@@ -1,9 +1,11 @@
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { beforeEach, describe, expect, it } from 'vitest';
+import Database from 'better-sqlite3';
 
 const execFileAsync = promisify(execFile);
 
@@ -17,6 +19,20 @@ async function runCli(cwd: string, args: string[], env?: NodeJS.ProcessEnv) {
 
 async function readArtifact(repoDir: string, name: string) {
   return readFile(path.join(repoDir, `.threadloop/artifacts/${name}`), 'utf8');
+}
+
+function readStateSnapshot(repoDir: string) {
+  const db = new Database(path.join(repoDir, '.threadloop/state/state.db'), { readonly: true });
+
+  try {
+    return {
+      taskStatuses: db.prepare('SELECT status FROM tasks ORDER BY rowid').pluck().all() as string[],
+      entryKinds: db.prepare('SELECT kind FROM entries ORDER BY rowid').pluck().all() as string[],
+      entryBodies: db.prepare('SELECT body FROM entries ORDER BY rowid').pluck().all() as string[],
+    };
+  } finally {
+    db.close();
+  }
 }
 
 describe('threadloop CLI', () => {
@@ -40,9 +56,76 @@ describe('threadloop CLI', () => {
     expect(artifact).toContain('# Add retry logic');
     expect(artifact).toContain('Retry only idempotent jobs');
 
-    const stateRaw = await readFile(path.join(repoDir, '.threadloop/state/state.json'), 'utf8');
-    expect(stateRaw).toContain('completed');
-    expect(stateRaw).toContain('decision');
+    expect(existsSync(path.join(repoDir, '.threadloop/state/state.db'))).toBe(true);
+    const snapshot = readStateSnapshot(repoDir);
+    expect(snapshot.taskStatuses).toContain('completed');
+    expect(snapshot.entryKinds).toContain('decision');
+  });
+
+  it('migrates legacy state.json into SQLite and keeps the JSON file as backup', async () => {
+    const legacyState = {
+      tasks: [
+        {
+          id: 'task_legacy',
+          title: 'Legacy task',
+          goal: 'Preserve v1 data',
+          constraints: ['Keep history intact'],
+          repoRoot: repoDir,
+          status: 'active',
+          createdAt: '2026-03-14T12:00:00.000Z',
+        },
+      ],
+      sessions: [
+        {
+          id: 'session_legacy',
+          taskId: 'task_legacy',
+          startedAt: '2026-03-14T12:00:00.000Z',
+          endedAt: null,
+          baseRef: null,
+          branch: 'master',
+          headSha: 'HEAD',
+        },
+      ],
+      entries: [
+        {
+          id: 'entry_legacy',
+          sessionId: 'session_legacy',
+          kind: 'decision',
+          body: 'Legacy decision',
+          metadata: { because: 'Existing repo state' },
+          createdAt: '2026-03-14T12:01:00.000Z',
+          source: 'cli',
+        },
+      ],
+      artifacts: [],
+      active: {
+        taskId: 'task_legacy',
+        sessionId: 'session_legacy',
+      },
+    };
+
+    await mkdir(path.join(repoDir, '.threadloop/state'), { recursive: true });
+    await writeFile(
+      path.join(repoDir, '.threadloop/config.json'),
+      `${JSON.stringify({ version: 1, createdAt: '2026-03-14T12:00:00.000Z' }, null, 2)}\n`,
+      'utf8',
+    );
+    await writeFile(path.join(repoDir, '.threadloop/state/state.json'), `${JSON.stringify(legacyState, null, 2)}\n`, 'utf8');
+
+    const status = await runCli(repoDir, ['status']);
+    await runCli(repoDir, ['capture', 'note', 'Migrated capture still works']);
+    await runCli(repoDir, ['finish']);
+
+    expect(status.stdout).toContain('Task: Legacy task');
+    expect(existsSync(path.join(repoDir, '.threadloop/state/state.db'))).toBe(true);
+
+    const snapshot = readStateSnapshot(repoDir);
+    expect(snapshot.taskStatuses).toEqual(['completed']);
+    expect(snapshot.entryBodies).toContain('Legacy decision');
+    expect(snapshot.entryBodies).toContain('Migrated capture still works');
+
+    const legacyBackup = await readFile(path.join(repoDir, '.threadloop/state/state.json'), 'utf8');
+    expect(legacyBackup).toContain('Legacy decision');
   });
 
   it('supports capture via $EDITOR and alternate artifact renderers', async () => {
@@ -106,6 +189,7 @@ describe('threadloop CLI', () => {
     expect(artifact).toContain('feature.ts');
     expect(artifact).not.toContain('.threadloop/config.json');
     expect(artifact).not.toContain('.threadloop/state/state.json');
+    expect(artifact).not.toContain('.threadloop/state/state.db');
     expect(artifact).not.toContain('.threadloop/artifacts/');
   });
 

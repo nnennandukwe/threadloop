@@ -24,8 +24,10 @@ Implemented command surface:
 
 Implemented storage:
 - `.threadloop/config.json`
-- `.threadloop/state/state.json`
+- `.threadloop/state/state.db`
 - `.threadloop/artifacts/*.md`
+
+Legacy v1 repos with `.threadloop/state/state.json` migrate into SQLite on first init/read/write. The JSON file is intentionally left in place as a safety backup during this phase, but ThreadLoop reads from SQLite after migration.
 
 ## Install
 
@@ -88,9 +90,25 @@ npm run smoke:pack
 ### What `threadloop init` does
 
 - creates `.threadloop/` if needed
-- creates `.threadloop/state/state.json`
+- creates or opens `.threadloop/state/state.db`
+- migrates legacy `.threadloop/state/state.json` into SQLite when present
 - ensures `.threadloop/state/` is ignored in the target repo's `.gitignore`
 - leaves `.threadloop/artifacts/` visible by default
+
+## SQLite migration status
+
+The current SQLite work is the first storage slice toward ThreadLoop v2 autonomous agent mode.
+
+What is implemented now:
+- SQLite-backed durable state
+- transactional writes for core mutations
+- migration from legacy `state.json`
+
+What is not implemented yet in this slice:
+- multi-session agent mode
+- explicit `session` namespace commands
+- `--json` machine-output contract
+- reconcile/daemon-backed DB workflows
 
 ## Quick start
 
@@ -131,6 +149,22 @@ Supported v1 entry kinds:
 - `handoff`: current-state handoff note
 
 Example artifacts live in `examples/`.
+
+## Coast workflow
+
+This project uses Coast for runtime verification.
+
+Typical commands:
+
+```bash
+coast lookup
+coast start dev-1
+coast exec dev-1 -- sh -c "npm ci"
+coast exec dev-1 -- sh -c "npm run test"
+coast exec dev-1 -- sh -c "npm run build"
+```
+
+Because ThreadLoop now depends on `better-sqlite3`, the shared `node_modules` directory can become platform-mismatched between the host and the Coast container. If you see errors loading `better_sqlite3.node` or an `Exec format error`, reinstall dependencies inside the Coast runtime with `npm ci`.
 
 ## Development
 

@@ -1,9 +1,21 @@
 import path from 'node:path';
 import { ensureThreadloopStateIgnored } from '../adapters/fs/gitignore.js';
-import { createId, ensureThreadloopLayout, readConfig, readState, withArtifact, withEntry, withSession, withTask, writeArtifactFile, writeConfig, writeState } from '../adapters/fs/json-store.js';
+import {
+  appendEntryToActiveSession,
+  completeActiveSession,
+  createId,
+  ensureStateDatabase,
+  ensureThreadloopLayout,
+  insertTaskSession,
+  readConfig,
+  readState,
+  recordArtifact,
+  writeArtifactFile,
+  writeConfig,
+} from '../adapters/fs/sqlite-store.js';
 import { isThreadloopInitialized } from '../adapters/fs/repo.js';
 import { refExists, resolveRepoRoot, snapshotRepo } from '../adapters/git/client.js';
-import type { ArtifactKind, EntryKind, Session, StateData, Task } from '../domain/types.js';
+import type { ArtifactKind, EntryKind, Session, Task } from '../domain/types.js';
 import { renderArtifact } from '../renderers/markdown/artifacts.js';
 
 export interface StartTaskInput {
@@ -28,10 +40,10 @@ export async function initThreadloop(cwd: string) {
   const created = !isThreadloopInitialized(repoRoot);
   if (created) {
     await writeConfig(repoRoot, { version: 1, createdAt: new Date().toISOString() });
-    await writeState(repoRoot, { tasks: [], sessions: [], entries: [], artifacts: [], active: null });
   } else {
     await readConfig(repoRoot);
   }
+  await ensureStateDatabase(repoRoot);
 
   const gitignoreStatus = await ensureThreadloopStateIgnored(repoRoot);
   return { repoRoot, created, gitignoreStatus };
@@ -40,11 +52,6 @@ export async function initThreadloop(cwd: string) {
 export async function startTask(input: StartTaskInput) {
   const repoRoot = await resolveRepoRoot(input.cwd);
   await assertInitialized(repoRoot);
-  const state = await readState(repoRoot);
-
-  if (state.active) {
-    throw new Error('A session is already active in this repo. Finish it before starting another.');
-  }
 
   if (input.baseRef && !(await refExists(repoRoot, input.baseRef))) {
     throw new Error(`Base ref not found: ${input.baseRef}`);
@@ -71,41 +78,33 @@ export async function startTask(input: StartTaskInput) {
     headSha: snapshot.headSha,
   };
 
-  let nextState = withTask(state, task);
-  nextState = withSession(nextState, session);
-
-  nextState = withEntry(nextState, {
-    id: createId('entry'),
-    sessionId: session.id,
-    kind: 'intent',
-    body: `Task started: ${task.title}`,
-    metadata: { goal: task.goal, constraints: task.constraints },
-    createdAt: new Date().toISOString(),
-    source: 'cli',
+  await insertTaskSession(repoRoot, {
+    task,
+    session,
+    intentEntry: {
+      id: createId('entry'),
+      sessionId: session.id,
+      kind: 'intent',
+      body: `Task started: ${task.title}`,
+      metadata: { goal: task.goal, constraints: task.constraints },
+      createdAt: new Date().toISOString(),
+      source: 'cli',
+    },
   });
-
-  await writeState(repoRoot, nextState);
   return { repoRoot, task, session };
 }
 
 export async function captureEntry(input: CaptureInput) {
   const repoRoot = await resolveRepoRoot(input.cwd);
   await assertInitialized(repoRoot);
-  const state = await readState(repoRoot);
-  const active = requireActiveState(state);
-
-  const entry = {
+  const entry = await appendEntryToActiveSession(repoRoot, {
     id: createId('entry'),
-    sessionId: active.sessionId,
     kind: input.kind,
     body: input.body,
     metadata: input.because ? { because: input.because } : {},
     createdAt: new Date().toISOString(),
     source: 'cli' as const,
-  };
-
-  const nextState = withEntry(state, entry);
-  await writeState(repoRoot, nextState);
+  });
   return { repoRoot, entry };
 }
 
@@ -135,7 +134,11 @@ export async function generateArtifact(cwd: string, artifactKind: ArtifactKind) 
   const repoRoot = await resolveRepoRoot(cwd);
   await assertInitialized(repoRoot);
   const state = await readState(repoRoot);
-  const active = requireActiveState(state);
+  const active = state.active;
+
+  if (!active) {
+    throw new Error('No active session in this repo. Start one with `threadloop start`.');
+  }
 
   const task = mustFind(state.tasks, active.taskId, 'task');
   const session = mustFind(state.sessions, active.sessionId, 'session');
@@ -162,26 +165,14 @@ export async function generateArtifact(cwd: string, artifactKind: ArtifactKind) 
     generatedAt,
   };
 
-  await writeState(repoRoot, withArtifact(state, artifact));
+  await recordArtifact(repoRoot, artifact);
   return { repoRoot, artifact, fullPath };
 }
 
 export async function finishSession(cwd: string) {
   const repoRoot = await resolveRepoRoot(cwd);
   await assertInitialized(repoRoot);
-  const state = await readState(repoRoot);
-  const active = requireActiveState(state);
-
-  const nextState: StateData = {
-    ...state,
-    tasks: state.tasks.map((task) => (task.id === active.taskId ? { ...task, status: 'completed' } : task)),
-    sessions: state.sessions.map((session) =>
-      session.id === active.sessionId ? { ...session, endedAt: new Date().toISOString() } : session,
-    ),
-    active: null,
-  };
-
-  await writeState(repoRoot, nextState);
+  const active = await completeActiveSession(repoRoot, new Date().toISOString());
   return { repoRoot, taskId: active.taskId, sessionId: active.sessionId };
 }
 
@@ -190,13 +181,7 @@ async function assertInitialized(repoRoot: string) {
     throw new Error('ThreadLoop is not initialized in this repo. Run `threadloop init` first.');
   }
   await readConfig(repoRoot);
-}
-
-function requireActiveState(state: StateData) {
-  if (!state.active) {
-    throw new Error('No active session in this repo. Start one with `threadloop start`.');
-  }
-  return state.active;
+  await ensureStateDatabase(repoRoot);
 }
 
 function mustFind<T extends { id: string }>(items: T[], id: string, label: string) {
