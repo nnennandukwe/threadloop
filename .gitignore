@@ -1,0 +1,6 @@
+node_modules/
+dist/
+coverage/
+.threadloop/state/
+.bg-shell/
+.DS_Store

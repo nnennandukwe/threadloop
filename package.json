@@ -1,0 +1,43 @@
+{
+  "name": "threadloop",
+  "version": "0.1.0",
+  "description": "Local-first CLI companion for review-ready AI-assisted coding artifacts",
+  "type": "module",
+  "bin": {
+    "threadloop": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx src/cli.ts",
+    "build": "tsup src/cli.ts --format esm --dts --clean --out-dir dist",
+    "prepare": "npm run build",
+    "smoke:pack": "node scripts/smoke-pack.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "cli",
+    "git",
+    "developer-tools",
+    "productivity"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^14.0.0",
+    "gray-matter": "^4.0.3",
+    "prompts": "^2.4.2",
+    "zod": "^4.1.11"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "tsx": "^4.20.6",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

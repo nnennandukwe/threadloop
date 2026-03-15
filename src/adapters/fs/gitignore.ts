@@ -1,0 +1,43 @@
+import { existsSync } from 'node:fs';
+import { readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+
+const STATE_IGNORE_ENTRY = '.threadloop/state/';
+
+export type GitignoreStatus = 'created' | 'updated' | 'already-correct';
+
+export async function ensureThreadloopStateIgnored(repoRoot: string): Promise<GitignoreStatus> {
+  const gitignorePath = path.join(repoRoot, '.gitignore');
+
+  if (!existsSync(gitignorePath)) {
+    await writeFile(gitignorePath, `${STATE_IGNORE_ENTRY}\n`, 'utf8');
+    return 'created';
+  }
+
+  const current = await readFile(gitignorePath, 'utf8');
+  const lines = current.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+
+  if (coversThreadloopState(lines)) {
+    return 'already-correct';
+  }
+
+  const next = current.endsWith('\n') || current.length === 0 ? `${current}${STATE_IGNORE_ENTRY}\n` : `${current}\n${STATE_IGNORE_ENTRY}\n`;
+  await writeFile(gitignorePath, next, 'utf8');
+  return 'updated';
+}
+
+function coversThreadloopState(lines: string[]) {
+  return lines.some((line) => {
+    if (line.startsWith('#') || line.startsWith('!')) {
+      return false;
+    }
+
+    return (
+      line === '.threadloop' ||
+      line === '.threadloop/' ||
+      line === '.threadloop/*' ||
+      line === '.threadloop/**' ||
+      line === STATE_IGNORE_ENTRY
+    );
+  });
+}
