@@ -128,6 +128,70 @@ describe('threadloop CLI', () => {
     expect(legacyBackup).toContain('Legacy decision');
   });
 
+  it('rejects unsupported schema metadata before migrating legacy state', async () => {
+    const legacyState = {
+      tasks: [
+        {
+          id: 'task_legacy',
+          title: 'Legacy task',
+          goal: 'Preserve v1 data',
+          constraints: [],
+          repoRoot: repoDir,
+          status: 'active',
+          createdAt: '2026-03-14T12:00:00.000Z',
+        },
+      ],
+      sessions: [
+        {
+          id: 'session_legacy',
+          taskId: 'task_legacy',
+          startedAt: '2026-03-14T12:00:00.000Z',
+          endedAt: null,
+          baseRef: null,
+          branch: 'master',
+          headSha: 'HEAD',
+        },
+      ],
+      entries: [],
+      artifacts: [],
+      active: {
+        taskId: 'task_legacy',
+        sessionId: 'session_legacy',
+      },
+    };
+
+    await mkdir(path.join(repoDir, '.threadloop/state'), { recursive: true });
+    await writeFile(
+      path.join(repoDir, '.threadloop/config.json'),
+      `${JSON.stringify({ version: 1, createdAt: '2026-03-14T12:00:00.000Z' }, null, 2)}\n`,
+      'utf8',
+    );
+    await writeFile(path.join(repoDir, '.threadloop/state/state.json'), `${JSON.stringify(legacyState, null, 2)}\n`, 'utf8');
+
+    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
+    const db = new Database(dbPath);
+    db.exec(`
+      CREATE TABLE metadata (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+    `);
+    db.prepare(`INSERT INTO metadata (key, value) VALUES ('schema_version', '0')`).run();
+    db.close();
+
+    await expect(runCli(repoDir, ['status'])).rejects.toThrow('Unsupported ThreadLoop schema version: 0');
+
+    const migratedDb = new Database(dbPath, { readonly: true });
+    try {
+      expect(migratedDb.prepare('SELECT COUNT(*) FROM tasks').pluck().get()).toBe(0);
+    } finally {
+      migratedDb.close();
+    }
+
+    const legacyBackup = await readFile(path.join(repoDir, '.threadloop/state/state.json'), 'utf8');
+    expect(legacyBackup).toContain('Legacy task');
+  });
+
   it('supports capture via $EDITOR and alternate artifact renderers', async () => {
     const editorScript = path.join(repoDir, 'fake-editor.sh');
     await writeFile(editorScript, '#!/bin/sh\nprintf "Reviewer should inspect retry cancellation path" > "$1"\n', 'utf8');

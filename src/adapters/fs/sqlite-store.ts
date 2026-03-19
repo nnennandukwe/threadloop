@@ -70,8 +70,8 @@ export async function ensureStateDatabase(repoRoot: string) {
   const db = openDatabase(repoRoot);
   try {
     bootstrapDatabase(db);
-    migrateLegacyJsonState(db, repoRoot);
     assertSchemaVersion(db);
+    migrateLegacyJsonState(db, repoRoot);
   } finally {
     db.close();
   }
