@@ -17,6 +17,15 @@ async function runCli(cwd: string, args: string[], env?: NodeJS.ProcessEnv) {
   return execFileAsync('node', [tsxCli, cliEntry, ...args], { cwd, env: env ? { ...process.env, ...env } : process.env });
 }
 
+async function runCliFailure(cwd: string, args: string[], env?: NodeJS.ProcessEnv) {
+  try {
+    await runCli(cwd, args, env);
+    throw new Error(`Expected CLI command to fail: ${args.join(' ')}`);
+  } catch (error) {
+    return error as Error & { stdout?: string; stderr?: string };
+  }
+}
+
 async function readArtifact(repoDir: string, name: string) {
   return readFile(path.join(repoDir, `.threadloop/artifacts/${name}`), 'utf8');
 }
@@ -366,11 +375,136 @@ describe('threadloop CLI', () => {
     await expect(runCli(repoDir, ['start', 'Add retry logic', '--goal', 'Reduce transient failures', '--base', 'missing-branch'])).rejects.toThrow();
   });
 
-  it('prints a friendly message when legacy status has no active session', async () => {
+  it('fails with SESSION_REQUIRED when legacy status has no active session', async () => {
     await runCli(repoDir, ['init']);
-    const status = await runCli(repoDir, ['status']);
 
-    expect(status.stdout).toContain('No active session.');
+    try {
+      await runCli(repoDir, ['status']);
+      throw new Error('Expected status to fail with SESSION_REQUIRED');
+    } catch (error) {
+      const failure = error as Error & { stderr?: string };
+      expect(failure.stderr).toContain('threadloop [SESSION_REQUIRED]: No active session.');
+    }
+  });
+
+  it('supports legacy wrapper commands with explicit session targeting and json envelopes', async () => {
+    await runCli(repoDir, ['init']);
+
+    const first = parseJsonOutput<{ data: { session_id: string } }>(
+      (await runCli(repoDir, ['session', 'start', 'First task', '--goal', 'Track first task', '--json'])).stdout,
+    );
+    const second = parseJsonOutput<{ data: { session_id: string } }>(
+      (await runCli(repoDir, ['session', 'start', 'Second task', '--goal', 'Track second task', '--json'])).stdout,
+    );
+
+    const captured = parseJsonOutput<{
+      ok: true;
+      command: string;
+      data: { session_id: string; entry: { kind: string; body: string } };
+    }>(
+      (
+        await runCli(repoDir, [
+          'capture',
+          'decision',
+          'Target the first session explicitly',
+          '--session',
+          first.data.session_id,
+          '--json',
+        ])
+      ).stdout,
+    );
+    expect(captured).toMatchObject({
+      ok: true,
+      command: 'capture',
+      data: {
+        session_id: first.data.session_id,
+        entry: { kind: 'decision', body: 'Target the first session explicitly' },
+      },
+    });
+
+    const status = parseJsonOutput<{
+      ok: true;
+      command: string;
+      data: { session_id: string; entries: { count: number; kinds: Record<string, number> } };
+    }>((await runCli(repoDir, ['status', '--session', first.data.session_id, '--json'])).stdout);
+    expect(status).toMatchObject({ ok: true, command: 'status' });
+    expect(status.data.session_id).toBe(first.data.session_id);
+    expect(status.data.entries.count).toBe(2);
+    expect(status.data.entries.kinds.intent).toBe(1);
+    expect(status.data.entries.kinds.decision).toBe(1);
+
+    const artifact = parseJsonOutput<{
+      ok: true;
+      command: string;
+      data: { session_id: string; artifact: { kind: string; path: string } };
+    }>((await runCli(repoDir, ['artifact', 'generate', '--session', first.data.session_id, '--json'])).stdout);
+    expect(artifact).toMatchObject({
+      ok: true,
+      command: 'artifact generate',
+      data: {
+        session_id: first.data.session_id,
+        artifact: { kind: 'change-brief' },
+      },
+    });
+    expect(artifact.data.artifact.path).toContain('first-task.change-brief.md');
+
+    const finished = parseJsonOutput<{
+      ok: true;
+      command: string;
+      data: { session_id: string };
+    }>((await runCli(repoDir, ['finish', '--session', first.data.session_id, '--json'])).stdout);
+    expect(finished).toMatchObject({
+      ok: true,
+      command: 'finish',
+      data: { session_id: first.data.session_id },
+    });
+
+    const secondStatus = await runCli(repoDir, ['status', '--session', second.data.session_id]);
+    expect(secondStatus.stdout).toContain(`Session: ${second.data.session_id}`);
+  });
+
+  it('fails legacy wrapper commands cleanly when multiple sessions are active and no session is selected', async () => {
+    await runCli(repoDir, ['init']);
+    await runCli(repoDir, ['session', 'start', 'First task', '--goal', 'Track first task']);
+    await runCli(repoDir, ['session', 'start', 'Second task', '--goal', 'Track second task']);
+
+    const captureFailure = parseJsonOutput<{ error: { code: string } }>(
+      (await runCliFailure(repoDir, ['capture', 'decision', 'Ambiguous capture', '--json'])).stderr ?? '',
+    );
+    expect(captureFailure.error.code).toBe('SESSION_AMBIGUOUS');
+
+    const statusFailure = parseJsonOutput<{ error: { code: string } }>(
+      (await runCliFailure(repoDir, ['status', '--json'])).stderr ?? '',
+    );
+    expect(statusFailure.error.code).toBe('SESSION_AMBIGUOUS');
+
+    const artifactFailure = parseJsonOutput<{ error: { code: string } }>(
+      (await runCliFailure(repoDir, ['artifact', 'generate', '--json'])).stderr ?? '',
+    );
+    expect(artifactFailure.error.code).toBe('SESSION_AMBIGUOUS');
+
+    const finishFailure = parseJsonOutput<{ error: { code: string } }>(
+      (await runCliFailure(repoDir, ['finish', '--json'])).stderr ?? '',
+    );
+    expect(finishFailure.error.code).toBe('SESSION_AMBIGUOUS');
+  });
+
+  it('blocks legacy root start when a session is already active', async () => {
+    await runCli(repoDir, ['init']);
+
+    const started = parseJsonOutput<{ ok: true; command: string; data: { session_id: string } }>(
+      (await runCli(repoDir, ['start', 'Legacy task', '--goal', 'Use the compatibility wrapper', '--json'])).stdout,
+    );
+    expect(started).toMatchObject({ ok: true, command: 'start' });
+
+    const failed = parseJsonOutput<{ ok: false; command: string; error: { code: string } }>(
+      (await runCliFailure(repoDir, ['start', 'Another legacy task', '--goal', 'Should fail', '--json'])).stderr ?? '',
+    );
+    expect(failed).toMatchObject({
+      ok: false,
+      command: 'start',
+      error: { code: 'SESSION_AMBIGUOUS' },
+    });
   });
 
   it('fails cleanly outside a git repository', async () => {
@@ -501,6 +635,25 @@ describe('threadloop CLI', () => {
     expect(rootHelp.stdout).toContain('artifact');
     expect(rootHelp.stdout).toContain('start');
 
+    const startHelp = await runCli(repoDir, ['start', '--help']);
+    expect(startHelp.stdout).toContain('--json');
+
+    const captureHelp = await runCli(repoDir, ['capture', '--help']);
+    expect(captureHelp.stdout).toContain('--session <id>');
+    expect(captureHelp.stdout).toContain('--json');
+
+    const statusHelp = await runCli(repoDir, ['status', '--help']);
+    expect(statusHelp.stdout).toContain('--session <id>');
+    expect(statusHelp.stdout).toContain('--json');
+
+    const artifactHelp = await runCli(repoDir, ['artifact', 'generate', '--help']);
+    expect(artifactHelp.stdout).toContain('--session <id>');
+    expect(artifactHelp.stdout).toContain('--json');
+
+    const finishHelp = await runCli(repoDir, ['finish', '--help']);
+    expect(finishHelp.stdout).toContain('--session <id>');
+    expect(finishHelp.stdout).toContain('--json');
+
     const sessionHelp = await runCli(repoDir, ['session', '--help']);
     expect(sessionHelp.stdout).toContain('start');
     expect(sessionHelp.stdout).toContain('list');
@@ -509,9 +662,9 @@ describe('threadloop CLI', () => {
     expect(sessionHelp.stdout).toContain('heartbeat');
     expect(sessionHelp.stdout).toContain('finish');
 
-    const startHelp = await runCli(repoDir, ['session', 'start', '--help']);
-    expect(startHelp.stdout).toContain('--json');
-    expect(startHelp.stdout).toContain('--goal <goal>');
-    expect(startHelp.stdout).toContain('--constraint <constraint...>');
+    const sessionStartHelp = await runCli(repoDir, ['session', 'start', '--help']);
+    expect(sessionStartHelp.stdout).toContain('--json');
+    expect(sessionStartHelp.stdout).toContain('--goal <goal>');
+    expect(sessionStartHelp.stdout).toContain('--constraint <constraint...>');
   });
 });

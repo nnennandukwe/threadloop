@@ -57,35 +57,44 @@ program
 
 program.command('init').description('Initialize ThreadLoop in the current Git repo').action(run(initCommand));
 
-program
-  .command('start')
-  .description('Start a task-scoped session')
-  .argument('<title>', 'task title')
-  .option('--goal <goal>', 'goal for the task')
-  .option('--constraint <constraint...>', 'constraints that matter for this task')
-  .option('--base <ref>', 'base Git ref used for comparisons')
-  .option('--goal-edit', 'open $EDITOR for the goal text')
-  .action(run(startCommand));
+withJsonOption(
+  program
+    .command('start')
+    .description('Start a task-scoped session')
+    .argument('<title>', 'task title')
+    .option('--goal <goal>', 'goal for the task')
+    .option('--constraint <constraint...>', 'constraints that matter for this task')
+    .option('--base <ref>', 'base Git ref used for comparisons')
+    .option('--goal-edit', 'open $EDITOR for the goal text'),
+).action(commandAction('start', startCommand));
 
-program
-  .command('capture')
-  .description('Capture a structured checkpoint entry')
-  .argument('<kind>', 'entry kind', parseEntryKind)
-  .argument('[text]', 'entry text')
-  .option('--because <reason>', 'optional reasoning or context')
-  .option('--edit', 'open $EDITOR for longer text')
-  .action(run(captureCommand));
+withJsonOption(
+  program
+    .command('capture')
+    .description('Capture a structured checkpoint entry')
+    .argument('<kind>', 'entry kind', parseEntryKind)
+    .argument('[text]', 'entry text')
+    .option('--session <id>', 'session id to target')
+    .option('--because <reason>', 'optional reasoning or context')
+    .option('--edit', 'open $EDITOR for longer text'),
+).action(commandAction('capture', captureCommand));
 
-program.command('status').description('Show the current task/session status').action(run(statusCommand));
+withJsonOption(
+  program.command('status').description('Show the current task/session status').option('--session <id>', 'session id to target'),
+).action(commandAction('status', statusCommand));
 
 const artifact = program.command('artifact').description('Generate artifacts from session context');
-artifact
-  .command('generate')
-  .description('Generate a Markdown artifact from task, notes, and Git context')
-  .argument('[kind]', 'artifact kind', parseArtifactKind, 'change-brief')
-  .action(run(artifactGenerateCommand));
+withJsonOption(
+  artifact
+    .command('generate')
+    .description('Generate a Markdown artifact from task, notes, and Git context')
+    .argument('[kind]', 'artifact kind', parseArtifactKind, 'change-brief')
+    .option('--session <id>', 'session id to target'),
+).action(commandAction('artifact generate', artifactGenerateCommand));
 
-program.command('finish').description('Complete the active session').action(run(finishCommand));
+withJsonOption(
+  program.command('finish').description('Complete the active session').option('--session <id>', 'session id to target'),
+).action(commandAction('finish', finishCommand));
 
 const session = program.command('session').description('Manage explicit ThreadLoop sessions');
 

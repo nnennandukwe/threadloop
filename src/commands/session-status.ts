@@ -2,17 +2,24 @@ import { countEntryKinds, toSessionId, type CommandContext, type JsonOption, typ
 import { ThreadloopError } from '../contracts/errors.js';
 import { getStatus } from '../services/session-service.js';
 
-type SessionStatusOptions = JsonOption & SessionOption;
+export type SessionStatusOptions = JsonOption & SessionOption;
 
-export async function sessionStatusCommand(context: CommandContext, options: SessionStatusOptions) {
+export async function sessionStatusCommand(context: CommandContext, options: SessionStatusOptions, allowLegacySingleActive = false) {
   const sessionId = toSessionId(options);
-  if (!sessionId) {
+  if (!sessionId && !allowLegacySingleActive) {
     throw new ThreadloopError('SESSION_REQUIRED', 'A session id is required for this command.', {
       details: { hint: 'Pass --session <id>.' },
     });
   }
 
-  const result = await getStatus(context.cwd, { sessionId });
+  const result = await getStatus(context.cwd, sessionId ? { sessionId } : { allowLegacySingleActive: true });
+
+  // For legacy convenience commands, fail safely when zero sessions match
+  if (!result.active && !sessionId && allowLegacySingleActive) {
+    throw new ThreadloopError('SESSION_REQUIRED', 'No active session.', {
+      details: { hint: 'Start a session with threadloop session start.' },
+    });
+  }
 
   if (!result.active) {
     writeCommandSuccess(context, {

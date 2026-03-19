@@ -3,14 +3,19 @@ import { readTextFromEditor } from '../adapters/fs/editor.js';
 import { writeCommandSuccess, type CommandContext } from './runtime.js';
 import { startTask } from '../services/session-service.js';
 
-interface SessionStartOptions {
+export interface StartOptions {
   goal?: string;
   constraint?: string[];
   base?: string;
   goalEdit?: boolean;
 }
 
-export async function sessionStartCommand(context: CommandContext, title: string, options: SessionStartOptions) {
+export async function sessionStartCommand(
+  context: CommandContext,
+  title: string,
+  options: StartOptions,
+  allowMultipleActive = true,
+) {
   let goal = options.goal?.trim();
   if (options.goalEdit) {
     goal = await readTextFromEditor(goal ?? '');
@@ -32,7 +37,7 @@ export async function sessionStartCommand(context: CommandContext, title: string
     goal,
     constraints: options.constraint ?? [],
     baseRef: options.base ?? null,
-    allowMultipleActive: true,
+    allowMultipleActive,
   });
 
   writeCommandSuccess(context, {

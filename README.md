@@ -24,11 +24,19 @@ Primary session contract:
 
 Compatibility surface:
 - `threadloop init`
-- `threadloop start <title>`
-- `threadloop capture <kind> [text]`
-- `threadloop status`
-- `threadloop artifact generate [change-brief|pr-summary|handoff]`
-- `threadloop finish`
+- `threadloop start <title> [--json]`
+- `threadloop capture <kind> [text] [--session <id>] [--json]`
+- `threadloop status [--session <id>] [--json]`
+- `threadloop artifact generate [change-brief|pr-summary|handoff] [--session <id>] [--json]`
+- `threadloop finish [--session <id>] [--json]`
+
+Compatibility rule:
+- legacy `capture`, `artifact generate`, and `finish` auto-resolve only when exactly one active session exists
+- legacy `start` preserves the legacy single-active-session behavior and refuses to open a second legacy root session in the same repo
+- legacy `status` fails with `SESSION_REQUIRED` when zero sessions match
+- when zero sessions match for `capture`, `artifact generate`, and `finish`, they fail with `SESSION_REQUIRED`
+- when multiple sessions match for any legacy command, they fail with `SESSION_AMBIGUOUS`
+- pass `--session <id>` or use `threadloop session ...` for deterministic targeting
 
 Implemented storage:
 - `.threadloop/config.json`
@@ -113,7 +121,8 @@ What is implemented now:
 - transactional writes for core mutations
 - migration from legacy `state.json`
 - explicit `session` namespace commands
-- `--json` machine-output contract for session commands
+- compatibility wrappers that safely fail on ambiguous multi-session state
+- `--json` machine-output contract for session commands and legacy wrappers
 
 What is not implemented yet in this slice:
 - protocol print / published agent-mode contract
@@ -128,9 +137,9 @@ npx threadloop session start "Add retry logic to job runner" --goal "Reduce tran
 session_id="session_123" # replace with the session_id returned from session start
 npx threadloop session capture decision "Retry only idempotent jobs" --session "$session_id" --because "Non-idempotent replay is unsafe"
 npx threadloop session capture validation "Ran targeted tests for retry backoff and cancellation" --session "$session_id"
-npx threadloop session status --session "$session_id" --json
-npx threadloop artifact generate change-brief
-npx threadloop session finish --session "$session_id" --json
+npx threadloop status --session "$session_id" --json
+npx threadloop artifact generate change-brief --session "$session_id"
+npx threadloop finish --session "$session_id" --json
 ```
 
 ## Longer notes with `$EDITOR`
@@ -184,13 +193,15 @@ Because ThreadLoop now depends on `better-sqlite3`, the shared `node_modules` di
 ```bash
 npm run test
 npm run build
-npm run smoke:pack
+npm run smoke:pack`
 ```
 
 ## Notes
 
 - ThreadLoop requires a Git repository.
-- Compatibility root commands keep one active session per repo.
+- Compatibility root `start` keeps one active session per repo.
+- Compatibility root `capture`, `artifact generate`, and `finish` work without `--session` only when exactly one active session exists.
+- Compatibility root `status` fails with `SESSION_REQUIRED` when zero sessions match.
 - `.threadloop/state/` is gitignored by default.
 - Artifacts are local by default and may be committed when useful.
 

@@ -11,10 +11,10 @@ Initializes `.threadloop/` in the current Git repository and ensures `.threadloo
 Starts an explicit task/session and returns a stable `session_id`.
 
 Options:
-- `--goal <goal>`: required task goal; prompts if missing
-- `--constraint <constraint...>`: one or more constraints to preserve
-- `--base <ref>`: Git base ref for comparisons
-- `--json`: render machine-readable session output
+-- `--goal <goal>`: required task goal; prompts if missing
+-- `--constraint <constraint...>`: one or more constraints to preserve
+-- `--base <ref>`: Git base ref for comparisons
+-- `--json`: render machine-readable session output
 
 ### `threadloop session list [--json]`
 Lists known sessions in the current repository, including which one is active.
@@ -23,34 +23,34 @@ Lists known sessions in the current repository, including which one is active.
 Shows the status of a specific session by explicit session id.
 
 Options:
-- `--session <id>`: target session id
-- `--json`: render machine-readable session output
+-- `--session <id>`: target session id
+-- `--json`: render machine-readable session output
 
 ### `threadloop session capture <kind> [text] --session <id> [--json]`
 Captures one structured entry for the targeted session.
 
 Kinds:
-- `intent`
-- `note`
-- `decision`
-- `risk`
-- `constraint`
-- `validation`
-- `reviewer_guidance`
+-- `intent`
+-- `note`
+-- `decision`
+-- `risk`
+-- `constraint`
+-- `validation`
+-- `reviewer_guidance`
 
 Options:
-- `--session <id>`: target session id
-- `--because <reason>`: attach rationale to a decision or note
-- `--edit`: open `$EDITOR` for longer capture text
-- `--json`: render machine-readable session output
+-- `--session <id>`: target session id
+-- `--because <reason>`: attach rationale to a decision or note
+-- `--edit`: open `$EDITOR` for longer capture text
+-- `--json`: render machine-readable session output
 
 ### `threadloop session heartbeat --session <id> [--json]`
 Refreshes a session's mechanical metadata without creating a semantic entry.
 
 Options:
-- `--session <id>`: target session id
-- `--source <cli|daemon|reconcile>`: record where the heartbeat came from
-- `--json`: render machine-readable session output
+-- `--session <id>`: target session id
+-- `--source <cli|daemon|reconcile>`: record where the heartbeat came from
+-- `--json`: render machine-readable session output
 
 ### `threadloop session finish --session <id> [--json]`
 Marks a specific session complete.
@@ -59,19 +59,31 @@ Marks a specific session complete.
 
 ThreadLoop still accepts the root commands below for compatibility while the namespaced session contract is the primary operator surface:
 
-- `threadloop start <title>`
-- `threadloop capture <kind> [text]`
-- `threadloop status`
-- `threadloop artifact generate [kind]`
-- `threadloop finish`
+- `threadloop start <title> [--json]`
+- `threadloop capture <kind> [text] [--session <id>] [--json]`
+- `threadloop status [--session <id>] [--json]`
+- `threadloop artifact generate [kind] [--session <id>] [--json]`
+- `threadloop finish [--session <id>] [--json]`
+
+Compatibility rules:
+- `start` preserves the legacy single-active-session behavior and refuses to open a second legacy root session in the same repo
+- `capture`, `artifact generate`, and `finish` auto-resolve only when exactly one active session exists
+- `status` fails with `SESSION_REQUIRED` when zero sessions match
+- when zero sessions match for `capture`, `artifact generate`, and `finish`, they fail with `SESSION_REQUIRED`
+- when multiple sessions match for any legacy command, they fail with `SESSION_AMBIGUOUS`
+- pass `--session <id>` or use the `threadloop session ...` forms for deterministic targeting
 
 ### `threadloop artifact generate [kind]`
 Renders a Markdown artifact from the active session.
 
 Kinds:
-- `change-brief` (default)
-- `pr-summary`
-- `handoff`
+-- `change-brief` (default)
+-- `pr-summary`
+-- `handoff`
+
+Options:
+-- `--session <id>`: target a specific session when more than one is active
+-- `--json`: render machine-readable command output
 
 ## Storage
 
