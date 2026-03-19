@@ -192,6 +192,36 @@ describe('threadloop CLI', () => {
     expect(legacyBackup).toContain('Legacy task');
   });
 
+  it('reports malformed config JSON with the ThreadLoop error message', async () => {
+    await mkdir(path.join(repoDir, '.threadloop/state'), { recursive: true });
+    await writeFile(path.join(repoDir, '.threadloop/config.json'), '{not-json\n', 'utf8');
+
+    await expect(runCli(repoDir, ['status'])).rejects.toThrow('Invalid .threadloop/config.json');
+  });
+
+  it('reports malformed legacy state JSON with the ThreadLoop error message', async () => {
+    await mkdir(path.join(repoDir, '.threadloop/state'), { recursive: true });
+    await writeFile(
+      path.join(repoDir, '.threadloop/config.json'),
+      `${JSON.stringify({ version: 1, createdAt: '2026-03-14T12:00:00.000Z' }, null, 2)}\n`,
+      'utf8',
+    );
+    await writeFile(path.join(repoDir, '.threadloop/state/state.json'), '{not-json\n', 'utf8');
+
+    await expect(runCli(repoDir, ['status'])).rejects.toThrow('Invalid .threadloop/state/state.json');
+  });
+
+  it('reports malformed SQLite JSON columns with the ThreadLoop error message', async () => {
+    await runCli(repoDir, ['init']);
+    await runCli(repoDir, ['start', 'Add retry logic', '--goal', 'Reduce transient failures']);
+
+    const db = new Database(path.join(repoDir, '.threadloop/state/state.db'));
+    db.prepare(`UPDATE tasks SET constraints_json = '{not-json'`).run();
+    db.close();
+
+    await expect(runCli(repoDir, ['status'])).rejects.toThrow('Invalid .threadloop/state/state.db');
+  });
+
   it('supports capture via $EDITOR and alternate artifact renderers', async () => {
     const editorScript = path.join(repoDir, 'fake-editor.sh');
     await writeFile(editorScript, '#!/bin/sh\nprintf "Reviewer should inspect retry cancellation path" > "$1"\n', 'utf8');

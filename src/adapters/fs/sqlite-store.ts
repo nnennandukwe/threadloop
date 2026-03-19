@@ -8,6 +8,11 @@ import type { ActiveState, Artifact, Entry, Session, StateData, Task, Threadloop
 import { threadloopPaths } from './repo.js';
 
 const CURRENT_SCHEMA_VERSION = 1;
+const INVALID_CONFIG_ERROR = 'Invalid .threadloop/config.json';
+const INVALID_STATE_JSON_ERROR = 'Invalid .threadloop/state/state.json';
+const INVALID_STATE_DB_ERROR = 'Invalid .threadloop/state/state.db';
+
+class InvalidJsonError extends Error {}
 
 type TaskRow = {
   id: string;
@@ -85,9 +90,9 @@ export async function writeConfig(repoRoot: string, config: ThreadloopConfig) {
 
 export async function readConfig(repoRoot: string): Promise<ThreadloopConfig> {
   const paths = threadloopPaths(repoRoot);
-  const parsed = threadloopConfigSchema.safeParse(await readJson(paths.configPath));
+  const parsed = threadloopConfigSchema.safeParse(await readJson(paths.configPath, INVALID_CONFIG_ERROR));
   if (!parsed.success) {
-    throw new Error('Invalid .threadloop/config.json');
+    throw new Error(INVALID_CONFIG_ERROR);
   }
   return parsed.data;
 }
@@ -100,7 +105,7 @@ export async function readState(repoRoot: string): Promise<StateData> {
     const state = loadState(db);
     const parsed = stateDataSchema.safeParse(state);
     if (!parsed.success) {
-      throw new Error('Invalid .threadloop/state/state.db');
+      throw new Error(INVALID_STATE_DB_ERROR);
     }
     return parsed.data;
   } finally {
@@ -304,9 +309,9 @@ function migrateLegacyJsonState(db: Database.Database, repoRoot: string) {
     return;
   }
 
-  const parsed = stateDataSchema.safeParse(readJsonSync(statePath));
+  const parsed = stateDataSchema.safeParse(readJsonSync(statePath, INVALID_STATE_JSON_ERROR));
   if (!parsed.success) {
-    throw new Error('Invalid .threadloop/state/state.json');
+    throw new Error(INVALID_STATE_JSON_ERROR);
   }
 
   const legacyState = parsed.data;
@@ -380,7 +385,7 @@ function loadState(db: Database.Database): StateData {
     id: row.id,
     title: row.title,
     goal: row.goal,
-    constraints: parseJsonText<string[]>(row.constraints_json),
+    constraints: parseJsonText<string[]>(row.constraints_json, INVALID_STATE_DB_ERROR),
     repoRoot: row.repo_root,
     status: row.status,
     createdAt: row.created_at,
@@ -417,7 +422,7 @@ function loadState(db: Database.Database): StateData {
     sessionId: row.session_id,
     kind: row.kind,
     body: row.body,
-    metadata: parseJsonText<Record<string, unknown>>(row.metadata_json),
+    metadata: parseJsonText<Record<string, unknown>>(row.metadata_json, INVALID_STATE_DB_ERROR),
     createdAt: row.created_at,
     source: row.source,
   }));
@@ -497,18 +502,22 @@ function insertArtifact(db: Database.Database, artifact: Artifact) {
   );
 }
 
-function parseJsonText<T>(value: string): T {
-  return JSON.parse(value) as T;
+function parseJsonText<T>(value: string, invalidMessage: string): T {
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    throw new InvalidJsonError(invalidMessage);
+  }
 }
 
-async function readJson(filePath: string) {
+async function readJson(filePath: string, invalidMessage: string) {
   const raw = await readFile(filePath, 'utf8');
-  return JSON.parse(raw);
+  return parseJsonText(raw, invalidMessage);
 }
 
-function readJsonSync(filePath: string) {
+function readJsonSync(filePath: string, invalidMessage: string) {
   const raw = readFileSync(filePath, 'utf8');
-  return JSON.parse(raw);
+  return parseJsonText(raw, invalidMessage);
 }
 
 async function writeJson(filePath: string, value: unknown) {
