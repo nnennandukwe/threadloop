@@ -91,10 +91,8 @@ export async function ensureStateDatabase(repoRoot: string) {
   const db = openDatabase(repoRoot);
   try {
     bootstrapDatabase(db);
-    ensureSessionHeartbeatColumns(db);
-    migrateActiveStateRegistry(db);
     assertSchemaVersion(db);
-    migrateLegacyJsonState(db, repoRoot);
+    runPendingMigrations(db, repoRoot);
   } finally {
     db.close();
   }
@@ -373,6 +371,16 @@ function ensureSessionHeartbeatColumns(db: Database.Database) {
   }
 }
 
+function runPendingMigrations(db: Database.Database, repoRoot: string) {
+  const migrate = db.transaction((nextRepoRoot: string) => {
+    ensureSessionHeartbeatColumns(db);
+    migrateActiveStateRegistry(db);
+    migrateLegacyJsonState(db, nextRepoRoot);
+  });
+
+  migrate.immediate(repoRoot);
+}
+
 function migrateActiveStateRegistry(db: Database.Database) {
   const activeSessionsCount = db.prepare(`SELECT COUNT(*) FROM active_sessions`).pluck().get() as number;
   if (activeSessionsCount > 0) {
@@ -416,31 +424,27 @@ function migrateLegacyJsonState(db: Database.Database, repoRoot: string) {
   }
 
   const legacyState = normalizeStateData(parsed.data);
-  const migrate = db.transaction((state: StateData) => {
-    for (const task of state.tasks) {
-      insertTask(db, task);
-    }
+  for (const task of legacyState.tasks) {
+    insertTask(db, task);
+  }
 
-    for (const session of state.sessions) {
-      insertSession(db, session);
-    }
+  for (const session of legacyState.sessions) {
+    insertSession(db, session);
+  }
 
-    for (const entry of state.entries) {
-      insertEntry(db, entry);
-    }
+  for (const entry of legacyState.entries) {
+    insertEntry(db, entry);
+  }
 
-    for (const artifact of state.artifacts) {
-      insertArtifact(db, artifact);
-    }
+  for (const artifact of legacyState.artifacts) {
+    insertArtifact(db, artifact);
+  }
 
-    for (const activeSession of state.activeSessions) {
-      insertActiveSession(db, activeSession);
-    }
+  for (const activeSession of legacyState.activeSessions) {
+    insertActiveSession(db, activeSession);
+  }
 
-    syncActiveStateCompat(db);
-  });
-
-  migrate.immediate(legacyState);
+  syncActiveStateCompat(db);
 }
 
 function databaseIsEmpty(db: Database.Database) {

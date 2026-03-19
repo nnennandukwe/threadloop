@@ -179,8 +179,54 @@ describe('threadloop CLI', () => {
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
+
+      CREATE TABLE tasks (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        goal TEXT NOT NULL,
+        constraints_json TEXT NOT NULL,
+        repo_root TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE sessions (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        ended_at TEXT,
+        base_ref TEXT,
+        branch TEXT NOT NULL,
+        head_sha TEXT NOT NULL
+      );
+
+      CREATE TABLE entries (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        body TEXT NOT NULL,
+        metadata_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        source TEXT NOT NULL
+      );
+
+      CREATE TABLE artifacts (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        path TEXT NOT NULL,
+        template_version TEXT NOT NULL,
+        generated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE active_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        task_id TEXT NOT NULL,
+        session_id TEXT NOT NULL
+      );
     `);
     db.prepare(`INSERT INTO metadata (key, value) VALUES ('schema_version', '0')`).run();
+    db.prepare(`INSERT INTO active_state (id, task_id, session_id) VALUES (1, 'task_legacy', 'session_legacy')`).run();
     db.close();
 
     await expect(runCli(repoDir, ['status'])).rejects.toThrow('Unsupported ThreadLoop schema version: 0');
@@ -188,6 +234,10 @@ describe('threadloop CLI', () => {
     const migratedDb = new Database(dbPath, { readonly: true });
     try {
       expect(migratedDb.prepare('SELECT COUNT(*) FROM tasks').pluck().get()).toBe(0);
+      expect(migratedDb.prepare('SELECT COUNT(*) FROM active_sessions').pluck().get()).toBe(0);
+      const sessionColumns = migratedDb.prepare(`PRAGMA table_info(sessions)`).all() as Array<{ name: string }>;
+      expect(sessionColumns.map((column) => column.name)).not.toContain('last_heartbeat_at');
+      expect(sessionColumns.map((column) => column.name)).not.toContain('last_heartbeat_source');
     } finally {
       migratedDb.close();
     }
