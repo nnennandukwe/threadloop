@@ -304,14 +304,15 @@ export async function generateArtifact(
   const { repoRoot, state } = await loadStateContext(cwd);
   const resolved = resolveSessionFromState(state, selector);
   const entries = state.entries.filter((entry) => entry.sessionId === resolved.session.id);
-  const repoSnapshot = await snapshotRepo(repoRoot, resolved.session.id, resolved.session.baseRef);
+  const repoSnapshot = await readRepoSnapshot(repoRoot, resolved.session.id);
+  const snapshot = repoSnapshot ?? (await snapshotRepo(repoRoot, resolved.session.id, resolved.session.baseRef));
   const generatedAt = new Date().toISOString();
   const filename = `${slugify(resolved.task.title)}.${artifactKind}.md`;
   const content = renderArtifact({
     task: resolved.task,
     session: resolved.session,
     entries,
-    repoSnapshot,
+    repoSnapshot: snapshot,
     generatedAt,
     artifactKind,
   });
