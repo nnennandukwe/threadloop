@@ -31,9 +31,11 @@ Compatibility surface:
 - `threadloop finish [--session <id>] [--json]`
 
 Compatibility rule:
-- legacy `capture`, `status`, `artifact generate`, and `finish` auto-resolve only when exactly one active session exists
-- when zero sessions match, they fail with `SESSION_REQUIRED`
-- when multiple sessions match, they fail with `SESSION_AMBIGUOUS`
+- legacy `capture`, `artifact generate`, and `finish` auto-resolve only when exactly one active session exists
+- legacy `start` preserves the legacy single-active-session behavior and refuses to open a second legacy root session in the same repo
+- legacy `status` fails with `SESSION_REQUIRED` when zero sessions match
+- when zero sessions match for `capture`, `artifact generate`, and `finish`, they fail with `SESSION_REQUIRED`
+- when multiple sessions match for any legacy command, they fail with `SESSION_AMBIGUOUS`
 - pass `--session <id>` or use `threadloop session ...` for deterministic targeting
 
 Implemented storage:
@@ -191,14 +193,15 @@ Because ThreadLoop now depends on `better-sqlite3`, the shared `node_modules` di
 ```bash
 npm run test
 npm run build
-npm run smoke:pack
+npm run smoke:pack`
 ```
 
 ## Notes
 
 - ThreadLoop requires a Git repository.
 - Compatibility root `start` keeps one active session per repo.
-- Compatibility root `capture`, `status`, `artifact generate`, and `finish` work without `--session` only when exactly one active session exists.
+- Compatibility root `capture`, `artifact generate`, and `finish` work without `--session` only when exactly one active session exists.
+- Compatibility root `status` fails with `SESSION_REQUIRED` when zero sessions match.
 - `.threadloop/state/` is gitignored by default.
 - Artifacts are local by default and may be committed when useful.
 

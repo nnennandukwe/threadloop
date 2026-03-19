@@ -14,6 +14,13 @@ export async function sessionStatusCommand(context: CommandContext, options: Ses
 
   const result = await getStatus(context.cwd, sessionId ? { sessionId } : { allowLegacySingleActive: true });
 
+  // For legacy convenience commands, fail safely when zero sessions match
+  if (!result.active && !sessionId && allowLegacySingleActive) {
+    throw new ThreadloopError('SESSION_REQUIRED', 'No active session.', {
+      details: { hint: 'Start a session with threadloop session start.' },
+    });
+  }
+
   if (!result.active) {
     writeCommandSuccess(context, {
       text: ['No active session.'],

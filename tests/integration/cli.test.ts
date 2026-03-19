@@ -375,11 +375,16 @@ describe('threadloop CLI', () => {
     await expect(runCli(repoDir, ['start', 'Add retry logic', '--goal', 'Reduce transient failures', '--base', 'missing-branch'])).rejects.toThrow();
   });
 
-  it('prints a friendly message when legacy status has no active session', async () => {
+  it('fails with SESSION_REQUIRED when legacy status has no active session', async () => {
     await runCli(repoDir, ['init']);
-    const status = await runCli(repoDir, ['status']);
 
-    expect(status.stdout).toContain('No active session.');
+    try {
+      await runCli(repoDir, ['status']);
+      throw new Error('Expected status to fail with SESSION_REQUIRED');
+    } catch (error) {
+      const failure = error as Error & { stderr?: string };
+      expect(failure.stderr).toContain('threadloop [SESSION_REQUIRED]: No active session.');
+    }
   });
 
   it('supports legacy wrapper commands with explicit session targeting and json envelopes', async () => {
