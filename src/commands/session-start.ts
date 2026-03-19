@@ -1,15 +1,16 @@
 import prompts from 'prompts';
 import { readTextFromEditor } from '../adapters/fs/editor.js';
+import { writeCommandSuccess, type CommandContext } from './runtime.js';
 import { startTask } from '../services/session-service.js';
 
-interface StartOptions {
+interface SessionStartOptions {
   goal?: string;
   constraint?: string[];
   base?: string;
   goalEdit?: boolean;
 }
 
-export async function startCommand(title: string, options: StartOptions) {
+export async function sessionStartCommand(context: CommandContext, title: string, options: SessionStartOptions) {
   let goal = options.goal?.trim();
   if (options.goalEdit) {
     goal = await readTextFromEditor(goal ?? '');
@@ -26,16 +27,26 @@ export async function startCommand(title: string, options: StartOptions) {
   }
 
   const result = await startTask({
-    cwd: process.cwd(),
+    cwd: context.cwd,
     title,
     goal,
     constraints: options.constraint ?? [],
     baseRef: options.base ?? null,
-    allowMultipleActive: false,
+    allowMultipleActive: true,
   });
 
-  console.log(`Started task: ${result.task.title}`);
-  console.log(`Goal: ${result.task.goal}`);
-  console.log(`Constraints: ${result.task.constraints.length > 0 ? result.task.constraints.join('; ') : 'none'}`);
-  console.log(`Session: ${result.session.id}`);
+  writeCommandSuccess(context, {
+    text: [
+      `Started task: ${result.task.title}`,
+      `Goal: ${result.task.goal}`,
+      `Constraints: ${result.task.constraints.length > 0 ? result.task.constraints.join('; ') : 'none'}`,
+      `Session: ${result.session.id}`,
+    ],
+    data: {
+      session_id: result.session.id,
+      task_id: result.task.id,
+      task: result.task,
+      session: result.session,
+    },
+  });
 }

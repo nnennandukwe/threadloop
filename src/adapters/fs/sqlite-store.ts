@@ -4,7 +4,16 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { stateDataSchema, threadloopConfigSchema } from '../../schemas/state.js';
-import type { ActiveState, Artifact, Entry, Session, StateData, Task, ThreadloopConfig } from '../../domain/types.js';
+import type {
+  ActiveState,
+  Artifact,
+  Entry,
+  HeartbeatSource,
+  Session,
+  StateData,
+  Task,
+  ThreadloopConfig,
+} from '../../domain/types.js';
 import { threadloopPaths } from './repo.js';
 
 const CURRENT_SCHEMA_VERSION = 1;
@@ -32,6 +41,8 @@ type SessionRow = {
   base_ref: string | null;
   branch: string;
   head_sha: string;
+  last_heartbeat_at: string | null;
+  last_heartbeat_source: HeartbeatSource | null;
 };
 
 type EntryRow = {
@@ -58,6 +69,11 @@ type ActiveStateRow = {
   session_id: string;
 };
 
+type ActiveSessionRow = {
+  task_id: string;
+  session_id: string;
+};
+
 export function createId(prefix: string) {
   return `${prefix}_${randomUUID()}`;
 }
@@ -76,7 +92,7 @@ export async function ensureStateDatabase(repoRoot: string) {
   try {
     bootstrapDatabase(db);
     assertSchemaVersion(db);
-    migrateLegacyJsonState(db, repoRoot);
+    runPendingMigrations(db, repoRoot);
   } finally {
     db.close();
   }
@@ -119,20 +135,11 @@ export async function insertTaskSession(repoRoot: string, payload: { task: Task;
   const db = openDatabase(repoRoot);
   try {
     const insert = db.transaction(({ task, session, intentEntry }: { task: Task; session: Session; intentEntry: Entry }) => {
-      const active = readActiveStateRow(db);
-      if (active) {
-        throw new Error('A session is already active in this repo. Finish it before starting another.');
-      }
-
       insertTask(db, task);
       insertSession(db, session);
       insertEntry(db, intentEntry);
-      db.prepare(
-        `
-          INSERT INTO active_state (id, task_id, session_id)
-          VALUES (1, ?, ?)
-        `,
-      ).run(task.id, session.id);
+      insertActiveSession(db, { taskId: task.id, sessionId: session.id });
+      syncActiveStateCompat(db);
     });
 
     insert.immediate(payload);
@@ -155,11 +162,21 @@ export async function appendEntryToActiveSession(
         throw new Error('No active session in this repo. Start one with `threadloop start`.');
       }
 
-      const entry: Entry = { ...nextDraft, sessionId: active.session_id };
-      insertEntry(db, entry);
-      return entry;
+      return appendEntry(db, active.session_id, nextDraft);
     });
 
+    return append.immediate(draft);
+  } finally {
+    db.close();
+  }
+}
+
+export async function appendEntryToSession(repoRoot: string, sessionId: string, draft: Omit<Entry, 'sessionId'>) {
+  await ensureStateDatabase(repoRoot);
+
+  const db = openDatabase(repoRoot);
+  try {
+    const append = db.transaction((nextDraft: Omit<Entry, 'sessionId'>) => appendEntry(db, sessionId, nextDraft));
     return append.immediate(draft);
   } finally {
     db.close();
@@ -192,14 +209,59 @@ export async function completeActiveSession(repoRoot: string, endedAt: string): 
         throw new Error('No active session in this repo. Start one with `threadloop start`.');
       }
 
-      db.prepare(`UPDATE tasks SET status = 'completed' WHERE id = ?`).run(active.task_id);
-      db.prepare(`UPDATE sessions SET ended_at = ? WHERE id = ?`).run(nextEndedAt, active.session_id);
-      db.prepare(`DELETE FROM active_state WHERE id = 1`).run();
-
-      return { taskId: active.task_id, sessionId: active.session_id };
+      return completeSession(db, active.session_id, active.task_id, nextEndedAt);
     });
 
     return finish.immediate(endedAt);
+  } finally {
+    db.close();
+  }
+}
+
+export async function completeSessionById(repoRoot: string, sessionId: string, endedAt: string): Promise<ActiveState> {
+  await ensureStateDatabase(repoRoot);
+
+  const db = openDatabase(repoRoot);
+  try {
+    const finish = db.transaction((nextEndedAt: string) => {
+      const session = readSessionRow(db, sessionId);
+      if (!session) {
+        throw new Error(`Unknown session id: ${sessionId}`);
+      }
+
+      return completeSession(db, session.id, session.task_id, nextEndedAt);
+    });
+
+    return finish.immediate(endedAt);
+  } finally {
+    db.close();
+  }
+}
+
+export async function recordSessionHeartbeat(
+  repoRoot: string,
+  payload: { sessionId: string; branch: string; headSha: string; lastHeartbeatAt: string; source: HeartbeatSource },
+) {
+  await ensureStateDatabase(repoRoot);
+
+  const db = openDatabase(repoRoot);
+  try {
+    const update = db.transaction((nextPayload: typeof payload) => {
+      const session = readSessionRow(db, nextPayload.sessionId);
+      if (!session) {
+        throw new Error(`Unknown session id: ${nextPayload.sessionId}`);
+      }
+
+      db.prepare(
+        `
+          UPDATE sessions
+          SET branch = ?, head_sha = ?, last_heartbeat_at = ?, last_heartbeat_source = ?
+          WHERE id = ?
+        `,
+      ).run(nextPayload.branch, nextPayload.headSha, nextPayload.lastHeartbeatAt, nextPayload.source, nextPayload.sessionId);
+    });
+
+    await update(payload);
   } finally {
     db.close();
   }
@@ -246,7 +308,9 @@ function bootstrapDatabase(db: Database.Database) {
       ended_at TEXT,
       base_ref TEXT,
       branch TEXT NOT NULL,
-      head_sha TEXT NOT NULL
+      head_sha TEXT NOT NULL,
+      last_heartbeat_at TEXT,
+      last_heartbeat_source TEXT
     );
 
     CREATE TABLE IF NOT EXISTS entries (
@@ -274,9 +338,15 @@ function bootstrapDatabase(db: Database.Database) {
       session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS active_sessions (
+      session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+      task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS sessions_task_id_idx ON sessions(task_id);
     CREATE INDEX IF NOT EXISTS entries_session_id_idx ON entries(session_id);
     CREATE INDEX IF NOT EXISTS artifacts_session_id_idx ON artifacts(session_id);
+    CREATE INDEX IF NOT EXISTS active_sessions_task_id_idx ON active_sessions(task_id);
   `);
 
   db.prepare(
@@ -286,6 +356,45 @@ function bootstrapDatabase(db: Database.Database) {
       ON CONFLICT(key) DO NOTHING
     `,
   ).run(String(CURRENT_SCHEMA_VERSION));
+}
+
+function ensureSessionHeartbeatColumns(db: Database.Database) {
+  const columns = db.prepare(`PRAGMA table_info(sessions)`).all() as Array<{ name: string }>;
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has('last_heartbeat_at')) {
+    db.prepare(`ALTER TABLE sessions ADD COLUMN last_heartbeat_at TEXT`).run();
+  }
+
+  if (!columnNames.has('last_heartbeat_source')) {
+    db.prepare(`ALTER TABLE sessions ADD COLUMN last_heartbeat_source TEXT`).run();
+  }
+}
+
+function runPendingMigrations(db: Database.Database, repoRoot: string) {
+  const migrate = db.transaction((nextRepoRoot: string) => {
+    ensureSessionHeartbeatColumns(db);
+    migrateActiveStateRegistry(db);
+    migrateLegacyJsonState(db, nextRepoRoot);
+  });
+
+  migrate.immediate(repoRoot);
+}
+
+function migrateActiveStateRegistry(db: Database.Database) {
+  const activeSessionsCount = db.prepare(`SELECT COUNT(*) FROM active_sessions`).pluck().get() as number;
+  if (activeSessionsCount > 0) {
+    syncActiveStateCompat(db);
+    return;
+  }
+
+  const active = readActiveStateRow(db);
+  if (!active) {
+    return;
+  }
+
+  insertActiveSession(db, { taskId: active.task_id, sessionId: active.session_id });
+  syncActiveStateCompat(db);
 }
 
 function assertSchemaVersion(db: Database.Database) {
@@ -314,35 +423,28 @@ function migrateLegacyJsonState(db: Database.Database, repoRoot: string) {
     throw new Error(INVALID_STATE_JSON_ERROR);
   }
 
-  const legacyState = parsed.data;
-  const migrate = db.transaction((state: StateData) => {
-    for (const task of state.tasks) {
-      insertTask(db, task);
-    }
+  const legacyState = normalizeStateData(parsed.data);
+  for (const task of legacyState.tasks) {
+    insertTask(db, task);
+  }
 
-    for (const session of state.sessions) {
-      insertSession(db, session);
-    }
+  for (const session of legacyState.sessions) {
+    insertSession(db, session);
+  }
 
-    for (const entry of state.entries) {
-      insertEntry(db, entry);
-    }
+  for (const entry of legacyState.entries) {
+    insertEntry(db, entry);
+  }
 
-    for (const artifact of state.artifacts) {
-      insertArtifact(db, artifact);
-    }
+  for (const artifact of legacyState.artifacts) {
+    insertArtifact(db, artifact);
+  }
 
-    if (state.active) {
-      db.prepare(
-        `
-          INSERT INTO active_state (id, task_id, session_id)
-          VALUES (1, ?, ?)
-        `,
-      ).run(state.active.taskId, state.active.sessionId);
-    }
-  });
+  for (const activeSession of legacyState.activeSessions) {
+    insertActiveSession(db, activeSession);
+  }
 
-  migrate.immediate(legacyState);
+  syncActiveStateCompat(db);
 }
 
 function databaseIsEmpty(db: Database.Database) {
@@ -354,7 +456,8 @@ function databaseIsEmpty(db: Database.Database) {
           (SELECT COUNT(*) FROM sessions) AS sessions_count,
           (SELECT COUNT(*) FROM entries) AS entries_count,
           (SELECT COUNT(*) FROM artifacts) AS artifacts_count,
-          (SELECT COUNT(*) FROM active_state) AS active_count
+          (SELECT COUNT(*) FROM active_state) AS active_count,
+          (SELECT COUNT(*) FROM active_sessions) AS active_sessions_count
       `,
     )
     .get() as {
@@ -363,13 +466,15 @@ function databaseIsEmpty(db: Database.Database) {
       entries_count: number;
       artifacts_count: number;
       active_count: number;
+      active_sessions_count: number;
     };
 
   return counts.tasks_count === 0
     && counts.sessions_count === 0
     && counts.entries_count === 0
     && counts.artifacts_count === 0
-    && counts.active_count === 0;
+    && counts.active_count === 0
+    && counts.active_sessions_count === 0;
 }
 
 function loadState(db: Database.Database): StateData {
@@ -394,7 +499,7 @@ function loadState(db: Database.Database): StateData {
   const sessions = (db
     .prepare(
       `
-        SELECT id, task_id, started_at, ended_at, base_ref, branch, head_sha
+        SELECT id, task_id, started_at, ended_at, base_ref, branch, head_sha, last_heartbeat_at, last_heartbeat_source
         FROM sessions
         ORDER BY rowid
       `,
@@ -407,6 +512,8 @@ function loadState(db: Database.Database): StateData {
     baseRef: row.base_ref,
     branch: row.branch,
     headSha: row.head_sha,
+    lastHeartbeatAt: row.last_heartbeat_at ?? null,
+    lastHeartbeatSource: row.last_heartbeat_source ?? null,
   }));
 
   const entries = (db
@@ -444,19 +551,41 @@ function loadState(db: Database.Database): StateData {
     generatedAt: row.generated_at,
   }));
 
-  const activeRow = readActiveStateRow(db);
-  const active = activeRow
-    ? {
-        taskId: activeRow.task_id,
-        sessionId: activeRow.session_id,
-      }
-    : null;
+  const activeSessions = readActiveSessionRows(db).map((row) => ({
+    taskId: row.task_id,
+    sessionId: row.session_id,
+  }));
+  const active = activeSessions.length === 1 ? activeSessions[0] : null;
 
-  return { tasks, sessions, entries, artifacts, active };
+  return normalizeStateData({ tasks, sessions, entries, artifacts, active, activeSessions });
 }
 
 function readActiveStateRow(db: Database.Database) {
   return db.prepare(`SELECT task_id, session_id FROM active_state WHERE id = 1`).get() as ActiveStateRow | undefined;
+}
+
+function readActiveSessionRows(db: Database.Database) {
+  return db
+    .prepare(
+      `
+        SELECT task_id, session_id
+        FROM active_sessions
+        ORDER BY rowid
+      `,
+    )
+    .all() as ActiveSessionRow[];
+}
+
+function readSessionRow(db: Database.Database, sessionId: string) {
+  return db
+    .prepare(
+      `
+        SELECT id, task_id, started_at, ended_at, base_ref, branch, head_sha, last_heartbeat_at, last_heartbeat_source
+        FROM sessions
+        WHERE id = ?
+      `,
+    )
+    .get(sessionId) as SessionRow | undefined;
 }
 
 function insertTask(db: Database.Database, task: Task) {
@@ -471,10 +600,20 @@ function insertTask(db: Database.Database, task: Task) {
 function insertSession(db: Database.Database, session: Session) {
   db.prepare(
     `
-      INSERT INTO sessions (id, task_id, started_at, ended_at, base_ref, branch, head_sha)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, task_id, started_at, ended_at, base_ref, branch, head_sha, last_heartbeat_at, last_heartbeat_source)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
-  ).run(session.id, session.taskId, session.startedAt, session.endedAt, session.baseRef, session.branch, session.headSha);
+  ).run(
+    session.id,
+    session.taskId,
+    session.startedAt,
+    session.endedAt,
+    session.baseRef,
+    session.branch,
+    session.headSha,
+    session.lastHeartbeatAt,
+    session.lastHeartbeatSource,
+  );
 }
 
 function insertEntry(db: Database.Database, entry: Entry) {
@@ -500,6 +639,66 @@ function insertArtifact(db: Database.Database, artifact: Artifact) {
     artifact.templateVersion,
     artifact.generatedAt,
   );
+}
+
+function insertActiveSession(db: Database.Database, active: ActiveState) {
+  db.prepare(
+    `
+      INSERT OR REPLACE INTO active_sessions (session_id, task_id)
+      VALUES (?, ?)
+    `,
+  ).run(active.sessionId, active.taskId);
+}
+
+function appendEntry(db: Database.Database, sessionId: string, draft: Omit<Entry, 'sessionId'>) {
+  const session = readSessionRow(db, sessionId);
+  if (!session) {
+    throw new Error(`Unknown session id: ${sessionId}`);
+  }
+
+  const entry: Entry = { ...draft, sessionId };
+  insertEntry(db, entry);
+  return entry;
+}
+
+function completeSession(db: Database.Database, sessionId: string, taskId: string, endedAt: string) {
+  db.prepare(`UPDATE tasks SET status = 'completed' WHERE id = ?`).run(taskId);
+  db.prepare(`UPDATE sessions SET ended_at = ? WHERE id = ?`).run(endedAt, sessionId);
+  db.prepare(`DELETE FROM active_sessions WHERE session_id = ?`).run(sessionId);
+  syncActiveStateCompat(db);
+
+  return { taskId, sessionId };
+}
+
+function normalizeStateData(state: StateData): StateData {
+  return {
+    ...state,
+    sessions: state.sessions.map((session) => ({
+      ...session,
+      lastHeartbeatAt: session.lastHeartbeatAt ?? null,
+      lastHeartbeatSource: session.lastHeartbeatSource ?? null,
+    })),
+    activeSessions: state.activeSessions ?? (state.active ? [state.active] : []),
+  };
+}
+
+function syncActiveStateCompat(db: Database.Database) {
+  const activeSessions = readActiveSessionRows(db);
+  if (activeSessions.length === 1) {
+    const [active] = activeSessions;
+    db.prepare(
+      `
+        INSERT INTO active_state (id, task_id, session_id)
+        VALUES (1, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          task_id = excluded.task_id,
+          session_id = excluded.session_id
+      `,
+    ).run(active.task_id, active.session_id);
+    return;
+  }
+
+  db.prepare(`DELETE FROM active_state WHERE id = 1`).run();
 }
 
 function parseJsonText<T>(value: string, invalidMessage: string): T {

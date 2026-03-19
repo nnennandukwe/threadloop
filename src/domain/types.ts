@@ -10,10 +10,12 @@ export const ENTRY_KINDS = [
 
 export const ARTIFACT_KINDS = ['change-brief', 'pr-summary', 'handoff'] as const;
 export const TASK_STATUS = ['active', 'completed'] as const;
+export const HEARTBEAT_SOURCES = ['cli', 'daemon', 'reconcile'] as const;
 
 export type EntryKind = (typeof ENTRY_KINDS)[number];
 export type ArtifactKind = (typeof ARTIFACT_KINDS)[number];
 export type TaskStatus = (typeof TASK_STATUS)[number];
+export type HeartbeatSource = (typeof HEARTBEAT_SOURCES)[number];
 
 export interface Task {
   id: string;
@@ -33,6 +35,8 @@ export interface Session {
   baseRef: string | null;
   branch: string;
   headSha: string;
+  lastHeartbeatAt: string | null;
+  lastHeartbeatSource: HeartbeatSource | null;
 }
 
 export interface Entry {
@@ -84,4 +88,10 @@ export interface StateData {
   entries: Entry[];
   artifacts: Artifact[];
   active: ActiveState | null;
+  activeSessions: ActiveState[];
+}
+
+export interface SessionRecord {
+  task: Task;
+  session: Session;
 }
