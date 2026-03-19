@@ -316,6 +316,13 @@ describe('threadloop CLI', () => {
     await expect(runCli(repoDir, ['start', 'Add retry logic', '--goal', 'Reduce transient failures', '--base', 'missing-branch'])).rejects.toThrow();
   });
 
+  it('prints a friendly message when legacy status has no active session', async () => {
+    await runCli(repoDir, ['init']);
+    const status = await runCli(repoDir, ['status']);
+
+    expect(status.stdout).toContain('No active session.');
+  });
+
   it('fails cleanly outside a git repository', async () => {
     const nonRepoDir = await mkdtemp(path.join(os.tmpdir(), 'threadloop-no-git-'));
     await expect(runCli(nonRepoDir, ['init'])).rejects.toThrow();

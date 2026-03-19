@@ -36,6 +36,7 @@ export interface StartTaskInput {
   goal: string;
   constraints: string[];
   baseRef: string | null;
+  allowMultipleActive?: boolean;
 }
 
 export interface CaptureInput {
@@ -85,6 +86,15 @@ export async function initThreadloop(cwd: string) {
 export async function startTask(input: StartTaskInput) {
   const repoRoot = await resolveRepositoryRoot(input.cwd);
   await assertInitialized(repoRoot);
+
+  if (!input.allowMultipleActive) {
+    const state = await readState(repoRoot);
+    if (state.activeSessions.length > 0) {
+      throw new ThreadloopError('SESSION_AMBIGUOUS', 'A legacy root session already exists in this repo. Finish it before starting another.', {
+        details: { activeSessions: state.activeSessions.length },
+      });
+    }
+  }
 
   if (input.baseRef && !(await refExists(repoRoot, input.baseRef))) {
     throw new ThreadloopError('BASE_REF_NOT_FOUND', `Base ref not found: ${input.baseRef}`, {
@@ -201,6 +211,9 @@ export async function captureEntry(input: CaptureInput) {
 
 export async function getStatus(cwd: string, selector: SessionSelector = {}) {
   const { repoRoot, state } = await loadStateContext(cwd);
+  if (!selector.sessionId && (selector.allowLegacySingleActive ?? true) && state.activeSessions.length === 0) {
+    return { repoRoot, active: null, entries: [], repoSnapshot: null };
+  }
   const record = selector.sessionId
     ? resolveSessionRecord(state, selector.sessionId)
     : resolveSessionFromState(state, {

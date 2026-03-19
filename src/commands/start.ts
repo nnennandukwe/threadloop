@@ -31,6 +31,7 @@ export async function startCommand(title: string, options: StartOptions) {
     goal,
     constraints: options.constraint ?? [],
     baseRef: options.base ?? null,
+    allowMultipleActive: false,
   });
 
   console.log(`Started task: ${result.task.title}`);

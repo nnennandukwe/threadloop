@@ -32,6 +32,7 @@ export async function sessionStartCommand(context: CommandContext, title: string
     goal,
     constraints: options.constraint ?? [],
     baseRef: options.base ?? null,
+    allowMultipleActive: true,
   });
 
   writeCommandSuccess(context, {

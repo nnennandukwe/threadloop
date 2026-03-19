@@ -35,6 +35,7 @@ describe('session service', () => {
       goal: 'Track first task',
       constraints: [],
       baseRef: null,
+      allowMultipleActive: true,
     });
     const second = await startTask({
       cwd: repoDir,
@@ -42,6 +43,7 @@ describe('session service', () => {
       goal: 'Track second task',
       constraints: [],
       baseRef: null,
+      allowMultipleActive: true,
     });
 
     await expect(captureEntry({
@@ -79,6 +81,7 @@ describe('session service', () => {
       goal: 'Retain ended session visibility',
       constraints: [],
       baseRef: null,
+      allowMultipleActive: true,
     });
 
     await finishSession(repoDir, { sessionId: started.session.id });
@@ -92,5 +95,43 @@ describe('session service', () => {
     expect(listed.sessions).toHaveLength(1);
     expect(listed.sessions[0]?.active).toBe(false);
     expect(listed.sessions[0]?.session.endedAt).toBeTruthy();
+  });
+
+  it('blocks legacy root start when a session is already active', async () => {
+    const repoDir = await makeRepo();
+    await initThreadloop(repoDir);
+
+    await startTask({
+      cwd: repoDir,
+      title: 'Existing task',
+      goal: 'Keep the repo occupied',
+      constraints: [],
+      baseRef: null,
+      allowMultipleActive: true,
+    });
+
+    await expect(
+      startTask({
+        cwd: repoDir,
+        title: 'Legacy task',
+        goal: 'Should fail for legacy compatibility',
+        constraints: [],
+        baseRef: null,
+      }),
+    ).rejects.toSatisfy((error: unknown) => {
+      expect(isThreadloopError(error)).toBe(true);
+      expect((error as { code?: string }).code).toBe('SESSION_AMBIGUOUS');
+      return true;
+    });
+  });
+
+  it('returns no active session for legacy status when none exist', async () => {
+    const repoDir = await makeRepo();
+    await initThreadloop(repoDir);
+
+    const status = await getStatus(repoDir, { allowLegacySingleActive: true });
+    expect(status.active).toBeNull();
+    expect(status.entries).toEqual([]);
+    expect(status.repoSnapshot).toBeNull();
   });
 });
