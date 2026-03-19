@@ -59,11 +59,18 @@ Marks a specific session complete.
 
 ThreadLoop still accepts the root commands below for compatibility while the namespaced session contract is the primary operator surface:
 
-- `threadloop start <title>`
-- `threadloop capture <kind> [text]`
-- `threadloop status`
-- `threadloop artifact generate [kind]`
-- `threadloop finish`
+- `threadloop start <title> [--json]`
+- `threadloop capture <kind> [text] [--session <id>] [--json]`
+- `threadloop status [--session <id>] [--json]`
+- `threadloop artifact generate [kind] [--session <id>] [--json]`
+- `threadloop finish [--session <id>] [--json]`
+
+Compatibility rules:
+- `start` preserves the legacy single-active-session behavior and refuses to open a second legacy root session in the same repo
+- `capture`, `status`, `artifact generate`, and `finish` auto-resolve only when exactly one active session exists
+- when zero sessions match, they fail with `SESSION_REQUIRED`
+- when multiple sessions match, they fail with `SESSION_AMBIGUOUS`
+- pass `--session <id>` or use the `threadloop session ...` forms for deterministic targeting
 
 ### `threadloop artifact generate [kind]`
 Renders a Markdown artifact from the active session.
@@ -72,6 +79,10 @@ Kinds:
 - `change-brief` (default)
 - `pr-summary`
 - `handoff`
+
+Options:
+- `--session <id>`: target a specific session when more than one is active
+- `--json`: render machine-readable command output
 
 ## Storage
 

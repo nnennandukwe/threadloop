@@ -4,7 +4,7 @@ import { ENTRY_KINDS, type EntryKind } from '../domain/types.js';
 import { captureEntry } from '../services/session-service.js';
 import { toSessionId, type CommandContext, type JsonOption, type SessionOption, writeCommandSuccess } from './runtime.js';
 
-interface SessionCaptureOptions extends JsonOption, SessionOption {
+export interface SessionCaptureOptions extends JsonOption, SessionOption {
   because?: string;
   edit?: boolean;
 }
@@ -14,9 +14,10 @@ export async function sessionCaptureCommand(
   kindValue: string,
   text: string | undefined,
   options: SessionCaptureOptions,
+  allowLegacySingleActive = false,
 ) {
   const sessionId = toSessionId(options);
-  if (!sessionId) {
+  if (!sessionId && !allowLegacySingleActive) {
     throw new ThreadloopError('SESSION_REQUIRED', 'A session id is required for this command.', {
       details: { hint: 'Pass --session <id>.' },
     });
@@ -42,7 +43,7 @@ export async function sessionCaptureCommand(
   });
 
   writeCommandSuccess(context, {
-    text: [`Captured ${result.entry.kind} in ${result.session.id}: ${result.entry.body}`],
+    text: [`Captured ${result.entry.kind}: ${result.entry.body}`, `Session: ${result.session.id}`],
     data: {
       session_id: result.session.id,
       task: result.task,
