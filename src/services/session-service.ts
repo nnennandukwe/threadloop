@@ -1,8 +1,8 @@
 import path from 'node:path';
 import { ensureThreadloopStateIgnored } from '../adapters/fs/gitignore.js';
 import {
-  appendEntryToActiveSession,
-  completeActiveSession,
+  appendEntryToSession,
+  completeSessionById,
   createId,
   ensureStateDatabase,
   ensureThreadloopLayout,
@@ -10,12 +10,24 @@ import {
   readConfig,
   readState,
   recordArtifact,
+  recordSessionHeartbeat,
   writeArtifactFile,
   writeConfig,
 } from '../adapters/fs/sqlite-store.js';
 import { isThreadloopInitialized } from '../adapters/fs/repo.js';
 import { refExists, resolveRepoRoot, snapshotRepo } from '../adapters/git/client.js';
-import type { ArtifactKind, EntryKind, Session, Task } from '../domain/types.js';
+import { ThreadloopError } from '../contracts/errors.js';
+import type {
+  ActiveState,
+  ArtifactKind,
+  Entry,
+  EntryKind,
+  HeartbeatSource,
+  Session,
+  SessionRecord,
+  StateData,
+  Task,
+} from '../domain/types.js';
 import { renderArtifact } from '../renderers/markdown/artifacts.js';
 
 export interface StartTaskInput {
@@ -31,10 +43,31 @@ export interface CaptureInput {
   kind: EntryKind;
   body: string;
   because?: string;
+  sessionId?: string;
+}
+
+export interface SessionSelector {
+  sessionId?: string;
+  allowLegacySingleActive?: boolean;
+}
+
+export interface HeartbeatInput {
+  cwd: string;
+  sessionId: string;
+  source?: HeartbeatSource;
+}
+
+interface StateContext {
+  repoRoot: string;
+  state: StateData;
+}
+
+interface ResolvedSession extends SessionRecord {
+  active: ActiveState;
 }
 
 export async function initThreadloop(cwd: string) {
-  const repoRoot = await resolveRepoRoot(cwd);
+  const repoRoot = await resolveRepositoryRoot(cwd);
   await ensureThreadloopLayout(repoRoot);
 
   const created = !isThreadloopInitialized(repoRoot);
@@ -50,14 +83,17 @@ export async function initThreadloop(cwd: string) {
 }
 
 export async function startTask(input: StartTaskInput) {
-  const repoRoot = await resolveRepoRoot(input.cwd);
+  const repoRoot = await resolveRepositoryRoot(input.cwd);
   await assertInitialized(repoRoot);
 
   if (input.baseRef && !(await refExists(repoRoot, input.baseRef))) {
-    throw new Error(`Base ref not found: ${input.baseRef}`);
+    throw new ThreadloopError('BASE_REF_NOT_FOUND', `Base ref not found: ${input.baseRef}`, {
+      details: { baseRef: input.baseRef },
+    });
   }
 
   const snapshot = await snapshotRepo(repoRoot, 'preview', input.baseRef);
+  const now = new Date().toISOString();
   const task: Task = {
     id: createId('task'),
     title: input.title,
@@ -65,17 +101,19 @@ export async function startTask(input: StartTaskInput) {
     constraints: input.constraints,
     repoRoot,
     status: 'active',
-    createdAt: new Date().toISOString(),
+    createdAt: now,
   };
 
   const session: Session = {
     id: createId('session'),
     taskId: task.id,
-    startedAt: new Date().toISOString(),
+    startedAt: now,
     endedAt: null,
     baseRef: input.baseRef,
     branch: snapshot.branch,
     headSha: snapshot.headSha,
+    lastHeartbeatAt: null,
+    lastHeartbeatSource: null,
   };
 
   await insertTaskSession(repoRoot, {
@@ -87,68 +125,110 @@ export async function startTask(input: StartTaskInput) {
       kind: 'intent',
       body: `Task started: ${task.title}`,
       metadata: { goal: task.goal, constraints: task.constraints },
-      createdAt: new Date().toISOString(),
+      createdAt: now,
       source: 'cli',
     },
   });
   return { repoRoot, task, session };
 }
 
+export async function listSessions(cwd: string) {
+  const { repoRoot, state } = await loadStateContext(cwd);
+  return {
+    repoRoot,
+    sessions: state.sessions.map((session) => {
+      const task = mustFindTask(state, session.taskId);
+      return {
+        task,
+        session,
+        active: state.activeSessions.some((active) => active.sessionId === session.id),
+      };
+    }),
+  };
+}
+
+export async function getSession(cwd: string, sessionId: string) {
+  const { repoRoot, state } = await loadStateContext(cwd);
+  const record = resolveSessionRecord(state, sessionId);
+  return { repoRoot, task: record.task, session: record.session };
+}
+
+export async function heartbeatSession(input: HeartbeatInput) {
+  const { repoRoot, state } = await loadStateContext(input.cwd);
+  const resolved = resolveSessionFromState(state, { sessionId: input.sessionId });
+  const now = new Date().toISOString();
+  const source = input.source ?? 'cli';
+  const repoSnapshot = await snapshotRepo(repoRoot, resolved.session.id, resolved.session.baseRef);
+
+  await recordSessionHeartbeat(repoRoot, {
+    sessionId: resolved.session.id,
+    branch: repoSnapshot.branch,
+    headSha: repoSnapshot.headSha,
+    lastHeartbeatAt: now,
+    source,
+  });
+
+  return {
+    repoRoot,
+    task: resolved.task,
+    session: {
+      ...resolved.session,
+      branch: repoSnapshot.branch,
+      headSha: repoSnapshot.headSha,
+      lastHeartbeatAt: now,
+      lastHeartbeatSource: source,
+    },
+  };
+}
+
 export async function captureEntry(input: CaptureInput) {
-  const repoRoot = await resolveRepoRoot(input.cwd);
-  await assertInitialized(repoRoot);
-  const entry = await appendEntryToActiveSession(repoRoot, {
+  const { repoRoot, state } = await loadStateContext(input.cwd);
+  const resolved = resolveSessionFromState(state, {
+    sessionId: input.sessionId,
+    allowLegacySingleActive: !input.sessionId,
+  });
+
+  const entry: Entry = await appendEntryToSession(repoRoot, resolved.session.id, {
     id: createId('entry'),
     kind: input.kind,
     body: input.body,
     metadata: input.because ? { because: input.because } : {},
     createdAt: new Date().toISOString(),
-    source: 'cli' as const,
+    source: 'cli',
   });
-  return { repoRoot, entry };
+  return { repoRoot, task: resolved.task, session: resolved.session, entry };
 }
 
-export async function getStatus(cwd: string) {
-  const repoRoot = await resolveRepoRoot(cwd);
-  await assertInitialized(repoRoot);
-  const state = await readState(repoRoot);
-  const active = state.active;
+export async function getStatus(cwd: string, selector: SessionSelector = {}) {
+  const { repoRoot, state } = await loadStateContext(cwd);
+  const record = selector.sessionId
+    ? resolveSessionRecord(state, selector.sessionId)
+    : resolveSessionFromState(state, {
+        ...selector,
+        allowLegacySingleActive: selector.allowLegacySingleActive ?? !selector.sessionId,
+      });
 
-  if (!active) {
-    return { repoRoot, active: null, entries: [], repoSnapshot: null };
-  }
-
-  const task = state.tasks.find((item) => item.id === active.taskId);
-  const session = state.sessions.find((item) => item.id === active.sessionId);
-
-  if (!task || !session) {
-    throw new Error('Active session state is corrupted.');
-  }
-
-  const entries = state.entries.filter((entry) => entry.sessionId === session.id);
-  const repoSnapshot = await snapshotRepo(repoRoot, session.id, session.baseRef);
-  return { repoRoot, active: { task, session }, entries, repoSnapshot };
+  const entries = state.entries.filter((entry) => entry.sessionId === record.session.id);
+  const repoSnapshot = record.session.endedAt === null
+    ? await snapshotRepo(repoRoot, record.session.id, record.session.baseRef)
+    : null;
+  return { repoRoot, active: { task: record.task, session: record.session }, entries, repoSnapshot };
 }
 
-export async function generateArtifact(cwd: string, artifactKind: ArtifactKind) {
-  const repoRoot = await resolveRepoRoot(cwd);
-  await assertInitialized(repoRoot);
-  const state = await readState(repoRoot);
-  const active = state.active;
-
-  if (!active) {
-    throw new Error('No active session in this repo. Start one with `threadloop start`.');
-  }
-
-  const task = mustFind(state.tasks, active.taskId, 'task');
-  const session = mustFind(state.sessions, active.sessionId, 'session');
-  const entries = state.entries.filter((entry) => entry.sessionId === session.id);
-  const repoSnapshot = await snapshotRepo(repoRoot, session.id, session.baseRef);
+export async function generateArtifact(
+  cwd: string,
+  artifactKind: ArtifactKind,
+  selector: SessionSelector = { allowLegacySingleActive: true },
+) {
+  const { repoRoot, state } = await loadStateContext(cwd);
+  const resolved = resolveSessionFromState(state, selector);
+  const entries = state.entries.filter((entry) => entry.sessionId === resolved.session.id);
+  const repoSnapshot = await snapshotRepo(repoRoot, resolved.session.id, resolved.session.baseRef);
   const generatedAt = new Date().toISOString();
-  const filename = `${slugify(task.title)}.${artifactKind}.md`;
+  const filename = `${slugify(resolved.task.title)}.${artifactKind}.md`;
   const content = renderArtifact({
-    task,
-    session,
+    task: resolved.task,
+    session: resolved.session,
     entries,
     repoSnapshot,
     generatedAt,
@@ -158,7 +238,7 @@ export async function generateArtifact(cwd: string, artifactKind: ArtifactKind) 
   const fullPath = await writeArtifactFile(repoRoot, filename, content);
   const artifact = {
     id: createId('artifact'),
-    sessionId: session.id,
+    sessionId: resolved.session.id,
     kind: artifactKind,
     path: path.relative(repoRoot, fullPath),
     templateVersion: 'v1',
@@ -166,30 +246,112 @@ export async function generateArtifact(cwd: string, artifactKind: ArtifactKind) 
   };
 
   await recordArtifact(repoRoot, artifact);
-  return { repoRoot, artifact, fullPath };
+  return { repoRoot, task: resolved.task, session: resolved.session, artifact, fullPath };
 }
 
-export async function finishSession(cwd: string) {
-  const repoRoot = await resolveRepoRoot(cwd);
-  await assertInitialized(repoRoot);
-  const active = await completeActiveSession(repoRoot, new Date().toISOString());
+export async function finishSession(cwd: string, selector: SessionSelector = { allowLegacySingleActive: true }) {
+  const { repoRoot, state } = await loadStateContext(cwd);
+  const resolved = resolveSessionFromState(state, selector);
+  const active = await completeSessionById(repoRoot, resolved.session.id, new Date().toISOString());
   return { repoRoot, taskId: active.taskId, sessionId: active.sessionId };
+}
+
+async function loadStateContext(cwd: string): Promise<StateContext> {
+  const repoRoot = await resolveRepositoryRoot(cwd);
+  await assertInitialized(repoRoot);
+  return { repoRoot, state: await readState(repoRoot) };
+}
+
+async function resolveRepositoryRoot(cwd: string) {
+  try {
+    return await resolveRepoRoot(cwd);
+  } catch (error) {
+    throw new ThreadloopError('NOT_GIT_REPOSITORY', 'ThreadLoop requires a Git repository. Run `git init` first.', {
+      cause: error,
+    });
+  }
 }
 
 async function assertInitialized(repoRoot: string) {
   if (!isThreadloopInitialized(repoRoot)) {
-    throw new Error('ThreadLoop is not initialized in this repo. Run `threadloop init` first.');
+    throw new ThreadloopError(
+      'THREADLOOP_NOT_INITIALIZED',
+      'ThreadLoop is not initialized in this repo. Run `threadloop init` first.',
+    );
   }
   await readConfig(repoRoot);
   await ensureStateDatabase(repoRoot);
 }
 
-function mustFind<T extends { id: string }>(items: T[], id: string, label: string) {
-  const item = items.find((value) => value.id === id);
-  if (!item) {
-    throw new Error(`Could not find active ${label}.`);
+function resolveSessionFromState(state: StateData, selector: SessionSelector): ResolvedSession {
+  if (selector.sessionId) {
+    const active = state.activeSessions.find((item) => item.sessionId === selector.sessionId);
+    if (!active) {
+      throw new ThreadloopError('SESSION_NOT_FOUND', `Could not find active session: ${selector.sessionId}`, {
+        details: { sessionId: selector.sessionId },
+      });
+    }
+
+    return { active, ...materializeSessionRecord(state, active) };
   }
-  return item;
+
+  if (!selector.allowLegacySingleActive) {
+    throw new ThreadloopError('SESSION_REQUIRED', 'A session id is required for this command.', {
+      details: { hint: 'Pass --session <id> or use the command with exactly one active session.' },
+    });
+  }
+
+  if (state.activeSessions.length === 0) {
+    throw new ThreadloopError('SESSION_REQUIRED', 'No active session exists in this repo. Start one with `threadloop start`.', {
+      details: { activeSessions: 0 },
+    });
+  }
+
+  if (state.activeSessions.length > 1) {
+    throw new ThreadloopError('SESSION_AMBIGUOUS', 'Multiple active sessions exist in this repo. Select one explicitly.', {
+      details: { sessionIds: state.activeSessions.map((item) => item.sessionId) },
+    });
+  }
+
+  const [active] = state.activeSessions;
+  return { active, ...materializeSessionRecord(state, active) };
+}
+
+function materializeSessionRecord(state: StateData, active: ActiveState): SessionRecord {
+  const task = state.tasks.find((item) => item.id === active.taskId);
+  const session = state.sessions.find((item) => item.id === active.sessionId && item.endedAt === null);
+
+  if (!task || !session) {
+    throw new ThreadloopError('STATE_CORRUPTED', 'ThreadLoop session registry is inconsistent with persisted tasks or sessions.', {
+      details: { taskId: active.taskId, sessionId: active.sessionId },
+    });
+  }
+
+  return { task, session };
+}
+
+function resolveSessionRecord(state: StateData, sessionId: string): SessionRecord {
+  const session = state.sessions.find((item) => item.id === sessionId);
+  if (!session) {
+    throw new ThreadloopError('SESSION_NOT_FOUND', `Could not find session: ${sessionId}`, {
+      details: { sessionId },
+    });
+  }
+
+  return {
+    task: mustFindTask(state, session.taskId),
+    session,
+  };
+}
+
+function mustFindTask(state: StateData, taskId: string) {
+  const task = state.tasks.find((item) => item.id === taskId);
+  if (!task) {
+    throw new ThreadloopError('STATE_CORRUPTED', 'ThreadLoop could not reload the associated task record.', {
+      details: { taskId },
+    });
+  }
+  return task;
 }
 
 function slugify(value: string) {

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ARTIFACT_KINDS, ENTRY_KINDS, TASK_STATUS } from '../domain/types.js';
+import { ARTIFACT_KINDS, ENTRY_KINDS, HEARTBEAT_SOURCES, TASK_STATUS } from '../domain/types.js';
 
 export const taskSchema = z.object({
   id: z.string(),
@@ -19,6 +19,8 @@ export const sessionSchema = z.object({
   baseRef: z.string().nullable(),
   branch: z.string(),
   headSha: z.string(),
+  lastHeartbeatAt: z.string().nullable().optional().default(null),
+  lastHeartbeatSource: z.enum(HEARTBEAT_SOURCES).nullable().optional().default(null),
 });
 
 export const entrySchema = z.object({
@@ -45,13 +47,19 @@ export const activeStateSchema = z.object({
   sessionId: z.string(),
 });
 
-export const stateDataSchema = z.object({
-  tasks: z.array(taskSchema),
-  sessions: z.array(sessionSchema),
-  entries: z.array(entrySchema),
-  artifacts: z.array(artifactSchema),
-  active: activeStateSchema.nullable(),
-});
+export const stateDataSchema = z
+  .object({
+    tasks: z.array(taskSchema),
+    sessions: z.array(sessionSchema),
+    entries: z.array(entrySchema),
+    artifacts: z.array(artifactSchema),
+    active: activeStateSchema.nullable(),
+    activeSessions: z.array(activeStateSchema).optional(),
+  })
+  .transform((state) => ({
+    ...state,
+    activeSessions: state.activeSessions ?? (state.active ? [state.active] : []),
+  }));
 
 export const threadloopConfigSchema = z.object({
   version: z.literal(1),

@@ -1,7 +1,7 @@
 import { getStatus } from '../services/session-service.js';
 
 export async function statusCommand() {
-  const result = await getStatus(process.cwd());
+  const result = await getStatus(process.cwd(), { allowLegacySingleActive: true });
 
   if (!result.active) {
     console.log('No active session.');

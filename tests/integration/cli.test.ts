@@ -21,6 +21,10 @@ async function readArtifact(repoDir: string, name: string) {
   return readFile(path.join(repoDir, `.threadloop/artifacts/${name}`), 'utf8');
 }
 
+function parseJsonOutput<T>(output: string) {
+  return JSON.parse(output) as T;
+}
+
 function readStateSnapshot(repoDir: string) {
   const db = new Database(path.join(repoDir, '.threadloop/state/state.db'), { readonly: true });
 
@@ -315,5 +319,142 @@ describe('threadloop CLI', () => {
   it('fails cleanly outside a git repository', async () => {
     const nonRepoDir = await mkdtemp(path.join(os.tmpdir(), 'threadloop-no-git-'));
     await expect(runCli(nonRepoDir, ['init'])).rejects.toThrow();
+  });
+
+  it('supports explicit session commands and stable json envelopes', async () => {
+    await runCli(repoDir, ['init']);
+
+    const started = parseJsonOutput<{
+      ok: true;
+      command: string;
+      data: { session_id: string; task_id: string };
+    }>((await runCli(repoDir, ['session', 'start', 'Explicit task', '--goal', 'Track the explicit session', '--json'])).stdout);
+
+    expect(started).toMatchObject({ ok: true, command: 'session start' });
+    expect(started.data.session_id).toBeTruthy();
+
+    const listed = parseJsonOutput<{
+      ok: true;
+      command: string;
+      data: { sessions: Array<{ session_id: string; active: boolean }> };
+    }>((await runCli(repoDir, ['session', 'list', '--json'])).stdout);
+    expect(listed).toMatchObject({ ok: true, command: 'session list' });
+    expect(listed.data.sessions).toHaveLength(1);
+    expect(listed.data.sessions[0]).toMatchObject({ session_id: started.data.session_id, active: true });
+
+    const captured = parseJsonOutput<{
+      ok: true;
+      command: string;
+      data: { session_id: string; entry: { kind: string; body: string } };
+    }>(
+      (
+        await runCli(repoDir, [
+          'session',
+          'capture',
+          'decision',
+          'Keep the explicit contract',
+          '--session',
+          started.data.session_id,
+          '--because',
+          'Machine consumers need a stable envelope',
+          '--json',
+        ])
+      ).stdout,
+    );
+    expect(captured).toMatchObject({ ok: true, command: 'session capture' });
+    expect(captured.data.session_id).toBe(started.data.session_id);
+    expect(captured.data.entry).toMatchObject({ kind: 'decision', body: 'Keep the explicit contract' });
+
+    const heartbeat = parseJsonOutput<{
+      ok: true;
+      command: string;
+      data: { session_id: string; session: { last_heartbeat_at: string | null; last_heartbeat_source: string | null } };
+    }>((await runCli(repoDir, ['session', 'heartbeat', '--session', started.data.session_id, '--source', 'cli', '--json'])).stdout);
+    expect(heartbeat).toMatchObject({ ok: true, command: 'session heartbeat' });
+    expect(heartbeat.data.session_id).toBe(started.data.session_id);
+    expect(heartbeat.data.session.last_heartbeat_at).toBeTruthy();
+    expect(heartbeat.data.session.last_heartbeat_source).toBe('cli');
+
+    const status = parseJsonOutput<{
+      ok: true;
+      command: string;
+      data: { session_id: string; entries: { count: number; kinds: Record<string, number> }; session: { ended_at: string | null } };
+    }>((await runCli(repoDir, ['session', 'status', '--session', started.data.session_id, '--json'])).stdout);
+    expect(status).toMatchObject({ ok: true, command: 'session status' });
+    expect(status.data.session_id).toBe(started.data.session_id);
+    expect(status.data.entries.count).toBe(2);
+    expect(status.data.entries.kinds.intent).toBe(1);
+    expect(status.data.entries.kinds.decision).toBe(1);
+
+    const finished = parseJsonOutput<{
+      ok: true;
+      command: string;
+      data: { session_id: string; task_id: string };
+    }>((await runCli(repoDir, ['session', 'finish', '--session', started.data.session_id, '--json'])).stdout);
+    expect(finished).toMatchObject({ ok: true, command: 'session finish' });
+    expect(finished.data.session_id).toBe(started.data.session_id);
+
+    const relisted = parseJsonOutput<{
+      ok: true;
+      command: string;
+      data: { sessions: Array<{ session_id: string; active: boolean; ended_at: string | null }> };
+    }>((await runCli(repoDir, ['session', 'list', '--json'])).stdout);
+    expect(relisted.data.sessions).toHaveLength(1);
+    expect(relisted.data.sessions[0]).toMatchObject({
+      session_id: started.data.session_id,
+      active: false,
+      ended_at: expect.any(String),
+    });
+
+    const finalStatus = parseJsonOutput<{
+      ok: true;
+      command: string;
+      data: { session_id: string; session: { ended_at: string | null } };
+    }>((await runCli(repoDir, ['session', 'status', '--session', started.data.session_id, '--json'])).stdout);
+    expect(finalStatus.data.session_id).toBe(started.data.session_id);
+    expect(finalStatus.data.session.ended_at).toBeTruthy();
+  });
+
+  it('returns a stable json error when a session id is required', async () => {
+    await runCli(repoDir, ['init']);
+
+    try {
+      await runCli(repoDir, ['session', 'status', '--json']);
+      throw new Error('Expected session status to fail without --session');
+    } catch (error) {
+      const failure = error as Error & { stderr?: string };
+      const parsed = parseJsonOutput<{
+        ok: false;
+        command: string;
+        error: { code: string; message: string };
+      }>(failure.stderr ?? '');
+      expect(parsed).toMatchObject({
+        ok: false,
+        command: 'session status',
+        error: {
+          code: 'SESSION_REQUIRED',
+        },
+      });
+    }
+  });
+
+  it('renders current session commands in help output', async () => {
+    const rootHelp = await runCli(repoDir, ['--help']);
+    expect(rootHelp.stdout).toContain('session');
+    expect(rootHelp.stdout).toContain('artifact');
+    expect(rootHelp.stdout).toContain('start');
+
+    const sessionHelp = await runCli(repoDir, ['session', '--help']);
+    expect(sessionHelp.stdout).toContain('start');
+    expect(sessionHelp.stdout).toContain('list');
+    expect(sessionHelp.stdout).toContain('status');
+    expect(sessionHelp.stdout).toContain('capture');
+    expect(sessionHelp.stdout).toContain('heartbeat');
+    expect(sessionHelp.stdout).toContain('finish');
+
+    const startHelp = await runCli(repoDir, ['session', 'start', '--help']);
+    expect(startHelp.stdout).toContain('--json');
+    expect(startHelp.stdout).toContain('--goal <goal>');
+    expect(startHelp.stdout).toContain('--constraint <constraint...>');
   });
 });

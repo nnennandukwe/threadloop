@@ -12,9 +12,17 @@ It is:
 - Markdown-first
 - optimized for review preparation through lightweight session memory
 
-## Current v1 scope
+## Current command surfaces
 
-Implemented command surface:
+Primary session contract:
+- `threadloop session start <title> --goal <goal> [--json]`
+- `threadloop session list [--json]`
+- `threadloop session status --session <id> [--json]`
+- `threadloop session capture <kind> [text] --session <id> [--json]`
+- `threadloop session heartbeat --session <id> [--json]`
+- `threadloop session finish --session <id> [--json]`
+
+Compatibility surface:
 - `threadloop init`
 - `threadloop start <title>`
 - `threadloop capture <kind> [text]`
@@ -27,7 +35,7 @@ Implemented storage:
 - `.threadloop/state/state.db`
 - `.threadloop/artifacts/*.md`
 
-Legacy v1 repos with `.threadloop/state/state.json` migrate into SQLite on first init/read/write. The JSON file is intentionally left in place as a safety backup during this phase, but ThreadLoop reads from SQLite after migration.
+Legacy repos with `.threadloop/state/state.json` migrate into SQLite on first init/read/write. The JSON file is intentionally left in place as a safety backup during this phase, but ThreadLoop reads from SQLite after migration.
 
 ## Install
 
@@ -56,9 +64,10 @@ In another Git repo:
 
 ```bash
 threadloop init
-threadloop start "Add retry logic" --goal "Reduce transient failures"
-threadloop capture decision "Retry only idempotent jobs" --because "Replay must stay safe"
-threadloop artifact generate change-brief
+threadloop session start "Add retry logic" --goal "Reduce transient failures" --json
+session_id="session_123" # replace with the session_id returned from session start
+threadloop session capture decision "Retry only idempotent jobs" --session "$session_id" --because "Replay must stay safe"
+threadloop session status --session "$session_id" --json
 ```
 
 Use this path for day-to-day local development. It does not require adding ThreadLoop to the consumer repo's dependencies.
@@ -76,7 +85,7 @@ Then in another Git repo, install the generated tarball:
 ```bash
 npm install /absolute/path/to/threadloop-0.1.0.tgz
 npx threadloop init
-npx threadloop start "Add retry logic" --goal "Reduce transient failures"
+npx threadloop session start "Add retry logic" --goal "Reduce transient failures" --json
 ```
 
 Use this path to verify packaging and distribution behavior.
@@ -97,28 +106,31 @@ npm run smoke:pack
 
 ## SQLite migration status
 
-The current SQLite work is the first storage slice toward ThreadLoop v2 autonomous agent mode.
+The current SQLite work is the storage foundation for ThreadLoop v2 autonomous agent mode.
 
 What is implemented now:
 - SQLite-backed durable state
 - transactional writes for core mutations
 - migration from legacy `state.json`
+- explicit `session` namespace commands
+- `--json` machine-output contract for session commands
 
 What is not implemented yet in this slice:
-- multi-session agent mode
-- explicit `session` namespace commands
-- `--json` machine-output contract
+- protocol print / published agent-mode contract
 - reconcile/daemon-backed DB workflows
+- concurrency hardening for fully autonomous use
 
 ## Quick start
 
 ```bash
 npx threadloop init
-npx threadloop start "Add retry logic to job runner" --goal "Reduce transient failure rate" --base main
-npx threadloop capture decision "Retry only idempotent jobs" --because "Non-idempotent replay is unsafe"
-npx threadloop capture validation "Ran targeted tests for retry backoff and cancellation"
+npx threadloop session start "Add retry logic to job runner" --goal "Reduce transient failure rate" --base main --json
+session_id="session_123" # replace with the session_id returned from session start
+npx threadloop session capture decision "Retry only idempotent jobs" --session "$session_id" --because "Non-idempotent replay is unsafe"
+npx threadloop session capture validation "Ran targeted tests for retry backoff and cancellation" --session "$session_id"
+npx threadloop session status --session "$session_id" --json
 npx threadloop artifact generate change-brief
-npx threadloop finish
+npx threadloop session finish --session "$session_id" --json
 ```
 
 ## Longer notes with `$EDITOR`
@@ -127,13 +139,14 @@ For longer capture text, use your editor:
 
 ```bash
 export EDITOR="vim"
-npx threadloop capture note --edit
-npx threadloop start "Reshape queue workers" --goal-edit
+session_id="session_123" # replace with the session_id returned from session start
+npx threadloop session capture note --edit --session "$session_id"
+npx threadloop session start "Reshape queue workers" --goal-edit --json
 ```
 
 ## Entry kinds
 
-Supported v1 entry kinds:
+Supported entry kinds:
 - `intent`
 - `note`
 - `decision`
@@ -177,7 +190,7 @@ npm run smoke:pack
 ## Notes
 
 - ThreadLoop requires a Git repository.
-- v1 keeps one active session per repo.
+- Compatibility root commands keep one active session per repo.
 - `.threadloop/state/` is gitignored by default.
 - Artifacts are local by default and may be committed when useful.
 
