@@ -13,6 +13,7 @@ import { sessionStatusCommand } from './commands/session-status.js';
 import { sessionCaptureCommand } from './commands/session-capture.js';
 import { sessionHeartbeatCommand } from './commands/session-heartbeat.js';
 import { sessionFinishCommand } from './commands/session-finish.js';
+import { sessionReconcileCommand } from './commands/session-reconcile.js';
 import { createInvalidArgumentError, toThreadloopError } from './contracts/errors.js';
 import { renderCommandFailure } from './contracts/output.js';
 import { createCommandContext } from './commands/runtime.js';
@@ -139,6 +140,14 @@ withJsonOption(
 withJsonOption(
   session.command('finish').description('Finish an explicit session').option('--session <id>', 'session id to target'),
 ).action(commandAction('session finish', sessionFinishCommand));
+
+withJsonOption(
+  session
+    .command('reconcile')
+    .description('Refresh Git-derived metadata for a session without creating semantic entries')
+    .option('--session <id>', 'session id to reconcile')
+    .option('-a, --all', 'reconcile all active sessions'),
+).action(commandAction('session reconcile', sessionReconcileCommand));
 
 program.parseAsync(process.argv).catch(handleError);
 

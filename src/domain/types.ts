@@ -95,3 +95,18 @@ export interface SessionRecord {
   task: Task;
   session: Session;
 }
+
+export interface StoredRepoSnapshot {
+  sessionId: string;
+  branch: string;
+  headSha: string;
+  baseRef: string | null;
+  changedFiles: string[];
+  diffStats: {
+    files: number;
+    insertions: number;
+    deletions: number;
+  };
+  commitRange: string[];
+  reconciledAt: string;
+}

@@ -275,6 +275,79 @@ export async function writeArtifactFile(repoRoot: string, filename: string, cont
   return fullPath;
 }
 
+export async function upsertRepoSnapshot(
+  repoRoot: string,
+  snapshot: {
+    sessionId: string;
+    branch: string;
+    headSha: string;
+    baseRef: string | null;
+    changedFiles: string[];
+    diffStats: { files: number; insertions: number; deletions: number };
+    commitRange: string[];
+    reconciledAt: string;
+  },
+) {
+  await ensureStateDatabase(repoRoot);
+
+  const db = openDatabase(repoRoot);
+  try {
+    const insert = db.transaction((nextSnapshot: typeof snapshot) => {
+      db.prepare(
+        `
+          INSERT OR REPLACE INTO repo_snapshots (session_id, branch, head_sha, base_ref, changed_files_json, diff_stats_json, commit_range_json, reconciled_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+      ).run(
+        nextSnapshot.sessionId,
+        nextSnapshot.branch,
+        nextSnapshot.headSha,
+        nextSnapshot.baseRef,
+        JSON.stringify(nextSnapshot.changedFiles),
+        JSON.stringify(nextSnapshot.diffStats),
+        JSON.stringify(nextSnapshot.commitRange),
+        nextSnapshot.reconciledAt,
+      );
+    });
+
+    insert.immediate(snapshot);
+  } finally {
+    db.close();
+  }
+}
+
+export async function readRepoSnapshot(repoRoot: string, sessionId: string) {
+  await ensureStateDatabase(repoRoot);
+
+  const db = openDatabase(repoRoot);
+  try {
+    const row = db.prepare(
+      `
+        SELECT session_id, branch, head_sha, base_ref, changed_files_json, diff_stats_json, commit_range_json, reconciled_at
+        FROM repo_snapshots
+        WHERE session_id = ?
+      `,
+    ).get(sessionId) as { session_id: string; branch: string; head_sha: string; base_ref: string | null; changed_files_json: string; diff_stats_json: string; commit_range_json: string; reconciled_at: string } | undefined;
+
+    if (!row) {
+      return null;
+    }
+
+    return {
+      sessionId: row.session_id,
+      branch: row.branch,
+      headSha: row.head_sha,
+      baseRef: row.base_ref,
+      changedFiles: parseJsonText<string[]>(row.changed_files_json, INVALID_STATE_DB_ERROR),
+      diffStats: parseJsonText<{ files: number; insertions: number; deletions: number }>(row.diff_stats_json, INVALID_STATE_DB_ERROR),
+      commitRange: parseJsonText<string[]>(row.commit_range_json, INVALID_STATE_DB_ERROR),
+      reconciledAt: row.reconciled_at,
+    };
+  } finally {
+    db.close();
+  }
+}
+
 function openDatabase(repoRoot: string) {
   const { stateDbPath } = threadloopPaths(repoRoot);
   const db = new Database(stateDbPath);
@@ -347,6 +420,17 @@ function bootstrapDatabase(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS entries_session_id_idx ON entries(session_id);
     CREATE INDEX IF NOT EXISTS artifacts_session_id_idx ON artifacts(session_id);
     CREATE INDEX IF NOT EXISTS active_sessions_task_id_idx ON active_sessions(task_id);
+
+    CREATE TABLE IF NOT EXISTS repo_snapshots (
+      session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+      branch TEXT NOT NULL,
+      head_sha TEXT NOT NULL,
+      base_ref TEXT,
+      changed_files_json TEXT NOT NULL,
+      diff_stats_json TEXT NOT NULL,
+      commit_range_json TEXT NOT NULL,
+      reconciled_at TEXT NOT NULL
+    );
   `);
 
   db.prepare(
@@ -457,7 +541,8 @@ function databaseIsEmpty(db: Database.Database) {
           (SELECT COUNT(*) FROM entries) AS entries_count,
           (SELECT COUNT(*) FROM artifacts) AS artifacts_count,
           (SELECT COUNT(*) FROM active_state) AS active_count,
-          (SELECT COUNT(*) FROM active_sessions) AS active_sessions_count
+          (SELECT COUNT(*) FROM active_sessions) AS active_sessions_count,
+          (SELECT COUNT(*) FROM repo_snapshots) AS snapshots_count
       `,
     )
     .get() as {
@@ -467,6 +552,7 @@ function databaseIsEmpty(db: Database.Database) {
       artifacts_count: number;
       active_count: number;
       active_sessions_count: number;
+      snapshots_count: number;
     };
 
   return counts.tasks_count === 0
@@ -474,7 +560,8 @@ function databaseIsEmpty(db: Database.Database) {
     && counts.entries_count === 0
     && counts.artifacts_count === 0
     && counts.active_count === 0
-    && counts.active_sessions_count === 0;
+    && counts.active_sessions_count === 0
+    && counts.snapshots_count === 0;
 }
 
 function loadState(db: Database.Database): StateData {

@@ -49,14 +49,14 @@ Guidelines:
 
 ### R004 — Mechanical reconcile and snapshot refresh
 - Class: operability
-- Status: active
+- Status: validated
 - Description: ThreadLoop must support explicit reconcile flows that refresh Git-derived snapshot metadata for one session or all active sessions without creating semantic notes.
 - Why it matters: Orchestrators need up-to-date branch, diff, and commit-range context, but semantic memory must remain intentional and trustworthy.
 - Source: user
 - Primary owning slice: M001/S02
 - Supporting slices: M001/S03, M001/S05
-- Validation: mapped
-- Notes: Mechanical state and semantic capture must remain separated.
+- Validation: validated
+- Notes: Implemented via `threadloop session reconcile --session <id>` and `--all` flags. Snapshot persisted in SQLite `repo_snapshots` table. Tests confirm no semantic entries are created during reconcile.
 
 ### R005 — Explicit-session artifact generation
 - Class: core-capability

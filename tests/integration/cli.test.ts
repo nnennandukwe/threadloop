@@ -667,4 +667,83 @@ describe('threadloop CLI', () => {
     expect(sessionStartHelp.stdout).toContain('--goal <goal>');
     expect(sessionStartHelp.stdout).toContain('--constraint <constraint...>');
   });
+
+  it('reconciles a specific session and persists the snapshot', async () => {
+    await runCli(repoDir, ['init']);
+    const started = parseJsonOutput<{ data: { session_id: string } }>(
+      (await runCli(repoDir, ['session', 'start', 'Reconcile test', '--goal', 'Test reconcile', '--json'])).stdout,
+    );
+    const sessionId = started.data.session_id;
+
+    const reconcile = parseJsonOutput<{
+      ok: true;
+      command: string;
+      data: { reconciled: number; sessions: Array<{ session_id: string; branch: string; head_sha: string }> };
+    }>((await runCli(repoDir, ['session', 'reconcile', '--session', sessionId, '--json'])).stdout);
+
+    expect(reconcile).toMatchObject({
+      ok: true,
+      command: 'session reconcile',
+      data: {
+        reconciled: 1,
+        sessions: [{ session_id: sessionId }],
+      },
+    });
+
+    const reReconcile = parseJsonOutput<{
+      data: { sessions: Array<{ session_id: string; previous_head_sha: string | null }> };
+    }>((await runCli(repoDir, ['session', 'reconcile', '--session', sessionId, '--json'])).stdout);
+    expect(reReconcile.data.sessions[0].previous_head_sha).toBeTruthy();
+  });
+
+  it('reconciles all active sessions with --all', async () => {
+    await runCli(repoDir, ['init']);
+    const first = parseJsonOutput<{ data: { session_id: string } }>(
+      (await runCli(repoDir, ['session', 'start', 'First task', '--goal', 'First goal', '--json'])).stdout,
+    );
+    const second = parseJsonOutput<{ data: { session_id: string } }>(
+      (await runCli(repoDir, ['session', 'start', 'Second task', '--goal', 'Second goal', '--json'])).stdout,
+    );
+
+    const reconcile = parseJsonOutput<{
+      data: { reconciled: number };
+    }>((await runCli(repoDir, ['session', 'reconcile', '--all', '--json'])).stdout);
+
+    expect(reconcile.data.reconciled).toBe(2);
+  });
+
+  it('reconcile fails without --session or --all', async () => {
+    await runCli(repoDir, ['init']);
+    await runCli(repoDir, ['session', 'start', 'Test task', '--goal', 'Test goal']);
+
+    const failure = parseJsonOutput<{ error: { code: string } }>(
+      (await runCliFailure(repoDir, ['session', 'reconcile', '--json'])).stderr ?? '',
+    );
+    expect(failure.error.code).toBe('RECONCILE_TARGET_REQUIRED');
+  });
+
+  it('reconcile does not create semantic entries', async () => {
+    await runCli(repoDir, ['init']);
+    const started = parseJsonOutput<{ data: { session_id: string } }>(
+      (await runCli(repoDir, ['session', 'start', 'Entry test', '--goal', 'Test goal', '--json'])).stdout,
+    );
+    const sessionId = started.data.session_id;
+
+    await runCli(repoDir, ['session', 'capture', 'decision', 'Pre-reconcile decision', '--session', sessionId]);
+    await runCli(repoDir, ['session', 'reconcile', '--session', sessionId]);
+    await runCli(repoDir, ['session', 'capture', 'decision', 'Post-reconcile decision', '--session', sessionId]);
+
+    const status = parseJsonOutput<{
+      data: { entries: { kinds: Record<string, number> } };
+    }>((await runCli(repoDir, ['session', 'status', '--session', sessionId, '--json'])).stdout);
+
+    expect(status.data.entries.kinds.decision).toBe(2);
+    expect(status.data.entries.kinds.note).toBeUndefined();
+    expect(status.data.entries.kinds.intent).toBe(1);
+  });
+
+  it('renders reconcile command in help output', async () => {
+    const sessionHelp = await runCli(repoDir, ['session', '--help']);
+    expect(sessionHelp.stdout).toContain('reconcile');
+  });
 });

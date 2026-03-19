@@ -20,6 +20,7 @@ Primary session contract:
 - `threadloop session status --session <id> [--json]`
 - `threadloop session capture <kind> [text] --session <id> [--json]`
 - `threadloop session heartbeat --session <id> [--json]`
+- `threadloop session reconcile --session <id>|--all [--json]`
 - `threadloop session finish --session <id> [--json]`
 
 Compatibility surface:

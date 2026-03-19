@@ -7,6 +7,7 @@ export const THREADLOOP_ERROR_CODES = [
   'BASE_REF_NOT_FOUND',
   'NOT_GIT_REPOSITORY',
   'STATE_CORRUPTED',
+  'RECONCILE_TARGET_REQUIRED',
 ] as const;
 
 export type ThreadloopErrorCode = (typeof THREADLOOP_ERROR_CODES)[number];
