@@ -1,11 +1,11 @@
 import type { CommandContext, JsonOption, SessionOption } from './runtime.js';
-import { writeCommandSuccess } from './runtime.js';
+import { writeCommandSuccess, toSessionId } from './runtime.js';
 import { reconcileSession } from '../services/session-service.js';
 
 export type SessionReconcileOptions = JsonOption & SessionOption & { all?: boolean };
 
 export async function sessionReconcileCommand(context: CommandContext, options: SessionReconcileOptions) {
-  const sessionId = options.session;
+  const sessionId = toSessionId(options);
   const reconcileAll = options.all ?? false;
 
   const results = await reconcileSession({

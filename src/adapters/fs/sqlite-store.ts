@@ -338,9 +338,9 @@ export async function readRepoSnapshot(repoRoot: string, sessionId: string) {
       branch: row.branch,
       headSha: row.head_sha,
       baseRef: row.base_ref,
-      changedFiles: JSON.parse(row.changed_files_json) as string[],
-      diffStats: JSON.parse(row.diff_stats_json) as { files: number; insertions: number; deletions: number },
-      commitRange: JSON.parse(row.commit_range_json) as string[],
+      changedFiles: parseJsonText<string[]>(row.changed_files_json, INVALID_STATE_DB_ERROR),
+      diffStats: parseJsonText<{ files: number; insertions: number; deletions: number }>(row.diff_stats_json, INVALID_STATE_DB_ERROR),
+      commitRange: parseJsonText<string[]>(row.commit_range_json, INVALID_STATE_DB_ERROR),
       reconciledAt: row.reconciled_at,
     };
   } finally {
@@ -541,7 +541,8 @@ function databaseIsEmpty(db: Database.Database) {
           (SELECT COUNT(*) FROM entries) AS entries_count,
           (SELECT COUNT(*) FROM artifacts) AS artifacts_count,
           (SELECT COUNT(*) FROM active_state) AS active_count,
-          (SELECT COUNT(*) FROM active_sessions) AS active_sessions_count
+          (SELECT COUNT(*) FROM active_sessions) AS active_sessions_count,
+          (SELECT COUNT(*) FROM repo_snapshots) AS snapshots_count
       `,
     )
     .get() as {
@@ -551,6 +552,7 @@ function databaseIsEmpty(db: Database.Database) {
       artifacts_count: number;
       active_count: number;
       active_sessions_count: number;
+      snapshots_count: number;
     };
 
   return counts.tasks_count === 0
@@ -558,7 +560,8 @@ function databaseIsEmpty(db: Database.Database) {
     && counts.entries_count === 0
     && counts.artifacts_count === 0
     && counts.active_count === 0
-    && counts.active_sessions_count === 0;
+    && counts.active_sessions_count === 0
+    && counts.snapshots_count === 0;
 }
 
 function loadState(db: Database.Database): StateData {
