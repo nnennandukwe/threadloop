@@ -6,6 +6,7 @@ export const STATE_DIR = path.join(THREADLOOP_DIR, 'state');
 export const ARTIFACTS_DIR = path.join(THREADLOOP_DIR, 'artifacts');
 export const CONFIG_PATH = path.join(THREADLOOP_DIR, 'config.json');
 export const STATE_PATH = path.join(STATE_DIR, 'state.json');
+export const STATE_DB_PATH = path.join(STATE_DIR, 'state.db');
 
 export function threadloopPaths(repoRoot: string) {
   return {
@@ -14,6 +15,7 @@ export function threadloopPaths(repoRoot: string) {
     artifactsDir: path.join(repoRoot, ARTIFACTS_DIR),
     configPath: path.join(repoRoot, CONFIG_PATH),
     statePath: path.join(repoRoot, STATE_PATH),
+    stateDbPath: path.join(repoRoot, STATE_DB_PATH),
   };
 }
 
