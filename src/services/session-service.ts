@@ -8,9 +8,11 @@ import {
   ensureThreadloopLayout,
   insertTaskSession,
   readConfig,
+  readRepoSnapshot,
   readState,
   recordArtifact,
   recordSessionHeartbeat,
+  upsertRepoSnapshot,
   writeArtifactFile,
   writeConfig,
 } from '../adapters/fs/sqlite-store.js';
@@ -23,9 +25,11 @@ import type {
   Entry,
   EntryKind,
   HeartbeatSource,
+  RepoSnapshot,
   Session,
   SessionRecord,
   StateData,
+  StoredRepoSnapshot,
   Task,
 } from '../domain/types.js';
 import { renderArtifact } from '../renderers/markdown/artifacts.js';
@@ -189,6 +193,70 @@ export async function heartbeatSession(input: HeartbeatInput) {
       lastHeartbeatSource: source,
     },
   };
+}
+
+export interface ReconcileInput {
+  cwd: string;
+  sessionId?: string;
+  reconcileAll?: boolean;
+}
+
+export interface ReconcileResult {
+  repoRoot: string;
+  sessionId: string;
+  previousSnapshot: StoredRepoSnapshot | null;
+  currentSnapshot: RepoSnapshot;
+  reconciledAt: string;
+}
+
+export async function reconcileSession(input: ReconcileInput): Promise<ReconcileResult[]> {
+  const { repoRoot, state } = await loadStateContext(input.cwd);
+
+  let sessionIds: string[];
+
+  if (input.sessionId) {
+    const resolved = resolveSessionRecord(state, input.sessionId);
+    sessionIds = [resolved.session.id];
+  } else if (input.reconcileAll) {
+    sessionIds = state.activeSessions.map((active) => active.sessionId);
+    if (sessionIds.length === 0) {
+      return [];
+    }
+  } else {
+    throw new ThreadloopError('RECONCILE_TARGET_REQUIRED', 'Specify --session <id> or --all to reconcile.', {
+      details: { hint: 'Use --session <id> for a specific session or --all for all active sessions.' },
+    });
+  }
+
+  const now = new Date().toISOString();
+  const results: ReconcileResult[] = [];
+
+  for (const sessionId of sessionIds) {
+    const resolved = resolveSessionRecord(state, sessionId);
+    const previousSnapshot = await readRepoSnapshot(repoRoot, sessionId);
+    const currentSnapshot = await snapshotRepo(repoRoot, sessionId, resolved.session.baseRef);
+
+    await upsertRepoSnapshot(repoRoot, {
+      sessionId,
+      branch: currentSnapshot.branch,
+      headSha: currentSnapshot.headSha,
+      baseRef: currentSnapshot.baseRef,
+      changedFiles: currentSnapshot.changedFiles,
+      diffStats: currentSnapshot.diffStats,
+      commitRange: currentSnapshot.commitRange,
+      reconciledAt: now,
+    });
+
+    results.push({
+      repoRoot,
+      sessionId,
+      previousSnapshot,
+      currentSnapshot,
+      reconciledAt: now,
+    });
+  }
+
+  return results;
 }
 
 export async function captureEntry(input: CaptureInput) {
