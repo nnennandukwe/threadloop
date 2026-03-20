@@ -4,14 +4,34 @@ import { reconcileSession } from '../services/session-service.js';
 
 export type DaemonRunOptions = { interval?: number };
 
-const DEFAULT_INTERVAL_MS = 60000;
+const DEFAULT_INTERVAL_SECONDS = 60;
+const MIN_INTERVAL_SECONDS = 1;
+
+function parseIntervalSeconds(value: number | undefined): number {
+  if (value === undefined) {
+    return DEFAULT_INTERVAL_SECONDS;
+  }
+  if (!Number.isFinite(value) || value < MIN_INTERVAL_SECONDS) {
+    throw new Error(`Interval must be at least ${MIN_INTERVAL_SECONDS} second`);
+  }
+  return value;
+}
 
 export async function daemonRunCommand(context: CommandContext, options: DaemonRunOptions) {
-  const interval = options.interval ?? DEFAULT_INTERVAL_MS;
+  const intervalSeconds = parseIntervalSeconds(options.interval);
+  const intervalMs = intervalSeconds * 1000;
+
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let resolveStop: () => void;
+
   const stop = new Promise<void>((resolve) => {
+    resolveStop = resolve;
     const cleanup = () => {
       process.removeListener('SIGINT', cleanup);
       process.removeListener('SIGTERM', cleanup);
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
       resolve();
     };
     process.on('SIGINT', cleanup);
@@ -19,18 +39,25 @@ export async function daemonRunCommand(context: CommandContext, options: DaemonR
   });
 
   writeCommandSuccess(context, {
-    text: [`Daemon started, reconciling every ${interval / 1000}s. Press Ctrl+C to stop.`],
-    data: { daemon: 'running', interval_ms: interval },
+    text: [`Daemon started, reconciling every ${intervalSeconds}s. Press Ctrl+C to stop.`],
+    data: { daemon: 'running', interval_ms: intervalMs },
   });
 
+  const output = context.json ? process.stderr : process.stdout;
+
   while (true) {
-    const result = await Promise.race([
-      stop,
-      (async () => {
-        await new Promise((resolve) => setTimeout(resolve, interval));
-        return 'tick';
-      })(),
-    ]);
+    let tickResolve: (value: 'tick') => void;
+    const tickPromise = new Promise<'tick'>((resolve) => {
+      tickResolve = resolve;
+      timeoutId = setTimeout(() => tickResolve('tick'), intervalMs);
+    });
+
+    const result = await Promise.race([stop, tickPromise]);
+
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+      timeoutId = undefined;
+    }
 
     if (result !== 'tick') {
       break;
@@ -41,7 +68,7 @@ export async function daemonRunCommand(context: CommandContext, options: DaemonR
         cwd: context.cwd,
         reconcileAll: true,
       });
-      process.stdout.write(`[daemon] Reconciled ${results.length} session(s)\n`);
+      output.write(`[daemon] Reconciled ${results.length} session(s)\n`);
     } catch (error) {
       process.stderr.write(`[daemon] Error: ${error}\n`);
     }
