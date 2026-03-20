@@ -14,6 +14,7 @@ import { sessionCaptureCommand } from './commands/session-capture.js';
 import { sessionHeartbeatCommand } from './commands/session-heartbeat.js';
 import { sessionFinishCommand } from './commands/session-finish.js';
 import { sessionReconcileCommand } from './commands/session-reconcile.js';
+import { daemonRunCommand } from './commands/daemon.js';
 import { createInvalidArgumentError, toThreadloopError } from './contracts/errors.js';
 import { renderCommandFailure } from './contracts/output.js';
 import { createCommandContext } from './commands/runtime.js';
@@ -148,6 +149,23 @@ withJsonOption(
     .option('--session <id>', 'session id to reconcile')
     .option('-a, --all', 'reconcile all active sessions'),
 ).action(commandAction('session reconcile', sessionReconcileCommand));
+
+const daemon = program.command('daemon').description('Run ThreadLoop daemon for active session management');
+
+function parseIntervalSeconds(value: string): number {
+  const parsed = parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    throw new InvalidArgumentError('Interval must be a positive number of seconds (minimum 1)');
+  }
+  return parsed;
+}
+
+withJsonOption(
+  daemon
+    .command('run')
+    .description('Run daemon to periodically reconcile active sessions')
+    .option('-i, --interval <seconds>', 'reconciliation interval in seconds', parseIntervalSeconds, 60),
+).action(commandAction('daemon run', daemonRunCommand));
 
 program.parseAsync(process.argv).catch(handleError);
 
