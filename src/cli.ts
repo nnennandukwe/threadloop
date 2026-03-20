@@ -15,6 +15,7 @@ import { sessionHeartbeatCommand } from './commands/session-heartbeat.js';
 import { sessionFinishCommand } from './commands/session-finish.js';
 import { sessionReconcileCommand } from './commands/session-reconcile.js';
 import { daemonRunCommand } from './commands/daemon.js';
+import { protocolPrintCommand } from './commands/protocol.js';
 import { createInvalidArgumentError, toThreadloopError } from './contracts/errors.js';
 import { renderCommandFailure } from './contracts/output.js';
 import { createCommandContext } from './commands/runtime.js';
@@ -166,6 +167,13 @@ withJsonOption(
     .description('Run daemon to periodically reconcile active sessions')
     .option('-i, --interval <seconds>', 'reconciliation interval in seconds', parseIntervalSeconds, 60),
 ).action(commandAction('daemon run', daemonRunCommand));
+
+withJsonOption(
+  program
+    .command('protocol')
+    .description('Print the agent integration protocol')
+    .action(commandAction('protocol', protocolPrintCommand)),
+);
 
 program.parseAsync(process.argv).catch(handleError);
 
