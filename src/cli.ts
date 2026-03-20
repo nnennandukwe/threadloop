@@ -152,11 +152,19 @@ withJsonOption(
 
 const daemon = program.command('daemon').description('Run ThreadLoop daemon for active session management');
 
+function parseIntervalSeconds(value: string): number {
+  const parsed = parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    throw new InvalidArgumentError('Interval must be a positive number of seconds (minimum 1)');
+  }
+  return parsed;
+}
+
 withJsonOption(
   daemon
     .command('run')
     .description('Run daemon to periodically reconcile active sessions')
-    .option('-i, --interval <seconds>', 'reconciliation interval in seconds', (v) => parseInt(v, 10), 60),
+    .option('-i, --interval <seconds>', 'reconciliation interval in seconds', parseIntervalSeconds, 60),
 ).action(commandAction('daemon run', daemonRunCommand));
 
 program.parseAsync(process.argv).catch(handleError);
