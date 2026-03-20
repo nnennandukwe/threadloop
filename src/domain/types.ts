@@ -70,6 +70,7 @@ export interface Artifact {
   path: string;
   templateVersion: string;
   generatedAt: string;
+  snapshotSource?: 'stored' | 'live';
 }
 
 export interface ThreadloopConfig {

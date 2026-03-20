@@ -304,14 +304,33 @@ export async function generateArtifact(
   const { repoRoot, state } = await loadStateContext(cwd);
   const resolved = resolveSessionFromState(state, selector);
   const entries = state.entries.filter((entry) => entry.sessionId === resolved.session.id);
-  const repoSnapshot = await snapshotRepo(repoRoot, resolved.session.id, resolved.session.baseRef);
+  const storedSnapshot = await readRepoSnapshot(repoRoot, resolved.session.id);
+  let snapshot: RepoSnapshot;
+  let snapshotSource: 'stored' | 'live';
+  if (storedSnapshot) {
+    snapshot = storedSnapshot;
+    snapshotSource = 'stored';
+  } else {
+    snapshot = await snapshotRepo(repoRoot, resolved.session.id, resolved.session.baseRef);
+    snapshotSource = 'live';
+    await upsertRepoSnapshot(repoRoot, {
+      sessionId: resolved.session.id,
+      branch: snapshot.branch,
+      headSha: snapshot.headSha,
+      baseRef: snapshot.baseRef,
+      changedFiles: snapshot.changedFiles,
+      diffStats: snapshot.diffStats,
+      commitRange: snapshot.commitRange,
+      reconciledAt: new Date().toISOString(),
+    });
+  }
   const generatedAt = new Date().toISOString();
   const filename = `${slugify(resolved.task.title)}.${artifactKind}.md`;
   const content = renderArtifact({
     task: resolved.task,
     session: resolved.session,
     entries,
-    repoSnapshot,
+    repoSnapshot: snapshot,
     generatedAt,
     artifactKind,
   });
@@ -324,6 +343,7 @@ export async function generateArtifact(
     path: path.relative(repoRoot, fullPath),
     templateVersion: 'v1',
     generatedAt,
+    snapshotSource,
   };
 
   await recordArtifact(repoRoot, artifact);

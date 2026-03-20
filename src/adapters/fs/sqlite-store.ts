@@ -62,6 +62,7 @@ type ArtifactRow = {
   path: string;
   template_version: string;
   generated_at: string;
+  snapshot_source: string | null;
 };
 
 type ActiveStateRow = {
@@ -402,7 +403,8 @@ function bootstrapDatabase(db: Database.Database) {
       kind TEXT NOT NULL,
       path TEXT NOT NULL,
       template_version TEXT NOT NULL,
-      generated_at TEXT NOT NULL
+      generated_at TEXT NOT NULL,
+      snapshot_source TEXT
     );
 
     CREATE TABLE IF NOT EXISTS active_state (
@@ -715,8 +717,8 @@ function insertEntry(db: Database.Database, entry: Entry) {
 function insertArtifact(db: Database.Database, artifact: Artifact) {
   db.prepare(
     `
-      INSERT INTO artifacts (id, session_id, kind, path, template_version, generated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO artifacts (id, session_id, kind, path, template_version, generated_at, snapshot_source)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `,
   ).run(
     artifact.id,
@@ -725,6 +727,7 @@ function insertArtifact(db: Database.Database, artifact: Artifact) {
     artifact.path,
     artifact.templateVersion,
     artifact.generatedAt,
+    artifact.snapshotSource ?? null,
   );
 }
 
