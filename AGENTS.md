@@ -14,7 +14,7 @@ repository root.
 Typical commands:
 
 ```bash
-npm install
+npm ci
 npm test
 npm run build
 npm run smoke:pack
