@@ -5,8 +5,8 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { beforeEach, describe, expect, it } from 'vitest';
-import Database from 'better-sqlite3';
 import { appendEntryToSession, createId } from '../../src/adapters/fs/sqlite-store.js';
+import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
 import { buildProtocolContract } from '../../src/contracts/protocol.js';
 
 const execFileAsync = promisify(execFile);
@@ -37,13 +37,13 @@ function parseJsonOutput<T>(output: string) {
 }
 
 function readStateSnapshot(repoDir: string) {
-  const db = new Database(path.join(repoDir, '.threadloop/state/state.db'), { readonly: true });
+  const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
 
   try {
     return {
-      taskStatuses: db.prepare('SELECT status FROM tasks ORDER BY rowid').pluck().all() as string[],
-      entryKinds: db.prepare('SELECT kind FROM entries ORDER BY rowid').pluck().all() as string[],
-      entryBodies: db.prepare('SELECT body FROM entries ORDER BY rowid').pluck().all() as string[],
+      taskStatuses: db.prepare('SELECT status FROM tasks ORDER BY rowid').all().map((row) => String(row.status)),
+      entryKinds: db.prepare('SELECT kind FROM entries ORDER BY rowid').all().map((row) => String(row.kind)),
+      entryBodies: db.prepare('SELECT body FROM entries ORDER BY rowid').all().map((row) => String(row.body)),
     };
   } finally {
     db.close();
@@ -184,7 +184,7 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     await writeFile(path.join(repoDir, '.threadloop/state/state.json'), `${JSON.stringify(legacyState, null, 2)}\n`, 'utf8');
 
     const dbPath = path.join(repoDir, '.threadloop/state/state.db');
-    const db = new Database(dbPath);
+    const db = new DatabaseSync(dbPath);
     db.exec(`
       CREATE TABLE metadata (
         key TEXT PRIMARY KEY,
@@ -242,10 +242,10 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
 
     await expect(runCli(repoDir, ['status'])).rejects.toThrow('Unsupported ThreadLoop schema version: 0');
 
-    const migratedDb = new Database(dbPath, { readonly: true });
+    const migratedDb = new DatabaseSync(dbPath, { readOnly: true });
     try {
-      expect(migratedDb.prepare('SELECT COUNT(*) FROM tasks').pluck().get()).toBe(0);
-      expect(migratedDb.prepare('SELECT COUNT(*) FROM active_sessions').pluck().get()).toBe(0);
+      expect(readScalarCount(migratedDb, 'SELECT COUNT(*) AS count FROM tasks')).toBe(0);
+      expect(readScalarCount(migratedDb, 'SELECT COUNT(*) AS count FROM active_sessions')).toBe(0);
       const sessionColumns = migratedDb.prepare(`PRAGMA table_info(sessions)`).all() as Array<{ name: string }>;
       expect(sessionColumns.map((column) => column.name)).not.toContain('last_heartbeat_at');
       expect(sessionColumns.map((column) => column.name)).not.toContain('last_heartbeat_source');
@@ -280,7 +280,7 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     await runCli(repoDir, ['init']);
     await runCli(repoDir, ['start', 'Add retry logic', '--goal', 'Reduce transient failures']);
 
-    const db = new Database(path.join(repoDir, '.threadloop/state/state.db'));
+    const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'));
     db.prepare(`UPDATE tasks SET constraints_json = '{not-json'`).run();
     db.close();
 
@@ -825,13 +825,17 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     expect(status.data.session.last_heartbeat_at).toBeTruthy();
     expect(['cli', 'daemon', 'reconcile']).toContain(status.data.session.last_heartbeat_source);
 
-    const db = new Database(path.join(repoDir, '.threadloop/state/state.db'), { readonly: true });
+    const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
     try {
       const entries = db.prepare(`SELECT body, source FROM entries WHERE session_id = ? ORDER BY rowid`).all(sessionId) as Array<{
         body: string;
         source: string;
       }>;
-      const snapshotCount = db.prepare(`SELECT COUNT(*) FROM repo_snapshots WHERE session_id = ?`).pluck().get(sessionId) as number;
+      const snapshotCount = readParameterizedCount(
+        db,
+        `SELECT COUNT(*) AS count FROM repo_snapshots WHERE session_id = ?`,
+        sessionId,
+      );
       const bodies = entries.map((entry) => entry.body);
 
       expect(bodies).toContain('Task started: Concurrent flow');
@@ -902,3 +906,13 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     expect(sessionHelp.stdout).toContain('reconcile');
   });
 });
+
+function readScalarCount(db: DatabaseSync, sql: string) {
+  const row = db.prepare(sql).get() as { count: number } | undefined;
+  return row?.count ?? 0;
+}
+
+function readParameterizedCount(db: DatabaseSync, sql: string, value: string) {
+  const row = db.prepare(sql).get(value) as { count: number } | undefined;
+  return row?.count ?? 0;
+}

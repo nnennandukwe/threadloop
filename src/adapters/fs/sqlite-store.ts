@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import Database from 'better-sqlite3';
 import { stateDataSchema, threadloopConfigSchema } from '../../schemas/state.js';
 import type {
   ActiveState,
@@ -15,6 +14,7 @@ import type {
   ThreadloopConfig,
 } from '../../domain/types.js';
 import { threadloopPaths } from './repo.js';
+import { DatabaseSync } from './sqlite-driver.js';
 
 const CURRENT_SCHEMA_VERSION = 1;
 const INVALID_CONFIG_ERROR = 'Invalid .threadloop/config.json';
@@ -135,15 +135,14 @@ export async function insertTaskSession(repoRoot: string, payload: { task: Task;
 
   const db = openDatabase(repoRoot);
   try {
-    const insert = db.transaction(({ task, session, intentEntry }: { task: Task; session: Session; intentEntry: Entry }) => {
+    runInImmediateTransaction(db, () => {
+      const { task, session, intentEntry } = payload;
       insertTask(db, task);
       insertSession(db, session);
       insertEntry(db, intentEntry);
       insertActiveSession(db, { taskId: task.id, sessionId: session.id });
       syncActiveStateCompat(db);
     });
-
-    insert.immediate(payload);
   } finally {
     db.close();
   }
@@ -157,16 +156,14 @@ export async function appendEntryToActiveSession(
 
   const db = openDatabase(repoRoot);
   try {
-    const append = db.transaction((nextDraft: Omit<Entry, 'sessionId'>) => {
+    return runInImmediateTransaction(db, () => {
       const active = readActiveStateRow(db);
       if (!active) {
         throw new Error('No active session in this repo. Start one with `threadloop start`.');
       }
 
-      return appendEntry(db, active.session_id, nextDraft);
+      return appendEntry(db, active.session_id, draft);
     });
-
-    return append.immediate(draft);
   } finally {
     db.close();
   }
@@ -177,8 +174,7 @@ export async function appendEntryToSession(repoRoot: string, sessionId: string, 
 
   const db = openDatabase(repoRoot);
   try {
-    const append = db.transaction((nextDraft: Omit<Entry, 'sessionId'>) => appendEntry(db, sessionId, nextDraft));
-    return append.immediate(draft);
+    return runInImmediateTransaction(db, () => appendEntry(db, sessionId, draft));
   } finally {
     db.close();
   }
@@ -189,11 +185,9 @@ export async function recordArtifact(repoRoot: string, artifact: Artifact) {
 
   const db = openDatabase(repoRoot);
   try {
-    const insert = db.transaction((nextArtifact: Artifact) => {
-      insertArtifact(db, nextArtifact);
+    runInImmediateTransaction(db, () => {
+      insertArtifact(db, artifact);
     });
-
-    insert.immediate(artifact);
   } finally {
     db.close();
   }
@@ -204,16 +198,14 @@ export async function completeActiveSession(repoRoot: string, endedAt: string): 
 
   const db = openDatabase(repoRoot);
   try {
-    const finish = db.transaction((nextEndedAt: string) => {
+    return runInImmediateTransaction(db, () => {
       const active = readActiveStateRow(db);
       if (!active) {
         throw new Error('No active session in this repo. Start one with `threadloop start`.');
       }
 
-      return completeSession(db, active.session_id, active.task_id, nextEndedAt);
+      return completeSession(db, active.session_id, active.task_id, endedAt);
     });
-
-    return finish.immediate(endedAt);
   } finally {
     db.close();
   }
@@ -224,16 +216,14 @@ export async function completeSessionById(repoRoot: string, sessionId: string, e
 
   const db = openDatabase(repoRoot);
   try {
-    const finish = db.transaction((nextEndedAt: string) => {
+    return runInImmediateTransaction(db, () => {
       const session = readSessionRow(db, sessionId);
       if (!session) {
         throw new Error(`Unknown session id: ${sessionId}`);
       }
 
-      return completeSession(db, session.id, session.task_id, nextEndedAt);
+      return completeSession(db, session.id, session.task_id, endedAt);
     });
-
-    return finish.immediate(endedAt);
   } finally {
     db.close();
   }
@@ -247,10 +237,10 @@ export async function recordSessionHeartbeat(
 
   const db = openDatabase(repoRoot);
   try {
-    const update = db.transaction((nextPayload: typeof payload) => {
-      const session = readSessionRow(db, nextPayload.sessionId);
+    runInImmediateTransaction(db, () => {
+      const session = readSessionRow(db, payload.sessionId);
       if (!session) {
-        throw new Error(`Unknown session id: ${nextPayload.sessionId}`);
+        throw new Error(`Unknown session id: ${payload.sessionId}`);
       }
 
       db.prepare(
@@ -259,10 +249,8 @@ export async function recordSessionHeartbeat(
           SET branch = ?, head_sha = ?, last_heartbeat_at = ?, last_heartbeat_source = ?
           WHERE id = ?
         `,
-      ).run(nextPayload.branch, nextPayload.headSha, nextPayload.lastHeartbeatAt, nextPayload.source, nextPayload.sessionId);
+      ).run(payload.branch, payload.headSha, payload.lastHeartbeatAt, payload.source, payload.sessionId);
     });
-
-    update.immediate(payload);
   } finally {
     db.close();
   }
@@ -293,25 +281,23 @@ export async function upsertRepoSnapshot(
 
   const db = openDatabase(repoRoot);
   try {
-    const insert = db.transaction((nextSnapshot: typeof snapshot) => {
+    runInImmediateTransaction(db, () => {
       db.prepare(
         `
           INSERT OR REPLACE INTO repo_snapshots (session_id, branch, head_sha, base_ref, changed_files_json, diff_stats_json, commit_range_json, reconciled_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `,
       ).run(
-        nextSnapshot.sessionId,
-        nextSnapshot.branch,
-        nextSnapshot.headSha,
-        nextSnapshot.baseRef,
-        JSON.stringify(nextSnapshot.changedFiles),
-        JSON.stringify(nextSnapshot.diffStats),
-        JSON.stringify(nextSnapshot.commitRange),
-        nextSnapshot.reconciledAt,
+        snapshot.sessionId,
+        snapshot.branch,
+        snapshot.headSha,
+        snapshot.baseRef,
+        JSON.stringify(snapshot.changedFiles),
+        JSON.stringify(snapshot.diffStats),
+        JSON.stringify(snapshot.commitRange),
+        snapshot.reconciledAt,
       );
     });
-
-    insert.immediate(snapshot);
   } finally {
     db.close();
   }
@@ -351,14 +337,15 @@ export async function readRepoSnapshot(repoRoot: string, sessionId: string) {
 
 function openDatabase(repoRoot: string) {
   const { stateDbPath } = threadloopPaths(repoRoot);
-  const db = new Database(stateDbPath);
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
-  db.pragma('busy_timeout = 5000');
+  const db = new DatabaseSync(stateDbPath, {
+    enableForeignKeyConstraints: true,
+    timeout: 5000,
+  });
+  db.exec('PRAGMA journal_mode = WAL');
   return db;
 }
 
-function bootstrapDatabase(db: Database.Database) {
+function bootstrapDatabase(db: DatabaseSync) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS metadata (
       key TEXT PRIMARY KEY,
@@ -444,7 +431,7 @@ function bootstrapDatabase(db: Database.Database) {
   ).run(String(CURRENT_SCHEMA_VERSION));
 }
 
-function ensureSessionHeartbeatColumns(db: Database.Database) {
+function ensureSessionHeartbeatColumns(db: DatabaseSync) {
   const columns = db.prepare(`PRAGMA table_info(sessions)`).all() as Array<{ name: string }>;
   const columnNames = new Set(columns.map((column) => column.name));
 
@@ -457,18 +444,16 @@ function ensureSessionHeartbeatColumns(db: Database.Database) {
   }
 }
 
-function runPendingMigrations(db: Database.Database, repoRoot: string) {
-  const migrate = db.transaction((nextRepoRoot: string) => {
+function runPendingMigrations(db: DatabaseSync, repoRoot: string) {
+  runInImmediateTransaction(db, () => {
     ensureSessionHeartbeatColumns(db);
     migrateActiveStateRegistry(db);
-    migrateLegacyJsonState(db, nextRepoRoot);
+    migrateLegacyJsonState(db, repoRoot);
   });
-
-  migrate.immediate(repoRoot);
 }
 
-function migrateActiveStateRegistry(db: Database.Database) {
-  const activeSessionsCount = db.prepare(`SELECT COUNT(*) FROM active_sessions`).pluck().get() as number;
+function migrateActiveStateRegistry(db: DatabaseSync) {
+  const activeSessionsCount = readNumericValue(db, `SELECT COUNT(*) AS count FROM active_sessions`, 'count');
   if (activeSessionsCount > 0) {
     syncActiveStateCompat(db);
     return;
@@ -483,10 +468,8 @@ function migrateActiveStateRegistry(db: Database.Database) {
   syncActiveStateCompat(db);
 }
 
-function assertSchemaVersion(db: Database.Database) {
-  const rawVersion = db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).pluck().get() as
-    | string
-    | undefined;
+function assertSchemaVersion(db: DatabaseSync) {
+  const rawVersion = readTextValue(db, `SELECT value FROM metadata WHERE key = 'schema_version'`, 'value');
 
   if (!rawVersion) {
     throw new Error('Missing ThreadLoop schema version metadata.');
@@ -498,7 +481,7 @@ function assertSchemaVersion(db: Database.Database) {
   }
 }
 
-function migrateLegacyJsonState(db: Database.Database, repoRoot: string) {
+function migrateLegacyJsonState(db: DatabaseSync, repoRoot: string) {
   const { statePath } = threadloopPaths(repoRoot);
   if (!existsSync(statePath) || !databaseIsEmpty(db)) {
     return;
@@ -533,7 +516,7 @@ function migrateLegacyJsonState(db: Database.Database, repoRoot: string) {
   syncActiveStateCompat(db);
 }
 
-function databaseIsEmpty(db: Database.Database) {
+function databaseIsEmpty(db: DatabaseSync) {
   const counts = db
     .prepare(
       `
@@ -566,7 +549,7 @@ function databaseIsEmpty(db: Database.Database) {
     && counts.snapshots_count === 0;
 }
 
-function loadState(db: Database.Database): StateData {
+function loadState(db: DatabaseSync): StateData {
   const tasks = (db
     .prepare(
       `
@@ -649,11 +632,11 @@ function loadState(db: Database.Database): StateData {
   return normalizeStateData({ tasks, sessions, entries, artifacts, active, activeSessions });
 }
 
-function readActiveStateRow(db: Database.Database) {
+function readActiveStateRow(db: DatabaseSync) {
   return db.prepare(`SELECT task_id, session_id FROM active_state WHERE id = 1`).get() as ActiveStateRow | undefined;
 }
 
-function readActiveSessionRows(db: Database.Database) {
+function readActiveSessionRows(db: DatabaseSync) {
   return db
     .prepare(
       `
@@ -665,7 +648,7 @@ function readActiveSessionRows(db: Database.Database) {
     .all() as ActiveSessionRow[];
 }
 
-function readSessionRow(db: Database.Database, sessionId: string) {
+function readSessionRow(db: DatabaseSync, sessionId: string) {
   return db
     .prepare(
       `
@@ -677,7 +660,7 @@ function readSessionRow(db: Database.Database, sessionId: string) {
     .get(sessionId) as SessionRow | undefined;
 }
 
-function insertTask(db: Database.Database, task: Task) {
+function insertTask(db: DatabaseSync, task: Task) {
   db.prepare(
     `
       INSERT INTO tasks (id, title, goal, constraints_json, repo_root, status, created_at)
@@ -686,7 +669,7 @@ function insertTask(db: Database.Database, task: Task) {
   ).run(task.id, task.title, task.goal, JSON.stringify(task.constraints), task.repoRoot, task.status, task.createdAt);
 }
 
-function insertSession(db: Database.Database, session: Session) {
+function insertSession(db: DatabaseSync, session: Session) {
   db.prepare(
     `
       INSERT INTO sessions (id, task_id, started_at, ended_at, base_ref, branch, head_sha, last_heartbeat_at, last_heartbeat_source)
@@ -705,7 +688,7 @@ function insertSession(db: Database.Database, session: Session) {
   );
 }
 
-function insertEntry(db: Database.Database, entry: Entry) {
+function insertEntry(db: DatabaseSync, entry: Entry) {
   db.prepare(
     `
       INSERT INTO entries (id, session_id, kind, body, metadata_json, created_at, source)
@@ -714,7 +697,7 @@ function insertEntry(db: Database.Database, entry: Entry) {
   ).run(entry.id, entry.sessionId, entry.kind, entry.body, JSON.stringify(entry.metadata), entry.createdAt, entry.source);
 }
 
-function insertArtifact(db: Database.Database, artifact: Artifact) {
+function insertArtifact(db: DatabaseSync, artifact: Artifact) {
   db.prepare(
     `
       INSERT INTO artifacts (id, session_id, kind, path, template_version, generated_at, snapshot_source)
@@ -731,7 +714,7 @@ function insertArtifact(db: Database.Database, artifact: Artifact) {
   );
 }
 
-function insertActiveSession(db: Database.Database, active: ActiveState) {
+function insertActiveSession(db: DatabaseSync, active: ActiveState) {
   db.prepare(
     `
       INSERT OR REPLACE INTO active_sessions (session_id, task_id)
@@ -740,7 +723,7 @@ function insertActiveSession(db: Database.Database, active: ActiveState) {
   ).run(active.sessionId, active.taskId);
 }
 
-function appendEntry(db: Database.Database, sessionId: string, draft: Omit<Entry, 'sessionId'>) {
+function appendEntry(db: DatabaseSync, sessionId: string, draft: Omit<Entry, 'sessionId'>) {
   const session = readSessionRow(db, sessionId);
   if (!session) {
     throw new Error(`Unknown session id: ${sessionId}`);
@@ -751,7 +734,7 @@ function appendEntry(db: Database.Database, sessionId: string, draft: Omit<Entry
   return entry;
 }
 
-function completeSession(db: Database.Database, sessionId: string, taskId: string, endedAt: string) {
+function completeSession(db: DatabaseSync, sessionId: string, taskId: string, endedAt: string) {
   db.prepare(`UPDATE tasks SET status = 'completed' WHERE id = ?`).run(taskId);
   db.prepare(`UPDATE sessions SET ended_at = ? WHERE id = ?`).run(endedAt, sessionId);
   db.prepare(`DELETE FROM active_sessions WHERE session_id = ?`).run(sessionId);
@@ -772,7 +755,7 @@ function normalizeStateData(state: StateData): StateData {
   };
 }
 
-function syncActiveStateCompat(db: Database.Database) {
+function syncActiveStateCompat(db: DatabaseSync) {
   const activeSessions = readActiveSessionRows(db);
   if (activeSessions.length === 1) {
     const [active] = activeSessions;
@@ -812,4 +795,29 @@ function readJsonSync(filePath: string, invalidMessage: string) {
 async function writeJson(filePath: string, value: unknown) {
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+}
+
+function runInImmediateTransaction<T>(db: DatabaseSync, action: () => T): T {
+  db.exec('BEGIN IMMEDIATE');
+
+  try {
+    const result = action();
+    db.exec('COMMIT');
+    return result;
+  } catch (error) {
+    if (db.isTransaction) {
+      db.exec('ROLLBACK');
+    }
+    throw error;
+  }
+}
+
+function readNumericValue(db: DatabaseSync, sql: string, column: string) {
+  const row = db.prepare(sql).get() as Record<string, number> | undefined;
+  return row?.[column] ?? 0;
+}
+
+function readTextValue(db: DatabaseSync, sql: string, column: string) {
+  const row = db.prepare(sql).get() as Record<string, string> | undefined;
+  return row?.[column];
 }

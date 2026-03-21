@@ -209,7 +209,7 @@ coast exec dev-1 -- sh -c "npm run test"
 coast exec dev-1 -- sh -c "npm run build"
 ```
 
-Because ThreadLoop now depends on `better-sqlite3`, the shared `node_modules` directory can become platform-mismatched between the host and the Coast container. If you see errors loading `better_sqlite3.node` or an `Exec format error`, reinstall dependencies inside the Coast runtime with `npm ci`.
+ThreadLoop now uses Node's built-in SQLite support, so the CLI can run natively on macOS without rebuilding a native addon when switching between the host and Coast.
 
 ## Development
 
