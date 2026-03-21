@@ -21,6 +21,18 @@ function parseIntervalSeconds(value: number | undefined): number {
   return value;
 }
 
+function renderStopInstruction(runtimeOptions: DaemonRunRuntimeOptions): string {
+  if (runtimeOptions.registerProcessSignalHandlers ?? true) {
+    return ' Press Ctrl+C to stop.';
+  }
+
+  if (runtimeOptions.stopSignal) {
+    return ' Waiting for stop signal.';
+  }
+
+  return '';
+}
+
 export async function daemonRunCommand(
   context: CommandContext,
   options: DaemonRunOptions,
@@ -70,7 +82,7 @@ export async function daemonRunCommand(
   });
 
   writeCommandSuccess(context, {
-    text: [`Daemon started, reconciling every ${intervalSeconds}s. Press Ctrl+C to stop.`],
+    text: [`Daemon started, reconciling every ${intervalSeconds}s.${renderStopInstruction(runtimeOptions)}`],
     data: { daemon: 'running', interval_ms: intervalMs },
   });
 
