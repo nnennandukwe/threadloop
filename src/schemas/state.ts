@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ARTIFACT_KINDS, ENTRY_KINDS, HEARTBEAT_SOURCES, TASK_STATUS } from '../domain/types.js';
+import { ARTIFACT_KINDS, ENTRY_KINDS, ENTRY_SOURCES, HEARTBEAT_SOURCES, TASK_STATUS } from '../domain/types.js';
 
 export const taskSchema = z.object({
   id: z.string(),
@@ -30,7 +30,7 @@ export const entrySchema = z.object({
   body: z.string(),
   metadata: z.record(z.string(), z.unknown()),
   createdAt: z.string(),
-  source: z.literal('cli'),
+  source: z.enum(ENTRY_SOURCES),
 });
 
 export const artifactSchema = z.object({

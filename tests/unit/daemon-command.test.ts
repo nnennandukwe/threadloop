@@ -29,7 +29,7 @@ describe('daemon command', () => {
     vi.restoreAllMocks();
   });
 
-  it('reconciles on schedule and shuts down cleanly on SIGTERM', async () => {
+  it('reconciles on schedule and shuts down cleanly on an injected stop signal', async () => {
     mockedReconcileSession.mockResolvedValue([]);
 
     const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
@@ -55,7 +55,7 @@ describe('daemon command', () => {
     const stdoutText = stdout.mock.calls.map(([chunk]) => String(chunk)).join('');
     const stderrText = stderr.mock.calls.map(([chunk]) => String(chunk)).join('');
 
-    expect(stdoutText).toContain('Daemon started, reconciling every 1s. Press Ctrl+C to stop.');
+    expect(stdoutText).toContain('Daemon started, reconciling every 1s. Waiting for stop signal.');
     expect(stdoutText).toContain('[daemon] Reconciled 0 session(s)');
     expect(stdoutText).toContain('Daemon stopped.');
     expect(stderrText).toBe('');

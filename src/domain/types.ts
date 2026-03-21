@@ -11,11 +11,13 @@ export const ENTRY_KINDS = [
 export const ARTIFACT_KINDS = ['change-brief', 'pr-summary', 'handoff'] as const;
 export const TASK_STATUS = ['active', 'completed'] as const;
 export const HEARTBEAT_SOURCES = ['cli', 'daemon', 'reconcile'] as const;
+export const ENTRY_SOURCES = ['cli', 'agent'] as const;
 
 export type EntryKind = (typeof ENTRY_KINDS)[number];
 export type ArtifactKind = (typeof ARTIFACT_KINDS)[number];
 export type TaskStatus = (typeof TASK_STATUS)[number];
 export type HeartbeatSource = (typeof HEARTBEAT_SOURCES)[number];
+export type EntrySource = (typeof ENTRY_SOURCES)[number];
 
 export interface Task {
   id: string;
@@ -46,7 +48,7 @@ export interface Entry {
   body: string;
   metadata: Record<string, unknown>;
   createdAt: string;
-  source: 'cli';
+  source: EntrySource;
 }
 
 export interface RepoSnapshot {

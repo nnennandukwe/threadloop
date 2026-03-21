@@ -6,6 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { beforeEach, describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
+import { appendEntryToSession, createId } from '../../src/adapters/fs/sqlite-store.js';
 import { buildProtocolContract } from '../../src/contracts/protocol.js';
 
 const execFileAsync = promisify(execFile);
@@ -782,6 +783,7 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     );
     const sessionId = started.data.session_id;
     const captureBodies = Array.from({ length: 8 }, (_, index) => `Concurrent capture ${index + 1}`);
+    const agentBodies = Array.from({ length: 4 }, (_, index) => `Concurrent agent capture ${index + 1}`);
     const heartbeatSources = ['cli', 'daemon', 'reconcile', 'daemon'] as const;
 
     await Promise.all([
@@ -795,6 +797,15 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
           sessionId,
           '--json',
         ])),
+      ...agentBodies.map((body) =>
+        appendEntryToSession(repoDir, sessionId, {
+          id: createId('entry'),
+          kind: 'note',
+          body,
+          metadata: { mode: 'agent' },
+          createdAt: new Date().toISOString(),
+          source: 'agent',
+        })),
       ...heartbeatSources.map((source) =>
         runCli(repoDir, ['session', 'heartbeat', '--session', sessionId, '--source', source, '--json'])),
       ...Array.from({ length: 4 }, () => runCli(repoDir, ['session', 'reconcile', '--session', sessionId, '--json'])),
@@ -807,21 +818,28 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
       };
     }>((await runCli(repoDir, ['session', 'status', '--session', sessionId, '--json'])).stdout);
 
-    expect(status.data.entries.count).toBe(1 + captureBodies.length);
+    expect(status.data.entries.count).toBe(1 + captureBodies.length + agentBodies.length);
     expect(status.data.entries.kinds.intent).toBe(1);
-    expect(status.data.entries.kinds.note).toBe(4);
+    expect(status.data.entries.kinds.note).toBe(4 + agentBodies.length);
     expect(status.data.entries.kinds.decision).toBe(4);
     expect(status.data.session.last_heartbeat_at).toBeTruthy();
     expect(['cli', 'daemon', 'reconcile']).toContain(status.data.session.last_heartbeat_source);
 
     const db = new Database(path.join(repoDir, '.threadloop/state/state.db'), { readonly: true });
     try {
-      const bodies = db.prepare(`SELECT body FROM entries WHERE session_id = ? ORDER BY rowid`).pluck().all(sessionId) as string[];
+      const entries = db.prepare(`SELECT body, source FROM entries WHERE session_id = ? ORDER BY rowid`).all(sessionId) as Array<{
+        body: string;
+        source: string;
+      }>;
       const snapshotCount = db.prepare(`SELECT COUNT(*) FROM repo_snapshots WHERE session_id = ?`).pluck().get(sessionId) as number;
+      const bodies = entries.map((entry) => entry.body);
 
       expect(bodies).toContain('Task started: Concurrent flow');
       expect(bodies.filter((body) => captureBodies.includes(body))).toHaveLength(captureBodies.length);
       expect(new Set(bodies.filter((body) => captureBodies.includes(body)))).toEqual(new Set(captureBodies));
+      expect(bodies.filter((body) => agentBodies.includes(body))).toHaveLength(agentBodies.length);
+      expect(new Set(bodies.filter((body) => agentBodies.includes(body)))).toEqual(new Set(agentBodies));
+      expect(entries.filter((entry) => agentBodies.includes(entry.body)).every((entry) => entry.source === 'agent')).toBe(true);
       expect(snapshotCount).toBe(1);
     } finally {
       db.close();
