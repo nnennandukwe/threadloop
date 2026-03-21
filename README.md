@@ -2,6 +2,8 @@
 
 ThreadLoop is a local-first CLI companion for AI-assisted coding work. It captures the small set of task intent, decisions, risks, validation notes, and reviewer guidance that matter, then renders that context into a review-ready artifact.
 
+For the orchestrated v2 workflow, see [docs/agent-mode.md](docs/agent-mode.md).
+
 ## Positioning
 
 ThreadLoop is deliberately not a passive provenance recorder and not a generic PR template generator.
@@ -124,11 +126,12 @@ What is implemented now:
 - explicit `session` namespace commands
 - compatibility wrappers that safely fail on ambiguous multi-session state
 - `--json` machine-output contract for session commands and legacy wrappers
+- reconcile and snapshot persistence
+- daemon-driven mechanical refresh
 - protocol print / published agent-mode contract
 
 What is not implemented yet in this slice:
-- reconcile/daemon-backed DB workflows
-- concurrency hardening for fully autonomous use
+- same-checkout autonomous multi-task concurrency hardening
 
 ## Quick start
 
@@ -143,6 +146,24 @@ npx threadloop protocol --json
 npx threadloop artifact generate change-brief --session "$session_id"
 npx threadloop finish --session "$session_id" --json
 ```
+
+## Autonomous agent mode
+
+Use explicit session commands for automation and keep one autonomous task per checkout or Git worktree.
+
+Recommended loop:
+
+1. `threadloop init`
+2. `threadloop session start ... --json`
+3. persist the returned `session_id`
+4. `threadloop session capture ... --session "$session_id"`
+5. `threadloop session reconcile --session "$session_id"` when Git-derived scope needs refresh
+6. `threadloop artifact generate ... --session "$session_id"`
+7. `threadloop session finish --session "$session_id"`
+
+Use `threadloop protocol --json` as the machine-facing contract for current commands, entry kinds, artifact kinds, and supported environment variables.
+
+The optional daemon only performs mechanical refresh work. It does not create semantic notes or replace explicit capture.
 
 ## Longer notes with `$EDITOR`
 
@@ -210,3 +231,4 @@ npm run smoke:pack`
 ## Docs
 
 - CLI reference: `docs/cli.md`
+- Autonomous agent mode: `docs/agent-mode.md`

@@ -60,8 +60,22 @@ Options:
 -- `-a, --all`: reconcile all active sessions
 -- `--json`: render machine-readable session output
 
+Use `--session <id>` for one explicit session or `--all` for all active sessions in the current workspace.
+
 ### `threadloop session finish --session <id> [--json]`
 Marks a specific session complete.
+
+### `threadloop daemon run [--json]`
+Runs the optional mechanical refresh loop for active sessions in the current workspace.
+
+Options:
+-- `-i, --interval <seconds>`: reconcile interval in seconds, default `60`
+-- `--json`: render machine-readable command output
+
+Behavior:
+-- periodically calls reconcile for all active sessions
+-- records no semantic notes
+-- writes running/stopped status in the normal command envelope
 
 ### Legacy compatibility commands
 
@@ -102,6 +116,9 @@ The JSON payload includes:
 - capture kinds and artifact kinds sourced from runtime constants
 - truthful notes about JSON support and session targeting behavior
 
+Current environment-variable contract:
+- `EDITOR`: used by `--edit` and `--goal-edit`
+
 ## Storage
 
 ThreadLoop stores state locally in the repo:
@@ -117,6 +134,20 @@ This SQLite work is the storage foundation for v2, and the explicit session name
 Recommended default:
 - keep `.threadloop/state/` uncommitted
 - commit artifacts only when they are useful for review or handoff
+
+## Agent-mode guidance
+
+For automation, prefer:
+
+- `threadloop session ...` commands over legacy root commands
+- explicit `--session <id>` on every session-scoped call
+- one autonomous task per checkout or Git worktree
+
+Legacy root commands are still available for human compatibility, but they can fail with `SESSION_REQUIRED` or `SESSION_AMBIGUOUS` in multi-session repos.
+
+`session heartbeat`, `session reconcile`, and `daemon run` are mechanical operations. They refresh state but do not create semantic entries. Use `session capture` for decisions, risks, validation, and reviewer guidance.
+
+For the full orchestrator/operator workflow, see [agent-mode.md](agent-mode.md).
 
 ## Coast note
 
