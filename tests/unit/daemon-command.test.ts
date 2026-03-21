@@ -18,10 +18,6 @@ function createContext(json = false): CommandContext {
   };
 }
 
-function emitSignal(signal: NodeJS.Signals) {
-  process.emit(signal, signal);
-}
-
 describe('daemon command', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -38,8 +34,12 @@ describe('daemon command', () => {
 
     const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const stopController = new AbortController();
 
-    const daemon = daemonRunCommand(createContext(), { interval: 1 });
+    const daemon = daemonRunCommand(createContext(), { interval: 1 }, {
+      stopSignal: stopController.signal,
+      registerProcessSignalHandlers: false,
+    });
 
     await vi.advanceTimersByTimeAsync(1_000);
 
@@ -49,7 +49,7 @@ describe('daemon command', () => {
       reconcileAll: true,
     });
 
-    emitSignal('SIGTERM');
+    stopController.abort();
     await daemon;
 
     const stdoutText = stdout.mock.calls.map(([chunk]) => String(chunk)).join('');
@@ -68,15 +68,19 @@ describe('daemon command', () => {
 
     const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const stopController = new AbortController();
 
-    const daemon = daemonRunCommand(createContext(), { interval: 1 });
+    const daemon = daemonRunCommand(createContext(), { interval: 1 }, {
+      stopSignal: stopController.signal,
+      registerProcessSignalHandlers: false,
+    });
 
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.advanceTimersByTimeAsync(1_000);
 
     expect(mockedReconcileSession).toHaveBeenCalledTimes(2);
 
-    emitSignal('SIGINT');
+    stopController.abort();
     await daemon;
 
     const stdoutText = stdout.mock.calls.map(([chunk]) => String(chunk)).join('');

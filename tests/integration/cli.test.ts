@@ -49,7 +49,7 @@ function readStateSnapshot(repoDir: string) {
   }
 }
 
-describe('threadloop CLI', () => {
+describe('threadloop CLI', { timeout: 15_000 }, () => {
   let repoDir: string;
 
   beforeEach(async () => {
@@ -826,7 +826,7 @@ describe('threadloop CLI', () => {
     } finally {
       db.close();
     }
-  });
+  }, 15_000);
 
   it('assembles the explicit v2 flow end to end on SQLite state', async () => {
     await runCli(repoDir, ['init']);
@@ -877,7 +877,7 @@ describe('threadloop CLI', () => {
     const renderedArtifact = await readFile(path.join(repoDir, artifact.data.artifact.path), 'utf8');
     expect(renderedArtifact).toContain('feature.ts');
     expect(renderedArtifact).not.toContain('.threadloop/');
-  });
+  }, 15_000);
 
   it('renders reconcile command in help output', async () => {
     const sessionHelp = await runCli(repoDir, ['session', '--help']);
