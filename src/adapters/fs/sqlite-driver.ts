@@ -7,7 +7,7 @@ const originalEmitWarning = process.emitWarning.bind(process);
 
 process.emitWarning = function suppressNodeSqliteExperimentalWarning(warning, type, ...args) {
   const warningMessage = typeof warning === 'string' ? warning : warning?.message;
-  const warningType = typeof type === 'string' ? type : warning instanceof Error ? warning.name : undefined;
+  const warningType = readWarningType(warning, type);
 
   if (warningType === 'ExperimentalWarning' && warningMessage?.includes(SQLITE_EXPERIMENTAL_WARNING)) {
     return;
@@ -16,8 +16,25 @@ process.emitWarning = function suppressNodeSqliteExperimentalWarning(warning, ty
   return originalEmitWarning(warning, type, ...args);
 };
 
-const sqlite = require('node:sqlite') as typeof import('node:sqlite');
-
-process.emitWarning = originalEmitWarning;
+const sqlite = (() => {
+  try {
+    return require('node:sqlite') as typeof import('node:sqlite');
+  } finally {
+    process.emitWarning = originalEmitWarning;
+  }
+})();
 
 export const { DatabaseSync } = sqlite;
+
+function readWarningType(warning: string | Error, type: unknown) {
+  if (typeof type === 'string') {
+    return type;
+  }
+
+  if (type && typeof type === 'object' && 'type' in type) {
+    const objectType = type.type;
+    return typeof objectType === 'string' ? objectType : undefined;
+  }
+
+  return warning instanceof Error ? warning.name : undefined;
+}
