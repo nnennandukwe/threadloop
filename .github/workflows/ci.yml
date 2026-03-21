@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   test:
-    name: ${{ matrix.os }}
+    name: ${{ matrix.os }} / Node ${{ matrix.node-version }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -17,6 +17,9 @@ jobs:
         os:
           - ubuntu-latest
           - macos-latest
+        node-version:
+          - 22.5.0
+          - 22
 
     steps:
       - name: Check out repository
@@ -25,7 +28,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node-version }}
           cache: npm
 
       - name: Install dependencies
