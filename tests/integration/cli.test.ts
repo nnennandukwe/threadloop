@@ -773,6 +773,112 @@ describe('threadloop CLI', () => {
     expect(status.data.entries.kinds.intent).toBe(1);
   });
 
+  it('keeps SQLite-backed state intact under concurrent capture, heartbeat, and reconcile writes', async () => {
+    await runCli(repoDir, ['init']);
+    await writeFile(path.join(repoDir, 'feature.ts'), 'export const feature = true;\n', 'utf8');
+
+    const started = parseJsonOutput<{ data: { session_id: string } }>(
+      (await runCli(repoDir, ['session', 'start', 'Concurrent flow', '--goal', 'Stress SQLite writes', '--json'])).stdout,
+    );
+    const sessionId = started.data.session_id;
+    const captureBodies = Array.from({ length: 8 }, (_, index) => `Concurrent capture ${index + 1}`);
+    const heartbeatSources = ['cli', 'daemon', 'reconcile', 'daemon'] as const;
+
+    await Promise.all([
+      ...captureBodies.map((body, index) =>
+        runCli(repoDir, [
+          'session',
+          'capture',
+          index % 2 === 0 ? 'note' : 'decision',
+          body,
+          '--session',
+          sessionId,
+          '--json',
+        ])),
+      ...heartbeatSources.map((source) =>
+        runCli(repoDir, ['session', 'heartbeat', '--session', sessionId, '--source', source, '--json'])),
+      ...Array.from({ length: 4 }, () => runCli(repoDir, ['session', 'reconcile', '--session', sessionId, '--json'])),
+    ]);
+
+    const status = parseJsonOutput<{
+      data: {
+        session: { last_heartbeat_at: string | null; last_heartbeat_source: string | null };
+        entries: { count: number; kinds: Record<string, number> };
+      };
+    }>((await runCli(repoDir, ['session', 'status', '--session', sessionId, '--json'])).stdout);
+
+    expect(status.data.entries.count).toBe(1 + captureBodies.length);
+    expect(status.data.entries.kinds.intent).toBe(1);
+    expect(status.data.entries.kinds.note).toBe(4);
+    expect(status.data.entries.kinds.decision).toBe(4);
+    expect(status.data.session.last_heartbeat_at).toBeTruthy();
+    expect(['cli', 'daemon', 'reconcile']).toContain(status.data.session.last_heartbeat_source);
+
+    const db = new Database(path.join(repoDir, '.threadloop/state/state.db'), { readonly: true });
+    try {
+      const bodies = db.prepare(`SELECT body FROM entries WHERE session_id = ? ORDER BY rowid`).pluck().all(sessionId) as string[];
+      const snapshotCount = db.prepare(`SELECT COUNT(*) FROM repo_snapshots WHERE session_id = ?`).pluck().get(sessionId) as number;
+
+      expect(bodies).toContain('Task started: Concurrent flow');
+      expect(bodies.filter((body) => captureBodies.includes(body))).toHaveLength(captureBodies.length);
+      expect(new Set(bodies.filter((body) => captureBodies.includes(body)))).toEqual(new Set(captureBodies));
+      expect(snapshotCount).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('assembles the explicit v2 flow end to end on SQLite state', async () => {
+    await runCli(repoDir, ['init']);
+    await writeFile(path.join(repoDir, 'feature.ts'), 'export const value = 1;\n', 'utf8');
+
+    const started = parseJsonOutput<{ data: { session_id: string } }>(
+      (await runCli(repoDir, ['session', 'start', 'Full v2 flow', '--goal', 'Prove the assembled session contract', '--json']))
+        .stdout,
+    );
+    const sessionId = started.data.session_id;
+
+    await runCli(repoDir, ['session', 'capture', 'decision', 'Keep explicit session targeting', '--session', sessionId, '--json']);
+    await runCli(repoDir, ['session', 'capture', 'validation', 'Verified stored snapshot refresh', '--session', sessionId, '--json']);
+    await runCli(repoDir, ['session', 'heartbeat', '--session', sessionId, '--source', 'daemon', '--json']);
+    await runCli(repoDir, ['session', 'reconcile', '--session', sessionId, '--json']);
+
+    const artifact = parseJsonOutput<{ data: { artifact: { path: string } } }>(
+      (await runCli(repoDir, ['artifact', 'generate', '--session', sessionId, '--json'])).stdout,
+    );
+    const status = parseJsonOutput<{
+      data: {
+        session: { ended_at: string | null; last_heartbeat_source: string | null };
+        entries: { count: number; kinds: Record<string, number> };
+        repo_snapshot: { branch: string; headSha: string; changedFiles: string[] } | null;
+      };
+    }>((await runCli(repoDir, ['session', 'status', '--session', sessionId, '--json'])).stdout);
+    const finished = parseJsonOutput<{ data: { session_id: string } }>(
+      (await runCli(repoDir, ['session', 'finish', '--session', sessionId, '--json'])).stdout,
+    );
+    const listed = parseJsonOutput<{
+      data: { sessions: Array<{ session_id: string; active: boolean; ended_at: string | null }> };
+    }>((await runCli(repoDir, ['session', 'list', '--json'])).stdout);
+
+    expect(status.data.entries.count).toBe(3);
+    expect(status.data.entries.kinds.intent).toBe(1);
+    expect(status.data.entries.kinds.decision).toBe(1);
+    expect(status.data.entries.kinds.validation).toBe(1);
+    expect(status.data.session.ended_at).toBeNull();
+    expect(status.data.session.last_heartbeat_source).toBe('daemon');
+    expect(status.data.repo_snapshot?.changedFiles).toContain('feature.ts');
+    expect(finished.data.session_id).toBe(sessionId);
+    expect(listed.data.sessions).toContainEqual(expect.objectContaining({
+      session_id: sessionId,
+      active: false,
+      ended_at: expect.any(String),
+    }));
+
+    const renderedArtifact = await readFile(path.join(repoDir, artifact.data.artifact.path), 'utf8');
+    expect(renderedArtifact).toContain('feature.ts');
+    expect(renderedArtifact).not.toContain('.threadloop/');
+  });
+
   it('renders reconcile command in help output', async () => {
     const sessionHelp = await runCli(repoDir, ['session', '--help']);
     expect(sessionHelp.stdout).toContain('reconcile');

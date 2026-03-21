@@ -262,7 +262,7 @@ export async function recordSessionHeartbeat(
       ).run(nextPayload.branch, nextPayload.headSha, nextPayload.lastHeartbeatAt, nextPayload.source, nextPayload.sessionId);
     });
 
-    await update(payload);
+    update.immediate(payload);
   } finally {
     db.close();
   }
