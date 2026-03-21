@@ -151,10 +151,4 @@ For the full orchestrator/operator workflow, see [agent-mode.md](agent-mode.md).
 
 ## Coast note
 
-If you are using Coast, reinstall dependencies inside the Coast runtime after native dependency changes such as `better-sqlite3`:
-
-```bash
-coast exec dev-1 -- sh -c "npm ci"
-```
-
-If you skip that and the shared workspace still has host-built native modules, you may see load failures for `better_sqlite3.node` or an `Exec format error`.
+ThreadLoop uses Node's built-in SQLite support, so the CLI can run on the host or in Coast without rebuilding a platform-specific SQLite addon between environments.
