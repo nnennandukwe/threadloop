@@ -57,5 +57,12 @@ export function renderCommandFailure(
     return JSON.stringify(createCommandFailureEnvelope(command, error), null, 2);
   }
 
-  return `threadloop [${error.code}]: ${error.message}`;
+  const lines = [`threadloop [${error.code}]: ${error.message}`];
+  const hint = error.details?.hint;
+
+  if (typeof hint === 'string' && hint.trim().length > 0) {
+    lines.push(`Hint: ${hint}`);
+  }
+
+  return lines.join('\n');
 }

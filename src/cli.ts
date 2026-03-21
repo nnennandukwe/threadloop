@@ -59,7 +59,10 @@ function commandAction<T extends unknown[]>(
 }
 
 function handleError(error: unknown) {
-  if (error instanceof CommanderError && (error.code === 'commander.help' || error.code === 'commander.version')) {
+  if (
+    error instanceof CommanderError &&
+    (error.code === 'commander.version' || error.code === 'commander.help' || error.code.startsWith('commander.help'))
+  ) {
     process.exitCode = 0;
     return;
   }
