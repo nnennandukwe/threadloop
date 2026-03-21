@@ -6,6 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { beforeEach, describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
+import { buildProtocolContract } from '../../src/contracts/protocol.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -666,6 +667,36 @@ describe('threadloop CLI', () => {
     expect(sessionStartHelp.stdout).toContain('--json');
     expect(sessionStartHelp.stdout).toContain('--goal <goal>');
     expect(sessionStartHelp.stdout).toContain('--constraint <constraint...>');
+  });
+
+  it('renders a derived protocol contract in json mode', async () => {
+    const protocol = parseJsonOutput<{
+      ok: true;
+      command: string;
+      data: ReturnType<typeof buildProtocolContract>;
+    }>((await runCli(repoDir, ['protocol', '--json'])).stdout);
+
+    expect(protocol).toMatchObject({ ok: true, command: 'protocol' });
+    expect(protocol.data).toEqual(buildProtocolContract());
+    expect(protocol.data.envVars).toEqual({
+      EDITOR: 'Editor command used by --edit and --goal-edit flows.',
+    });
+    expect(protocol.data.captureKinds).toEqual([
+      'intent',
+      'note',
+      'decision',
+      'risk',
+      'constraint',
+      'validation',
+      'reviewer_guidance',
+    ]);
+    expect(protocol.data.artifactKinds).toEqual(['change-brief', 'pr-summary', 'handoff']);
+    expect(protocol.data.commands['artifact generate']).toContain('threadloop artifact generate [kind] [--session <id>] [--json]');
+    expect(protocol.data.commands['session capture']).toContain(
+      'threadloop session capture <kind> [text] --session <id> [--because <reason>] [--edit] [--json]',
+    );
+    expect(protocol.data.commands.init).toBe('threadloop init - Initialize ThreadLoop in the current Git repo');
+    expect(protocol.data.notes).not.toContain('Use --json flag for machine-readable output on any command');
   });
 
   it('reconciles a specific session and persists the snapshot', async () => {

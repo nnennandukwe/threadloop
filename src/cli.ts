@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-import { Command, CommanderError, InvalidArgumentError, Option } from 'commander';
-import { ARTIFACT_KINDS, ENTRY_KINDS, HEARTBEAT_SOURCES } from './domain/types.js';
+import { Command, CommanderError } from 'commander';
 import { artifactGenerateCommand } from './commands/artifact.js';
 import { captureCommand } from './commands/capture.js';
 import { finishCommand } from './commands/finish.js';
@@ -15,157 +14,29 @@ import { sessionHeartbeatCommand } from './commands/session-heartbeat.js';
 import { sessionFinishCommand } from './commands/session-finish.js';
 import { sessionReconcileCommand } from './commands/session-reconcile.js';
 import { daemonRunCommand } from './commands/daemon.js';
+import { protocolPrintCommand } from './commands/protocol.js';
 import { createInvalidArgumentError, toThreadloopError } from './contracts/errors.js';
 import { renderCommandFailure } from './contracts/output.js';
 import { createCommandContext } from './commands/runtime.js';
+import { createThreadloopProgram } from './cli-program.js';
 
-const program = new Command();
-
-function parseEntryKind(value: string) {
-  if (!ENTRY_KINDS.includes(value as (typeof ENTRY_KINDS)[number])) {
-    throw new InvalidArgumentError(`Entry kind must be one of: ${ENTRY_KINDS.join(', ')}`);
-  }
-  return value as (typeof ENTRY_KINDS)[number];
-}
-
-function parseArtifactKind(value: string) {
-  if (!ARTIFACT_KINDS.includes(value as (typeof ARTIFACT_KINDS)[number])) {
-    throw new InvalidArgumentError(`Artifact kind must be one of: ${ARTIFACT_KINDS.join(', ')}`);
-  }
-  return value as (typeof ARTIFACT_KINDS)[number];
-}
-
-function parseHeartbeatSource(value: string) {
-  if (!HEARTBEAT_SOURCES.includes(value as (typeof HEARTBEAT_SOURCES)[number])) {
-    throw new InvalidArgumentError(`Heartbeat source must be one of: ${HEARTBEAT_SOURCES.join(', ')}`);
-  }
-  return value as (typeof HEARTBEAT_SOURCES)[number];
-}
-
-function withJsonOption<T extends Command>(command: T) {
-  return command.addOption(new Option('--json', 'Output machine-readable JSON'));
-}
-
-program
-  .name('threadloop')
-  .description('Task-first, repo-local session memory that generates review-ready artifacts')
-  .version('0.1.0')
-  .showHelpAfterError(false)
-  .configureOutput({
-    writeOut: (text) => process.stdout.write(text),
-    writeErr: () => {},
-  })
-  .exitOverride();
-
-program.command('init').description('Initialize ThreadLoop in the current Git repo').action(run(initCommand));
-
-withJsonOption(
-  program
-    .command('start')
-    .description('Start a task-scoped session')
-    .argument('<title>', 'task title')
-    .option('--goal <goal>', 'goal for the task')
-    .option('--constraint <constraint...>', 'constraints that matter for this task')
-    .option('--base <ref>', 'base Git ref used for comparisons')
-    .option('--goal-edit', 'open $EDITOR for the goal text'),
-).action(commandAction('start', startCommand));
-
-withJsonOption(
-  program
-    .command('capture')
-    .description('Capture a structured checkpoint entry')
-    .argument('<kind>', 'entry kind', parseEntryKind)
-    .argument('[text]', 'entry text')
-    .option('--session <id>', 'session id to target')
-    .option('--because <reason>', 'optional reasoning or context')
-    .option('--edit', 'open $EDITOR for longer text'),
-).action(commandAction('capture', captureCommand));
-
-withJsonOption(
-  program.command('status').description('Show the current task/session status').option('--session <id>', 'session id to target'),
-).action(commandAction('status', statusCommand));
-
-const artifact = program.command('artifact').description('Generate artifacts from session context');
-withJsonOption(
-  artifact
-    .command('generate')
-    .description('Generate a Markdown artifact from task, notes, and Git context')
-    .argument('[kind]', 'artifact kind', parseArtifactKind, 'change-brief')
-    .option('--session <id>', 'session id to target'),
-).action(commandAction('artifact generate', artifactGenerateCommand));
-
-withJsonOption(
-  program.command('finish').description('Complete the active session').option('--session <id>', 'session id to target'),
-).action(commandAction('finish', finishCommand));
-
-const session = program.command('session').description('Manage explicit ThreadLoop sessions');
-
-withJsonOption(
-  session
-    .command('start')
-    .description('Start a task-scoped session')
-    .argument('<title>', 'task title')
-    .option('--goal <goal>', 'goal for the task')
-    .option('--constraint <constraint...>', 'constraints that matter for this task')
-    .option('--base <ref>', 'base Git ref used for comparisons')
-    .option('--goal-edit', 'open $EDITOR for the goal text'),
-).action(commandAction('session start', sessionStartCommand));
-
-withJsonOption(session.command('list').description('List sessions in the current workspace')).action(
-  commandAction('session list', sessionListCommand),
-);
-
-withJsonOption(
-  session.command('status').description('Show status for an explicit session').option('--session <id>', 'session id to target'),
-).action(commandAction('session status', sessionStatusCommand));
-
-withJsonOption(
-  session
-    .command('capture')
-    .description('Capture a structured checkpoint entry for an explicit session')
-    .argument('<kind>', 'entry kind', parseEntryKind)
-    .argument('[text]', 'entry text')
-    .option('--session <id>', 'session id to target')
-    .option('--because <reason>', 'optional reasoning or context')
-    .option('--edit', 'open $EDITOR for longer text'),
-).action(commandAction('session capture', sessionCaptureCommand));
-
-withJsonOption(
-  session
-    .command('heartbeat')
-    .description('Refresh mechanical session metadata without creating a semantic entry')
-    .option('--session <id>', 'session id to target')
-    .option('--source <source>', 'heartbeat source', parseHeartbeatSource),
-).action(commandAction('session heartbeat', sessionHeartbeatCommand));
-
-withJsonOption(
-  session.command('finish').description('Finish an explicit session').option('--session <id>', 'session id to target'),
-).action(commandAction('session finish', sessionFinishCommand));
-
-withJsonOption(
-  session
-    .command('reconcile')
-    .description('Refresh Git-derived metadata for a session without creating semantic entries')
-    .option('--session <id>', 'session id to reconcile')
-    .option('-a, --all', 'reconcile all active sessions'),
-).action(commandAction('session reconcile', sessionReconcileCommand));
-
-const daemon = program.command('daemon').description('Run ThreadLoop daemon for active session management');
-
-function parseIntervalSeconds(value: string): number {
-  const parsed = parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed < 1) {
-    throw new InvalidArgumentError('Interval must be a positive number of seconds (minimum 1)');
-  }
-  return parsed;
-}
-
-withJsonOption(
-  daemon
-    .command('run')
-    .description('Run daemon to periodically reconcile active sessions')
-    .option('-i, --interval <seconds>', 'reconciliation interval in seconds', parseIntervalSeconds, 60),
-).action(commandAction('daemon run', daemonRunCommand));
+const program = createThreadloopProgram({
+  init: run(initCommand),
+  start: commandAction('start', startCommand),
+  capture: commandAction('capture', captureCommand),
+  status: commandAction('status', statusCommand),
+  artifactGenerate: commandAction('artifact generate', artifactGenerateCommand),
+  finish: commandAction('finish', finishCommand),
+  sessionStart: commandAction('session start', sessionStartCommand),
+  sessionList: commandAction('session list', sessionListCommand),
+  sessionStatus: commandAction('session status', sessionStatusCommand),
+  sessionCapture: commandAction('session capture', sessionCaptureCommand),
+  sessionHeartbeat: commandAction('session heartbeat', sessionHeartbeatCommand),
+  sessionFinish: commandAction('session finish', sessionFinishCommand),
+  sessionReconcile: commandAction('session reconcile', sessionReconcileCommand),
+  daemonRun: commandAction('daemon run', daemonRunCommand),
+  protocol: commandAction('protocol', protocolPrintCommand),
+});
 
 program.parseAsync(process.argv).catch(handleError);
 
