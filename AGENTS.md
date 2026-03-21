@@ -5,7 +5,7 @@ repository root.
 
 ## Prerequisites
 
-- Node 22.5.0 or newer
+- Node 22.13.0 or newer
 - npm
 - a Git repository
 

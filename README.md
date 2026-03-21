@@ -51,7 +51,7 @@ Legacy repos with `.threadloop/state/state.json` migrate into SQLite on first in
 ## Install
 
 Prerequisites:
-- Node 22.5.0 or newer
+- Node 22.13.0 or newer
 - a Git repository
 
 ```bash
