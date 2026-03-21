@@ -1,8 +1,12 @@
 import type { CommandContext } from './runtime.js';
-import { writeCommandSuccess, toSessionId } from './runtime.js';
+import { writeCommandSuccess } from './runtime.js';
 import { reconcileSession } from '../services/session-service.js';
 
 export type DaemonRunOptions = { interval?: number };
+export interface DaemonRunRuntimeOptions {
+  stopSignal?: AbortSignal;
+  registerProcessSignalHandlers?: boolean;
+}
 
 const DEFAULT_INTERVAL_SECONDS = 60;
 const MIN_INTERVAL_SECONDS = 1;
@@ -17,25 +21,52 @@ function parseIntervalSeconds(value: number | undefined): number {
   return value;
 }
 
-export async function daemonRunCommand(context: CommandContext, options: DaemonRunOptions) {
+export async function daemonRunCommand(
+  context: CommandContext,
+  options: DaemonRunOptions,
+  runtimeOptions: DaemonRunRuntimeOptions = {},
+) {
   const intervalSeconds = parseIntervalSeconds(options.interval);
   const intervalMs = intervalSeconds * 1000;
+  const registerProcessSignalHandlers = runtimeOptions.registerProcessSignalHandlers ?? true;
 
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  let resolveStop: () => void;
 
   const stop = new Promise<void>((resolve) => {
-    resolveStop = resolve;
+    let settled = false;
+
+    const onAbort = () => {
+      cleanup();
+    };
+
     const cleanup = () => {
-      process.removeListener('SIGINT', cleanup);
-      process.removeListener('SIGTERM', cleanup);
+      if (settled) {
+        return;
+      }
+      settled = true;
+
+      if (registerProcessSignalHandlers) {
+        process.removeListener('SIGINT', cleanup);
+        process.removeListener('SIGTERM', cleanup);
+      }
+      runtimeOptions.stopSignal?.removeEventListener('abort', onAbort);
       if (timeoutId !== undefined) {
         clearTimeout(timeoutId);
       }
       resolve();
     };
-    process.on('SIGINT', cleanup);
-    process.on('SIGTERM', cleanup);
+
+    if (registerProcessSignalHandlers) {
+      process.on('SIGINT', cleanup);
+      process.on('SIGTERM', cleanup);
+    }
+
+    if (runtimeOptions.stopSignal?.aborted) {
+      cleanup();
+      return;
+    }
+
+    runtimeOptions.stopSignal?.addEventListener('abort', onAbort);
   });
 
   writeCommandSuccess(context, {
