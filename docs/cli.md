@@ -52,7 +52,7 @@ Options:
 -- `--source <cli|daemon|reconcile>`: record where the heartbeat came from
 -- `--json`: render machine-readable session output
 
-### `threadloop session reconcile --session <id> [--json]`
+### `threadloop session reconcile (--session <id> | --all) [--json]`
 Refreshes Git-derived metadata for one or more sessions without creating semantic entries. Updates branch, head SHA, changed files, diff stats, and commit range.
 
 Options:
