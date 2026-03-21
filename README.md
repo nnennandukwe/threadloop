@@ -51,7 +51,7 @@ Legacy repos with `.threadloop/state/state.json` migrate into SQLite on first in
 ## Install
 
 Prerequisites:
-- Node 22+
+- Node 22.5.0 or newer
 - a Git repository
 
 ```bash
@@ -194,22 +194,6 @@ Supported entry kinds:
 - `handoff`: current-state handoff note
 
 Example artifacts live in `examples/`.
-
-## Coast workflow
-
-This project uses Coast for runtime verification.
-
-Typical commands:
-
-```bash
-coast lookup
-coast start dev-1
-coast exec dev-1 -- sh -c "npm ci"
-coast exec dev-1 -- sh -c "npm run test"
-coast exec dev-1 -- sh -c "npm run build"
-```
-
-ThreadLoop now uses Node's built-in SQLite support, so the CLI can run natively on macOS without rebuilding a native addon when switching between the host and Coast.
 
 ## Development
 

@@ -1,7 +1,0 @@
-[coast]
-name = "threadloop"
-runtime = "dind"
-autostart = false
-
-[coast.setup]
-packages = ["nodejs", "npm", "git", "bash"]
