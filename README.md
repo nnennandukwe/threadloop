@@ -124,9 +124,9 @@ What is implemented now:
 - explicit `session` namespace commands
 - compatibility wrappers that safely fail on ambiguous multi-session state
 - `--json` machine-output contract for session commands and legacy wrappers
+- protocol print / published agent-mode contract
 
 What is not implemented yet in this slice:
-- protocol print / published agent-mode contract
 - reconcile/daemon-backed DB workflows
 - concurrency hardening for fully autonomous use
 
@@ -139,6 +139,7 @@ session_id="session_123" # replace with the session_id returned from session sta
 npx threadloop session capture decision "Retry only idempotent jobs" --session "$session_id" --because "Non-idempotent replay is unsafe"
 npx threadloop session capture validation "Ran targeted tests for retry backoff and cancellation" --session "$session_id"
 npx threadloop status --session "$session_id" --json
+npx threadloop protocol --json
 npx threadloop artifact generate change-brief --session "$session_id"
 npx threadloop finish --session "$session_id" --json
 ```

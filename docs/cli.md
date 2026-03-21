@@ -93,6 +93,15 @@ Options:
 -- `--session <id>`: target a specific session when more than one is active
 -- `--json`: render machine-readable command output
 
+### `threadloop protocol [--json]`
+Prints the agent integration contract derived from the current CLI configuration.
+
+The JSON payload includes:
+- supported environment variables used by the CLI contract
+- command usages derived from the registered command tree
+- capture kinds and artifact kinds sourced from runtime constants
+- truthful notes about JSON support and session targeting behavior
+
 ## Storage
 
 ThreadLoop stores state locally in the repo:
