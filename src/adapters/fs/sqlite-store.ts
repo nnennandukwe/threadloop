@@ -159,7 +159,7 @@ export async function appendEntryToActiveSession(
     return runInImmediateTransaction(db, () => {
       const active = readActiveStateRow(db);
       if (!active) {
-        throw new Error('No active session in this repo. Start one with `threadloop start`.');
+        throw new Error('No active session in this repo. Start one with `threadloop session start`.');
       }
 
       return appendEntry(db, active.session_id, draft);
@@ -201,7 +201,7 @@ export async function completeActiveSession(repoRoot: string, endedAt: string): 
     return runInImmediateTransaction(db, () => {
       const active = readActiveStateRow(db);
       if (!active) {
-        throw new Error('No active session in this repo. Start one with `threadloop start`.');
+        throw new Error('No active session in this repo. Start one with `threadloop session start`.');
       }
 
       return completeSession(db, active.session_id, active.task_id, endedAt);

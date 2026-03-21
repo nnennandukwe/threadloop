@@ -17,7 +17,7 @@ export async function sessionStatusCommand(context: CommandContext, options: Ses
   // For legacy convenience commands, fail safely when zero sessions match
   if (!result.active && !sessionId && allowLegacySingleActive) {
     throw new ThreadloopError('SESSION_REQUIRED', 'No active session.', {
-      details: { hint: 'Start a session with threadloop session start.' },
+      details: { hint: 'Start one with `threadloop session start`.' },
     });
   }
 

@@ -403,7 +403,7 @@ function resolveSessionFromState(state: StateData, selector: SessionSelector): R
   }
 
   if (state.activeSessions.length === 0) {
-    throw new ThreadloopError('SESSION_REQUIRED', 'No active session exists in this repo. Start one with `threadloop start`.', {
+    throw new ThreadloopError('SESSION_REQUIRED', 'No active session exists in this repo. Start one with `threadloop session start`.', {
       details: { activeSessions: 0 },
     });
   }

@@ -380,13 +380,9 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
   it('fails with SESSION_REQUIRED when legacy status has no active session', async () => {
     await runCli(repoDir, ['init']);
 
-    try {
-      await runCli(repoDir, ['status']);
-      throw new Error('Expected status to fail with SESSION_REQUIRED');
-    } catch (error) {
-      const failure = error as Error & { stderr?: string };
-      expect(failure.stderr).toContain('threadloop [SESSION_REQUIRED]: No active session.');
-    }
+    const failure = await runCliFailure(repoDir, ['status']);
+    expect(failure.stderr).toContain('threadloop [SESSION_REQUIRED]: No active session.');
+    expect(failure.stderr).toContain('Hint: Start one with `threadloop session start`.');
   });
 
   it('supports legacy wrapper commands with explicit session targeting and json envelopes', async () => {
@@ -631,11 +627,24 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     }
   });
 
+  it('renders actionable text hints for session-required failures', async () => {
+    await runCli(repoDir, ['init']);
+
+    const statusFailure = await runCliFailure(repoDir, ['session', 'status']);
+    expect(statusFailure.stderr).toContain('threadloop [SESSION_REQUIRED]: A session id is required for this command.');
+    expect(statusFailure.stderr).toContain('Hint: Pass --session <id>.');
+
+    const captureFailure = await runCliFailure(repoDir, ['session', 'capture', 'note', 'Need a session first']);
+    expect(captureFailure.stderr).toContain('threadloop [SESSION_REQUIRED]: A session id is required for this command.');
+    expect(captureFailure.stderr).toContain('Hint: Pass --session <id>.');
+  });
+
   it('renders current session commands in help output', async () => {
     const rootHelp = await runCli(repoDir, ['--help']);
     expect(rootHelp.stdout).toContain('session');
     expect(rootHelp.stdout).toContain('artifact');
     expect(rootHelp.stdout).toContain('start');
+    expect(rootHelp.stderr).toBe('');
 
     const startHelp = await runCli(repoDir, ['start', '--help']);
     expect(startHelp.stdout).toContain('--json');
@@ -651,6 +660,7 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     const artifactHelp = await runCli(repoDir, ['artifact', 'generate', '--help']);
     expect(artifactHelp.stdout).toContain('--session <id>');
     expect(artifactHelp.stdout).toContain('--json');
+    expect(artifactHelp.stderr).toBe('');
 
     const finishHelp = await runCli(repoDir, ['finish', '--help']);
     expect(finishHelp.stdout).toContain('--session <id>');
@@ -668,6 +678,7 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     expect(sessionStartHelp.stdout).toContain('--json');
     expect(sessionStartHelp.stdout).toContain('--goal <goal>');
     expect(sessionStartHelp.stdout).toContain('--constraint <constraint...>');
+    expect(sessionStartHelp.stderr).toBe('');
   });
 
   it('renders a derived protocol contract in json mode', async () => {

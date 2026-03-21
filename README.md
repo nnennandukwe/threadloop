@@ -16,7 +16,7 @@ It is:
 
 ## Current command surfaces
 
-Primary session contract:
+Canonical session contract:
 - `threadloop session start <title> --goal <goal> [--json]`
 - `threadloop session list [--json]`
 - `threadloop session status --session <id> [--json]`
@@ -141,10 +141,10 @@ npx threadloop session start "Add retry logic to job runner" --goal "Reduce tran
 session_id="session_123" # replace with the session_id returned from session start
 npx threadloop session capture decision "Retry only idempotent jobs" --session "$session_id" --because "Non-idempotent replay is unsafe"
 npx threadloop session capture validation "Ran targeted tests for retry backoff and cancellation" --session "$session_id"
-npx threadloop status --session "$session_id" --json
+npx threadloop session status --session "$session_id" --json
 npx threadloop protocol --json
 npx threadloop artifact generate change-brief --session "$session_id"
-npx threadloop finish --session "$session_id" --json
+npx threadloop session finish --session "$session_id" --json
 ```
 
 ## Autonomous agent mode
@@ -216,12 +216,13 @@ ThreadLoop now uses Node's built-in SQLite support, so the CLI can run natively 
 ```bash
 npm run test
 npm run build
-npm run smoke:pack`
+npm run smoke:pack
 ```
 
 ## Notes
 
 - ThreadLoop requires a Git repository.
+- Prefer `threadloop session ...` commands for explicit session work.
 - Compatibility root `start` keeps one active session per repo.
 - Compatibility root `capture`, `artifact generate`, and `finish` work without `--session` only when exactly one active session exists.
 - Compatibility root `status` fails with `SESSION_REQUIRED` when zero sessions match.

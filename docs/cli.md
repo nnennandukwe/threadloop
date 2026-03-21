@@ -1,6 +1,6 @@
 # ThreadLoop CLI
 
-ThreadLoop is a repo-local CLI for preserving task intent, decisions, risks, validation notes, and reviewer guidance while you work.
+ThreadLoop is a repo-local CLI for preserving task intent, decisions, risks, validation notes, and reviewer guidance while you work. The canonical operator surface is session-first; root commands remain only for compatibility.
 
 ## Commands
 
@@ -79,7 +79,7 @@ Behavior:
 
 ### Legacy compatibility commands
 
-ThreadLoop still accepts the root commands below for compatibility while the namespaced session contract is the primary operator surface:
+ThreadLoop still accepts the root commands below for compatibility. Prefer the session-first commands above for explicit session work:
 
 - `threadloop start <title> [--json]`
 - `threadloop capture <kind> [text] [--session <id>] [--json]`
@@ -96,7 +96,7 @@ Compatibility rules:
 - pass `--session <id>` or use the `threadloop session ...` forms for deterministic targeting
 
 ### `threadloop artifact generate [kind]`
-Renders a Markdown artifact from the active session.
+Renders a Markdown artifact from the active session. Use `--session <id>` for deterministic targeting.
 
 Kinds:
 -- `change-brief` (default)
@@ -143,7 +143,7 @@ For automation, prefer:
 - explicit `--session <id>` on every session-scoped call
 - one autonomous task per checkout or Git worktree
 
-Legacy root commands are still available for human compatibility, but they can fail with `SESSION_REQUIRED` or `SESSION_AMBIGUOUS` in multi-session repos.
+Legacy root commands are still available for human compatibility, but they can fail with `SESSION_REQUIRED` or `SESSION_AMBIGUOUS` in multi-session repos and should not be treated as the default workflow.
 
 `session heartbeat`, `session reconcile`, and `daemon run` are mechanical operations. They refresh state but do not create semantic entries. Use `session capture` for decisions, risks, validation, and reviewer guidance.
 

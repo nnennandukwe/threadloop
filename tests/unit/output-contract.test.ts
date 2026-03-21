@@ -29,7 +29,17 @@ describe('output contract', () => {
     );
   });
 
-  it('renders stable text failures with public codes', () => {
+  it('renders stable text failures with hint details', () => {
+    expect(renderCommandFailure('session status', {
+      code: 'SESSION_REQUIRED',
+      message: 'A session id is required for this command.',
+      details: { hint: 'Pass --session <id>.' },
+    }, false)).toBe(
+      'threadloop [SESSION_REQUIRED]: A session id is required for this command.\nHint: Pass --session <id>.',
+    );
+  });
+
+  it('renders stable text failures without hints as a single line', () => {
     expect(renderCommandFailure('session capture', {
       code: 'SESSION_NOT_FOUND',
       message: 'Could not find active session: session_missing',
