@@ -20,6 +20,9 @@ const CURRENT_SCHEMA_VERSION = 1;
 const INVALID_CONFIG_ERROR = 'Invalid .threadloop/config.json';
 const INVALID_STATE_JSON_ERROR = 'Invalid .threadloop/state/state.json';
 const INVALID_STATE_DB_ERROR = 'Invalid .threadloop/state/state.db';
+const SQLITE_BUSY_TIMEOUT_MS = 10_000;
+const SQLITE_LOCK_RETRY_DELAYS_MS = [25, 50, 100, 200, 400, 800];
+const SQLITE_LOCK_SLEEP_BUFFER = new Int32Array(new SharedArrayBuffer(4));
 
 class InvalidJsonError extends Error {}
 
@@ -91,9 +94,16 @@ export async function ensureStateDatabase(repoRoot: string) {
 
   const db = openDatabase(repoRoot);
   try {
+    if (!databaseNeedsSetup(db, repoRoot)) {
+      return;
+    }
+
+    db.exec('PRAGMA journal_mode = WAL');
     bootstrapDatabase(db);
     assertSchemaVersion(db);
-    runPendingMigrations(db, repoRoot);
+    runInImmediateTransaction(db, () => {
+      runPendingMigrations(db, repoRoot);
+    });
   } finally {
     db.close();
   }
@@ -339,10 +349,64 @@ function openDatabase(repoRoot: string) {
   const { stateDbPath } = threadloopPaths(repoRoot);
   const db = new DatabaseSync(stateDbPath, {
     enableForeignKeyConstraints: true,
-    timeout: 5000,
   });
-  db.exec('PRAGMA journal_mode = WAL');
+  db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
   return db;
+}
+
+function databaseNeedsSetup(db: DatabaseSync, repoRoot: string) {
+  if (!tableExists(db, 'metadata')) {
+    return true;
+  }
+
+  const rawVersion = readTextValue(db, `SELECT value FROM metadata WHERE key = 'schema_version'`, 'value');
+  if (!rawVersion || Number(rawVersion) !== CURRENT_SCHEMA_VERSION) {
+    return true;
+  }
+
+  const requiredTables = [
+    'tasks',
+    'sessions',
+    'entries',
+    'artifacts',
+    'active_state',
+    'active_sessions',
+    'repo_snapshots',
+  ];
+
+  if (requiredTables.some((table) => !tableExists(db, table))) {
+    return true;
+  }
+
+  const sessionColumns = new Set((db.prepare(`PRAGMA table_info(sessions)`).all() as Array<{ name: string }>).map((column) => column.name));
+  if (!sessionColumns.has('last_heartbeat_at') || !sessionColumns.has('last_heartbeat_source')) {
+    return true;
+  }
+
+  const activeState = readActiveStateRow(db);
+  const activeSessions = readActiveSessionRows(db);
+  if (activeSessions.length === 0) {
+    if (activeState) {
+      return true;
+    }
+  } else if (activeSessions.length === 1) {
+    const [activeSession] = activeSessions;
+    if (!activeState || activeState.session_id !== activeSession.session_id || activeState.task_id !== activeSession.task_id) {
+      return true;
+    }
+  } else if (activeState) {
+    return true;
+  }
+
+  const { statePath } = threadloopPaths(repoRoot);
+  return existsSync(statePath) && databaseIsEmpty(db);
+}
+
+function tableExists(db: DatabaseSync, tableName: string) {
+  const row = db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`).get(tableName) as
+    | { name: string }
+    | undefined;
+  return row?.name === tableName;
 }
 
 function bootstrapDatabase(db: DatabaseSync) {
@@ -445,11 +509,9 @@ function ensureSessionHeartbeatColumns(db: DatabaseSync) {
 }
 
 function runPendingMigrations(db: DatabaseSync, repoRoot: string) {
-  runInImmediateTransaction(db, () => {
-    ensureSessionHeartbeatColumns(db);
-    migrateActiveStateRegistry(db);
-    migrateLegacyJsonState(db, repoRoot);
-  });
+  ensureSessionHeartbeatColumns(db);
+  migrateActiveStateRegistry(db);
+  migrateLegacyJsonState(db, repoRoot);
 }
 
 function migrateActiveStateRegistry(db: DatabaseSync) {
@@ -798,18 +860,50 @@ async function writeJson(filePath: string, value: unknown) {
 }
 
 function runInImmediateTransaction<T>(db: DatabaseSync, action: () => T): T {
-  db.exec('BEGIN IMMEDIATE');
+  for (let attempt = 0; attempt <= SQLITE_LOCK_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      db.exec('BEGIN IMMEDIATE');
 
-  try {
-    const result = action();
-    db.exec('COMMIT');
-    return result;
-  } catch (error) {
-    if (db.isTransaction) {
-      db.exec('ROLLBACK');
+      try {
+        const result = action();
+        db.exec('COMMIT');
+        return result;
+      } catch (error) {
+        if (db.isTransaction) {
+          db.exec('ROLLBACK');
+        }
+        throw error;
+      }
+    } catch (error) {
+      if (db.isTransaction) {
+        db.exec('ROLLBACK');
+      }
+
+      if (!isSqliteLockError(error) || attempt === SQLITE_LOCK_RETRY_DELAYS_MS.length) {
+        throw error;
+      }
+
+      sleepForSqliteRetry(SQLITE_LOCK_RETRY_DELAYS_MS[attempt]);
     }
-    throw error;
   }
+
+  throw new Error('Unreachable SQLite transaction retry state.');
+}
+
+function isSqliteLockError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+  return message.includes('database is locked')
+    || message.includes('database table is locked')
+    || message.includes('database schema is locked')
+    || message.includes('database busy');
+}
+
+function sleepForSqliteRetry(delayMs: number) {
+  Atomics.wait(SQLITE_LOCK_SLEEP_BUFFER, 0, 0, delayMs);
 }
 
 function readNumericValue(db: DatabaseSync, sql: string, column: string) {
