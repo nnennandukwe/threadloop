@@ -355,7 +355,7 @@ function getWriteDatabase(repoRoot: string, state: RepoConnectionState) {
 
 async function withSerializedWriteAccess<T>(
   repoRoot: string,
-  action: (db: DatabaseSync, state: RepoConnectionState) => T,
+  action: (db: DatabaseSync, state: RepoConnectionState) => T | Promise<T>,
 ): Promise<T> {
   const state = getRepoConnectionState(repoRoot);
   const previous = state.pendingWrite;
@@ -367,7 +367,8 @@ async function withSerializedWriteAccess<T>(
   await previous.catch(() => {});
 
   try {
-    return action(getWriteDatabase(repoRoot, state), state);
+    const result = await action(getWriteDatabase(repoRoot, state), state);
+    return result;
   } finally {
     release?.();
   }
