@@ -35,6 +35,12 @@ type RepoConnectionState = {
   pendingWrite: Promise<void>;
 };
 
+type SqliteError = Error & {
+  code?: string;
+  errcode?: number;
+  errstr?: string;
+};
+
 type TaskRow = {
   id: string;
   title: string;
@@ -399,9 +405,21 @@ function ensureDatabaseReady(db: DatabaseSync, state: RepoConnectionState, repoR
     });
     state.setup = { status: 'ready' };
   } catch (error) {
-    state.setup = { status: 'failed', error };
+    state.setup = isTransientSqliteSetupError(error)
+      ? { status: 'unknown' }
+      : { status: 'failed', error };
     throw error;
   }
+}
+
+function isTransientSqliteSetupError(error: unknown): error is SqliteError {
+  return isSqliteError(error)
+    && error.errcode === 5
+    && error.errstr === 'database is locked';
+}
+
+function isSqliteError(error: unknown): error is SqliteError {
+  return error instanceof Error && (error as SqliteError).code === 'ERR_SQLITE_ERROR';
 }
 
 function databaseNeedsSetup(db: DatabaseSync, repoRoot: string) {
