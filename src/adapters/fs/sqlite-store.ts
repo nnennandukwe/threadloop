@@ -297,7 +297,7 @@ export async function readRepoSnapshot(repoRoot: string, sessionId: string) {
   }
 }
 
-export function closeSqliteConnections(repoRoot?: string) {
+export async function closeSqliteConnections(repoRoot?: string) {
   const repoRoots = repoRoot ? [repoRoot] : Array.from(repoConnections.keys());
 
   for (const currentRepoRoot of repoRoots) {
@@ -306,13 +306,14 @@ export function closeSqliteConnections(repoRoot?: string) {
       continue;
     }
 
+    await state.pendingWrite.catch(() => {});
     state.writer?.close();
     repoConnections.delete(currentRepoRoot);
   }
 }
 
-export function resetSqliteConnections(repoRoot?: string) {
-  closeSqliteConnections(repoRoot);
+export async function resetSqliteConnections(repoRoot?: string) {
+  await closeSqliteConnections(repoRoot);
 }
 
 function openWriteDatabase(repoRoot: string) {
