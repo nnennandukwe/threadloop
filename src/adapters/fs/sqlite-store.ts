@@ -21,10 +21,25 @@ const INVALID_CONFIG_ERROR = 'Invalid .threadloop/config.json';
 const INVALID_STATE_JSON_ERROR = 'Invalid .threadloop/state/state.json';
 const INVALID_STATE_DB_ERROR = 'Invalid .threadloop/state/state.db';
 const SQLITE_BUSY_TIMEOUT_MS = 10_000;
-const SQLITE_LOCK_RETRY_DELAYS_MS = [25, 50, 100, 200, 400, 800];
-const SQLITE_LOCK_SLEEP_BUFFER = new Int32Array(new SharedArrayBuffer(4));
 
 class InvalidJsonError extends Error {}
+
+type SetupState =
+  | { status: 'unknown' }
+  | { status: 'ready' }
+  | { status: 'failed'; error: unknown };
+
+type RepoConnectionState = {
+  writer: DatabaseSync | null;
+  setup: SetupState;
+  pendingWrite: Promise<void>;
+};
+
+type SqliteError = Error & {
+  code?: string;
+  errcode?: number;
+  errstr?: string;
+};
 
 type TaskRow = {
   id: string;
@@ -78,6 +93,8 @@ type ActiveSessionRow = {
   session_id: string;
 };
 
+const repoConnections = new Map<string, RepoConnectionState>();
+
 export function createId(prefix: string) {
   return `${prefix}_${randomUUID()}`;
 }
@@ -91,22 +108,13 @@ export async function ensureThreadloopLayout(repoRoot: string) {
 
 export async function ensureStateDatabase(repoRoot: string) {
   await ensureThreadloopLayout(repoRoot);
-
-  const db = openDatabase(repoRoot);
-  try {
-    if (!databaseNeedsSetup(db, repoRoot)) {
-      return;
-    }
-
-    db.exec('PRAGMA journal_mode = WAL');
-    bootstrapDatabase(db);
-    assertSchemaVersion(db);
-    runInImmediateTransaction(db, () => {
-      runPendingMigrations(db, repoRoot);
-    });
-  } finally {
-    db.close();
+  if (getRepoConnectionState(repoRoot).setup.status === 'ready') {
+    return;
   }
+
+  await withSerializedWriteAccess(repoRoot, (db, state) => {
+    ensureDatabaseReady(db, state, repoRoot);
+  });
 }
 
 export async function writeConfig(repoRoot: string, config: ThreadloopConfig) {
@@ -127,7 +135,7 @@ export async function readConfig(repoRoot: string): Promise<ThreadloopConfig> {
 export async function readState(repoRoot: string): Promise<StateData> {
   await ensureStateDatabase(repoRoot);
 
-  const db = openDatabase(repoRoot);
+  const db = openReadDatabase(repoRoot);
   try {
     const state = loadState(db);
     const parsed = stateDataSchema.safeParse(state);
@@ -141,113 +149,67 @@ export async function readState(repoRoot: string): Promise<StateData> {
 }
 
 export async function insertTaskSession(repoRoot: string, payload: { task: Task; session: Session; intentEntry: Entry }) {
-  await ensureStateDatabase(repoRoot);
-
-  const db = openDatabase(repoRoot);
-  try {
-    runInImmediateTransaction(db, () => {
+  await withWriteTransaction(repoRoot, (db) => {
       const { task, session, intentEntry } = payload;
       insertTask(db, task);
       insertSession(db, session);
       insertEntry(db, intentEntry);
       insertActiveSession(db, { taskId: task.id, sessionId: session.id });
       syncActiveStateCompat(db);
-    });
-  } finally {
-    db.close();
-  }
+  });
 }
 
 export async function appendEntryToActiveSession(
   repoRoot: string,
   draft: Omit<Entry, 'sessionId'>,
 ): Promise<Entry> {
-  await ensureStateDatabase(repoRoot);
-
-  const db = openDatabase(repoRoot);
-  try {
-    return runInImmediateTransaction(db, () => {
+  return withWriteTransaction(repoRoot, (db) => {
       const active = readActiveStateRow(db);
       if (!active) {
         throw new Error('No active session in this repo. Start one with `threadloop session start`.');
       }
 
       return appendEntry(db, active.session_id, draft);
-    });
-  } finally {
-    db.close();
-  }
+  });
 }
 
 export async function appendEntryToSession(repoRoot: string, sessionId: string, draft: Omit<Entry, 'sessionId'>) {
-  await ensureStateDatabase(repoRoot);
-
-  const db = openDatabase(repoRoot);
-  try {
-    return runInImmediateTransaction(db, () => appendEntry(db, sessionId, draft));
-  } finally {
-    db.close();
-  }
+  return withWriteTransaction(repoRoot, (db) => appendEntry(db, sessionId, draft));
 }
 
 export async function recordArtifact(repoRoot: string, artifact: Artifact) {
-  await ensureStateDatabase(repoRoot);
-
-  const db = openDatabase(repoRoot);
-  try {
-    runInImmediateTransaction(db, () => {
-      insertArtifact(db, artifact);
-    });
-  } finally {
-    db.close();
-  }
+  await withWriteTransaction(repoRoot, (db) => {
+    insertArtifact(db, artifact);
+  });
 }
 
 export async function completeActiveSession(repoRoot: string, endedAt: string): Promise<ActiveState> {
-  await ensureStateDatabase(repoRoot);
-
-  const db = openDatabase(repoRoot);
-  try {
-    return runInImmediateTransaction(db, () => {
+  return withWriteTransaction(repoRoot, (db) => {
       const active = readActiveStateRow(db);
       if (!active) {
         throw new Error('No active session in this repo. Start one with `threadloop session start`.');
       }
 
       return completeSession(db, active.session_id, active.task_id, endedAt);
-    });
-  } finally {
-    db.close();
-  }
+  });
 }
 
 export async function completeSessionById(repoRoot: string, sessionId: string, endedAt: string): Promise<ActiveState> {
-  await ensureStateDatabase(repoRoot);
-
-  const db = openDatabase(repoRoot);
-  try {
-    return runInImmediateTransaction(db, () => {
+  return withWriteTransaction(repoRoot, (db) => {
       const session = readSessionRow(db, sessionId);
       if (!session) {
         throw new Error(`Unknown session id: ${sessionId}`);
       }
 
       return completeSession(db, session.id, session.task_id, endedAt);
-    });
-  } finally {
-    db.close();
-  }
+  });
 }
 
 export async function recordSessionHeartbeat(
   repoRoot: string,
   payload: { sessionId: string; branch: string; headSha: string; lastHeartbeatAt: string; source: HeartbeatSource },
 ) {
-  await ensureStateDatabase(repoRoot);
-
-  const db = openDatabase(repoRoot);
-  try {
-    runInImmediateTransaction(db, () => {
+  await withWriteTransaction(repoRoot, (db) => {
       const session = readSessionRow(db, payload.sessionId);
       if (!session) {
         throw new Error(`Unknown session id: ${payload.sessionId}`);
@@ -260,10 +222,7 @@ export async function recordSessionHeartbeat(
           WHERE id = ?
         `,
       ).run(payload.branch, payload.headSha, payload.lastHeartbeatAt, payload.source, payload.sessionId);
-    });
-  } finally {
-    db.close();
-  }
+  });
 }
 
 export async function writeArtifactFile(repoRoot: string, filename: string, content: string) {
@@ -287,11 +246,7 @@ export async function upsertRepoSnapshot(
     reconciledAt: string;
   },
 ) {
-  await ensureStateDatabase(repoRoot);
-
-  const db = openDatabase(repoRoot);
-  try {
-    runInImmediateTransaction(db, () => {
+  await withWriteTransaction(repoRoot, (db) => {
       db.prepare(
         `
           INSERT OR REPLACE INTO repo_snapshots (session_id, branch, head_sha, base_ref, changed_files_json, diff_stats_json, commit_range_json, reconciled_at)
@@ -307,16 +262,13 @@ export async function upsertRepoSnapshot(
         JSON.stringify(snapshot.commitRange),
         snapshot.reconciledAt,
       );
-    });
-  } finally {
-    db.close();
-  }
+  });
 }
 
 export async function readRepoSnapshot(repoRoot: string, sessionId: string) {
   await ensureStateDatabase(repoRoot);
 
-  const db = openDatabase(repoRoot);
+  const db = openReadDatabase(repoRoot);
   try {
     const row = db.prepare(
       `
@@ -345,13 +297,131 @@ export async function readRepoSnapshot(repoRoot: string, sessionId: string) {
   }
 }
 
-function openDatabase(repoRoot: string) {
+export async function closeSqliteConnections(repoRoot?: string) {
+  const repoRoots = repoRoot ? [repoRoot] : Array.from(repoConnections.keys());
+
+  for (const currentRepoRoot of repoRoots) {
+    const state = repoConnections.get(currentRepoRoot);
+    if (!state) {
+      continue;
+    }
+
+    await state.pendingWrite.catch(() => {});
+    state.writer?.close();
+    repoConnections.delete(currentRepoRoot);
+  }
+}
+
+export async function resetSqliteConnections(repoRoot?: string) {
+  await closeSqliteConnections(repoRoot);
+}
+
+function openWriteDatabase(repoRoot: string) {
   const { stateDbPath } = threadloopPaths(repoRoot);
   const db = new DatabaseSync(stateDbPath, {
     enableForeignKeyConstraints: true,
   });
   db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
   return db;
+}
+
+function openReadDatabase(repoRoot: string) {
+  const { stateDbPath } = threadloopPaths(repoRoot);
+  const db = new DatabaseSync(stateDbPath, { readOnly: true });
+  db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+  return db;
+}
+
+function getRepoConnectionState(repoRoot: string) {
+  let state = repoConnections.get(repoRoot);
+  if (!state) {
+    state = {
+      writer: null,
+      setup: { status: 'unknown' },
+      pendingWrite: Promise.resolve(),
+    };
+    repoConnections.set(repoRoot, state);
+  }
+
+  return state;
+}
+
+function getWriteDatabase(repoRoot: string, state: RepoConnectionState) {
+  if (!state.writer) {
+    state.writer = openWriteDatabase(repoRoot);
+  }
+
+  return state.writer;
+}
+
+async function withSerializedWriteAccess<T>(
+  repoRoot: string,
+  action: (db: DatabaseSync, state: RepoConnectionState) => T | Promise<T>,
+): Promise<T> {
+  const state = getRepoConnectionState(repoRoot);
+  const previous = state.pendingWrite;
+  let release: (() => void) | undefined;
+  state.pendingWrite = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  await previous.catch(() => {});
+
+  try {
+    const result = await action(getWriteDatabase(repoRoot, state), state);
+    return result;
+  } finally {
+    release?.();
+  }
+}
+
+async function withWriteTransaction<T>(repoRoot: string, action: (db: DatabaseSync) => T): Promise<T> {
+  await ensureThreadloopLayout(repoRoot);
+
+  return withSerializedWriteAccess(repoRoot, (db, state) => {
+    ensureDatabaseReady(db, state, repoRoot);
+    return runInImmediateTransaction(db, () => action(db));
+  });
+}
+
+function ensureDatabaseReady(db: DatabaseSync, state: RepoConnectionState, repoRoot: string) {
+  if (state.setup.status === 'ready') {
+    return;
+  }
+
+  if (state.setup.status === 'failed') {
+    throw state.setup.error;
+  }
+
+  try {
+    if (!databaseNeedsSetup(db, repoRoot)) {
+      state.setup = { status: 'ready' };
+      return;
+    }
+
+    db.exec('PRAGMA journal_mode = WAL');
+    bootstrapDatabase(db);
+    assertSchemaVersion(db);
+    runInImmediateTransaction(db, () => {
+      runPendingMigrations(db, repoRoot);
+    });
+    state.setup = { status: 'ready' };
+  } catch (error) {
+    state.setup = isTransientSqliteSetupError(error)
+      ? { status: 'unknown' }
+      : { status: 'failed', error };
+    throw error;
+  }
+}
+
+function isTransientSqliteSetupError(error: unknown): error is SqliteError {
+  return isSqliteError(error)
+    && error.errcode === 5
+    && error.errstr === 'database is locked';
+}
+
+function isSqliteError(error: unknown): error is SqliteError {
+  return error instanceof Error && (error as SqliteError).code === 'ERR_SQLITE_ERROR';
 }
 
 function databaseNeedsSetup(db: DatabaseSync, repoRoot: string) {
@@ -860,50 +930,18 @@ async function writeJson(filePath: string, value: unknown) {
 }
 
 function runInImmediateTransaction<T>(db: DatabaseSync, action: () => T): T {
-  for (let attempt = 0; attempt <= SQLITE_LOCK_RETRY_DELAYS_MS.length; attempt += 1) {
-    try {
-      db.exec('BEGIN IMMEDIATE');
+  db.exec('BEGIN IMMEDIATE');
 
-      try {
-        const result = action();
-        db.exec('COMMIT');
-        return result;
-      } catch (error) {
-        if (db.isTransaction) {
-          db.exec('ROLLBACK');
-        }
-        throw error;
-      }
-    } catch (error) {
-      if (db.isTransaction) {
-        db.exec('ROLLBACK');
-      }
-
-      if (!isSqliteLockError(error) || attempt === SQLITE_LOCK_RETRY_DELAYS_MS.length) {
-        throw error;
-      }
-
-      sleepForSqliteRetry(SQLITE_LOCK_RETRY_DELAYS_MS[attempt]);
+  try {
+    const result = action();
+    db.exec('COMMIT');
+    return result;
+  } catch (error) {
+    if (db.isTransaction) {
+      db.exec('ROLLBACK');
     }
+    throw error;
   }
-
-  throw new Error('Unreachable SQLite transaction retry state.');
-}
-
-function isSqliteLockError(error: unknown) {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-
-  const message = error.message.toLowerCase();
-  return message.includes('database is locked')
-    || message.includes('database table is locked')
-    || message.includes('database schema is locked')
-    || message.includes('database busy');
-}
-
-function sleepForSqliteRetry(delayMs: number) {
-  Atomics.wait(SQLITE_LOCK_SLEEP_BUFFER, 0, 0, delayMs);
 }
 
 function readNumericValue(db: DatabaseSync, sql: string, column: string) {

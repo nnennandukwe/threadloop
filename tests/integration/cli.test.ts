@@ -5,11 +5,19 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { appendEntryToSession, createId } from '../../src/adapters/fs/sqlite-store.js';
+import * as sqliteStore from '../../src/adapters/fs/sqlite-store.js';
 import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
 import { buildProtocolContract } from '../../src/contracts/protocol.js';
 
 const execFileAsync = promisify(execFile);
+const { appendEntryToSession, createId } = sqliteStore;
+
+type SqliteStoreLifecycleHooks = typeof sqliteStore & {
+  closeSqliteConnections?: () => void | Promise<void>;
+  resetSqliteConnections?: () => void | Promise<void>;
+};
+
+const sqliteStoreLifecycle = sqliteStore as SqliteStoreLifecycleHooks;
 
 const projectRoot = process.cwd();
 const tsxCli = path.join(projectRoot, 'node_modules/tsx/dist/cli.mjs');
@@ -45,6 +53,93 @@ function readStateSnapshot(repoDir: string) {
       entryKinds: db.prepare('SELECT kind FROM entries ORDER BY rowid').all().map((row) => String(row.kind)),
       entryBodies: db.prepare('SELECT body FROM entries ORDER BY rowid').all().map((row) => String(row.body)),
     };
+  } finally {
+    db.close();
+  }
+}
+
+async function resetSqliteConnectionLifecycle() {
+  const { closeSqliteConnections, resetSqliteConnections } = sqliteStoreLifecycle;
+
+  if (typeof closeSqliteConnections !== 'function') {
+    throw new Error('Expected sqlite store to export closeSqliteConnections for lifecycle coverage.');
+  }
+
+  if (typeof resetSqliteConnections !== 'function') {
+    throw new Error('Expected sqlite store to export resetSqliteConnections for lifecycle coverage.');
+  }
+
+  await Promise.resolve(closeSqliteConnections());
+  await Promise.resolve(resetSqliteConnections());
+}
+
+async function runConcurrentMutationBurst(repoDir: string, sessionId: string, label: string) {
+  const captureBodies = Array.from({ length: 8 }, (_, index) => `${label} capture ${index + 1}`);
+  const agentBodies = Array.from({ length: 4 }, (_, index) => `${label} agent capture ${index + 1}`);
+  const heartbeatSources = ['cli', 'daemon', 'reconcile', 'daemon'] as const;
+
+  await Promise.all([
+    ...captureBodies.map((body, index) =>
+      runCli(repoDir, [
+        'session',
+        'capture',
+        index % 2 === 0 ? 'note' : 'decision',
+        body,
+        '--session',
+        sessionId,
+        '--json',
+      ]),
+    ),
+    ...agentBodies.map((body) =>
+      appendEntryToSession(repoDir, sessionId, {
+        id: createId('entry'),
+        kind: 'note',
+        body,
+        metadata: { mode: 'agent' },
+        createdAt: new Date().toISOString(),
+        source: 'agent',
+      }),
+    ),
+    ...heartbeatSources.map((source) =>
+      runCli(repoDir, ['session', 'heartbeat', '--session', sessionId, '--source', source, '--json']),
+    ),
+    ...Array.from({ length: 4 }, () => runCli(repoDir, ['session', 'reconcile', '--session', sessionId, '--json'])),
+  ]);
+
+  const status = parseJsonOutput<{
+    data: {
+      session: { last_heartbeat_at: string | null; last_heartbeat_source: string | null };
+      entries: { count: number; kinds: Record<string, number> };
+    };
+  }>((await runCli(repoDir, ['session', 'status', '--session', sessionId, '--json'])).stdout);
+
+  expect(status.data.entries.count).toBe(1 + captureBodies.length + agentBodies.length);
+  expect(status.data.entries.kinds.intent).toBe(1);
+  expect(status.data.entries.kinds.note).toBe(4 + agentBodies.length);
+  expect(status.data.entries.kinds.decision).toBe(4);
+  expect(status.data.session.last_heartbeat_at).toBeTruthy();
+  expect(['cli', 'daemon', 'reconcile']).toContain(status.data.session.last_heartbeat_source);
+
+  const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
+  try {
+    const entries = db.prepare(`SELECT body, source FROM entries WHERE session_id = ? ORDER BY rowid`).all(sessionId) as Array<{
+      body: string;
+      source: string;
+    }>;
+    const snapshotCount = readParameterizedCount(
+      db,
+      `SELECT COUNT(*) AS count FROM repo_snapshots WHERE session_id = ?`,
+      sessionId,
+    );
+    const bodies = entries.map((entry) => entry.body);
+
+    expect(bodies).toContain(`Task started: ${label}`);
+    expect(bodies.filter((body) => captureBodies.includes(body))).toHaveLength(captureBodies.length);
+    expect(new Set(bodies.filter((body) => captureBodies.includes(body)))).toEqual(new Set(captureBodies));
+    expect(bodies.filter((body) => agentBodies.includes(body))).toHaveLength(agentBodies.length);
+    expect(new Set(bodies.filter((body) => agentBodies.includes(body)))).toEqual(new Set(agentBodies));
+    expect(entries.filter((entry) => agentBodies.includes(entry.body)).every((entry) => entry.source === 'agent')).toBe(true);
+    expect(snapshotCount).toBe(1);
   } finally {
     db.close();
   }
@@ -792,74 +887,77 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     const started = parseJsonOutput<{ data: { session_id: string } }>(
       (await runCli(repoDir, ['session', 'start', 'Concurrent flow', '--goal', 'Stress SQLite writes', '--json'])).stdout,
     );
-    const sessionId = started.data.session_id;
-    const captureBodies = Array.from({ length: 8 }, (_, index) => `Concurrent capture ${index + 1}`);
-    const agentBodies = Array.from({ length: 4 }, (_, index) => `Concurrent agent capture ${index + 1}`);
-    const heartbeatSources = ['cli', 'daemon', 'reconcile', 'daemon'] as const;
-
-    await Promise.all([
-      ...captureBodies.map((body, index) =>
-        runCli(repoDir, [
-          'session',
-          'capture',
-          index % 2 === 0 ? 'note' : 'decision',
-          body,
-          '--session',
-          sessionId,
-          '--json',
-        ])),
-      ...agentBodies.map((body) =>
-        appendEntryToSession(repoDir, sessionId, {
-          id: createId('entry'),
-          kind: 'note',
-          body,
-          metadata: { mode: 'agent' },
-          createdAt: new Date().toISOString(),
-          source: 'agent',
-        })),
-      ...heartbeatSources.map((source) =>
-        runCli(repoDir, ['session', 'heartbeat', '--session', sessionId, '--source', source, '--json'])),
-      ...Array.from({ length: 4 }, () => runCli(repoDir, ['session', 'reconcile', '--session', sessionId, '--json'])),
-    ]);
-
-    const status = parseJsonOutput<{
-      data: {
-        session: { last_heartbeat_at: string | null; last_heartbeat_source: string | null };
-        entries: { count: number; kinds: Record<string, number> };
-      };
-    }>((await runCli(repoDir, ['session', 'status', '--session', sessionId, '--json'])).stdout);
-
-    expect(status.data.entries.count).toBe(1 + captureBodies.length + agentBodies.length);
-    expect(status.data.entries.kinds.intent).toBe(1);
-    expect(status.data.entries.kinds.note).toBe(4 + agentBodies.length);
-    expect(status.data.entries.kinds.decision).toBe(4);
-    expect(status.data.session.last_heartbeat_at).toBeTruthy();
-    expect(['cli', 'daemon', 'reconcile']).toContain(status.data.session.last_heartbeat_source);
-
-    const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
-    try {
-      const entries = db.prepare(`SELECT body, source FROM entries WHERE session_id = ? ORDER BY rowid`).all(sessionId) as Array<{
-        body: string;
-        source: string;
-      }>;
-      const snapshotCount = readParameterizedCount(
-        db,
-        `SELECT COUNT(*) AS count FROM repo_snapshots WHERE session_id = ?`,
-        sessionId,
-      );
-      const bodies = entries.map((entry) => entry.body);
-
-      expect(bodies).toContain('Task started: Concurrent flow');
-      expect(bodies.filter((body) => captureBodies.includes(body))).toHaveLength(captureBodies.length);
-      expect(new Set(bodies.filter((body) => captureBodies.includes(body)))).toEqual(new Set(captureBodies));
-      expect(bodies.filter((body) => agentBodies.includes(body))).toHaveLength(agentBodies.length);
-      expect(new Set(bodies.filter((body) => agentBodies.includes(body)))).toEqual(new Set(agentBodies));
-      expect(entries.filter((entry) => agentBodies.includes(entry.body)).every((entry) => entry.source === 'agent')).toBe(true);
-      expect(snapshotCount).toBe(1);
-    } finally {
-      db.close();
-    }
+    await runConcurrentMutationBurst(repoDir, started.data.session_id, 'Concurrent flow');
   }, 15_000);
+
+  it(
+    'reopens cached sqlite handles after close/reset hooks and keeps writes working',
+    async () => {
+      await runCli(repoDir, ['init']);
+      const started = parseJsonOutput<{ data: { session_id: string } }>(
+        (await runCli(repoDir, ['session', 'start', 'Resettable flow', '--goal', 'Exercise lifecycle hooks', '--json']))
+          .stdout,
+      );
+      const sessionId = started.data.session_id;
+
+      await runCli(repoDir, ['session', 'capture', 'decision', 'First write before reset', '--session', sessionId, '--json']);
+      await resetSqliteConnectionLifecycle();
+
+      const statusAfterReset = parseJsonOutput<{
+        data: { entries: { count: number; kinds: Record<string, number> } };
+      }>((await runCli(repoDir, ['session', 'status', '--session', sessionId, '--json'])).stdout);
+
+      expect(statusAfterReset.data.entries.count).toBe(2);
+      expect(statusAfterReset.data.entries.kinds.intent).toBe(1);
+      expect(statusAfterReset.data.entries.kinds.decision).toBe(1);
+
+      await runCli(repoDir, ['session', 'capture', 'note', 'Second write after reset', '--session', sessionId, '--json']);
+      const statusAfterReuse = parseJsonOutput<{
+        data: { entries: { count: number; kinds: Record<string, number> } };
+      }>((await runCli(repoDir, ['session', 'status', '--session', sessionId, '--json'])).stdout);
+
+      expect(statusAfterReuse.data.entries.count).toBe(3);
+      expect(statusAfterReuse.data.entries.kinds.note).toBe(1);
+    },
+    15_000,
+  );
+
+  it(
+    'keeps SQLite-backed state intact across repeated concurrent mutation bursts in one process',
+    async () => {
+      await runCli(repoDir, ['init']);
+      await writeFile(path.join(repoDir, 'feature.ts'), 'export const feature = true;\n', 'utf8');
+
+      const roundCount = 2;
+      for (let round = 0; round < roundCount; round += 1) {
+        const started = parseJsonOutput<{ data: { session_id: string } }>(
+          (
+            await runCli(repoDir, [
+              'session',
+              'start',
+              `Concurrent flow ${round + 1}`,
+              '--goal',
+              'Stress SQLite writes',
+              '--json',
+            ])
+          ).stdout,
+        );
+
+        await runConcurrentMutationBurst(repoDir, started.data.session_id, `Concurrent flow ${round + 1}`);
+        await resetSqliteConnectionLifecycle();
+      }
+
+      const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
+      try {
+        expect(readScalarCount(db, 'SELECT COUNT(*) AS count FROM sessions')).toBe(roundCount);
+        expect(readScalarCount(db, 'SELECT COUNT(*) AS count FROM repo_snapshots')).toBe(roundCount);
+        expect(readScalarCount(db, 'SELECT COUNT(*) AS count FROM active_sessions')).toBe(roundCount);
+      } finally {
+        db.close();
+      }
+    },
+    30_000,
+  );
 
   it('assembles the explicit v2 flow end to end on SQLite state', async () => {
     await runCli(repoDir, ['init']);
