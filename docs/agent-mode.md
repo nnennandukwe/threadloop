@@ -146,4 +146,3 @@ Legacy root commands exist for compatibility, but automation should prefer the e
 - `.threadloop/state/` is gitignored by default.
 - `.threadloop` internal paths are excluded from artifact Git scope.
 - Legacy `.threadloop/state/state.json` data migrates to SQLite on first access and is kept as a backup file.
-- ThreadLoop relies on Node's built-in SQLite support, so switching between macOS and Coast no longer requires rebuilding a platform-specific SQLite addon.

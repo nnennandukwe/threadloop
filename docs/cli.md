@@ -148,7 +148,3 @@ Legacy root commands are still available for human compatibility, but they can f
 `session heartbeat`, `session reconcile`, and `daemon run` are mechanical operations. They refresh state but do not create semantic entries. Use `session capture` for decisions, risks, validation, and reviewer guidance.
 
 For the full orchestrator/operator workflow, see [agent-mode.md](agent-mode.md).
-
-## Coast note
-
-ThreadLoop uses Node's built-in SQLite support, so the CLI can run on the host or in Coast without rebuilding a platform-specific SQLite addon between environments.
