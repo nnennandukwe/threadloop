@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -512,6 +512,55 @@ describe('session gate run', { timeout: 20_000 }, () => {
     },
   );
 
+  it('binds an invalidated receipt to the pre-run commit when post-run Git observation fails', async () => {
+    const repoDir = await makeCommittedRepo();
+    const sessionId = await startFramedSession(repoDir);
+    await recordProofPlan(
+      repoDir,
+      sessionId,
+      proofPlan(['node', '-e', 'require("node:fs").renameSync(".git/HEAD", ".git/HEAD.saved")']),
+    );
+    await forceVerifying(repoDir);
+    const headPath = path.join(repoDir, '.git', 'HEAD');
+    const savedHeadPath = path.join(repoDir, '.git', 'HEAD.saved');
+
+    const gateRun = await (async () => {
+      try {
+        return await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json']);
+      } finally {
+        await rename(savedHeadPath, headPath);
+      }
+    })();
+    const result = parseJson<{
+      data: {
+        receipt: {
+          result: string;
+          head_before: string;
+          head_after: string;
+          clean_after: boolean;
+        };
+      };
+    }>(gateRun.stdout);
+
+    expect(result.data.receipt).toMatchObject({
+      result: 'invalidated',
+      head_after: result.data.receipt.head_before,
+      clean_after: false,
+    });
+    expect(result.data.receipt.head_after).toMatch(/^[a-f0-9]{40}$/);
+
+    const next = parseJson<{
+      data: {
+        candidate: { target_state: string; executable: boolean };
+        proof: { status: string };
+      };
+    }>((await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout);
+    expect(next.data).toMatchObject({
+      candidate: { target_state: 'repairing', executable: true },
+      proof: { status: 'failed' },
+    });
+  });
+
   it('assigns deterministic distinct receipt sequences to concurrent completions', async () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
@@ -588,6 +637,47 @@ describe('session gate run', { timeout: 20_000 }, () => {
 });
 
 describe('proof-aware session next', { timeout: 20_000 }, () => {
+  it('fails closed instead of throwing when a legacy receipt contains a non-commit head_after', async () => {
+    const repoDir = await makeCommittedRepo();
+    const sessionId = await startFramedSession(repoDir);
+    await recordProofPlan(
+      repoDir,
+      sessionId,
+      proofPlan(['node', '-e', 'process.stderr.write("failed\\n"); process.exit(1)']),
+    );
+    await forceVerifying(repoDir);
+    await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json']);
+
+    await resetSqliteConnections(repoDir);
+    const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'));
+    try {
+      db.exec(`DROP TRIGGER gate_receipts_no_update`);
+      db.prepare(`UPDATE gate_receipts SET head_after = 'unobserved'`).run();
+      db.exec(`
+        CREATE TRIGGER gate_receipts_no_update
+        BEFORE UPDATE ON gate_receipts
+        BEGIN
+          SELECT RAISE(ABORT, 'gate receipts are immutable');
+        END
+      `);
+    } finally {
+      db.close();
+    }
+
+    const next = parseJson<{
+      data: {
+        candidate: null;
+        proof: { status: string; gates: Array<{ status: string }> };
+        staleness: { status: string };
+      };
+    }>((await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout);
+    expect(next.data).toMatchObject({
+      candidate: null,
+      proof: { status: 'corrupt', gates: [{ status: 'corrupt' }] },
+      staleness: { status: 'corrupt' },
+    });
+  });
+
   it('authorizes reviewing only when every latest declared receipt passes for the current HEAD', async () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);

@@ -71,6 +71,10 @@ export interface ProofRepositoryObservation {
   changedFiles: string[];
 }
 
+export function isFullCommitSha(value: string) {
+  return /^[0-9a-f]{40}$/.test(value);
+}
+
 export async function observeProofRepository(repoRoot: string): Promise<ProofRepositoryObservation> {
   const [rawBranch, headSha, rawStatus] = await Promise.all([
     git(repoRoot, ['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => ''),
@@ -94,13 +98,13 @@ export async function observeProofRepository(repoRoot: string): Promise<ProofRep
 }
 
 export async function hasCommittedDiff(repoRoot: string, baselineHead: string, currentHead: string) {
-  if (baselineHead === currentHead) {
+  if (!isFullCommitSha(baselineHead) || !isFullCommitSha(currentHead) || baselineHead === currentHead) {
     return false;
   }
   try {
     await execFileAsync('git', ['merge-base', '--is-ancestor', baselineHead, currentHead], { cwd: repoRoot });
   } catch (error) {
-    if (isExitCode(error, 1)) {
+    if (isExitCode(error, 1) || isExitCode(error, 128)) {
       return false;
     }
     throw error;
@@ -111,6 +115,9 @@ export async function hasCommittedDiff(repoRoot: string, baselineHead: string, c
   } catch (error) {
     if (isExitCode(error, 1)) {
       return true;
+    }
+    if (isExitCode(error, 128)) {
+      return false;
     }
     throw error;
   }

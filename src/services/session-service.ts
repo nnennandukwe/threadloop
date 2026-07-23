@@ -26,6 +26,7 @@ import {
 } from '../adapters/fs/sqlite-store.js';
 import { isThreadloopInitialized } from '../adapters/fs/repo.js';
 import {
+  isFullCommitSha,
   observeProofRepository,
   observeRepository,
   hasCommittedDiff,
@@ -494,7 +495,7 @@ export async function runSessionGate(input: RunSessionGateInput) {
   const after = await observeProofRepository(repoRoot).catch(() => null);
   const invalidated = !after || !after.clean || after.headSha !== before.headSha || after.branch !== before.branch;
   const result = invalidated ? 'invalidated' : processResult.result;
-  const headAfter = after?.headSha ?? 'unobserved';
+  const headAfter = after?.headSha ?? before.headSha;
   const cleanAfter = after?.clean ?? false;
   const execution = {
     contract_version: 1,
@@ -842,10 +843,10 @@ async function buildProofGuardContext(
   const latestFailure = [...proofState.receipts]
     .sort((left, right) => right.sequence - left.sequence)
     .find((receipt) => receipt.result !== 'passed');
-  const committedRepairFromFailure =
-    Boolean(latestFailure) &&
-    latestFailure?.headAfter !== repository.headSha &&
-    (await hasCommittedDiff(repoRoot, latestFailure?.headAfter ?? repository.headSha, repository.headSha));
+  let committedRepairFromFailure = false;
+  if (latestFailure && isFullCommitSha(latestFailure.headAfter) && latestFailure.headAfter !== repository.headSha) {
+    committedRepairFromFailure = await hasCommittedDiff(repoRoot, latestFailure.headAfter, repository.headSha);
+  }
   return {
     plan,
     evidence: proofState.evidence,
