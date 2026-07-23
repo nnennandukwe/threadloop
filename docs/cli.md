@@ -83,11 +83,30 @@ Options:
 
 Use `--session <id>` for one explicit session or `--all` for all active sessions in the current workspace.
 
-### `threadloop session finish --session <id> [--json]`
+### `threadloop session next --session <id> [--json]`
 
-Persists one final Git snapshot and marks a specific session complete. During the first M002 foundation increment this
-remains a compatibility surface; autonomous executors must not treat it as approval or merge proof. See
-[`lifecycle.md`](lifecycle.md).
+Reads one deterministic transition candidate, current lifecycle state/version, guard failures, required work, and live
+sanitized repository identity, branch, HEAD, and worktree cleanliness. This command does not heartbeat, reconcile,
+refresh snapshots, migrate the database, repair projections, or mutate lifecycle state.
+
+Proof staleness and repair-budget fields are explicitly deferred to #40. Completed and blocked sessions return terminal
+reasons.
+
+### `threadloop session transition <target-state> [options]`
+
+Applies one guarded lifecycle transition through an optimistic compare-and-swap transaction.
+
+Required options:
+
+- `--session <id>`: target session id
+- `--expected-state-version <version>`: canonical non-negative integer from the latest state read
+- `--idempotency-key <key>`: stable 1-128 character request key
+- `--actor <cli|agent>`: invoking actor
+- `--input <json-object>`: structured transition input; `{}` is valid for ordinary transitions
+
+The same key and canonical request replays the original result without adding records. Reusing a key for different
+content fails with `IDEMPOTENCY_CONFLICT`. Stale state versions fail without lifecycle mutation. Transitions requiring
+proof owned by issue #40 or review, approval, and merge evidence owned by issue #42 fail closed.
 
 ### `threadloop daemon run [--json]`
 
@@ -113,15 +132,14 @@ session work:
 - `threadloop capture <kind> [text] [--session <id>] [--json]`
 - `threadloop status [--session <id>] [--json]`
 - `threadloop artifact generate [kind] [--session <id>] [--json]`
-- `threadloop finish [--session <id>] [--json]`
 
 Compatibility rules:
 
 - `start` preserves the legacy single-active-session behavior and refuses to open a second legacy root session in the
   same repo
-- `capture`, `artifact generate`, and `finish` auto-resolve only when exactly one active session exists
+- `capture` and `artifact generate` auto-resolve only when exactly one active session exists
 - `status` fails with `SESSION_REQUIRED` when zero sessions match
-- when zero sessions match for `capture`, `artifact generate`, and `finish`, they fail with `SESSION_REQUIRED`
+- when zero sessions match for `capture` and `artifact generate`, they fail with `SESSION_REQUIRED`
 - when multiple sessions match for any legacy command, they fail with `SESSION_AMBIGUOUS`
 - pass `--session <id>` or use the `threadloop session ...` forms for deterministic targeting
 
@@ -167,8 +185,8 @@ ThreadLoop stores state locally in the repo:
 If an older repo still has `.threadloop/state/state.json`, ThreadLoop migrates that data into SQLite on first access and
 intentionally leaves the JSON file in place as a safety backup. After migration, ThreadLoop reads from SQLite.
 
-This SQLite work is the storage foundation for v2, and the explicit session namespace / JSON contract now lands on top
-of it.
+SQLite schema v3 stores transition and idempotency records plus the prior state needed for blocked recovery. Migration
+from v2 is atomic, and schema metadata accepts canonical unsigned decimal text only.
 
 Recommended default:
 
