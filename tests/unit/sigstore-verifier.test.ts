@@ -129,7 +129,7 @@ function trustedSigner() {
 }
 
 describe('Sigstore receipt verifier', () => {
-  it('disables internal retries and re-signs once after an exact Rekor entry conflict', async () => {
+  it('keeps bounded network retries and re-signs after an exact Rekor entry conflict', async () => {
     const conflict = Object.assign(new Error('equivalent entry exists'), {
       code: 'TLOG_CREATE_ENTRY_ERROR',
       cause: {
@@ -145,11 +145,25 @@ describe('Sigstore receipt verifier', () => {
     await expect(signSigstoreStatement(Buffer.from('statement'), IN_TOTO_PAYLOAD_TYPE, attest)).resolves.toBe(bundle);
     expect(attest).toHaveBeenCalledTimes(2);
     expect(attest).toHaveBeenNthCalledWith(1, Buffer.from('statement'), IN_TOTO_PAYLOAD_TYPE, {
-      retry: { retries: 0 },
+      retry: { retries: 2 },
     });
     expect(attest).toHaveBeenNthCalledWith(2, Buffer.from('statement'), IN_TOTO_PAYLOAD_TYPE, {
-      retry: { retries: 0 },
+      retry: { retries: 2 },
     });
+  });
+
+  it('bounds repeated Rekor entry-conflict recovery', async () => {
+    const conflict = Object.assign(new Error('equivalent entry exists'), {
+      code: 'TLOG_CREATE_ENTRY_ERROR',
+      cause: {
+        statusCode: 409,
+        location: `/api/v1/log/entries/${'a'.repeat(128)}`,
+      },
+    });
+    const attest = vi.fn<SigstoreAttestFunction>().mockRejectedValue(conflict);
+
+    await expect(signSigstoreStatement(Buffer.from('statement'), IN_TOTO_PAYLOAD_TYPE, attest)).rejects.toBe(conflict);
+    expect(attest).toHaveBeenCalledTimes(3);
   });
 
   it('does not retry signing failures that are not exact Rekor entry conflicts', async () => {
