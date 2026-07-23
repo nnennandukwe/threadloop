@@ -100,7 +100,7 @@ export async function hasCommittedDiff(repoRoot: string, baselineHead: string, c
   try {
     await execFileAsync('git', ['merge-base', '--is-ancestor', baselineHead, currentHead], { cwd: repoRoot });
   } catch (error) {
-    if (isExitCode(error, 1)) {
+    if (isExitCode(error, 1) || isExitCode(error, 128)) {
       return false;
     }
     throw error;
@@ -111,6 +111,9 @@ export async function hasCommittedDiff(repoRoot: string, baselineHead: string, c
   } catch (error) {
     if (isExitCode(error, 1)) {
       return true;
+    }
+    if (isExitCode(error, 128)) {
+      return false;
     }
     throw error;
   }

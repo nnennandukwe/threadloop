@@ -494,7 +494,9 @@ export async function runSessionGate(input: RunSessionGateInput) {
   const after = await observeProofRepository(repoRoot).catch(() => null);
   const invalidated = !after || !after.clean || after.headSha !== before.headSha || after.branch !== before.branch;
   const result = invalidated ? 'invalidated' : processResult.result;
-  const headAfter = after?.headSha ?? 'unobserved';
+  // Keep the receipt baseline usable even when the post-gate observation fails.
+  // The invalidated result and dirty flag still fail closed in that case.
+  const headAfter = after?.headSha ?? before.headSha;
   const cleanAfter = after?.clean ?? false;
   const execution = {
     contract_version: 1,
@@ -842,10 +844,12 @@ async function buildProofGuardContext(
   const latestFailure = [...proofState.receipts]
     .sort((left, right) => right.sequence - left.sequence)
     .find((receipt) => receipt.result !== 'passed');
+  const failureHeadSha = latestFailure?.headAfter;
   const committedRepairFromFailure =
     Boolean(latestFailure) &&
-    latestFailure?.headAfter !== repository.headSha &&
-    (await hasCommittedDiff(repoRoot, latestFailure?.headAfter ?? repository.headSha, repository.headSha));
+    failureHeadSha !== repository.headSha &&
+    Boolean(failureHeadSha?.match(/^[0-9a-f]{40}$/i)) &&
+    (await hasCommittedDiff(repoRoot, failureHeadSha, repository.headSha));
   return {
     plan,
     evidence: proofState.evidence,
