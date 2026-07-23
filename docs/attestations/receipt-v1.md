@@ -36,9 +36,9 @@ identity, source repository, and the commit-pinned ThreadLoop reusable workflow:
 }
 ```
 
-The source repository must match the checkout's GitHub `origin`, and the caller certificate identity must bind the
-current named branch. Stored legacy plans remain readable and their local gates remain runnable, but
-`session next --json` reports `ci_proof.status: "policy_missing"`. Immutable legacy plans are never upgraded in place.
+The source repository must match the checkout's GitHub `origin`, and the caller workflow identity must bind the current
+named branch. Stored legacy plans remain readable and their local gates remain runnable, but `session next --json`
+reports `ci_proof.status: "policy_missing"`. Immutable legacy plans are never upgraded in place.
 
 ## Reusable workflow
 
@@ -93,8 +93,9 @@ Before appending evidence, ThreadLoop verifies:
 
 - Sigstore signature validity with `sigstore@4.1.1`;
 - Fulcio certificate transparency and a Rekor inclusion proof;
-- the GitHub issuer and exact caller workflow certificate identity;
+- the GitHub issuer and exact reusable-workflow certificate identity;
 - `job_workflow_ref` and `job_workflow_sha` through the build-signer certificate extensions;
+- the separate caller workflow identity and caller workflow digest certificate extensions;
 - GitHub-hosted runner, source repository, source ref, source HEAD, and run invocation URI;
 - exact Statement, predicate, artifact, session, plan, and gate relationships; and
 - a clean, unchanged, passing result for the checkout's current HEAD.
