@@ -39,5 +39,8 @@ describe('protocol contract', () => {
       },
       trackedFileMutations: 'none',
     });
+    expect(contract.commands['session gate import']).toBe(
+      'threadloop session gate import <package-path> --session <id> [--json] - Verify and append one signed GitHub Actions gate receipt',
+    );
   });
 });

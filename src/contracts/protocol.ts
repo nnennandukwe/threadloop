@@ -66,10 +66,11 @@ export function buildProtocolContract(): ProtocolContract {
     },
     notes: [
       'Only commands whose usage includes [--json] support machine-readable output.',
-      'Session status, capture, heartbeat, transition, next, and gate run require --session <id>; session reconcile requires either --session <id> or --all.',
+      'Session status, capture, heartbeat, transition, next, gate run, and gate import require --session <id>; session reconcile requires either --session <id> or --all.',
       'Session next is read-only; lifecycle completion is available only through an evidence-authorized session transition.',
       'Gate run executes only stored proof-plan argv, working directory, and timeout values; it never advances lifecycle state.',
-      'Local gate receipts are unsigned commit-bound evidence; signed CI authority remains outside this contract.',
+      'Gate import verifies the immutable GitHub Actions and Sigstore policy from the v2 proof plan; no trust override is accepted.',
+      'Review requires current-HEAD local proof and verified signed CI proof for every declared gate.',
       'Legacy root commands may auto-resolve a single active session when --session is omitted.',
       'ThreadLoop state and local receipt output are excluded through .git/info/exclude; review artifacts remain visible.',
       'Reconcile refreshes metadata without creating semantic entries.',
