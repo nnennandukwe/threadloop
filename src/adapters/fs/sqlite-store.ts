@@ -503,7 +503,10 @@ function databaseNeedsSetup(db: DatabaseSync, repoRoot: string) {
         (
           tasks.status <> 'completed'
           AND sessions.ended_at IS NULL
-          AND active_sessions.session_id IS NULL
+          AND (
+            active_sessions.session_id IS NULL
+            OR active_sessions.task_id <> sessions.task_id
+          )
         )
         OR
         (
@@ -676,22 +679,12 @@ function migrateActiveStateRegistry(db: DatabaseSync) {
 }
 
 function reconcileActiveSessionProjection(db: DatabaseSync) {
-  db.prepare(
-    `
-      DELETE FROM active_sessions
-      WHERE session_id IN (
-        SELECT sessions.id
-        FROM sessions
-        INNER JOIN tasks ON tasks.id = sessions.task_id
-        WHERE tasks.status = 'completed' OR sessions.ended_at IS NOT NULL
-      )
-    `,
-  ).run();
+  db.prepare(`DELETE FROM active_sessions`).run();
 
   db.prepare(
     `
-      INSERT OR IGNORE INTO active_sessions (session_id, task_id)
-      SELECT sessions.id, tasks.id
+      INSERT INTO active_sessions (session_id, task_id)
+      SELECT sessions.id, sessions.task_id
       FROM sessions
       INNER JOIN tasks ON tasks.id = sessions.task_id
       WHERE tasks.status <> 'completed' AND sessions.ended_at IS NULL

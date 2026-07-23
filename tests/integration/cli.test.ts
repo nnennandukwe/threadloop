@@ -650,6 +650,56 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     }
   });
 
+  it('repairs a mismatched active-session task projection before materializing the session', async () => {
+    await runCli(repoDir, ['init']);
+    const first = parseJsonOutput<{ data: { session_id: string; task_id: string } }>(
+      (await runCli(repoDir, ['session', 'start', 'First projection task', '--goal', 'Own the first session', '--json']))
+        .stdout,
+    );
+    const second = parseJsonOutput<{ data: { session_id: string; task_id: string } }>(
+      (await runCli(repoDir, ['session', 'start', 'Second projection task', '--goal', 'Own the second session', '--json']))
+        .stdout,
+    );
+
+    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
+    const corrupted = new DatabaseSync(dbPath);
+    try {
+      corrupted
+        .prepare(`UPDATE active_sessions SET task_id = ? WHERE session_id = ?`)
+        .run(second.data.task_id, first.data.session_id);
+    } finally {
+      corrupted.close();
+    }
+
+    const capture = parseJsonOutput<{ data: { session_id: string; task: { id: string } } }>(
+      (
+        await runCli(repoDir, [
+          'session',
+          'capture',
+          'note',
+          'Projection repaired before capture',
+          '--session',
+          first.data.session_id,
+          '--json',
+        ])
+      ).stdout,
+    );
+
+    expect(capture.data).toMatchObject({
+      session_id: first.data.session_id,
+      task: { id: first.data.task_id },
+    });
+
+    const repaired = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      expect(
+        repaired.prepare(`SELECT task_id FROM active_sessions WHERE session_id = ?`).get(first.data.session_id),
+      ).toEqual({ task_id: first.data.task_id });
+    } finally {
+      repaired.close();
+    }
+  });
+
   it('reports malformed config JSON with the ThreadLoop error message', async () => {
     await mkdir(path.join(repoDir, '.threadloop/state'), { recursive: true });
     await writeFile(path.join(repoDir, '.threadloop/config.json'), '{not-json\n', 'utf8');

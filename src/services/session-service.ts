@@ -470,6 +470,16 @@ function materializeSessionRecord(state: StateData, active: ActiveState): Sessio
     });
   }
 
+  if (session.taskId !== task.id) {
+    throw new ThreadloopError('STATE_CORRUPTED', 'ThreadLoop session registry associates the session with the wrong task.', {
+      details: {
+        projectedTaskId: active.taskId,
+        sessionId: active.sessionId,
+        sessionTaskId: session.taskId,
+      },
+    });
+  }
+
   return { task, session };
 }
 
