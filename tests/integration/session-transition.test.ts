@@ -189,6 +189,27 @@ describe('schema v3 transition persistence', () => {
     }
   });
 
+  it('revalidates canonical schema metadata on the ready read path', async () => {
+    const repoDir = await makeRepo();
+    const dbPath = createSchemaV2(repoDir);
+    await ensureStateDatabase(repoDir);
+
+    const corrupt = new DatabaseSync(dbPath);
+    corrupt.prepare(`UPDATE metadata SET value = '3.0' WHERE key = 'schema_version'`).run();
+    corrupt.close();
+
+    await expect(ensureStateDatabase(repoDir)).rejects.toThrow('Unsupported ThreadLoop schema version: 3.0');
+
+    const unchanged = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      expect(unchanged.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({
+        value: '3.0',
+      });
+    } finally {
+      unchanged.close();
+    }
+  });
+
   it.each(['2.0', '02', '2e0', ' 2 ', '\t2\n', '3.0', '03', '3e0', ' 3 ', '\t3\n'])(
     'rejects malformed schema metadata %j before mutation',
     async (rawVersion) => {

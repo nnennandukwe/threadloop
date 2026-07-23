@@ -181,6 +181,12 @@ export async function ensureThreadloopLayout(repoRoot: string) {
 
 export async function ensureStateDatabase(repoRoot: string) {
   await ensureThreadloopLayout(repoRoot);
+  const state = getRepoConnectionState(repoRoot);
+  if (state.setup.status === 'ready') {
+    assertReadySchemaVersion(repoRoot, state);
+    return;
+  }
+
   await withSerializedWriteAccess(repoRoot, (db, state) => {
     ensureDatabaseReady(db, state, repoRoot);
   });
@@ -727,6 +733,18 @@ function ensureDatabaseReady(db: DatabaseSync, state: RepoConnectionState, repoR
   } catch (error) {
     state.setup = isTransientSqliteSetupError(error) ? { status: 'unknown' } : { status: 'failed', error };
     throw error;
+  }
+}
+
+function assertReadySchemaVersion(repoRoot: string, state: RepoConnectionState) {
+  const db = openReadDatabase(repoRoot);
+  try {
+    assertSchemaVersion(db);
+  } catch (error) {
+    state.setup = { status: 'failed', error };
+    throw error;
+  } finally {
+    db.close();
   }
 }
 
