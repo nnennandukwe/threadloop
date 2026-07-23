@@ -7,8 +7,12 @@ import { filterThreadloopPaths, isThreadloopOwnedPath } from './filter.js';
 const execFileAsync = promisify(execFile);
 
 async function git(repoRoot: string, args: string[]) {
+  return (await gitRaw(repoRoot, args)).trim();
+}
+
+async function gitRaw(repoRoot: string, args: string[]) {
   const { stdout } = await execFileAsync('git', args, { cwd: repoRoot });
-  return stdout.trim();
+  return stdout;
 }
 
 export async function resolveRepoRoot(cwd: string) {
@@ -43,6 +47,42 @@ export async function getHeadSha(repoRoot: string) {
   } catch {
     return 'unborn';
   }
+}
+
+export interface LiveRepositoryObservation {
+  identity: {
+    source: 'origin' | 'local';
+    host: string | null;
+    owner: string | null;
+    name: string;
+  };
+  branch: string | null;
+  headSha: string | null;
+  worktree: {
+    clean: boolean;
+    changedFiles: string[];
+  };
+}
+
+export async function observeRepository(repoRoot: string): Promise<LiveRepositoryObservation> {
+  const [rawOrigin, rawBranch, rawHead, rawStatus] = await Promise.all([
+    git(repoRoot, ['config', '--get', 'remote.origin.url']).catch(() => ''),
+    git(repoRoot, ['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => ''),
+    git(repoRoot, ['rev-parse', '--verify', 'HEAD']).catch(() => ''),
+    gitRaw(repoRoot, ['status', '--porcelain=v1', '-z', '--untracked-files=all']),
+  ]);
+  const headSha = rawHead || null;
+  const changedFiles = parsePorcelainPaths(rawStatus);
+
+  return {
+    identity: parseRepositoryIdentity(rawOrigin, repoRoot),
+    branch: headSha && rawBranch ? rawBranch : null,
+    headSha,
+    worktree: {
+      clean: changedFiles.length === 0,
+      changedFiles,
+    },
+  };
 }
 
 export async function getChangedFiles(repoRoot: string, baseRef: string | null) {
@@ -126,6 +166,96 @@ function parseNumstat(output: string) {
 
 function parseNumstatValue(value: string) {
   return /^\d+$/.test(value) ? Number(value) : 0;
+}
+
+function parseRepositoryIdentity(origin: string, repoRoot: string): LiveRepositoryObservation['identity'] {
+  const fallback = {
+    source: 'local' as const,
+    host: null,
+    owner: null,
+    name: path.basename(repoRoot),
+  };
+  if (!origin) {
+    return fallback;
+  }
+
+  const scp = parseScpOrigin(origin);
+  if (scp) {
+    return identityFromParts(scp.host, scp.repositoryPath) ?? fallback;
+  }
+
+  try {
+    const parsed = new URL(origin);
+    if (!parsed.hostname || !['http:', 'https:', 'ssh:', 'git:'].includes(parsed.protocol)) {
+      return fallback;
+    }
+    return identityFromParts(parsed.hostname, parsed.pathname) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function parseScpOrigin(origin: string) {
+  if (origin.includes('://')) {
+    return null;
+  }
+  const separator = origin.indexOf(':');
+  if (separator <= 0) {
+    return null;
+  }
+  const authority = origin.slice(0, separator);
+  const host = authority.slice(authority.lastIndexOf('@') + 1);
+  const suffix = origin.slice(separator + 1);
+  const queryIndex = suffix.search(/[?#]/);
+  const repositoryPath = queryIndex >= 0 ? suffix.slice(0, queryIndex) : suffix;
+  if (!host || !repositoryPath || host.includes('/') || /\s/.test(host)) {
+    return null;
+  }
+  return { host, repositoryPath };
+}
+
+function identityFromParts(host: string, repositoryPath: string): LiveRepositoryObservation['identity'] | null {
+  const parts = repositoryPath
+    .replace(/^\/+|\/+$/g, '')
+    .split('/')
+    .filter(Boolean);
+  const rawName = parts.pop();
+  if (!rawName || parts.length === 0) {
+    return null;
+  }
+  const name = rawName.endsWith('.git') ? rawName.slice(0, -4) : rawName;
+  if (!name) {
+    return null;
+  }
+
+  return {
+    source: 'origin',
+    host: host.toLowerCase(),
+    owner: parts.join('/'),
+    name,
+  };
+}
+
+function parsePorcelainPaths(output: string) {
+  const records = output.split('\0');
+  const paths: string[] = [];
+
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index];
+    if (!record) {
+      continue;
+    }
+    const status = record.slice(0, 2);
+    const changedPath = record.slice(3);
+    if (changedPath) {
+      paths.push(changedPath);
+    }
+    if (/[RC]/.test(status)) {
+      index += 1;
+    }
+  }
+
+  return Array.from(new Set(paths)).sort();
 }
 
 export async function snapshotRepo(repoRoot: string, sessionId: string, baseRef: string | null): Promise<RepoSnapshot> {

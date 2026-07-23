@@ -1,5 +1,5 @@
 import { Command, InvalidArgumentError, Option } from 'commander';
-import { ARTIFACT_KINDS, ENTRY_KINDS, ENTRY_SOURCES, HEARTBEAT_SOURCES } from './domain/types.js';
+import { ARTIFACT_KINDS, ENTRY_KINDS, ENTRY_SOURCES, HEARTBEAT_SOURCES, TASK_STATUS } from './domain/types.js';
 
 // Commander intentionally models command action arguments as a variadic any[] boundary.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -11,13 +11,13 @@ export interface ThreadloopCliHandlers {
   capture: CliAction;
   status: CliAction;
   artifactGenerate: CliAction;
-  finish: CliAction;
   sessionStart: CliAction;
   sessionList: CliAction;
   sessionStatus: CliAction;
   sessionCapture: CliAction;
   sessionHeartbeat: CliAction;
-  sessionFinish: CliAction;
+  sessionTransition: CliAction;
+  sessionNext: CliAction;
   sessionReconcile: CliAction;
   daemonRun: CliAction;
   protocol: CliAction;
@@ -32,7 +32,10 @@ const PROTOCOL_COMMAND_RULES: Record<string, ProtocolCommandRule> = {
   'session status': { requiredOptions: ['session'] },
   'session capture': { requiredOptions: ['session'] },
   'session heartbeat': { requiredOptions: ['session'] },
-  'session finish': { requiredOptions: ['session'] },
+  'session transition': {
+    requiredOptions: ['session', 'expectedStateVersion', 'idempotencyKey', 'actor', 'input'],
+  },
+  'session next': { requiredOptions: ['session'] },
   'session reconcile': { usageOverride: '(--session <id> | --all) [--json]' },
 };
 
@@ -45,13 +48,13 @@ export function createNoopCliHandlers(): ThreadloopCliHandlers {
     capture: noopAction,
     status: noopAction,
     artifactGenerate: noopAction,
-    finish: noopAction,
     sessionStart: noopAction,
     sessionList: noopAction,
     sessionStatus: noopAction,
     sessionCapture: noopAction,
     sessionHeartbeat: noopAction,
-    sessionFinish: noopAction,
+    sessionTransition: noopAction,
+    sessionNext: noopAction,
     sessionReconcile: noopAction,
     daemonRun: noopAction,
     protocol: noopAction,
@@ -119,13 +122,6 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
       .option('--session <id>', 'session id to target'),
   ).action(handlers.artifactGenerate);
 
-  withJsonOption(
-    program
-      .command('finish')
-      .description('Complete the active session')
-      .option('--session <id>', 'session id to target'),
-  ).action(handlers.finish);
-
   const session = program.command('session').description('Manage explicit ThreadLoop sessions');
 
   withJsonOption(
@@ -174,10 +170,26 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
 
   withJsonOption(
     session
-      .command('finish')
-      .description('Finish an explicit session')
-      .option('--session <id>', 'session id to target'),
-  ).action(handlers.sessionFinish);
+      .command('transition')
+      .description('Apply an idempotent, guarded lifecycle transition')
+      .argument('<target-state>', 'target lifecycle state', parseTaskStatus)
+      .requiredOption('--session <id>', 'session id to target', parseRequiredText)
+      .requiredOption(
+        '--expected-state-version <version>',
+        'optimistic lifecycle state version',
+        parseExpectedStateVersion,
+      )
+      .requiredOption('--idempotency-key <key>', 'idempotency key for this canonical request', parseIdempotencyKey)
+      .requiredOption('--actor <actor>', 'transition actor', parseEntrySource)
+      .requiredOption('--input <json-object>', 'structured transition input', parseJsonObject),
+  ).action(handlers.sessionTransition);
+
+  withJsonOption(
+    session
+      .command('next')
+      .description('Inspect the deterministic next lifecycle candidate without mutating state')
+      .requiredOption('--session <id>', 'session id to inspect', parseRequiredText),
+  ).action(handlers.sessionNext);
 
   withJsonOption(
     session
@@ -229,6 +241,59 @@ function parseEntrySource(value: string) {
     throw new InvalidArgumentError(`Actor must be one of: ${ENTRY_SOURCES.join(', ')}`);
   }
   return value as (typeof ENTRY_SOURCES)[number];
+}
+
+function parseTaskStatus(value: string) {
+  if (!TASK_STATUS.includes(value as (typeof TASK_STATUS)[number])) {
+    throw new InvalidArgumentError(`Target state must be one of: ${TASK_STATUS.join(', ')}`);
+  }
+  return value as (typeof TASK_STATUS)[number];
+}
+
+function parseRequiredText(value: string) {
+  const normalized = value.trim();
+  if (!normalized) {
+    throw new InvalidArgumentError('Session id must be non-empty.');
+  }
+  return normalized;
+}
+
+function parseExpectedStateVersion(value: string) {
+  if (!/^(0|[1-9][0-9]*)$/.test(value)) {
+    throw new InvalidArgumentError('Expected state version must be a canonical non-negative integer.');
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new InvalidArgumentError('Expected state version must not exceed Number.MAX_SAFE_INTEGER.');
+  }
+  return parsed;
+}
+
+function parseIdempotencyKey(value: string) {
+  if (
+    value.length < 1 ||
+    value.length > 128 ||
+    !/^[\x21-\x7e]+$/.test(value) ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(value)
+  ) {
+    throw new InvalidArgumentError(
+      'Idempotency key must be 1-128 ASCII characters and match [A-Za-z0-9][A-Za-z0-9._:/-]*.',
+    );
+  }
+  return value;
+}
+
+function parseJsonObject(value: string) {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new InvalidArgumentError('Input must be valid JSON.');
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new InvalidArgumentError('Input must be a non-null JSON object.');
+  }
+  return parsed as Record<string, unknown>;
 }
 
 function parseIntervalSeconds(value: string): number {

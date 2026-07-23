@@ -47,8 +47,6 @@ describe('threadloop packaged install', () => {
     expect(artifact).not.toContain('.threadloop/');
     expect(artifact).toContain('changed_files:');
 
-    await execFileAsync('npx', ['threadloop', 'finish'], { cwd: consumerRepo });
-
     const started = JSON.parse(
       (
         await execFileAsync(
@@ -79,6 +77,42 @@ describe('threadloop packaged install', () => {
     ) as { data: { session_id: string; entry: { body: string } } };
     expect(captured.data.session_id).toBe(started.data.session_id);
     expect(captured.data.entry.body).toBe('Explicit packaged flow works');
+
+    const next = JSON.parse(
+      (
+        await execFileAsync('npx', ['threadloop', 'session', 'next', '--session', started.data.session_id, '--json'], {
+          cwd: consumerRepo,
+        })
+      ).stdout,
+    ) as { data: { candidate: { target_state: string; executable: boolean } } };
+    expect(next.data.candidate).toMatchObject({ target_state: 'framed', executable: true });
+
+    const transitioned = JSON.parse(
+      (
+        await execFileAsync(
+          'npx',
+          [
+            'threadloop',
+            'session',
+            'transition',
+            'framed',
+            '--session',
+            started.data.session_id,
+            '--expected-state-version',
+            '0',
+            '--idempotency-key',
+            'packaged:framed',
+            '--actor',
+            'agent',
+            '--input',
+            '{}',
+            '--json',
+          ],
+          { cwd: consumerRepo },
+        )
+      ).stdout,
+    ) as { data: { lifecycle: { state: string; state_version: number } } };
+    expect(transitioned.data.lifecycle).toEqual({ state: 'framed', state_version: 1, blocked_from_state: null });
 
     const sessionStatus = JSON.parse(
       (

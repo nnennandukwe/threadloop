@@ -14,6 +14,7 @@ export const taskSchema = z.object({
   repoRoot: z.string(),
   status: persistedTaskStatusSchema,
   stateVersion: z.number().int().nonnegative().optional().default(0),
+  blockedFromState: z.enum(TASK_STATUS).nullable().optional().default(null),
   createdAt: z.string(),
 });
 
@@ -68,6 +69,7 @@ export const stateDataSchema = z
       ...task,
       issueRef: task.issueRef ?? null,
       stateVersion: task.stateVersion ?? 0,
+      blockedFromState: task.blockedFromState ?? null,
     })),
     activeSessions: state.activeSessions ?? (state.active ? [state.active] : []),
   }));

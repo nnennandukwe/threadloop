@@ -188,7 +188,7 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     await execFileAsync('git', ['config', 'user.name', 'Test User'], { cwd: repoDir });
   });
 
-  it('initializes, starts, captures, generates an artifact, and finishes', async () => {
+  it('initializes, starts, captures, and generates an artifact', async () => {
     await runCli(repoDir, ['init']);
     await runCli(repoDir, ['start', 'Add retry logic', '--goal', 'Reduce transient failures']);
     await runCli(repoDir, [
@@ -199,7 +199,6 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
       'Non-idempotent replay is unsafe',
     ]);
     await runCli(repoDir, ['artifact', 'generate']);
-    await runCli(repoDir, ['finish']);
 
     const artifact = await readArtifact(repoDir, 'add-retry-logic.change-brief.md');
     expect(artifact).toContain('# Add retry logic');
@@ -207,7 +206,7 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
 
     expect(existsSync(path.join(repoDir, '.threadloop/state/state.db'))).toBe(true);
     const snapshot = readStateSnapshot(repoDir);
-    expect(snapshot.taskStatuses).toContain('completed');
+    expect(snapshot.taskStatuses).toContain('queued');
     expect(snapshot.entryKinds).toContain('decision');
   });
 
@@ -350,13 +349,12 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
 
     const status = await runCli(repoDir, ['status']);
     await runCli(repoDir, ['capture', 'note', 'Migrated capture still works']);
-    await runCli(repoDir, ['finish']);
 
     expect(status.stdout).toContain('Task: Legacy task');
     expect(existsSync(path.join(repoDir, '.threadloop/state/state.db'))).toBe(true);
 
     const snapshot = readStateSnapshot(repoDir);
-    expect(snapshot.taskStatuses).toEqual(['completed']);
+    expect(snapshot.taskStatuses).toEqual(['queued']);
     expect(snapshot.entryBodies).toContain('Legacy decision');
     expect(snapshot.entryBodies).toContain('Migrated capture still works');
 
@@ -492,7 +490,7 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     try {
       const schemaVersion = migrated.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get() as
         { value: string } | undefined;
-      expect(schemaVersion?.value).toBe('2');
+      expect(schemaVersion?.value).toBe('3');
       expect(migrated.prepare(`SELECT id, status, state_version FROM tasks ORDER BY id`).all()).toEqual([
         { id: 'task_active', status: 'queued', state_version: 0 },
         { id: 'task_completed', status: 'completed', state_version: 0 },
@@ -643,14 +641,14 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
           value TEXT NOT NULL
         );
       `);
-      db.prepare(`INSERT INTO metadata (key, value) VALUES ('schema_version', '3')`).run();
+      db.prepare(`INSERT INTO metadata (key, value) VALUES ('schema_version', '4')`).run();
       const journalMode = db.prepare(`PRAGMA journal_mode`).get() as { journal_mode: string };
       expect(journalMode.journal_mode).toBe('delete');
     } finally {
       db.close();
     }
 
-    await expect(runCli(repoDir, ['status'])).rejects.toThrow('Unsupported ThreadLoop schema version: 3');
+    await expect(runCli(repoDir, ['status'])).rejects.toThrow('Unsupported ThreadLoop schema version: 4');
 
     const unchanged = new DatabaseSync(dbPath, { readOnly: true });
     try {
@@ -928,19 +926,6 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     expect(artifact).not.toContain('.threadloop/');
   });
 
-  it('persists a final snapshot on session finish without a separate reconcile', async () => {
-    const started = parseJsonOutput<{ data: { session_id: string } }>(
-      (await runCli(repoDir, ['session', 'start', 'Finish snapshot', '--goal', 'Persist closeout snapshot', '--json']))
-        .stdout,
-    );
-
-    await writeFile(path.join(repoDir, 'closeout.ts'), 'export const closeout = true;\n', 'utf8');
-    await runCli(repoDir, ['session', 'finish', '--session', started.data.session_id, '--json']);
-
-    const snapshot = readStoredRepoSnapshot(repoDir, started.data.session_id);
-    expect(snapshot?.changedFiles).toContain('closeout.ts');
-  });
-
   it('fails cleanly for a missing base ref', async () => {
     await runCli(repoDir, ['init']);
     await expect(
@@ -1017,17 +1002,6 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     });
     expect(artifact.data.artifact.path).toContain('first-task.change-brief.md');
 
-    const finished = parseJsonOutput<{
-      ok: true;
-      command: string;
-      data: { session_id: string };
-    }>((await runCli(repoDir, ['finish', '--session', first.data.session_id, '--json'])).stdout);
-    expect(finished).toMatchObject({
-      ok: true,
-      command: 'finish',
-      data: { session_id: first.data.session_id },
-    });
-
     const secondStatus = await runCli(repoDir, ['status', '--session', second.data.session_id]);
     expect(secondStatus.stdout).toContain(`Session: ${second.data.session_id}`);
   });
@@ -1051,11 +1025,6 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
       (await runCliFailure(repoDir, ['artifact', 'generate', '--json'])).stderr ?? '',
     );
     expect(artifactFailure.error.code).toBe('SESSION_AMBIGUOUS');
-
-    const finishFailure = parseJsonOutput<{ error: { code: string } }>(
-      (await runCliFailure(repoDir, ['finish', '--json'])).stderr ?? '',
-    );
-    expect(finishFailure.error.code).toBe('SESSION_AMBIGUOUS');
   });
 
   it('blocks legacy root start when a session is already active', async () => {
@@ -1186,13 +1155,46 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     expect(status.data.entries.kinds.decision).toBe(1);
     expect(status.data.task.issue_ref).toBe('ISSUE-7');
 
-    const finished = parseJsonOutput<{
+    const next = parseJsonOutput<{
       ok: true;
       command: string;
-      data: { session_id: string; task_id: string };
-    }>((await runCli(repoDir, ['session', 'finish', '--session', started.data.session_id, '--json'])).stdout);
-    expect(finished).toMatchObject({ ok: true, command: 'session finish' });
-    expect(finished.data.session_id).toBe(started.data.session_id);
+      data: { candidate: { target_state: string; executable: boolean } };
+    }>((await runCli(repoDir, ['session', 'next', '--session', started.data.session_id, '--json'])).stdout);
+    expect(next).toMatchObject({
+      ok: true,
+      command: 'session next',
+      data: { candidate: { target_state: 'framed', executable: true } },
+    });
+
+    const transitioned = parseJsonOutput<{
+      ok: true;
+      command: string;
+      data: { lifecycle: { state: string; state_version: number } };
+    }>(
+      (
+        await runCli(repoDir, [
+          'session',
+          'transition',
+          'framed',
+          '--session',
+          started.data.session_id,
+          '--expected-state-version',
+          '0',
+          '--idempotency-key',
+          'explicit-flow:framed',
+          '--actor',
+          'cli',
+          '--input',
+          '{}',
+          '--json',
+        ])
+      ).stdout,
+    );
+    expect(transitioned).toMatchObject({
+      ok: true,
+      command: 'session transition',
+      data: { lifecycle: { state: 'framed', state_version: 1 } },
+    });
 
     const relisted = parseJsonOutput<{
       ok: true;
@@ -1202,9 +1204,9 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     expect(relisted.data.sessions).toHaveLength(1);
     expect(relisted.data.sessions[0]).toMatchObject({
       session_id: started.data.session_id,
-      active: false,
+      active: true,
     });
-    expect(relisted.data.sessions[0]?.ended_at).toEqual(expect.any(String));
+    expect(relisted.data.sessions[0]?.ended_at).toBeNull();
 
     const finalStatus = parseJsonOutput<{
       ok: true;
@@ -1212,7 +1214,7 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
       data: { session_id: string; session: { ended_at: string | null } };
     }>((await runCli(repoDir, ['session', 'status', '--session', started.data.session_id, '--json'])).stdout);
     expect(finalStatus.data.session_id).toBe(started.data.session_id);
-    expect(finalStatus.data.session.ended_at).toBeTruthy();
+    expect(finalStatus.data.session.ended_at).toBeNull();
   });
 
   it('returns a stable json error when a session id is required', async () => {
@@ -1280,17 +1282,36 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     expect(artifactHelp.stdout).toContain('--json');
     expect(artifactHelp.stderr).toBe('');
 
-    const finishHelp = await runCli(repoDir, ['finish', '--help']);
-    expect(finishHelp.stdout).toContain('--session <id>');
-    expect(finishHelp.stdout).toContain('--json');
-
     const sessionHelp = await runCli(repoDir, ['session', '--help']);
     expect(sessionHelp.stdout).toContain('start');
     expect(sessionHelp.stdout).toContain('list');
     expect(sessionHelp.stdout).toContain('status');
     expect(sessionHelp.stdout).toContain('capture');
     expect(sessionHelp.stdout).toContain('heartbeat');
-    expect(sessionHelp.stdout).toContain('finish');
+    expect(sessionHelp.stdout).toContain('transition');
+    expect(sessionHelp.stdout).toContain('next');
+    expect(sessionHelp.stdout).not.toContain('finish');
+
+    const transitionHelp = await runCli(repoDir, ['session', 'transition', '--help']);
+    expect(transitionHelp.stdout).toContain('<target-state>');
+    expect(transitionHelp.stdout).toContain('--expected-state-version <version>');
+    expect(transitionHelp.stdout).toContain('--idempotency-key <key>');
+    expect(transitionHelp.stdout).toContain('--actor <actor>');
+    expect(transitionHelp.stdout).toContain('--input <json-object>');
+    expect(transitionHelp.stdout).toContain('--json');
+
+    const nextHelp = await runCli(repoDir, ['session', 'next', '--help']);
+    expect(nextHelp.stdout).toContain('--session <id>');
+    expect(nextHelp.stdout).toContain('--json');
+
+    const removedRoot = parseJsonOutput<{ error: { code: string } }>(
+      (await runCliFailure(repoDir, ['finish', '--json'])).stderr ?? '',
+    );
+    expect(removedRoot.error.code).toBe('INVALID_ARGUMENT');
+    const removedSession = parseJsonOutput<{ error: { code: string } }>(
+      (await runCliFailure(repoDir, ['session', 'finish', '--json'])).stderr ?? '',
+    );
+    expect(removedSession.error.code).toBe('INVALID_ARGUMENT');
 
     const sessionStartHelp = await runCli(repoDir, ['session', 'start', '--help']);
     expect(sessionStartHelp.stdout).toContain('--json');
@@ -1331,6 +1352,12 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     expect(protocol.data.commands['session capture']).toContain(
       'threadloop session capture <kind> [text] --session <id> [--because <reason>] [--actor <actor>] [--edit] [--json]',
     );
+    expect(protocol.data.commands['session transition']).toContain(
+      'threadloop session transition <target-state> --session <id> --expected-state-version <version> --idempotency-key <key> --actor <actor> --input <json-object> [--json]',
+    );
+    expect(protocol.data.commands['session next']).toContain('threadloop session next --session <id> [--json]');
+    expect(protocol.data.commands.finish).toBeUndefined();
+    expect(protocol.data.commands['session finish']).toBeUndefined();
     expect(protocol.data.commands.init).toBe('threadloop init - Initialize ThreadLoop in the current Git repo');
     expect(protocol.data.workflow.defaultBaseRef).toBe('main');
     expect(protocol.data.workflow.branchNaming.default).toBe('threadloop/<slug>');
@@ -1539,8 +1566,25 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
         repo_snapshot: { branch: string; headSha: string; changedFiles: string[] } | null;
       };
     }>((await runCli(repoDir, ['session', 'status', '--session', sessionId, '--json'])).stdout);
-    const finished = parseJsonOutput<{ data: { session_id: string } }>(
-      (await runCli(repoDir, ['session', 'finish', '--session', sessionId, '--json'])).stdout,
+    const transitioned = parseJsonOutput<{ data: { session_id: string } }>(
+      (
+        await runCli(repoDir, [
+          'session',
+          'transition',
+          'framed',
+          '--session',
+          sessionId,
+          '--expected-state-version',
+          '0',
+          '--idempotency-key',
+          'v2-flow:framed',
+          '--actor',
+          'agent',
+          '--input',
+          '{}',
+          '--json',
+        ])
+      ).stdout,
     );
     const listed = parseJsonOutput<{
       data: { sessions: Array<{ session_id: string; active: boolean; ended_at: string | null }> };
@@ -1553,13 +1597,13 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     expect(status.data.session.ended_at).toBeNull();
     expect(status.data.session.last_heartbeat_source).toBe('daemon');
     expect(status.data.repo_snapshot?.changedFiles).toContain('feature.ts');
-    expect(finished.data.session_id).toBe(sessionId);
+    expect(transitioned.data.session_id).toBe(sessionId);
     const listedSession = listed.data.sessions.find((session) => session.session_id === sessionId);
     expect(listedSession).toMatchObject({
       session_id: sessionId,
-      active: false,
+      active: true,
     });
-    expect(listedSession?.ended_at).toEqual(expect.any(String));
+    expect(listedSession?.ended_at).toBeNull();
 
     const renderedArtifact = await readFile(path.join(repoDir, artifact.data.artifact.path), 'utf8');
     expect(renderedArtifact).toContain('feature.ts');

@@ -2,12 +2,13 @@ import path from 'node:path';
 import { ensureThreadloopStateIgnored } from '../adapters/fs/gitignore.js';
 import {
   appendEntryToSession,
-  completeSessionById,
+  applySessionTransition,
   createId,
   ensureStateDatabase,
   ensureThreadloopLayout,
   insertTaskSession,
   readConfig,
+  readSessionLifecycleReadOnly,
   readRepoSnapshot,
   readState,
   recordArtifact,
@@ -17,8 +18,10 @@ import {
   writeConfig,
 } from '../adapters/fs/sqlite-store.js';
 import { isThreadloopInitialized } from '../adapters/fs/repo.js';
-import { refExists, resolveRepoRoot, snapshotRepo } from '../adapters/git/client.js';
+import { observeRepository, refExists, resolveRepoRoot, snapshotRepo } from '../adapters/git/client.js';
 import { ThreadloopError } from '../contracts/errors.js';
+import { canonicalizeTransitionRequest, planNextTransition } from '../domain/session-transition.js';
+import type { TransitionRequest } from '../domain/session-transition.js';
 import { DEFAULT_BASE_REF } from '../domain/types.js';
 import type {
   ActiveState,
@@ -67,6 +70,16 @@ export interface HeartbeatInput {
   source?: HeartbeatSource;
 }
 
+export interface TransitionSessionInput extends TransitionRequest {
+  cwd: string;
+  idempotencyKey: string;
+}
+
+export interface NextSessionInput {
+  cwd: string;
+  sessionId: string;
+}
+
 interface StateContext {
   repoRoot: string;
   state: StateData;
@@ -95,7 +108,7 @@ export async function startTask(input: StartTaskInput) {
     if (state.activeSessions.length > 0) {
       throw new ThreadloopError(
         'SESSION_AMBIGUOUS',
-        'A legacy root session already exists in this repo. Finish it before starting another.',
+        'A legacy root session already exists in this repo. Use explicit session commands for additional work.',
         {
           details: { activeSessions: state.activeSessions.length },
         },
@@ -120,6 +133,7 @@ export async function startTask(input: StartTaskInput) {
     repoRoot,
     status: 'queued',
     stateVersion: 0,
+    blockedFromState: null,
     createdAt: now,
   };
 
@@ -205,6 +219,123 @@ export async function heartbeatSession(input: HeartbeatInput) {
       lastHeartbeatAt: now,
       lastHeartbeatSource: source,
     },
+  };
+}
+
+export async function transitionSession(input: TransitionSessionInput) {
+  const repoRoot = await resolveRepositoryRoot(input.cwd);
+  try {
+    await assertInitialized(repoRoot);
+    return await applySessionTransition(repoRoot, {
+      ...input,
+      ...canonicalizeTransitionRequest(input),
+    });
+  } catch (error) {
+    if (isSchemaStateError(error)) {
+      throw new ThreadloopError('STATE_CORRUPTED', error instanceof Error ? error.message : String(error), {
+        cause: error,
+      });
+    }
+    if (isSqliteBusyError(error)) {
+      throw new ThreadloopError(
+        'STATE_BUSY',
+        'ThreadLoop state is busy after waiting 10 seconds. Retry the same idempotency key.',
+        {
+          cause: error,
+          details: {
+            session_id: input.sessionId,
+            idempotency_key: input.idempotencyKey,
+            hint: 'Retry the identical request with the same idempotency key.',
+          },
+        },
+      );
+    }
+    if (isSqliteStateError(error)) {
+      throw new ThreadloopError('STATE_CORRUPTED', 'ThreadLoop could not persist transition state safely.', {
+        cause: error,
+        details: { session_id: input.sessionId },
+      });
+    }
+    throw error;
+  }
+}
+
+export async function getNextSessionAction(input: NextSessionInput) {
+  const repoRoot = await resolveRepositoryRoot(input.cwd);
+  await assertInitializedReadOnly(repoRoot);
+
+  let lifecycle: NonNullable<ReturnType<typeof readSessionLifecycleReadOnly>>;
+  try {
+    const stored = readSessionLifecycleReadOnly(repoRoot, input.sessionId);
+    if (!stored) {
+      throw new ThreadloopError('SESSION_NOT_FOUND', `Could not find session: ${input.sessionId}`, {
+        details: { session_id: input.sessionId },
+      });
+    }
+    lifecycle = stored;
+  } catch (error) {
+    if (error instanceof ThreadloopError) {
+      throw error;
+    }
+    throw new ThreadloopError('STATE_CORRUPTED', error instanceof Error ? error.message : String(error), {
+      cause: error,
+    });
+  }
+
+  let repository: Awaited<ReturnType<typeof observeRepository>>;
+  try {
+    repository = await observeRepository(repoRoot);
+  } catch (error) {
+    throw new ThreadloopError('REPOSITORY_OBSERVATION_FAILED', 'Could not read the live Git repository state.', {
+      cause: error,
+      details: {
+        session_id: input.sessionId,
+        hint: 'Restore access to the Git worktree and retry session next.',
+      },
+    });
+  }
+
+  const planned = planNextTransition({
+    state: lifecycle.state,
+    stateVersion: lifecycle.stateVersion,
+    blockedFromState: lifecycle.blockedFromState,
+  });
+  return {
+    contract_version: 1 as const,
+    session_id: lifecycle.sessionId,
+    task_id: lifecycle.taskId,
+    lifecycle: {
+      state: lifecycle.state,
+      state_version: lifecycle.stateVersion,
+      blocked_from_state: lifecycle.blockedFromState,
+    },
+    candidate: planned.candidate,
+    guard_failures: planned.guardFailures,
+    required_work: planned.requiredWork,
+    repository: {
+      identity: repository.identity,
+      branch: repository.branch,
+      head_sha: repository.headSha,
+      worktree: {
+        clean: repository.worktree.clean,
+        changed_files: repository.worktree.changedFiles,
+      },
+    },
+    staleness: {
+      status: 'deferred' as const,
+      is_stale: null,
+      stale_receipt_ids: [],
+      owner_issue: 40 as const,
+    },
+    repair_budget: {
+      status: 'deferred' as const,
+      attempts_used: null,
+      limit: 3,
+      remaining: null,
+      exhausted: null,
+      owner_issue: 40 as const,
+    },
+    terminal_reason: planned.terminalReason,
   };
 }
 
@@ -362,25 +493,6 @@ export async function generateArtifact(
   return { repoRoot, task: resolved.task, session: resolved.session, artifact, fullPath };
 }
 
-export async function finishSession(cwd: string, selector: SessionSelector = { allowLegacySingleActive: true }) {
-  const { repoRoot, state } = await loadStateContext(cwd);
-  const resolved = resolveSessionFromState(state, selector);
-  const endedAt = new Date().toISOString();
-  const finalSnapshot = await snapshotRepo(repoRoot, resolved.session.id, resolved.session.baseRef);
-  await upsertRepoSnapshot(repoRoot, {
-    sessionId: resolved.session.id,
-    branch: finalSnapshot.branch,
-    headSha: finalSnapshot.headSha,
-    baseRef: finalSnapshot.baseRef,
-    changedFiles: finalSnapshot.changedFiles,
-    diffStats: finalSnapshot.diffStats,
-    commitRange: finalSnapshot.commitRange,
-    reconciledAt: endedAt,
-  });
-  const active = await completeSessionById(repoRoot, resolved.session.id, endedAt);
-  return { repoRoot, taskId: active.taskId, sessionId: active.sessionId };
-}
-
 async function loadStateContext(cwd: string): Promise<StateContext> {
   const repoRoot = await resolveRepositoryRoot(cwd);
   await assertInitialized(repoRoot);
@@ -421,6 +533,16 @@ async function assertInitialized(repoRoot: string) {
   }
   await readConfig(repoRoot);
   await ensureStateDatabase(repoRoot);
+}
+
+async function assertInitializedReadOnly(repoRoot: string) {
+  if (!isThreadloopInitialized(repoRoot)) {
+    throw new ThreadloopError(
+      'THREADLOOP_NOT_INITIALIZED',
+      'ThreadLoop is not initialized in this repo. Run `threadloop init` first.',
+    );
+  }
+  await readConfig(repoRoot);
 }
 
 function resolveSessionFromState(state: StateData, selector: SessionSelector): ResolvedSession {
@@ -536,4 +658,26 @@ function slugify(value: string) {
 function normalizeOptionalText(value: string | null | undefined) {
   const normalized = value?.trim();
   return normalized ? normalized : null;
+}
+
+function isSchemaStateError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.startsWith('Unsupported ThreadLoop schema version:') ||
+    message.startsWith('Missing ThreadLoop schema version metadata.') ||
+    message.startsWith('Invalid schema for ') ||
+    message === 'Invalid .threadloop/state/state.db'
+  );
+}
+
+function isSqliteBusyError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const sqlite = error as Error & { errcode?: number; errstr?: string };
+  return sqlite.errcode === 5 || sqlite.errstr === 'database is locked' || /database is locked/i.test(error.message);
+}
+
+function isSqliteStateError(error: unknown) {
+  return error instanceof Error && (error as Error & { code?: string }).code === 'ERR_SQLITE_ERROR';
 }
