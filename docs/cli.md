@@ -12,64 +12,97 @@ Initializes `.threadloop/` in the current Git repository and ensures `.threadloo
 
 ### `threadloop session start <title> [--json]`
 
-Starts an explicit task/session and returns a stable `session_id`. When `.threadloop/` is missing, this command
-auto-initializes ThreadLoop state for agent automation.
+Starts an explicit task/session in `queued` state with `state_version: 0` and returns a stable `session_id`. When
+`.threadloop/` is missing, this command auto-initializes ThreadLoop state for agent automation.
 
-Options: -- `--goal <goal>`: required task goal; prompts if missing -- `--constraint <constraint...>`: one or more
-constraints to preserve -- `--base <ref>`: Git base ref for comparisons; when omitted, ThreadLoop uses `main` if that
-ref exists -- `--issue <ref>`: issue reference for branch and PR traceability -- `--actor <cli|agent>`: source for the
-initial intent entry, default `cli` -- `--json`: render machine-readable session output
+Options:
+
+- `--goal <goal>`: required task goal; prompts if missing
+- `--constraint <constraint...>`: one or more constraints to preserve
+- `--base <ref>`: Git base ref for comparisons; when omitted, ThreadLoop uses `main` if that ref exists
+- `--issue <ref>`: issue reference for branch and PR traceability
+- `--actor <cli|agent>`: source for the initial intent entry, default `cli`
+- `--json`: render machine-readable session output
 
 ### `threadloop session list [--json]`
 
-Lists known sessions in the current repository, including which one is active.
+Lists known sessions in the current repository, including lifecycle status, state version, and whether each session
+remains active.
 
 ### `threadloop session status --session <id> [--json]`
 
-Shows the status of a specific session by explicit session id.
+Shows the lifecycle status and optimistic state version of a specific session by explicit session id.
 
-Options: -- `--session <id>`: target session id -- `--json`: render machine-readable session output
+Options:
+
+- `--session <id>`: target session id
+- `--json`: render machine-readable session output
 
 ### `threadloop session capture <kind> [text] --session <id> [--json]`
 
 Captures one structured entry for the targeted session.
 
-Kinds: -- `intent` -- `note` -- `decision` -- `risk` -- `constraint` -- `validation` -- `reviewer_guidance`
+Kinds:
 
-Options: -- `--session <id>`: target session id -- `--because <reason>`: attach rationale to a decision or note --
-`--actor <cli|agent>`: source for the captured entry, default `cli` -- `--edit`: open `$EDITOR` for longer capture text
--- `--json`: render machine-readable session output
+- `intent`
+- `note`
+- `decision`
+- `risk`
+- `constraint`
+- `validation`
+- `reviewer_guidance`
+
+Options:
+
+- `--session <id>`: target session id
+- `--because <reason>`: attach rationale to a decision or note
+- `--actor <cli|agent>`: source for the captured entry, default `cli`
+- `--edit`: open `$EDITOR` for longer capture text
+- `--json`: render machine-readable session output
 
 ### `threadloop session heartbeat --session <id> [--json]`
 
 Refreshes a session's mechanical metadata without creating a semantic entry.
 
-Options: -- `--session <id>`: target session id -- `--source <cli|daemon|reconcile>`: record where the heartbeat came
-from -- `--json`: render machine-readable session output
+Options:
+
+- `--session <id>`: target session id
+- `--source <cli|daemon|reconcile>`: record where the heartbeat came from
+- `--json`: render machine-readable session output
 
 ### `threadloop session reconcile (--session <id> | --all) [--json]`
 
 Refreshes Git-derived metadata for one or more sessions without creating semantic entries. Updates branch, head SHA,
 changed files, diff stats, and commit range.
 
-Options: -- `--session <id>`: reconcile a specific session -- `-a, --all`: reconcile all active sessions -- `--json`:
-render machine-readable session output
+Options:
+
+- `--session <id>`: reconcile a specific session
+- `-a, --all`: reconcile all active sessions
+- `--json`: render machine-readable session output
 
 Use `--session <id>` for one explicit session or `--all` for all active sessions in the current workspace.
 
 ### `threadloop session finish --session <id> [--json]`
 
-Persists one final Git snapshot and marks a specific session complete.
+Persists one final Git snapshot and marks a specific session complete. During the first M002 foundation increment this
+remains a compatibility surface; autonomous executors must not treat it as approval or merge proof. See
+[`lifecycle.md`](lifecycle.md).
 
 ### `threadloop daemon run [--json]`
 
 Runs the optional mechanical refresh loop for active sessions in the current workspace.
 
-Options: -- `-i, --interval <seconds>`: reconcile interval in seconds, default `60` -- `--json`: render machine-readable
-command output
+Options:
 
-Behavior: -- periodically calls reconcile for all active sessions -- records no semantic notes -- writes running/stopped
-status in the normal command envelope
+- `-i, --interval <seconds>`: reconcile interval in seconds, default `60`
+- `--json`: render machine-readable command output
+
+Behavior:
+
+- periodically calls reconcile for all active sessions
+- records no semantic notes
+- writes running/stopped status in the normal command envelope
 
 ### Legacy compatibility commands
 
@@ -96,10 +129,16 @@ Compatibility rules:
 
 Renders a Markdown artifact from the active session. Use `--session <id>` for deterministic targeting.
 
-Kinds: -- `change-brief` (default) -- `pr-summary` -- `handoff`
+Kinds:
 
-Options: -- `--session <id>`: target a specific session when more than one is active -- `--json`: render
-machine-readable command output
+- `change-brief` (default)
+- `pr-summary`
+- `handoff`
+
+Options:
+
+- `--session <id>`: target a specific session when more than one is active
+- `--json`: render machine-readable command output
 
 ### `threadloop protocol [--json]`
 

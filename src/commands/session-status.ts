@@ -50,6 +50,7 @@ export async function sessionStatusCommand(
       `Goal: ${task.goal}`,
       `Issue: ${task.issueRef ?? 'not set'}`,
       `Status: ${task.status}`,
+      `State version: ${task.stateVersion}`,
       `Branch: ${result.repoSnapshot?.branch ?? session.branch}`,
       `Base ref: ${session.baseRef ?? 'not set'}`,
       `Entries: ${result.entries.length}`,
@@ -71,6 +72,7 @@ export async function sessionStatusCommand(
         goal: task.goal,
         issue_ref: task.issueRef,
         status: task.status,
+        state_version: task.stateVersion,
       },
       session: {
         id: session.id,

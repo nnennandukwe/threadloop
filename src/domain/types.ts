@@ -9,7 +9,18 @@ export const ENTRY_KINDS = [
 ] as const;
 
 export const ARTIFACT_KINDS = ['change-brief', 'pr-summary', 'handoff'] as const;
-export const TASK_STATUS = ['active', 'completed'] as const;
+export const TASK_STATUS = [
+  'queued',
+  'framed',
+  'proof_ready',
+  'implementing',
+  'verifying',
+  'reviewing',
+  'repairing',
+  'ready_for_human',
+  'blocked',
+  'completed',
+] as const;
 export const HEARTBEAT_SOURCES = ['cli', 'daemon', 'reconcile'] as const;
 export const ENTRY_SOURCES = ['cli', 'agent'] as const;
 export const DEFAULT_BASE_REF = 'main' as const;
@@ -28,6 +39,7 @@ export interface Task {
   issueRef: string | null;
   repoRoot: string;
   status: TaskStatus;
+  stateVersion: number;
   createdAt: string;
 }
 
