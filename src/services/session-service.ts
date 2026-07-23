@@ -40,6 +40,7 @@ import {
   canonicalizeTransitionRequest,
   evaluateTransitionGuards,
   planNextTransition,
+  requiresProofGuardContext,
 } from '../domain/session-transition.js';
 import type { ProofGuardContext, TransitionRequest } from '../domain/session-transition.js';
 import {
@@ -52,7 +53,7 @@ import {
 } from '../domain/proof.js';
 import type { GateReceiptPayload } from '../domain/proof.js';
 import { canonicalJson } from '../domain/canonical-json.js';
-import { DEFAULT_BASE_REF } from '../domain/types.js';
+import { DEFAULT_BASE_REF, TASK_STATUS } from '../domain/types.js';
 import type {
   ActiveState,
   ArtifactKind,
@@ -167,7 +168,7 @@ export async function startTask(input: StartTaskInput) {
     constraints: input.constraints,
     issueRef: normalizeOptionalText(input.issueRef),
     repoRoot,
-    status: 'queued',
+    status: TASK_STATUS.QUEUED,
     stateVersion: 0,
     blockedFromState: null,
     createdAt: now,
@@ -274,16 +275,16 @@ export async function transitionSession(input: TransitionSessionInput) {
     let boundProofPlan: BoundProofPlan | undefined;
     let proofGuardContext: ProofGuardContext = {};
     if (
-      lifecycle?.state === 'framed' &&
+      lifecycle?.state === TASK_STATUS.FRAMED &&
       lifecycle.stateVersion === input.expectedStateVersion &&
-      input.targetState === 'proof_ready'
+      input.targetState === TASK_STATUS.PROOF_READY
     ) {
       boundProofPlan = await prepareBoundProofPlan(repoRoot, input.input.proof_plan);
       proofGuardContext = { boundPlan: boundProofPlan };
     } else if (
       lifecycle &&
       lifecycle.schemaVersion >= 4 &&
-      isIssue40ProofTransition(lifecycle.state, input.targetState)
+      requiresProofGuardContext(lifecycle.state, input.targetState)
     ) {
       const repository = await observeProofRepository(repoRoot);
       const proofState = await evaluateSessionProof(repoRoot, input.sessionId, repository.headSha);
@@ -336,15 +337,6 @@ export async function transitionSession(input: TransitionSessionInput) {
     }
     throw error;
   }
-}
-
-function isIssue40ProofTransition(from: Task['status'], to: Task['status']) {
-  return (
-    (from === 'proof_ready' && to === 'implementing') ||
-    (from === 'implementing' && to === 'verifying') ||
-    (from === 'verifying' && ['reviewing', 'repairing'].includes(to)) ||
-    (from === 'repairing' && to === 'verifying')
-  );
 }
 
 async function prepareBoundProofPlan(repoRoot: string, value: unknown): Promise<BoundProofPlan> {
@@ -400,7 +392,7 @@ export async function runSessionGate(input: RunSessionGateInput) {
       details: { session_id: input.sessionId },
     });
   }
-  if (context.state !== 'verifying') {
+  if (context.state !== TASK_STATUS.VERIFYING) {
     throw new ThreadloopError('GATE_NOT_RUNNABLE', 'Local gates can run only while a session is verifying.', {
       details: {
         session_id: input.sessionId,

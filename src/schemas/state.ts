@@ -3,7 +3,7 @@ import { ARTIFACT_KINDS, ENTRY_KINDS, ENTRY_SOURCES, HEARTBEAT_SOURCES, TASK_STA
 
 const persistedTaskStatusSchema = z
   .union([z.enum(TASK_STATUS), z.literal('active')])
-  .transform((status) => (status === 'active' ? 'queued' : status));
+  .transform((status) => (status === 'active' ? TASK_STATUS.QUEUED : status));
 
 export const taskSchema = z.object({
   id: z.string(),

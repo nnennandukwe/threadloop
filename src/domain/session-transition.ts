@@ -1,4 +1,5 @@
-import type { EntrySource, TaskStatus } from './types.js';
+import { getDeterministicForwardTarget, isForwardLifecycleTransition } from './lifecycle.js';
+import { TASK_STATUS, type EntrySource, type TaskStatus } from './types.js';
 import { canonicalizeJsonValue, isPlainObject } from './canonical-json.js';
 import type { BoundProofPlan } from './proof.js';
 import type { ProofEvidence, ProofEvidenceStatus } from './proof.js';
@@ -36,6 +37,8 @@ export interface TransitionGuardDecision {
   guardFailures: TransitionGuardFailure[];
   requiredWork: TransitionRequiredWork[];
 }
+
+export type TransitionGuardRequirement = 'none' | 'proof_plan' | 'proof' | 'review';
 
 export interface ProofGuardContext {
   boundPlan?: BoundProofPlan;
@@ -91,7 +94,7 @@ export function evaluateTransitionGuards(
   blockedFromState: TaskStatus | null,
   proof: ProofGuardContext = {},
 ): TransitionGuardDecision {
-  if (from === 'blocked' && blockedFromState === null) {
+  if (from === TASK_STATUS.BLOCKED && blockedFromState === null) {
     return deniedGuards(
       {
         code: 'BLOCKED_PRIOR_STATE_REQUIRED',
@@ -109,18 +112,38 @@ export function evaluateTransitionGuards(
     return evidence;
   }
 
-  if (to === 'blocked' || from === 'blocked' || (from === 'queued' && to === 'framed')) {
+  const requirement = getTransitionGuardRequirement(from, to);
+  if (requirement === 'none') {
     return allowedGuards();
   }
-
-  const owner = guardOwner(from, to);
-  if (from === 'framed' && to === 'proof_ready' && proof.boundPlan) {
-    return allowedGuards();
+  if (requirement === 'proof_plan') {
+    return proof.boundPlan ? allowedGuards() : evaluateProofOwnedGuards(from, to, proof);
   }
-  if (owner === 40) {
+  if (requirement === 'proof') {
     return evaluateProofOwnedGuards(from, to, proof);
   }
-  return owner === 42 ? deferredReviewGuards(to) : deferredProofGuards();
+  return deferredReviewGuards(to);
+}
+
+export function getTransitionGuardRequirement(from: TaskStatus, to: TaskStatus): TransitionGuardRequirement {
+  if (
+    to === TASK_STATUS.BLOCKED ||
+    from === TASK_STATUS.BLOCKED ||
+    (from === TASK_STATUS.QUEUED && to === TASK_STATUS.FRAMED)
+  ) {
+    return 'none';
+  }
+  if (from === TASK_STATUS.FRAMED && to === TASK_STATUS.PROOF_READY) {
+    return 'proof_plan';
+  }
+  if (from === TASK_STATUS.REVIEWING || from === TASK_STATUS.READY_FOR_HUMAN || to === TASK_STATUS.COMPLETED) {
+    return 'review';
+  }
+  return 'proof';
+}
+
+export function requiresProofGuardContext(from: TaskStatus, to: TaskStatus) {
+  return isForwardLifecycleTransition(from, to) && getTransitionGuardRequirement(from, to) === 'proof';
 }
 
 function evaluateProofOwnedGuards(from: TaskStatus, to: TaskStatus, proof: ProofGuardContext): TransitionGuardDecision {
@@ -141,7 +164,7 @@ function evaluateProofOwnedGuards(from: TaskStatus, to: TaskStatus, proof: Proof
     );
   }
 
-  if (from === 'proof_ready' && to === 'implementing') {
+  if (from === TASK_STATUS.PROOF_READY && to === TASK_STATUS.IMPLEMENTING) {
     if (repository.clean && repository.branch === plan.baselineBranch && repository.headSha === plan.baselineHeadSha) {
       return allowedGuards();
     }
@@ -159,7 +182,7 @@ function evaluateProofOwnedGuards(from: TaskStatus, to: TaskStatus, proof: Proof
     );
   }
 
-  if (from === 'implementing' && to === 'verifying') {
+  if (from === TASK_STATUS.IMPLEMENTING && to === TASK_STATUS.VERIFYING) {
     if (
       repository.clean &&
       repository.branch === plan.baselineBranch &&
@@ -182,7 +205,7 @@ function evaluateProofOwnedGuards(from: TaskStatus, to: TaskStatus, proof: Proof
     );
   }
 
-  if (from === 'verifying' && to === 'reviewing') {
+  if (from === TASK_STATUS.VERIFYING && to === TASK_STATUS.REVIEWING) {
     if (proof.evidence?.status !== 'passed') {
       return deniedGuards(
         {
@@ -214,7 +237,7 @@ function evaluateProofOwnedGuards(from: TaskStatus, to: TaskStatus, proof: Proof
     return allowedGuards();
   }
 
-  if (from === 'verifying' && to === 'repairing') {
+  if (from === TASK_STATUS.VERIFYING && to === TASK_STATUS.REPAIRING) {
     if (proof.evidence?.status === 'failed' && (proof.attemptsUsed ?? 3) < 3) {
       return allowedGuards();
     }
@@ -237,7 +260,7 @@ function evaluateProofOwnedGuards(from: TaskStatus, to: TaskStatus, proof: Proof
     );
   }
 
-  if (from === 'repairing' && to === 'verifying') {
+  if (from === TASK_STATUS.REPAIRING && to === TASK_STATUS.VERIFYING) {
     if (repository.clean && repository.branch === plan.baselineBranch && repository.committedRepairFromFailure) {
       return allowedGuards();
     }
@@ -263,7 +286,10 @@ export function validateTransitionEvidence(
   to: TaskStatus,
   input: Record<string, unknown>,
 ): TransitionGuardDecision {
-  if (to === 'blocked' && !hasRequiredTextFields(input.block, ['reason', 'evidence_ref', 'recovery', 'stop_code'])) {
+  if (
+    to === TASK_STATUS.BLOCKED &&
+    !hasRequiredTextFields(input.block, ['reason', 'evidence_ref', 'recovery', 'stop_code'])
+  ) {
     return deniedGuards(
       {
         code: 'BLOCK_EVIDENCE_REQUIRED',
@@ -276,7 +302,10 @@ export function validateTransitionEvidence(
     );
   }
 
-  if (from === 'blocked' && !hasRequiredTextFields(input.recovery, ['approved_by', 'evidence_ref', 'reason'])) {
+  if (
+    from === TASK_STATUS.BLOCKED &&
+    !hasRequiredTextFields(input.recovery, ['approved_by', 'evidence_ref', 'reason'])
+  ) {
     return deniedGuards(
       {
         code: 'RECOVERY_EVIDENCE_REQUIRED',
@@ -302,7 +331,7 @@ export function planNextTransition(input: {
   };
   proofGuardContext?: ProofGuardContext;
 }): PlannedTransition {
-  if (input.state === 'completed') {
+  if (input.state === TASK_STATUS.COMPLETED) {
     return {
       candidate: null,
       guardFailures: [],
@@ -311,12 +340,12 @@ export function planNextTransition(input: {
     };
   }
 
-  if (input.state === 'blocked') {
+  if (input.state === TASK_STATUS.BLOCKED) {
     const target = input.blockedFromState;
     return {
       candidate: target
         ? {
-            from_state: 'blocked',
+            from_state: TASK_STATUS.BLOCKED,
             target_state: target,
             expected_state_version: input.stateVersion,
             executable: false,
@@ -338,13 +367,13 @@ export function planNextTransition(input: {
     };
   }
 
-  if (input.state === 'verifying' && input.proof) {
+  if (input.state === TASK_STATUS.VERIFYING && input.proof) {
     return planVerifyingTransition(input.stateVersion, input.proof, input.proofGuardContext);
   }
 
-  const target = deterministicTarget(input.state);
+  const target = getDeterministicForwardTarget(input.state);
   if (!target) {
-    const owner = input.state === 'reviewing' ? 42 : 40;
+    const owner = input.state === TASK_STATUS.REVIEWING ? 42 : 40;
     const guards = owner === 42 ? deferredReviewGuards(null) : deferredProofGuards();
     return {
       candidate: null,
@@ -374,11 +403,11 @@ function planVerifyingTransition(
   proofGuardContext: ProofGuardContext | undefined,
 ): PlannedTransition {
   if (proof.status === 'passed') {
-    const guards = evaluateTransitionGuards('verifying', 'reviewing', {}, null, proofGuardContext);
+    const guards = evaluateTransitionGuards(TASK_STATUS.VERIFYING, TASK_STATUS.REVIEWING, {}, null, proofGuardContext);
     return {
       candidate: {
-        from_state: 'verifying',
-        target_state: 'reviewing',
+        from_state: TASK_STATUS.VERIFYING,
+        target_state: TASK_STATUS.REVIEWING,
         expected_state_version: stateVersion,
         executable: guards.allowed,
       },
@@ -390,8 +419,8 @@ function planVerifyingTransition(
   if (proof.status === 'failed' && proof.attemptsUsed < 3) {
     return {
       candidate: {
-        from_state: 'verifying',
-        target_state: 'repairing',
+        from_state: TASK_STATUS.VERIFYING,
+        target_state: TASK_STATUS.REPAIRING,
         expected_state_version: stateVersion,
         executable: true,
       },
@@ -403,8 +432,8 @@ function planVerifyingTransition(
   if (proof.status === 'failed') {
     return {
       candidate: {
-        from_state: 'verifying',
-        target_state: 'blocked',
+        from_state: TASK_STATUS.VERIFYING,
+        target_state: TASK_STATUS.BLOCKED,
         expected_state_version: stateVersion,
         executable: false,
       },
@@ -454,35 +483,6 @@ function planVerifyingTransition(
   };
 }
 
-function deterministicTarget(state: TaskStatus): TaskStatus | null {
-  switch (state) {
-    case 'queued':
-      return 'framed';
-    case 'framed':
-      return 'proof_ready';
-    case 'proof_ready':
-      return 'implementing';
-    case 'implementing':
-      return 'verifying';
-    case 'repairing':
-      return 'verifying';
-    case 'ready_for_human':
-      return 'completed';
-    case 'verifying':
-    case 'reviewing':
-    case 'blocked':
-    case 'completed':
-      return null;
-  }
-}
-
-function guardOwner(from: TaskStatus, to: TaskStatus): 40 | 42 {
-  if (from === 'reviewing' || from === 'ready_for_human' || to === 'completed') {
-    return 42;
-  }
-  return 40;
-}
-
 function deferredProofGuards(): TransitionGuardDecision {
   return deniedGuards(
     {
@@ -499,7 +499,7 @@ function deferredProofGuards(): TransitionGuardDecision {
 }
 
 function deferredReviewGuards(target: TaskStatus | null): TransitionGuardDecision {
-  const completing = target === 'completed';
+  const completing = target === TASK_STATUS.COMPLETED;
   return deniedGuards(
     {
       code: completing ? 'APPROVAL_AND_MERGE_EVIDENCE_DEFERRED' : 'REVIEW_EVIDENCE_DEFERRED',

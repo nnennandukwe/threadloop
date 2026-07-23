@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { evaluateLifecycleTransition, isActiveTaskStatus } from '../../src/domain/lifecycle.js';
-import { TASK_STATUS } from '../../src/domain/types.js';
+import {
+  evaluateLifecycleTransition,
+  getDeterministicForwardTarget,
+  isActiveTaskStatus,
+} from '../../src/domain/lifecycle.js';
+import { TASK_STATUS, TASK_STATUS_VALUES } from '../../src/domain/types.js';
 
 describe('governed lifecycle', () => {
   it('publishes the complete ordered lifecycle state set', () => {
-    expect(TASK_STATUS).toEqual([
+    expect(TASK_STATUS_VALUES).toEqual([
       'queued',
       'framed',
       'proof_ready',
@@ -16,6 +20,11 @@ describe('governed lifecycle', () => {
       'blocked',
       'completed',
     ]);
+  });
+
+  it('prevents callers from mutating the shared lifecycle state set', () => {
+    expect(Object.isFrozen(TASK_STATUS)).toBe(true);
+    expect(Object.isFrozen(TASK_STATUS_VALUES)).toBe(true);
   });
 
   it('allows every forward transition in the structural workflow', () => {
@@ -53,11 +62,13 @@ describe('governed lifecycle', () => {
       'reviewing:ready_for_human',
       'repairing:verifying',
       'ready_for_human:completed',
-      ...TASK_STATUS.filter((state) => !['blocked', 'completed'].includes(state)).map((state) => `${state}:blocked`),
+      ...TASK_STATUS_VALUES.filter((state) => !['blocked', 'completed'].includes(state)).map(
+        (state) => `${state}:blocked`,
+      ),
     ]);
 
-    for (const from of TASK_STATUS) {
-      for (const to of TASK_STATUS) {
+    for (const from of TASK_STATUS_VALUES) {
+      for (const to of TASK_STATUS_VALUES) {
         expect(evaluateLifecycleTransition(from, to).allowed, `${from} -> ${to}`).toBe(
           allowedPairs.has(`${from}:${to}`),
         );
@@ -66,7 +77,7 @@ describe('governed lifecycle', () => {
   });
 
   it('allows every nonterminal workflow state to block', () => {
-    for (const from of TASK_STATUS.filter((state) => !['blocked', 'completed'].includes(state))) {
+    for (const from of TASK_STATUS_VALUES.filter((state) => !['blocked', 'completed'].includes(state))) {
       expect(evaluateLifecycleTransition(from, 'blocked')).toMatchObject({
         allowed: true,
         code: 'TRANSITION_ALLOWED',
@@ -104,8 +115,15 @@ describe('governed lifecycle', () => {
   });
 
   it('treats every lifecycle state except completed as active-session compatible', () => {
-    for (const status of TASK_STATUS) {
+    for (const status of TASK_STATUS_VALUES) {
       expect(isActiveTaskStatus(status), status).toBe(status !== 'completed');
     }
+  });
+
+  it('derives deterministic next states from the structural workflow', () => {
+    expect(getDeterministicForwardTarget('queued')).toBe('framed');
+    expect(getDeterministicForwardTarget('repairing')).toBe('verifying');
+    expect(getDeterministicForwardTarget('verifying')).toBeNull();
+    expect(getDeterministicForwardTarget('completed')).toBeNull();
   });
 });
