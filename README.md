@@ -214,5 +214,6 @@ npm run smoke:pack
 
 ## Docs
 
-- CLI reference: `docs/cli.md`
-- Autonomous agent mode: `docs/agent-mode.md`
+- [CLI reference](docs/cli.md)
+- [Autonomous agent mode](docs/agent-mode.md)
+- [Contribution guide](CONTRIBUTING.md)

@@ -1,0 +1,84 @@
+name: Documentation improvement
+description: Report missing, inaccurate, or unclear ThreadLoop documentation.
+title: "[Docs]: "
+labels:
+  - documentation
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for README, CLI reference, examples, and workflow-guide improvements.
+
+        Before filing:
+        - Search the [existing issues](https://github.com/nnennandukwe/threadloop/issues?q=is%3Aissue) for a related report.
+        - Check the [README](https://github.com/nnennandukwe/threadloop#readme), [CLI reference](https://github.com/nnennandukwe/threadloop/blob/main/docs/cli.md), and [agent-mode guide](https://github.com/nnennandukwe/threadloop/blob/main/docs/agent-mode.md).
+
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Prerequisites
+      options:
+        - label: I searched open and closed issues and did not find an existing documentation report for this problem.
+          required: true
+
+  - type: dropdown
+    id: documentation-area
+    attributes:
+      label: Documentation area
+      options:
+        - README
+        - CLI reference
+        - Agent-mode guide
+        - Examples
+        - Command help text
+        - Generated artifacts
+        - Contribution workflow
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: location
+    attributes:
+      label: Location
+      description: Link to the page or name the file, section, command, or example involved.
+      placeholder: "docs/cli.md — session capture"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: audience
+    attributes:
+      label: Primary audience
+      options:
+        - First-time user
+        - CLI user
+        - Contributor
+        - Agent or orchestrator author
+        - Maintainer or reviewer
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Documentation problem
+      description: What is missing, inaccurate, contradictory, or hard to follow? Explain the impact on the reader.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-improvement
+    attributes:
+      label: Proposed improvement
+      description: Describe the correction, example, or explanation that would resolve the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add relevant output, screenshots, related documentation, or other context.

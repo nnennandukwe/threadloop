@@ -1,0 +1,99 @@
+name: Feature request
+description: Propose an outcome that would improve a real ThreadLoop workflow.
+title: "[Feature]: "
+labels:
+  - enhancement
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A strong feature request starts with the workflow and problem, then describes a testable outcome.
+
+        Before filing:
+        - Search the [existing issues](https://github.com/nnennandukwe/threadloop/issues?q=is%3Aissue) for related proposals.
+        - Review the [README](https://github.com/nnennandukwe/threadloop#readme), [agent-mode guide](https://github.com/nnennandukwe/threadloop/blob/main/docs/agent-mode.md), and [contribution guide](https://github.com/nnennandukwe/threadloop/blob/main/CONTRIBUTING.md).
+
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Prerequisites
+      options:
+        - label: I searched open and closed issues and did not find an existing request for this outcome.
+          required: true
+        - label: I described the user or agent problem, not only a preferred implementation.
+          required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      description: Which ThreadLoop surface would this primarily change?
+      options:
+        - Session commands
+        - Legacy compatibility commands
+        - JSON output or protocol contract
+        - Generated Markdown or review artifacts
+        - Storage or migration
+        - Git integration or repository discovery
+        - Daemon or reconciliation
+        - Installation or packaging
+        - Documentation
+        - New surface
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is difficult, unsafe, ambiguous, or impossible today, and who experiences it?
+      placeholder: When a contributor or agent tries to ..., they cannot ... because ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Current workflow
+      description: Show the commands or steps used today, including the point where the workflow breaks down.
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the observable behavior after this change without assuming a specific implementation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: List concrete, verifiable conditions that would make this request complete.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What workarounds or other designs have you tried, and why are they insufficient?
+
+  - type: textarea
+    id: contract-impact
+    attributes:
+      label: Contract and compatibility considerations
+      description: Note likely effects on CLI syntax, JSON output, persisted state, artifacts, supported runtimes, or existing automation.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add examples, diagrams, prior art, or links that help explain the request.
