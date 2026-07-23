@@ -114,7 +114,8 @@ export async function startTask(input: StartTaskInput) {
     constraints: input.constraints,
     issueRef: normalizeOptionalText(input.issueRef),
     repoRoot,
-    status: 'active',
+    status: 'queued',
+    stateVersion: 0,
     createdAt: now,
   };
 

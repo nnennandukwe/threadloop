@@ -158,11 +158,13 @@ Recommended loop:
 6. `threadloop session reconcile --session "$session_id"` when Git-derived scope needs refresh
 7. rebase the task branch onto the latest `origin/main`
 8. `threadloop artifact generate pr-summary --session "$session_id"`
-9. `threadloop session finish --session "$session_id"`
+9. stop for human review; do not infer approval, merge, or lifecycle completion from the compatibility `session finish` command
 
 Use `threadloop protocol --json` as the machine-facing contract for current commands, entry kinds, artifact kinds, supported environment variables, and the published branch/rebase/PR workflow guidance.
 
 The optional daemon only performs mechanical refresh work. It does not create semantic notes or replace explicit capture.
+
+The governed task lifecycle and schema-v2 migration contract are documented in [`docs/lifecycle.md`](docs/lifecycle.md). Autonomous transition and guard commands are delivered as later M002 increments; the current `session finish` compatibility command is not proof of approval or merge.
 
 ## Longer notes with `$EDITOR`
 

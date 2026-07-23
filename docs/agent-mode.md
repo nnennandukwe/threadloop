@@ -31,7 +31,7 @@ The current operator model is one autonomous task per checkout or worktree.
 5. Capture intent, decisions, risks, validation, and reviewer guidance as the task evolves.
 6. Reconcile before artifact generation when Git-derived scope needs a refresh.
 7. Rebase the task branch onto the latest `origin/main` before PR open.
-8. Generate the artifact you need, then finish the session when the task is done.
+8. Generate the artifact you need, then stop for human review. Until the guarded transition commands land, do not use compatibility `session finish` as evidence of approval or merge.
 
 Example:
 
@@ -61,7 +61,6 @@ threadloop session capture validation \
 
 threadloop session reconcile --session "$SESSION_ID" --json
 threadloop artifact generate pr-summary --session "$SESSION_ID" --json
-threadloop session finish --session "$SESSION_ID" --json
 ```
 
 ## Machine-facing contract

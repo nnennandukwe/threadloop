@@ -348,6 +348,148 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     expect(legacyBackup).toContain('Legacy decision');
   });
 
+  it('migrates schema v1 task lifecycle state without losing active-session compatibility', async () => {
+    await mkdir(path.join(repoDir, '.threadloop/state'), { recursive: true });
+    await writeFile(
+      path.join(repoDir, '.threadloop/config.json'),
+      `${JSON.stringify({ version: 1, createdAt: '2026-07-23T12:00:00.000Z' }, null, 2)}\n`,
+      'utf8',
+    );
+    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
+    const db = new DatabaseSync(dbPath);
+    const now = '2026-07-23T12:00:00.000Z';
+
+    try {
+      db.exec(`
+        CREATE TABLE metadata (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL
+        );
+
+        CREATE TABLE tasks (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          goal TEXT NOT NULL,
+          constraints_json TEXT NOT NULL,
+          issue_ref TEXT,
+          repo_root TEXT NOT NULL,
+          status TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE sessions (
+          id TEXT PRIMARY KEY,
+          task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+          started_at TEXT NOT NULL,
+          ended_at TEXT,
+          base_ref TEXT,
+          branch TEXT NOT NULL,
+          head_sha TEXT NOT NULL,
+          last_heartbeat_at TEXT,
+          last_heartbeat_source TEXT
+        );
+
+        CREATE TABLE entries (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          kind TEXT NOT NULL,
+          body TEXT NOT NULL,
+          metadata_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          source TEXT NOT NULL
+        );
+
+        CREATE TABLE artifacts (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          kind TEXT NOT NULL,
+          path TEXT NOT NULL,
+          template_version TEXT NOT NULL,
+          generated_at TEXT NOT NULL,
+          snapshot_source TEXT
+        );
+
+        CREATE TABLE active_state (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE active_sessions (
+          session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+          task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE repo_snapshots (
+          session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+          branch TEXT NOT NULL,
+          head_sha TEXT NOT NULL,
+          base_ref TEXT,
+          changed_files_json TEXT NOT NULL,
+          diff_stats_json TEXT NOT NULL,
+          commit_range_json TEXT NOT NULL,
+          reconciled_at TEXT NOT NULL
+        );
+      `);
+      db.prepare(`INSERT INTO metadata (key, value) VALUES ('schema_version', '1')`).run();
+      db.prepare(
+        `
+          INSERT INTO tasks (id, title, goal, constraints_json, issue_ref, repo_root, status, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+      ).run('task_active', 'Active v1 task', 'Migrate to queued', '[]', null, repoDir, 'active', now);
+      db.prepare(
+        `
+          INSERT INTO sessions (id, task_id, started_at, ended_at, base_ref, branch, head_sha, last_heartbeat_at, last_heartbeat_source)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+      ).run('session_active', 'task_active', now, null, null, 'feature/lifecycle', 'abc123', null, null);
+
+      db.prepare(
+        `
+          INSERT INTO tasks (id, title, goal, constraints_json, issue_ref, repo_root, status, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+      ).run('task_completed', 'Completed v1 task', 'Remain completed', '[]', null, repoDir, 'completed', now);
+      db.prepare(
+        `
+          INSERT INTO sessions (id, task_id, started_at, ended_at, base_ref, branch, head_sha, last_heartbeat_at, last_heartbeat_source)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+      ).run('session_completed', 'task_completed', now, now, null, 'feature/done', 'def456', null, null);
+
+      const taskColumns = db.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>;
+      expect(taskColumns.map((column) => column.name)).not.toContain('state_version');
+    } finally {
+      db.close();
+    }
+
+    const status = parseJsonOutput<{
+      data: {
+        task: { status: string; state_version: number };
+      };
+    }>((await runCli(repoDir, ['session', 'status', '--session', 'session_active', '--json'])).stdout);
+
+    expect(status.data.task).toMatchObject({ status: 'queued', state_version: 0 });
+
+    const migrated = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const schemaVersion = migrated.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get() as
+        | { value: string }
+        | undefined;
+      expect(schemaVersion?.value).toBe('2');
+      expect(
+        migrated.prepare(`SELECT id, status, state_version FROM tasks ORDER BY id`).all(),
+      ).toEqual([
+        { id: 'task_active', status: 'queued', state_version: 0 },
+        { id: 'task_completed', status: 'completed', state_version: 0 },
+      ]);
+      expect(readScalarCount(migrated, 'SELECT COUNT(*) AS count FROM active_sessions')).toBe(1);
+    } finally {
+      migrated.close();
+    }
+  });
+
   it('rejects unsupported schema metadata before migrating legacy state', async () => {
     const legacyState = {
       tasks: [
