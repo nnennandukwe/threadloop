@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
+import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import {
   applySessionTransition,
   ensureStateDatabase,
@@ -662,7 +663,7 @@ describe('session transition command', { timeout: 20_000 }, () => {
     await expect(
       applySessionTransition(repoDir, {
         ...request,
-        ...canonicalizeTransitionRequest(request),
+        ...canonicalizeTransitionRequest(request, sha256),
         idempotencyKey: 'rollback:atomic',
       }),
     ).rejects.toThrow('injected idempotency failure');
@@ -700,7 +701,7 @@ describe('session transition command', { timeout: 20_000 }, () => {
       repoDir,
       {
         ...request,
-        ...canonicalizeTransitionRequest(request),
+        ...canonicalizeTransitionRequest(request, sha256),
         idempotencyKey: 'future:completion',
       },
       () => ({ allowed: true, guardFailures: [], requiredWork: [] }),

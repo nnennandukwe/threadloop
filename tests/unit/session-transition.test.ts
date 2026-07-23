@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import {
   canonicalizeTransitionRequest,
   evaluateTransitionGuards,
@@ -7,21 +8,44 @@ import {
 } from '../../src/domain/session-transition.js';
 
 describe('session transition domain', () => {
+  it('uses the injected digest for the canonical request bytes', () => {
+    const digest = vi.fn(() => 'injected-sha256');
+    const result = canonicalizeTransitionRequest(
+      {
+        sessionId: 'session_123',
+        targetState: 'framed',
+        expectedStateVersion: 0,
+        actor: 'agent',
+        input: {},
+      },
+      digest,
+    );
+
+    expect(digest).toHaveBeenCalledWith(result.requestJson);
+    expect(result.requestSha256).toBe('injected-sha256');
+  });
+
   it('canonicalizes recursively equivalent requests to the same bytes and digest', () => {
-    const first = canonicalizeTransitionRequest({
-      sessionId: 'session_123',
-      targetState: 'framed',
-      expectedStateVersion: 0,
-      actor: 'agent',
-      input: { z: [{ b: 2, a: 1 }], a: true },
-    });
-    const second = canonicalizeTransitionRequest({
-      actor: 'agent',
-      expectedStateVersion: 0,
-      input: { a: true, z: [{ a: 1, b: 2 }] },
-      sessionId: 'session_123',
-      targetState: 'framed',
-    });
+    const first = canonicalizeTransitionRequest(
+      {
+        sessionId: 'session_123',
+        targetState: 'framed',
+        expectedStateVersion: 0,
+        actor: 'agent',
+        input: { z: [{ b: 2, a: 1 }], a: true },
+      },
+      sha256,
+    );
+    const second = canonicalizeTransitionRequest(
+      {
+        actor: 'agent',
+        expectedStateVersion: 0,
+        input: { a: true, z: [{ a: 1, b: 2 }] },
+        sessionId: 'session_123',
+        targetState: 'framed',
+      },
+      sha256,
+    );
 
     expect(first).toEqual(second);
     expect(first.requestJson).toBe(

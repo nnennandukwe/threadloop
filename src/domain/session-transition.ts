@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import type { EntrySource, TaskStatus } from './types.js';
 
 export interface TransitionRequest {
@@ -14,6 +13,8 @@ export interface CanonicalTransitionRequest {
   requestJson: string;
   requestSha256: string;
 }
+
+export type RequestDigest = (value: string) => string;
 
 export interface TransitionGuardFailure {
   code: string;
@@ -45,7 +46,10 @@ export interface PlannedTransition {
   terminalReason: 'BLOCKED_REQUIRES_HUMAN_RECOVERY' | 'COMPLETED' | null;
 }
 
-export function canonicalizeTransitionRequest(request: TransitionRequest): CanonicalTransitionRequest {
+export function canonicalizeTransitionRequest(
+  request: TransitionRequest,
+  digest: RequestDigest,
+): CanonicalTransitionRequest {
   const canonicalInput = canonicalizeJsonValue(request.input) as Record<string, unknown>;
   const canonical = {
     actor: request.actor,
@@ -59,7 +63,7 @@ export function canonicalizeTransitionRequest(request: TransitionRequest): Canon
   return {
     canonicalInput,
     requestJson,
-    requestSha256: createHash('sha256').update(requestJson).digest('hex'),
+    requestSha256: digest(requestJson),
   };
 }
 

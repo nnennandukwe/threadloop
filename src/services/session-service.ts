@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { sha256 } from '../adapters/crypto/sha256.js';
 import { ensureThreadloopStateIgnored } from '../adapters/fs/gitignore.js';
 import {
   appendEntryToSession,
@@ -228,7 +229,7 @@ export async function transitionSession(input: TransitionSessionInput) {
     await assertInitialized(repoRoot);
     return await applySessionTransition(repoRoot, {
       ...input,
-      ...canonicalizeTransitionRequest(input),
+      ...canonicalizeTransitionRequest(input, sha256),
     });
   } catch (error) {
     if (isSchemaStateError(error)) {
