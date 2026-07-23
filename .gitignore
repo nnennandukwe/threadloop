@@ -2,6 +2,7 @@ node_modules/
 dist/
 coverage/
 .threadloop/state/
+.entire/
 .bg-shell/
 .DS_Store
 
