@@ -7,8 +7,9 @@ while you work. The canonical operator surface is session-first; root commands r
 
 ### `threadloop init`
 
-Initializes `.threadloop/` in the current Git repository and ensures `.threadloop/state/` is ignored via
-`.git/info/exclude` without editing tracked repo files.
+Initializes `.threadloop/` in the current Git repository and ensures `.threadloop/state/` plus
+`.threadloop/artifacts/receipts/` are ignored via `.git/info/exclude` without editing tracked repo files. Normal review
+artifacts remain visible.
 
 ### `threadloop session start <title> [--json]`
 
@@ -89,8 +90,9 @@ Reads one deterministic transition candidate, current lifecycle state/version, g
 sanitized repository identity, branch, HEAD, and worktree cleanliness. This command does not heartbeat, reconcile,
 refresh snapshots, migrate the database, repair projections, or mutate lifecycle state.
 
-Proof staleness and repair-budget fields are explicitly deferred to #40. Completed and blocked sessions return terminal
-reasons.
+The response reports each declared gate as `missing`, `passed`, `failed`, `stale`, or `corrupt`, plus the latest receipt
+id, current-HEAD staleness, and repair attempts used/remaining. Completed and blocked sessions return terminal reasons.
+Schema-v2/v3 reads report `migration_required` without mutating the database.
 
 ### `threadloop session transition <target-state> [options]`
 
@@ -102,11 +104,42 @@ Required options:
 - `--expected-state-version <version>`: canonical non-negative integer from the latest state read
 - `--idempotency-key <key>`: stable 1-128 character request key
 - `--actor <cli|agent>`: invoking actor
-- `--input <json-object>`: structured transition input; `{}` is valid for ordinary transitions
+- `--input <json-object>`: structured transition input; `framed -> proof_ready` requires `proof_plan`
 
 The same key and canonical request replays the original result without adding records. Reusing a key for different
-content fails with `IDEMPOTENCY_CONFLICT`. Stale state versions fail without lifecycle mutation. Transitions requiring
-proof owned by issue #40 or review, approval, and merge evidence owned by issue #42 fail closed.
+content fails with `IDEMPOTENCY_CONFLICT`. Stale state versions fail without lifecycle mutation. Issue #40-owned
+transitions use the immutable plan, clean Git observations, current receipts, and derived repair budget. Review,
+approval, and merge evidence owned by issue #42 remains fail-closed.
+
+Proof-plan input:
+
+```json
+{
+  "proof_plan": {
+    "acceptance_criteria": ["All repository checks pass"],
+    "gates": [
+      {
+        "id": "repository-check",
+        "command": ["npm", "run", "check"],
+        "working_directory": ".",
+        "timeout_ms": 900000
+      }
+    ]
+  }
+}
+```
+
+All gates are required. Gate ids must be unique, commands are exact argv arrays, working directories must exist and
+resolve inside the repository, and timeouts must be positive integers no greater than one day.
+
+### `threadloop session gate run <gate-id> --session <id> [--json]`
+
+Runs one gate declared by the session's immutable proof plan. The command accepts no executable, argument, directory,
+timeout, or shell override. It is available only in `verifying` on a clean committed worktree.
+
+The runner captures stdout and stderr separately, waits for process and stream closure, records non-zero, timeout,
+abort, spawn, cleanup, and repository-drift outcomes, then appends an immutable receipt. Gate execution never changes
+lifecycle state. A later receipt for the same gate supersedes an earlier receipt by database sequence.
 
 ### `threadloop daemon run [--json]`
 
@@ -185,12 +218,14 @@ ThreadLoop stores state locally in the repo:
 If an older repo still has `.threadloop/state/state.json`, ThreadLoop migrates that data into SQLite on first access and
 intentionally leaves the JSON file in place as a safety backup. After migration, ThreadLoop reads from SQLite.
 
-SQLite schema v3 stores transition and idempotency records plus the prior state needed for blocked recovery. Migration
-from v2 is atomic, and schema metadata accepts canonical unsigned decimal text only.
+SQLite schema v4 stores transition/idempotency records, one immutable proof plan per session, and append-only local gate
+receipts. Migration is atomic, and schema metadata accepts canonical unsigned decimal text only. Update, delete, and
+replace attempts against plans and receipts are rejected by persistent triggers.
 
 Recommended default:
 
 - keep `.threadloop/state/` uncommitted
+- keep `.threadloop/artifacts/receipts/` local and uncommitted
 - commit artifacts only when they are useful for review or handoff
 
 ## Agent-mode guidance
