@@ -17,5 +17,23 @@ describe('protocol contract', () => {
       expect(usage.startsWith(`threadloop ${path}`)).toBe(true);
       expect(usage.includes('[--json]')).toBe(supportsJson);
     }
+
+    expect(contract.workflow).toMatchObject({
+      defaultBaseRef: 'main',
+      branchNaming: {
+        default: 'threadloop/<slug>',
+        withIssue: 'issue-<issue>/<slug>',
+      },
+      rebaseBeforePr: {
+        required: true,
+        upstream: 'origin/main',
+      },
+      pr: {
+        baseRef: 'main',
+        bodyArtifact: 'pr-summary',
+        closingKeyword: 'Closes',
+      },
+      trackedFileMutations: 'none',
+    });
   });
 });

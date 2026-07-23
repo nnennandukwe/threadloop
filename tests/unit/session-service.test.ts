@@ -1,13 +1,15 @@
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
+import { readRepoSnapshot } from '../../src/adapters/fs/sqlite-store.js';
 import { isThreadloopError } from '../../src/contracts/errors.js';
 import {
   captureEntry,
   finishSession,
+  generateArtifact,
   getStatus,
   initThreadloop,
   listSessions,
@@ -25,6 +27,49 @@ async function makeRepo() {
 }
 
 describe('session service', () => {
+  it('auto-initializes a repo on startTask and records agent issue metadata', async () => {
+    const repoDir = await makeRepo();
+
+    const started = await startTask({
+      cwd: repoDir,
+      title: 'Auto init task',
+      goal: 'Start without manual init',
+      constraints: [],
+      baseRef: null,
+      issueRef: 'ISSUE-13',
+      actor: 'agent',
+      allowMultipleActive: true,
+    });
+
+    const status = await getStatus(repoDir, { sessionId: started.session.id });
+    expect(status.active?.task.issueRef).toBe('ISSUE-13');
+    expect(status.entries[0]).toMatchObject({ kind: 'intent', source: 'agent' });
+    expect(status.repoSnapshot).not.toBeNull();
+  });
+
+  it('uses a live snapshot when generating an artifact for an active session', async () => {
+    const repoDir = await makeRepo();
+
+    const started = await startTask({
+      cwd: repoDir,
+      title: 'Live artifact snapshot',
+      goal: 'Refresh scope during artifact generation',
+      constraints: [],
+      baseRef: null,
+      allowMultipleActive: true,
+    });
+
+    await writeFile(path.join(repoDir, 'feature.ts'), 'export const feature = true;\n', 'utf8');
+
+    const artifact = await generateArtifact(repoDir, 'change-brief', { sessionId: started.session.id });
+    const content = await readFile(artifact.fullPath, 'utf8');
+    const storedSnapshot = await readRepoSnapshot(repoDir, started.session.id);
+
+    expect(artifact.artifact.snapshotSource).toBe('live');
+    expect(content).toContain('feature.ts');
+    expect(storedSnapshot?.changedFiles).toContain('feature.ts');
+  });
+
   it('requires explicit selection when multiple sessions are active', async () => {
     const repoDir = await makeRepo();
     await initThreadloop(repoDir);

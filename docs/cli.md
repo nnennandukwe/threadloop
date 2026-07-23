@@ -5,15 +5,17 @@ ThreadLoop is a repo-local CLI for preserving task intent, decisions, risks, val
 ## Commands
 
 ### `threadloop init`
-Initializes `.threadloop/` in the current Git repository and ensures `.threadloop/state/` is ignored in the repo's `.gitignore`.
+Initializes `.threadloop/` in the current Git repository and ensures `.threadloop/state/` is ignored via `.git/info/exclude` without editing tracked repo files.
 
 ### `threadloop session start <title> [--json]`
-Starts an explicit task/session and returns a stable `session_id`.
+Starts an explicit task/session and returns a stable `session_id`. When `.threadloop/` is missing, this command auto-initializes ThreadLoop state for agent automation.
 
 Options:
 -- `--goal <goal>`: required task goal; prompts if missing
 -- `--constraint <constraint...>`: one or more constraints to preserve
 -- `--base <ref>`: Git base ref for comparisons
+-- `--issue <ref>`: issue reference for branch and PR traceability
+-- `--actor <cli|agent>`: source for the initial intent entry, default `cli`
 -- `--json`: render machine-readable session output
 
 ### `threadloop session list [--json]`
@@ -41,6 +43,7 @@ Kinds:
 Options:
 -- `--session <id>`: target session id
 -- `--because <reason>`: attach rationale to a decision or note
+-- `--actor <cli|agent>`: source for the captured entry, default `cli`
 -- `--edit`: open `$EDITOR` for longer capture text
 -- `--json`: render machine-readable session output
 
@@ -63,7 +66,7 @@ Options:
 Use `--session <id>` for one explicit session or `--all` for all active sessions in the current workspace.
 
 ### `threadloop session finish --session <id> [--json]`
-Marks a specific session complete.
+Persists one final Git snapshot and marks a specific session complete.
 
 ### `threadloop daemon run [--json]`
 Runs the optional mechanical refresh loop for active sessions in the current workspace.
@@ -114,6 +117,7 @@ The JSON payload includes:
 - supported environment variables used by the CLI contract
 - command usages derived from the registered command tree
 - capture kinds and artifact kinds sourced from runtime constants
+- structured workflow guidance for base branch, branch naming, rebase, and PR summary generation
 - truthful notes about JSON support and session targeting behavior
 
 Current environment-variable contract:
@@ -141,7 +145,9 @@ For automation, prefer:
 
 - `threadloop session ...` commands over legacy root commands
 - explicit `--session <id>` on every session-scoped call
+- `--actor agent` on agent-authored `session start` and `session capture` commands
 - one autonomous task per checkout or Git worktree
+- syncing `main`, creating a fresh task branch, and rebasing onto `origin/main` before PR open
 
 Legacy root commands are still available for human compatibility, but they can fail with `SESSION_REQUIRED` or `SESSION_AMBIGUOUS` in multi-session repos and should not be treated as the default workflow.
 

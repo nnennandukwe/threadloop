@@ -25,21 +25,22 @@ Semantic vs mechanical operations:
 The current operator model is one autonomous task per checkout or worktree.
 
 1. Prepare a dedicated Git checkout or `git worktree` for the task.
-2. Run `threadloop init` once in that workspace.
+2. Fetch `origin`, fast-forward local `main` to `origin/main`, and create a fresh task branch from updated `main`.
 3. Start an explicit session and persist the returned `session_id`.
 4. Pass the `session_id` to every subsequent ThreadLoop command.
 5. Capture intent, decisions, risks, validation, and reviewer guidance as the task evolves.
 6. Reconcile before artifact generation when Git-derived scope needs a refresh.
-7. Generate the artifact you need.
-8. Finish the session when the task is done.
+7. Rebase the task branch onto the latest `origin/main` before PR open.
+8. Generate the artifact you need, then finish the session when the task is done.
 
 Example:
 
 ```bash
-threadloop init
 threadloop session start "Add retry backoff to worker queue" \
   --goal "Reduce transient failure noise without changing job semantics" \
   --base main \
+  --issue ISSUE-42 \
+  --actor agent \
   --json
 ```
 
@@ -50,6 +51,7 @@ threadloop session capture decision \
   "Retry only idempotent jobs" \
   --session "$SESSION_ID" \
   --because "Non-idempotent replay is unsafe" \
+  --actor agent \
   --json
 
 threadloop session capture validation \
@@ -58,7 +60,7 @@ threadloop session capture validation \
   --json
 
 threadloop session reconcile --session "$SESSION_ID" --json
-threadloop artifact generate change-brief --session "$SESSION_ID" --json
+threadloop artifact generate pr-summary --session "$SESSION_ID" --json
 threadloop session finish --session "$SESSION_ID" --json
 ```
 
@@ -70,6 +72,7 @@ The protocol currently publishes:
 
 - command usages derived from the actual CLI tree
 - supported entry kinds and artifact kinds
+- structured workflow guidance for `main` sync, branch naming, rebase, and PR summary generation
 - truthful notes about `--json` support and session targeting
 - environment variables that are actually used by the CLI
 
@@ -78,6 +81,8 @@ Current environment-variable contract:
 - `EDITOR`: used only by `--edit` and `--goal-edit`
 
 ThreadLoop does not currently use environment variables for session targeting or workspace selection. Pass `--session <id>` explicitly and run commands from the intended repository root or subdirectory.
+
+ThreadLoop also does not perform Git fetch, branch creation, rebase, or PR open for you in this slice. Those remain orchestrator responsibilities.
 
 ## Human-assisted flows
 
@@ -126,7 +131,9 @@ The safe default is one autonomous task per checkout or worktree.
 Recommended:
 
 - separate long-running tasks into distinct Git worktrees or independent clones
+- sync `main` before each task and branch once per session
 - use explicit `session_id` targeting everywhere
+- rebase the session branch onto `origin/main` before opening a PR
 - keep one daemon per workspace if you use the daemon at all
 
 Allowed but less desirable:
@@ -143,6 +150,6 @@ Legacy root commands exist for compatibility, but automation should prefer the e
 ## Operator notes
 
 - ThreadLoop requires a Git repository.
-- `.threadloop/state/` is gitignored by default.
+- `.threadloop/state/` is ignored via `.git/info/exclude` by default.
 - `.threadloop` internal paths are excluded from artifact Git scope.
 - Legacy `.threadloop/state/state.json` data migrates to SQLite on first access and is kept as a backup file.
