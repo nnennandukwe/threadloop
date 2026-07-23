@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import { ARTIFACT_KINDS, ENTRY_KINDS, ENTRY_SOURCES, HEARTBEAT_SOURCES, TASK_STATUS } from '../domain/types.js';
 
+const persistedTaskStatusSchema = z
+  .union([z.enum(TASK_STATUS), z.literal('active')])
+  .transform((status) => (status === 'active' ? 'queued' : status));
+
 export const taskSchema = z.object({
   id: z.string(),
   title: z.string(),
@@ -8,7 +12,8 @@ export const taskSchema = z.object({
   constraints: z.array(z.string()),
   issueRef: z.string().nullable().optional().default(null),
   repoRoot: z.string(),
-  status: z.enum(TASK_STATUS),
+  status: persistedTaskStatusSchema,
+  stateVersion: z.number().int().nonnegative().optional().default(0),
   createdAt: z.string(),
 });
 
@@ -62,6 +67,7 @@ export const stateDataSchema = z
     tasks: state.tasks.map((task) => ({
       ...task,
       issueRef: task.issueRef ?? null,
+      stateVersion: task.stateVersion ?? 0,
     })),
     activeSessions: state.activeSessions ?? (state.active ? [state.active] : []),
   }));

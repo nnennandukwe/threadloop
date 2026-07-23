@@ -114,7 +114,8 @@ export async function startTask(input: StartTaskInput) {
     constraints: input.constraints,
     issueRef: normalizeOptionalText(input.issueRef),
     repoRoot,
-    status: 'active',
+    status: 'queued',
+    stateVersion: 0,
     createdAt: now,
   };
 
@@ -466,6 +467,16 @@ function materializeSessionRecord(state: StateData, active: ActiveState): Sessio
   if (!task || !session) {
     throw new ThreadloopError('STATE_CORRUPTED', 'ThreadLoop session registry is inconsistent with persisted tasks or sessions.', {
       details: { taskId: active.taskId, sessionId: active.sessionId },
+    });
+  }
+
+  if (session.taskId !== task.id) {
+    throw new ThreadloopError('STATE_CORRUPTED', 'ThreadLoop session registry associates the session with the wrong task.', {
+      details: {
+        projectedTaskId: active.taskId,
+        sessionId: active.sessionId,
+        sessionTaskId: session.taskId,
+      },
     });
   }
 

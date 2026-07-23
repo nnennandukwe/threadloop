@@ -348,6 +348,148 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     expect(legacyBackup).toContain('Legacy decision');
   });
 
+  it('migrates schema v1 task lifecycle state without losing active-session compatibility', async () => {
+    await mkdir(path.join(repoDir, '.threadloop/state'), { recursive: true });
+    await writeFile(
+      path.join(repoDir, '.threadloop/config.json'),
+      `${JSON.stringify({ version: 1, createdAt: '2026-07-23T12:00:00.000Z' }, null, 2)}\n`,
+      'utf8',
+    );
+    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
+    const db = new DatabaseSync(dbPath);
+    const now = '2026-07-23T12:00:00.000Z';
+
+    try {
+      db.exec(`
+        CREATE TABLE metadata (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL
+        );
+
+        CREATE TABLE tasks (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          goal TEXT NOT NULL,
+          constraints_json TEXT NOT NULL,
+          issue_ref TEXT,
+          repo_root TEXT NOT NULL,
+          status TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE sessions (
+          id TEXT PRIMARY KEY,
+          task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+          started_at TEXT NOT NULL,
+          ended_at TEXT,
+          base_ref TEXT,
+          branch TEXT NOT NULL,
+          head_sha TEXT NOT NULL,
+          last_heartbeat_at TEXT,
+          last_heartbeat_source TEXT
+        );
+
+        CREATE TABLE entries (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          kind TEXT NOT NULL,
+          body TEXT NOT NULL,
+          metadata_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          source TEXT NOT NULL
+        );
+
+        CREATE TABLE artifacts (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          kind TEXT NOT NULL,
+          path TEXT NOT NULL,
+          template_version TEXT NOT NULL,
+          generated_at TEXT NOT NULL,
+          snapshot_source TEXT
+        );
+
+        CREATE TABLE active_state (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE active_sessions (
+          session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+          task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE repo_snapshots (
+          session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+          branch TEXT NOT NULL,
+          head_sha TEXT NOT NULL,
+          base_ref TEXT,
+          changed_files_json TEXT NOT NULL,
+          diff_stats_json TEXT NOT NULL,
+          commit_range_json TEXT NOT NULL,
+          reconciled_at TEXT NOT NULL
+        );
+      `);
+      db.prepare(`INSERT INTO metadata (key, value) VALUES ('schema_version', '1')`).run();
+      db.prepare(
+        `
+          INSERT INTO tasks (id, title, goal, constraints_json, issue_ref, repo_root, status, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+      ).run('task_active', 'Active v1 task', 'Migrate to queued', '[]', null, repoDir, 'active', now);
+      db.prepare(
+        `
+          INSERT INTO sessions (id, task_id, started_at, ended_at, base_ref, branch, head_sha, last_heartbeat_at, last_heartbeat_source)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+      ).run('session_active', 'task_active', now, null, null, 'feature/lifecycle', 'abc123', null, null);
+
+      db.prepare(
+        `
+          INSERT INTO tasks (id, title, goal, constraints_json, issue_ref, repo_root, status, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+      ).run('task_completed', 'Completed v1 task', 'Remain completed', '[]', null, repoDir, 'completed', now);
+      db.prepare(
+        `
+          INSERT INTO sessions (id, task_id, started_at, ended_at, base_ref, branch, head_sha, last_heartbeat_at, last_heartbeat_source)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+      ).run('session_completed', 'task_completed', now, now, null, 'feature/done', 'def456', null, null);
+
+      const taskColumns = db.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>;
+      expect(taskColumns.map((column) => column.name)).not.toContain('state_version');
+    } finally {
+      db.close();
+    }
+
+    const status = parseJsonOutput<{
+      data: {
+        task: { status: string; state_version: number };
+      };
+    }>((await runCli(repoDir, ['session', 'status', '--session', 'session_active', '--json'])).stdout);
+
+    expect(status.data.task).toMatchObject({ status: 'queued', state_version: 0 });
+
+    const migrated = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const schemaVersion = migrated.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get() as
+        | { value: string }
+        | undefined;
+      expect(schemaVersion?.value).toBe('2');
+      expect(
+        migrated.prepare(`SELECT id, status, state_version FROM tasks ORDER BY id`).all(),
+      ).toEqual([
+        { id: 'task_active', status: 'queued', state_version: 0 },
+        { id: 'task_completed', status: 'completed', state_version: 0 },
+      ]);
+      expect(readScalarCount(migrated, 'SELECT COUNT(*) AS count FROM active_sessions')).toBe(1);
+    } finally {
+      migrated.close();
+    }
+  });
+
   it('rejects unsupported schema metadata before migrating legacy state', async () => {
     const legacyState = {
       tasks: [
@@ -450,7 +592,12 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     const migratedDb = new DatabaseSync(dbPath, { readOnly: true });
     try {
       expect(readScalarCount(migratedDb, 'SELECT COUNT(*) AS count FROM tasks')).toBe(0);
-      expect(readScalarCount(migratedDb, 'SELECT COUNT(*) AS count FROM active_sessions')).toBe(0);
+      expect(
+        readScalarCount(
+          migratedDb,
+          `SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'active_sessions'`,
+        ),
+      ).toBe(0);
       const sessionColumns = migratedDb.prepare(`PRAGMA table_info(sessions)`).all() as Array<{ name: string }>;
       expect(sessionColumns.map((column) => column.name)).not.toContain('last_heartbeat_at');
       expect(sessionColumns.map((column) => column.name)).not.toContain('last_heartbeat_source');
@@ -460,6 +607,97 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
 
     const legacyBackup = await readFile(path.join(repoDir, '.threadloop/state/state.json'), 'utf8');
     expect(legacyBackup).toContain('Legacy task');
+  });
+
+  it('rejects a newer schema before changing journal mode or bootstrapping tables', async () => {
+    await mkdir(path.join(repoDir, '.threadloop/state'), { recursive: true });
+    await writeFile(
+      path.join(repoDir, '.threadloop/config.json'),
+      `${JSON.stringify({ version: 1, createdAt: '2026-07-23T12:00:00.000Z' }, null, 2)}\n`,
+      'utf8',
+    );
+
+    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
+    const db = new DatabaseSync(dbPath);
+    try {
+      db.exec(`
+        CREATE TABLE metadata (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL
+        );
+      `);
+      db.prepare(`INSERT INTO metadata (key, value) VALUES ('schema_version', '3')`).run();
+      const journalMode = db.prepare(`PRAGMA journal_mode`).get() as { journal_mode: string };
+      expect(journalMode.journal_mode).toBe('delete');
+    } finally {
+      db.close();
+    }
+
+    await expect(runCli(repoDir, ['status'])).rejects.toThrow('Unsupported ThreadLoop schema version: 3');
+
+    const unchanged = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const tableNames = unchanged
+        .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name`)
+        .all()
+        .map((row) => String(row.name));
+      const journalMode = unchanged.prepare(`PRAGMA journal_mode`).get() as { journal_mode: string };
+
+      expect(tableNames).toEqual(['metadata']);
+      expect(journalMode.journal_mode).toBe('delete');
+    } finally {
+      unchanged.close();
+    }
+  });
+
+  it('repairs a mismatched active-session task projection before materializing the session', async () => {
+    await runCli(repoDir, ['init']);
+    const first = parseJsonOutput<{ data: { session_id: string; task_id: string } }>(
+      (await runCli(repoDir, ['session', 'start', 'First projection task', '--goal', 'Own the first session', '--json']))
+        .stdout,
+    );
+    const second = parseJsonOutput<{ data: { session_id: string; task_id: string } }>(
+      (await runCli(repoDir, ['session', 'start', 'Second projection task', '--goal', 'Own the second session', '--json']))
+        .stdout,
+    );
+
+    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
+    const corrupted = new DatabaseSync(dbPath);
+    try {
+      corrupted
+        .prepare(`UPDATE active_sessions SET task_id = ? WHERE session_id = ?`)
+        .run(second.data.task_id, first.data.session_id);
+    } finally {
+      corrupted.close();
+    }
+
+    const capture = parseJsonOutput<{ data: { session_id: string; task: { id: string } } }>(
+      (
+        await runCli(repoDir, [
+          'session',
+          'capture',
+          'note',
+          'Projection repaired before capture',
+          '--session',
+          first.data.session_id,
+          '--json',
+        ])
+      ).stdout,
+    );
+
+    expect(capture.data).toMatchObject({
+      session_id: first.data.session_id,
+      task: { id: first.data.task_id },
+    });
+
+    const repaired = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      expect(
+        repaired.prepare(`SELECT task_id FROM active_sessions WHERE session_id = ?`).get(first.data.session_id),
+      ).toEqual({ task_id: first.data.task_id });
+    } finally {
+      repaired.close();
+    }
   });
 
   it('reports malformed config JSON with the ThreadLoop error message', async () => {

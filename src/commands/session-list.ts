@@ -6,9 +6,9 @@ export async function sessionListCommand(context: CommandContext) {
 
   writeCommandSuccess(context, {
     text: [
-      `Active sessions: ${result.sessions.length}`,
+      `Sessions: ${result.sessions.length}`,
       ...(result.sessions.length > 0
-        ? result.sessions.map(({ task, session, active }) => `${session.id}  ${active ? 'active' : 'completed'}  ${task.title}`)
+        ? result.sessions.map(({ task, session }) => `${session.id}  ${task.status}  ${task.title}`)
         : ['none']),
     ],
     data: {
@@ -16,6 +16,8 @@ export async function sessionListCommand(context: CommandContext) {
         session_id: session.id,
         task_id: task.id,
         title: task.title,
+        status: task.status,
+        state_version: task.stateVersion,
         active,
         ended_at: session.endedAt,
       })),

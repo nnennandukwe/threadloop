@@ -4,6 +4,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
+import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
 import { readRepoSnapshot } from '../../src/adapters/fs/sqlite-store.js';
 import { isThreadloopError } from '../../src/contracts/errors.js';
 import {
@@ -43,6 +44,7 @@ describe('session service', () => {
 
     const status = await getStatus(repoDir, { sessionId: started.session.id });
     expect(status.active?.task.issueRef).toBe('ISSUE-13');
+    expect(status.active?.task).toMatchObject({ status: 'queued', stateVersion: 0 });
     expect(status.entries[0]).toMatchObject({ kind: 'intent', source: 'agent' });
     expect(status.repoSnapshot).not.toBeNull();
   });
@@ -116,6 +118,51 @@ describe('session service', () => {
     expect(listed.sessions.find((item) => item.session.id === second.session.id)?.active).toBe(true);
   });
 
+  it('rejects a session registry entry whose projected task does not own the session', async () => {
+    const repoDir = await makeRepo();
+    await initThreadloop(repoDir);
+
+    const first = await startTask({
+      cwd: repoDir,
+      title: 'First registry task',
+      goal: 'Own the first session',
+      constraints: [],
+      baseRef: null,
+      allowMultipleActive: true,
+    });
+    const second = await startTask({
+      cwd: repoDir,
+      title: 'Second registry task',
+      goal: 'Own the second session',
+      constraints: [],
+      baseRef: null,
+      allowMultipleActive: true,
+    });
+
+    const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'));
+    try {
+      db.prepare(`UPDATE active_sessions SET task_id = ? WHERE session_id = ?`).run(
+        second.task.id,
+        first.session.id,
+      );
+    } finally {
+      db.close();
+    }
+
+    await expect(
+      captureEntry({
+        cwd: repoDir,
+        sessionId: first.session.id,
+        kind: 'note',
+        body: 'This must not attach to the wrong task',
+      }),
+    ).rejects.toSatisfy((error: unknown) => {
+      expect(isThreadloopError(error)).toBe(true);
+      expect((error as { code?: string }).code).toBe('STATE_CORRUPTED');
+      return true;
+    });
+  });
+
   it('keeps explicit status available after finishing a session', async () => {
     const repoDir = await makeRepo();
     await initThreadloop(repoDir);
@@ -139,6 +186,7 @@ describe('session service', () => {
     const listed = await listSessions(repoDir);
     expect(listed.sessions).toHaveLength(1);
     expect(listed.sessions[0]?.active).toBe(false);
+    expect(listed.sessions[0]?.task).toMatchObject({ status: 'completed', stateVersion: 1 });
     expect(listed.sessions[0]?.session.endedAt).toBeTruthy();
   });
 

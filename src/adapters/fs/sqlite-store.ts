@@ -16,7 +16,7 @@ import type {
 import { threadloopPaths } from './repo.js';
 import { DatabaseSync } from './sqlite-driver.js';
 
-const CURRENT_SCHEMA_VERSION = 1;
+const CURRENT_SCHEMA_VERSION = 2;
 const INVALID_CONFIG_ERROR = 'Invalid .threadloop/config.json';
 const INVALID_STATE_JSON_ERROR = 'Invalid .threadloop/state/state.json';
 const INVALID_STATE_DB_ERROR = 'Invalid .threadloop/state/state.db';
@@ -49,6 +49,7 @@ type TaskRow = {
   issue_ref: string | null;
   repo_root: string;
   status: Task['status'];
+  state_version: number;
   created_at: string;
 };
 
@@ -401,6 +402,10 @@ function ensureDatabaseReady(db: DatabaseSync, state: RepoConnectionState, repoR
   }
 
   try {
+    if (tableExists(db, 'metadata')) {
+      assertSupportedSchemaVersion(db);
+    }
+
     if (!databaseNeedsSetup(db, repoRoot)) {
       state.setup = { status: 'ready' };
       return;
@@ -408,10 +413,12 @@ function ensureDatabaseReady(db: DatabaseSync, state: RepoConnectionState, repoR
 
     db.exec('PRAGMA journal_mode = WAL');
     bootstrapDatabase(db);
-    assertSchemaVersion(db);
+    assertSupportedSchemaVersion(db);
     runInImmediateTransaction(db, () => {
       runPendingMigrations(db, repoRoot);
+      writeSchemaVersion(db);
     });
+    assertSchemaVersion(db);
     state.setup = { status: 'ready' };
   } catch (error) {
     state.setup = isTransientSqliteSetupError(error)
@@ -461,7 +468,12 @@ function databaseNeedsSetup(db: DatabaseSync, repoRoot: string) {
   }
 
   const taskColumns = new Set((db.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>).map((column) => column.name));
-  if (!taskColumns.has('issue_ref')) {
+  if (!taskColumns.has('issue_ref') || !taskColumns.has('state_version')) {
+    return true;
+  }
+
+  const legacyStatusCount = readNumericValue(db, `SELECT COUNT(*) AS count FROM tasks WHERE status = 'active'`, 'count');
+  if (legacyStatusCount > 0) {
     return true;
   }
 
@@ -477,6 +489,34 @@ function databaseNeedsSetup(db: DatabaseSync, repoRoot: string) {
       return true;
     }
   } else if (activeState) {
+    return true;
+  }
+
+  const activeProjectionMismatchCount = readNumericValue(
+    db,
+    `
+      SELECT COUNT(*) AS count
+      FROM sessions
+      INNER JOIN tasks ON tasks.id = sessions.task_id
+      LEFT JOIN active_sessions ON active_sessions.session_id = sessions.id
+      WHERE
+        (
+          tasks.status <> 'completed'
+          AND sessions.ended_at IS NULL
+          AND (
+            active_sessions.session_id IS NULL
+            OR active_sessions.task_id <> sessions.task_id
+          )
+        )
+        OR
+        (
+          (tasks.status = 'completed' OR sessions.ended_at IS NOT NULL)
+          AND active_sessions.session_id IS NOT NULL
+        )
+    `,
+    'count',
+  );
+  if (activeProjectionMismatchCount > 0) {
     return true;
   }
 
@@ -506,6 +546,7 @@ function bootstrapDatabase(db: DatabaseSync) {
       issue_ref TEXT,
       repo_root TEXT NOT NULL,
       status TEXT NOT NULL,
+      state_version INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL
     );
 
@@ -600,11 +641,25 @@ function ensureTaskIssueRefColumn(db: DatabaseSync) {
   }
 }
 
+function ensureTaskLifecycleColumns(db: DatabaseSync) {
+  const columns = db.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>;
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has('state_version')) {
+    db.prepare(`ALTER TABLE tasks ADD COLUMN state_version INTEGER NOT NULL DEFAULT 0`).run();
+  }
+
+  db.prepare(`UPDATE tasks SET status = 'queued' WHERE status = 'active'`).run();
+}
+
 function runPendingMigrations(db: DatabaseSync, repoRoot: string) {
   ensureTaskIssueRefColumn(db);
+  ensureTaskLifecycleColumns(db);
   ensureSessionHeartbeatColumns(db);
   migrateActiveStateRegistry(db);
   migrateLegacyJsonState(db, repoRoot);
+  reconcileActiveSessionProjection(db);
+  syncActiveStateCompat(db);
 }
 
 function migrateActiveStateRegistry(db: DatabaseSync) {
@@ -623,7 +678,21 @@ function migrateActiveStateRegistry(db: DatabaseSync) {
   syncActiveStateCompat(db);
 }
 
-function assertSchemaVersion(db: DatabaseSync) {
+function reconcileActiveSessionProjection(db: DatabaseSync) {
+  db.prepare(`DELETE FROM active_sessions`).run();
+
+  db.prepare(
+    `
+      INSERT INTO active_sessions (session_id, task_id)
+      SELECT sessions.id, sessions.task_id
+      FROM sessions
+      INNER JOIN tasks ON tasks.id = sessions.task_id
+      WHERE tasks.status <> 'completed' AND sessions.ended_at IS NULL
+    `,
+  ).run();
+}
+
+function assertSupportedSchemaVersion(db: DatabaseSync) {
   const rawVersion = readTextValue(db, `SELECT value FROM metadata WHERE key = 'schema_version'`, 'value');
 
   if (!rawVersion) {
@@ -631,9 +700,28 @@ function assertSchemaVersion(db: DatabaseSync) {
   }
 
   const version = Number(rawVersion);
-  if (version !== CURRENT_SCHEMA_VERSION) {
+  if (!Number.isInteger(version) || version < 1 || version > CURRENT_SCHEMA_VERSION) {
     throw new Error(`Unsupported ThreadLoop schema version: ${rawVersion}`);
   }
+
+  return version;
+}
+
+function assertSchemaVersion(db: DatabaseSync) {
+  const rawVersion = readTextValue(db, `SELECT value FROM metadata WHERE key = 'schema_version'`, 'value');
+  if (Number(rawVersion) !== CURRENT_SCHEMA_VERSION) {
+    throw new Error(`Unsupported ThreadLoop schema version: ${rawVersion}`);
+  }
+}
+
+function writeSchemaVersion(db: DatabaseSync) {
+  db.prepare(
+    `
+      INSERT INTO metadata (key, value)
+      VALUES ('schema_version', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `,
+  ).run(String(CURRENT_SCHEMA_VERSION));
 }
 
 function migrateLegacyJsonState(db: DatabaseSync, repoRoot: string) {
@@ -708,7 +796,7 @@ function loadState(db: DatabaseSync): StateData {
   const tasks = (db
     .prepare(
       `
-        SELECT id, title, goal, constraints_json, repo_root, status, created_at
+        SELECT id, title, goal, constraints_json, repo_root, status, state_version, created_at
         , issue_ref
         FROM tasks
         ORDER BY rowid
@@ -722,6 +810,7 @@ function loadState(db: DatabaseSync): StateData {
     issueRef: row.issue_ref ?? null,
     repoRoot: row.repo_root,
     status: row.status,
+    stateVersion: row.state_version,
     createdAt: row.created_at,
   }));
 
@@ -820,8 +909,8 @@ function readSessionRow(db: DatabaseSync, sessionId: string) {
 function insertTask(db: DatabaseSync, task: Task) {
   db.prepare(
     `
-      INSERT INTO tasks (id, title, goal, constraints_json, issue_ref, repo_root, status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO tasks (id, title, goal, constraints_json, issue_ref, repo_root, status, state_version, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
   ).run(
     task.id,
@@ -831,6 +920,7 @@ function insertTask(db: DatabaseSync, task: Task) {
     task.issueRef,
     task.repoRoot,
     task.status,
+    task.stateVersion,
     task.createdAt,
   );
 }
@@ -901,7 +991,7 @@ function appendEntry(db: DatabaseSync, sessionId: string, draft: Omit<Entry, 'se
 }
 
 function completeSession(db: DatabaseSync, sessionId: string, taskId: string, endedAt: string) {
-  db.prepare(`UPDATE tasks SET status = 'completed' WHERE id = ?`).run(taskId);
+  db.prepare(`UPDATE tasks SET status = 'completed', state_version = state_version + 1 WHERE id = ?`).run(taskId);
   db.prepare(`UPDATE sessions SET ended_at = ? WHERE id = ?`).run(endedAt, sessionId);
   db.prepare(`DELETE FROM active_sessions WHERE session_id = ?`).run(sessionId);
   syncActiveStateCompat(db);
@@ -915,6 +1005,7 @@ function normalizeStateData(state: StateData): StateData {
     tasks: state.tasks.map((task) => ({
       ...task,
       issueRef: task.issueRef ?? null,
+      stateVersion: task.stateVersion ?? 0,
     })),
     sessions: state.sessions.map((session) => ({
       ...session,

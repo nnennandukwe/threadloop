@@ -8,7 +8,7 @@ ThreadLoop is a repo-local CLI for preserving task intent, decisions, risks, val
 Initializes `.threadloop/` in the current Git repository and ensures `.threadloop/state/` is ignored via `.git/info/exclude` without editing tracked repo files.
 
 ### `threadloop session start <title> [--json]`
-Starts an explicit task/session and returns a stable `session_id`. When `.threadloop/` is missing, this command auto-initializes ThreadLoop state for agent automation.
+Starts an explicit task/session in `queued` state with `state_version: 0` and returns a stable `session_id`. When `.threadloop/` is missing, this command auto-initializes ThreadLoop state for agent automation.
 
 Options:
 -- `--goal <goal>`: required task goal; prompts if missing
@@ -19,10 +19,10 @@ Options:
 -- `--json`: render machine-readable session output
 
 ### `threadloop session list [--json]`
-Lists known sessions in the current repository, including which one is active.
+Lists known sessions in the current repository, including lifecycle status, state version, and whether each session remains active.
 
 ### `threadloop session status --session <id> [--json]`
-Shows the status of a specific session by explicit session id.
+Shows the lifecycle status and optimistic state version of a specific session by explicit session id.
 
 Options:
 -- `--session <id>`: target session id
@@ -66,7 +66,7 @@ Options:
 Use `--session <id>` for one explicit session or `--all` for all active sessions in the current workspace.
 
 ### `threadloop session finish --session <id> [--json]`
-Persists one final Git snapshot and marks a specific session complete.
+Persists one final Git snapshot and marks a specific session complete. During the first M002 foundation increment this remains a compatibility surface; autonomous executors must not treat it as approval or merge proof. See [`lifecycle.md`](lifecycle.md).
 
 ### `threadloop daemon run [--json]`
 Runs the optional mechanical refresh loop for active sessions in the current workspace.
