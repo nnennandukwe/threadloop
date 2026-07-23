@@ -592,7 +592,12 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     const migratedDb = new DatabaseSync(dbPath, { readOnly: true });
     try {
       expect(readScalarCount(migratedDb, 'SELECT COUNT(*) AS count FROM tasks')).toBe(0);
-      expect(readScalarCount(migratedDb, 'SELECT COUNT(*) AS count FROM active_sessions')).toBe(0);
+      expect(
+        readScalarCount(
+          migratedDb,
+          `SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'active_sessions'`,
+        ),
+      ).toBe(0);
       const sessionColumns = migratedDb.prepare(`PRAGMA table_info(sessions)`).all() as Array<{ name: string }>;
       expect(sessionColumns.map((column) => column.name)).not.toContain('last_heartbeat_at');
       expect(sessionColumns.map((column) => column.name)).not.toContain('last_heartbeat_source');
@@ -602,6 +607,47 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
 
     const legacyBackup = await readFile(path.join(repoDir, '.threadloop/state/state.json'), 'utf8');
     expect(legacyBackup).toContain('Legacy task');
+  });
+
+  it('rejects a newer schema before changing journal mode or bootstrapping tables', async () => {
+    await mkdir(path.join(repoDir, '.threadloop/state'), { recursive: true });
+    await writeFile(
+      path.join(repoDir, '.threadloop/config.json'),
+      `${JSON.stringify({ version: 1, createdAt: '2026-07-23T12:00:00.000Z' }, null, 2)}\n`,
+      'utf8',
+    );
+
+    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
+    const db = new DatabaseSync(dbPath);
+    try {
+      db.exec(`
+        CREATE TABLE metadata (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL
+        );
+      `);
+      db.prepare(`INSERT INTO metadata (key, value) VALUES ('schema_version', '3')`).run();
+      const journalMode = db.prepare(`PRAGMA journal_mode`).get() as { journal_mode: string };
+      expect(journalMode.journal_mode).toBe('delete');
+    } finally {
+      db.close();
+    }
+
+    await expect(runCli(repoDir, ['status'])).rejects.toThrow('Unsupported ThreadLoop schema version: 3');
+
+    const unchanged = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const tableNames = unchanged
+        .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name`)
+        .all()
+        .map((row) => String(row.name));
+      const journalMode = unchanged.prepare(`PRAGMA journal_mode`).get() as { journal_mode: string };
+
+      expect(tableNames).toEqual(['metadata']);
+      expect(journalMode.journal_mode).toBe('delete');
+    } finally {
+      unchanged.close();
+    }
   });
 
   it('reports malformed config JSON with the ThreadLoop error message', async () => {

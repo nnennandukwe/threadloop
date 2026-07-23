@@ -402,6 +402,10 @@ function ensureDatabaseReady(db: DatabaseSync, state: RepoConnectionState, repoR
   }
 
   try {
+    if (tableExists(db, 'metadata')) {
+      assertSupportedSchemaVersion(db);
+    }
+
     if (!databaseNeedsSetup(db, repoRoot)) {
       state.setup = { status: 'ready' };
       return;
