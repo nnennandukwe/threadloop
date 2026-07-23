@@ -39,7 +39,7 @@ export async function sessionStartCommand(
     title,
     goal,
     constraints: options.constraint ?? [],
-    baseRef: options.base ?? null,
+    baseRef: options.base,
     issueRef: options.issue,
     actor: options.actor,
     allowMultipleActive,

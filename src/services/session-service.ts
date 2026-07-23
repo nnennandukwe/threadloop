@@ -19,6 +19,7 @@ import {
 import { isThreadloopInitialized } from '../adapters/fs/repo.js';
 import { refExists, resolveRepoRoot, snapshotRepo } from '../adapters/git/client.js';
 import { ThreadloopError } from '../contracts/errors.js';
+import { DEFAULT_BASE_REF } from '../domain/types.js';
 import type {
   ActiveState,
   ArtifactKind,
@@ -40,7 +41,7 @@ export interface StartTaskInput {
   title: string;
   goal: string;
   constraints: string[];
-  baseRef: string | null;
+  baseRef?: string | null;
   issueRef?: string | null;
   actor?: EntrySource;
   allowMultipleActive?: boolean;
@@ -84,6 +85,10 @@ export async function initThreadloop(cwd: string) {
 export async function startTask(input: StartTaskInput) {
   const repoRoot = await resolveRepositoryRoot(input.cwd);
   await initializeThreadloopRepo(repoRoot);
+  const baseRef =
+    input.baseRef === undefined && (await refExists(repoRoot, DEFAULT_BASE_REF))
+      ? DEFAULT_BASE_REF
+      : (input.baseRef ?? null);
 
   if (!input.allowMultipleActive) {
     const state = await readState(repoRoot);
@@ -94,13 +99,13 @@ export async function startTask(input: StartTaskInput) {
     }
   }
 
-  if (input.baseRef && !(await refExists(repoRoot, input.baseRef))) {
-    throw new ThreadloopError('BASE_REF_NOT_FOUND', `Base ref not found: ${input.baseRef}`, {
-      details: { baseRef: input.baseRef },
+  if (baseRef && !(await refExists(repoRoot, baseRef))) {
+    throw new ThreadloopError('BASE_REF_NOT_FOUND', `Base ref not found: ${baseRef}`, {
+      details: { baseRef },
     });
   }
 
-  const snapshot = await snapshotRepo(repoRoot, 'preview', input.baseRef);
+  const snapshot = await snapshotRepo(repoRoot, 'preview', baseRef);
   const now = new Date().toISOString();
   const task: Task = {
     id: createId('task'),
@@ -118,7 +123,7 @@ export async function startTask(input: StartTaskInput) {
     taskId: task.id,
     startedAt: now,
     endedAt: null,
-    baseRef: input.baseRef,
+    baseRef,
     branch: snapshot.branch,
     headSha: snapshot.headSha,
     lastHeartbeatAt: null,

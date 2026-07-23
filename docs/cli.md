@@ -13,7 +13,7 @@ Starts an explicit task/session and returns a stable `session_id`. When `.thread
 Options:
 -- `--goal <goal>`: required task goal; prompts if missing
 -- `--constraint <constraint...>`: one or more constraints to preserve
--- `--base <ref>`: Git base ref for comparisons
+-- `--base <ref>`: Git base ref for comparisons; when omitted, ThreadLoop uses `main` if that ref exists
 -- `--issue <ref>`: issue reference for branch and PR traceability
 -- `--actor <cli|agent>`: source for the initial intent entry, default `cli`
 -- `--json`: render machine-readable session output

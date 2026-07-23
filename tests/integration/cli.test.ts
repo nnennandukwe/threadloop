@@ -255,6 +255,33 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     }
   });
 
+  it('defaults an omitted session base to main when the ref exists', async () => {
+    await execFileAsync('git', ['commit', '--allow-empty', '-m', 'main baseline'], { cwd: repoDir });
+    await execFileAsync('git', ['branch', '-M', 'main'], { cwd: repoDir });
+    await execFileAsync('git', ['switch', '-c', 'threadloop/default-base'], { cwd: repoDir });
+
+    const started = parseJsonOutput<{
+      data: {
+        session_id: string;
+        session: { baseRef: string | null };
+      };
+    }>(
+      (
+        await runCli(repoDir, [
+          'session',
+          'start',
+          'Default base task',
+          '--goal',
+          'Match the published workflow contract',
+          '--json',
+        ])
+      ).stdout,
+    );
+
+    expect(started.data.session.baseRef).toBe('main');
+    expect(readStoredRepoSnapshot(repoDir, started.data.session_id)?.baseRef).toBe('main');
+  });
+
   it('migrates legacy state.json into SQLite and keeps the JSON file as backup', async () => {
     const legacyState = {
       tasks: [
@@ -921,6 +948,8 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
 
     const startHelp = await runCli(repoDir, ['start', '--help']);
     expect(startHelp.stdout).toContain('--json');
+    expect(startHelp.stdout).toContain('defaults to');
+    expect(startHelp.stdout).toContain('main when available');
     expect(startHelp.stdout).toContain('--issue <ref>');
     expect(startHelp.stdout).toContain('--actor <actor>');
 
@@ -954,6 +983,8 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     expect(sessionStartHelp.stdout).toContain('--json');
     expect(sessionStartHelp.stdout).toContain('--goal <goal>');
     expect(sessionStartHelp.stdout).toContain('--constraint <constraint...>');
+    expect(sessionStartHelp.stdout).toContain('defaults to');
+    expect(sessionStartHelp.stdout).toContain('main when available');
     expect(sessionStartHelp.stdout).toContain('--issue <ref>');
     expect(sessionStartHelp.stdout).toContain('--actor <actor>');
     expect(sessionStartHelp.stderr).toBe('');

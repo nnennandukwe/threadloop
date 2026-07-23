@@ -83,7 +83,7 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
       .argument('<title>', 'task title')
       .option('--goal <goal>', 'goal for the task')
       .option('--constraint <constraint...>', 'constraints that matter for this task')
-      .option('--base <ref>', 'base Git ref used for comparisons')
+      .option('--base <ref>', 'base Git ref used for comparisons; defaults to main when available')
       .option('--issue <ref>', 'issue reference for branch and PR traceability')
       .option('--actor <actor>', 'entry actor for the initial intent record', parseEntrySource, 'cli')
       .option('--goal-edit', 'open $EDITOR for the goal text'),
@@ -127,7 +127,7 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
       .argument('<title>', 'task title')
       .option('--goal <goal>', 'goal for the task')
       .option('--constraint <constraint...>', 'constraints that matter for this task')
-      .option('--base <ref>', 'base Git ref used for comparisons')
+      .option('--base <ref>', 'base Git ref used for comparisons; defaults to main when available')
       .option('--issue <ref>', 'issue reference for branch and PR traceability')
       .option('--actor <actor>', 'entry actor for the initial intent record', parseEntrySource, 'cli')
       .option('--goal-edit', 'open $EDITOR for the goal text'),
