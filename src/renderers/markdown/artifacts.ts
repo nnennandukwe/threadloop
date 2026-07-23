@@ -31,6 +31,7 @@ function frontmatterFor(input: ArtifactRenderInput) {
     kind: artifactKind,
     task_id: task.id,
     session_id: session.id,
+    issue_ref: task.issueRef,
     generated_at: generatedAt,
     branch: repoSnapshot.branch,
     base_ref: repoSnapshot.baseRef,
@@ -78,12 +79,18 @@ function renderChangeBrief(input: ArtifactRenderInput) {
 }
 
 function renderPrSummary(input: ArtifactRenderInput) {
-  const { task, entries, repoSnapshot } = input;
+  const { task, session, entries, repoSnapshot } = input;
 
   return [
     `# PR Summary: ${task.title}`,
     '',
     section('Summary', [task.goal || 'No goal recorded.']),
+    section('PR metadata', [
+      `- Branch: ${repoSnapshot.branch || session.branch || '(detached)'}`,
+      `- Base ref: ${repoSnapshot.baseRef ?? session.baseRef ?? 'Not set'}`,
+      `- Issue: ${task.issueRef ?? 'Not recorded'}`,
+      ...(task.issueRef ? [`- Closing reference: Closes ${task.issueRef}`] : []),
+    ]),
     section('Changes in scope', repoSnapshot.changedFiles.length > 0 ? repoSnapshot.changedFiles.map((file) => `- ${file}`) : ['- No changed files detected']),
     section('Key decisions', bullets(entries.filter((entry) => entry.kind === 'decision'), 'No decisions recorded.')),
     section('Validation', bullets(entries.filter((entry) => entry.kind === 'validation'), 'No validation recorded.')),
