@@ -28,7 +28,8 @@
     "check:community": "tsx scripts/check-community.ts",
     "check:static": "npm run format:check && npm run lint && npm run lint:markdown && npm run typecheck && npm run dead-code && npm run check:community",
     "check": "npm run check:static && npm test && npm run build && npm run smoke:pack",
-    "security:dependencies": "npm audit --audit-level=high"
+    "security:dependencies": "npm audit --audit-level=high",
+    "sensor:ci-gate": "tsx scripts/run-ci-gate-sensor.ts"
   },
   "keywords": [
     "cli",
@@ -41,6 +42,7 @@
     "commander": "^14.0.0",
     "gray-matter": "^4.0.3",
     "prompts": "^2.4.2",
+    "sigstore": "4.1.1",
     "zod": "^4.1.11"
   },
   "devDependencies": {

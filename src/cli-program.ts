@@ -19,6 +19,7 @@ export interface ThreadloopCliHandlers {
   sessionTransition: CliAction;
   sessionNext: CliAction;
   sessionGateRun: CliAction;
+  sessionGateImport: CliAction;
   sessionReconcile: CliAction;
   daemonRun: CliAction;
   protocol: CliAction;
@@ -38,6 +39,7 @@ const PROTOCOL_COMMAND_RULES: Record<string, ProtocolCommandRule> = {
   },
   'session next': { requiredOptions: ['session'] },
   'session gate run': { requiredOptions: ['session'] },
+  'session gate import': { requiredOptions: ['session'] },
   'session reconcile': { usageOverride: '(--session <id> | --all) [--json]' },
 };
 
@@ -58,6 +60,7 @@ export function createNoopCliHandlers(): ThreadloopCliHandlers {
     sessionTransition: noopAction,
     sessionNext: noopAction,
     sessionGateRun: noopAction,
+    sessionGateImport: noopAction,
     sessionReconcile: noopAction,
     daemonRun: noopAction,
     protocol: noopAction,
@@ -202,6 +205,13 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
       .argument('<gate-id>', 'declared proof-plan gate id', parseRequiredGateId)
       .requiredOption('--session <id>', 'session id to target', parseRequiredText),
   ).action(handlers.sessionGateRun);
+  withJsonOption(
+    sessionGate
+      .command('import')
+      .description('Verify and append one signed GitHub Actions gate receipt')
+      .argument('<package-path>', 'path to a signed receipt package')
+      .requiredOption('--session <id>', 'session id to target', parseRequiredText),
+  ).action(handlers.sessionGateImport);
 
   withJsonOption(
     session
