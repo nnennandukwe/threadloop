@@ -64,6 +64,65 @@ export interface LiveRepositoryObservation {
   };
 }
 
+export interface ProofRepositoryObservation {
+  branch: string | null;
+  headSha: string;
+  clean: boolean;
+  changedFiles: string[];
+}
+
+export function isFullCommitSha(value: string) {
+  return /^[0-9a-f]{40}$/.test(value);
+}
+
+export async function observeProofRepository(repoRoot: string): Promise<ProofRepositoryObservation> {
+  const [rawBranch, headSha, rawStatus] = await Promise.all([
+    git(repoRoot, ['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => ''),
+    git(repoRoot, ['rev-parse', '--verify', '--end-of-options', 'HEAD^{commit}']),
+    gitRaw(repoRoot, [
+      '--no-optional-locks',
+      'status',
+      '--porcelain=v1',
+      '-z',
+      '--untracked-files=all',
+      '--ignore-submodules=none',
+    ]),
+  ]);
+  const changedFiles = parsePorcelainPaths(rawStatus);
+  return {
+    branch: rawBranch || null,
+    headSha,
+    clean: changedFiles.length === 0,
+    changedFiles,
+  };
+}
+
+export async function hasCommittedDiff(repoRoot: string, baselineHead: string, currentHead: string) {
+  if (!isFullCommitSha(baselineHead) || !isFullCommitSha(currentHead) || baselineHead === currentHead) {
+    return false;
+  }
+  try {
+    await execFileAsync('git', ['merge-base', '--is-ancestor', baselineHead, currentHead], { cwd: repoRoot });
+  } catch (error) {
+    if (isExitCode(error, 1) || isExitCode(error, 128)) {
+      return false;
+    }
+    throw error;
+  }
+  try {
+    await execFileAsync('git', ['diff', '--quiet', baselineHead, currentHead, '--'], { cwd: repoRoot });
+    return false;
+  } catch (error) {
+    if (isExitCode(error, 1)) {
+      return true;
+    }
+    if (isExitCode(error, 128)) {
+      return false;
+    }
+    throw error;
+  }
+}
+
 export async function observeRepository(repoRoot: string): Promise<LiveRepositoryObservation> {
   const [rawOrigin, rawBranch, rawHead, rawStatus] = await Promise.all([
     git(repoRoot, ['config', '--get', 'remote.origin.url']).catch(() => ''),
@@ -260,6 +319,10 @@ function parsePorcelainPaths(output: string) {
   }
 
   return Array.from(new Set(paths)).sort();
+}
+
+function isExitCode(error: unknown, code: number) {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
 }
 
 export async function snapshotRepo(repoRoot: string, sessionId: string, baseRef: string | null): Promise<RepoSnapshot> {

@@ -155,7 +155,7 @@ afterEach(async () => {
   temporaryRepos.length = 0;
 });
 
-describe('schema v3 transition persistence', () => {
+describe('schema v4 proof persistence', () => {
   it('migrates a canonical schema-v2 database without changing lifecycle state', async () => {
     const repoDir = await makeRepo();
     const dbPath = createSchemaV2(repoDir);
@@ -165,17 +165,22 @@ describe('schema v3 transition persistence', () => {
 
     const db = new DatabaseSync(dbPath, { readOnly: true });
     try {
-      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '3' });
+      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '4' });
       expect(
         (db.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>).map((column) => column.name),
       ).toContain('blocked_from_state');
       expect(
         db
           .prepare(
-            `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('session_transitions', 'transition_idempotency') ORDER BY name`,
+            `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('session_transitions', 'transition_idempotency', 'proof_plans', 'gate_receipts') ORDER BY name`,
           )
           .all(),
-      ).toEqual([{ name: 'session_transitions' }, { name: 'transition_idempotency' }]);
+      ).toEqual([
+        { name: 'gate_receipts' },
+        { name: 'proof_plans' },
+        { name: 'session_transitions' },
+        { name: 'transition_idempotency' },
+      ]);
       expect(db.prepare(`SELECT status, state_version, blocked_from_state FROM tasks`).get()).toEqual({
         status: 'queued',
         state_version: 0,
@@ -297,7 +302,7 @@ describe('schema v3 transition persistence', () => {
     }
   });
 
-  it('rolls back every schema-v3 change when migration validation fails', async () => {
+  it('rolls back every schema-v4 change when migration validation fails', async () => {
     const repoDir = await makeRepo();
     const dbPath = createSchemaV2(repoDir);
     const incompatible = new DatabaseSync(dbPath);
@@ -427,7 +432,7 @@ describe('session transition command', { timeout: 20_000 }, () => {
     }
   });
 
-  it('rejects changed content for an existing key and caches stale and deferred failures', async () => {
+  it('rejects changed content for an existing key, caches stale failures, and validates proof plans first', async () => {
     const repoDir = await makeRepo();
     const { session_id: sessionId } = await startQueuedSession(repoDir);
     const key = `wake:${sessionId}:0`;
@@ -448,13 +453,14 @@ describe('session transition command', { timeout: 20_000 }, () => {
     const guarded = await runCliFailure(repoDir, guardedArgs);
     const guardedReplay = await runCliFailure(repoDir, guardedArgs);
     expect(guardedReplay.stderr).toBe(guarded.stderr);
-    expect(
-      parseJson<{ error: { code: string; details: { guard_failures: Array<{ owner_issue: number }> } } }>(
-        guarded.stderr,
-      ),
-    ).toMatchObject({
-      error: { code: 'TRANSITION_GUARD_FAILED', details: { guard_failures: [{ owner_issue: 40 }] } },
+    expect(parseJson<{ error: { code: string; details: { field: string } } }>(guarded.stderr)).toMatchObject({
+      error: { code: 'INVALID_ARGUMENT', details: { field: 'proof_plan' } },
     });
+
+    const rejectedKey = `wake:${sessionId}:rejected`;
+    await runCliFailure(repoDir, transitionArgs(sessionId, 'blocked', '1', rejectedKey, '{"block":{}}'));
+    const reusedRejectedKey = await runCliFailure(repoDir, transitionArgs(sessionId, 'proof_ready', '1', rejectedKey));
+    expect(parseJson<{ error: { code: string } }>(reusedRejectedKey.stderr).error.code).toBe('IDEMPOTENCY_CONFLICT');
 
     const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
     try {
@@ -853,18 +859,16 @@ describe('session next command', { timeout: 15_000 }, () => {
           },
         },
         staleness: {
-          status: 'deferred',
-          is_stale: null,
+          status: 'missing',
+          is_stale: false,
           stale_receipt_ids: [],
-          owner_issue: 40,
         },
         repair_budget: {
-          status: 'deferred',
-          attempts_used: null,
+          status: 'available',
+          attempts_used: 0,
           limit: 3,
-          remaining: null,
-          exhausted: null,
-          owner_issue: 40,
+          remaining: 3,
+          exhausted: false,
         },
         terminal_reason: null,
       },
@@ -874,7 +878,7 @@ describe('session next command', { timeout: 15_000 }, () => {
     expect(await readFile(dbPath)).toEqual(beforeBytes);
   });
 
-  it('reads a canonical schema-v2 database without migrating or creating v3 objects', async () => {
+  it('reads a canonical schema-v2 database without migrating or creating v4 objects', async () => {
     const repoDir = await makeRepo();
     const dbPath = createSchemaV2(repoDir);
 

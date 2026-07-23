@@ -4,6 +4,8 @@ import path from 'node:path';
 import { resolveGitPath } from '../git/client.js';
 
 const STATE_IGNORE_ENTRY = '.threadloop/state/';
+const RECEIPTS_IGNORE_ENTRY = '.threadloop/artifacts/receipts/';
+const LOCAL_IGNORE_ENTRIES = [STATE_IGNORE_ENTRY, RECEIPTS_IGNORE_ENTRY] as const;
 
 export type GitignoreStatus = 'created' | 'updated' | 'already-correct';
 
@@ -12,7 +14,7 @@ export async function ensureThreadloopStateIgnored(repoRoot: string): Promise<Gi
   await mkdir(path.dirname(excludePath), { recursive: true });
 
   if (!existsSync(excludePath)) {
-    await writeFile(excludePath, `${STATE_IGNORE_ENTRY}\n`, 'utf8');
+    await writeFile(excludePath, `${LOCAL_IGNORE_ENTRIES.join('\n')}\n`, 'utf8');
     return 'created';
   }
 
@@ -22,19 +24,20 @@ export async function ensureThreadloopStateIgnored(repoRoot: string): Promise<Gi
     .map((line) => line.trim())
     .filter(Boolean);
 
-  if (coversThreadloopState(lines)) {
+  const missingEntries = LOCAL_IGNORE_ENTRIES.filter((entry) => !coversThreadloopPath(lines, entry));
+  if (missingEntries.length === 0) {
     return 'already-correct';
   }
 
   const next =
     current.endsWith('\n') || current.length === 0
-      ? `${current}${STATE_IGNORE_ENTRY}\n`
-      : `${current}\n${STATE_IGNORE_ENTRY}\n`;
+      ? `${current}${missingEntries.join('\n')}\n`
+      : `${current}\n${missingEntries.join('\n')}\n`;
   await writeFile(excludePath, next, 'utf8');
   return 'updated';
 }
 
-function coversThreadloopState(lines: string[]) {
+function coversThreadloopPath(lines: string[], target: string) {
   return lines.some((line) => {
     if (line.startsWith('#') || line.startsWith('!')) {
       return false;
@@ -45,7 +48,7 @@ function coversThreadloopState(lines: string[]) {
       line === '.threadloop/' ||
       line === '.threadloop/*' ||
       line === '.threadloop/**' ||
-      line === STATE_IGNORE_ENTRY
+      line === target
     );
   });
 }

@@ -13,13 +13,15 @@ parsing.
 - The orchestrator starts a session and keeps the returned `session_id`.
 - Agents and tools write semantic notes with `threadloop session capture`.
 - ThreadLoop records mechanical repo state with `session heartbeat` and `session reconcile`.
-- Orchestrators inspect `session next` and submit guarded mutations through `session transition`.
+- Orchestrators inspect `session next`, run declared local gates, and submit guarded mutations through
+  `session transition`.
 - Review artifacts are generated from the stored task, entry, and Git snapshot state.
 
 Semantic vs mechanical operations:
 
 - Semantic: `session start`, `session capture`, `artifact generate`, `session transition`
-- Mechanical: `session heartbeat`, `session reconcile`, `daemon run`
+- Mechanical evidence: `session gate run`
+- Mechanical refresh: `session heartbeat`, `session reconcile`, `daemon run`
 - Read-only control: `session next`
 
 `session reconcile` and the daemon do not create semantic notes. They only refresh branch, head SHA, changed file scope,
@@ -37,7 +39,9 @@ The current operator model is one autonomous task per checkout or worktree.
 6. Reconcile before artifact generation when Git-derived scope needs a refresh.
 7. Rebase the task branch onto the latest `origin/main` before PR open.
 8. Generate the artifact you need and inspect `session next --json`.
-9. Stop when the candidate is not executable; never fabricate #40 proof or #42 review, approval, or merge evidence.
+9. Record a proof plan at `framed -> proof_ready`, then execute only its declared gates while verifying.
+10. Use `session next` to rerun missing/stale/corrupt gates, enter bounded repair after failures, or proceed on a pass.
+11. Stop at review-owned states; never fabricate #42 review, approval, or merge evidence.
 
 Example:
 
@@ -67,6 +71,7 @@ threadloop session capture validation \
 
 threadloop session reconcile --session "$SESSION_ID" --json
 threadloop session next --session "$SESSION_ID" --json
+threadloop session gate run repository-check --session "$SESSION_ID" --json
 threadloop artifact generate pr-summary --session "$SESSION_ID" --json
 ```
 
@@ -160,6 +165,7 @@ namespace because it avoids ambiguity.
 ## Operator notes
 
 - ThreadLoop requires a Git repository.
-- `.threadloop/state/` is ignored via `.git/info/exclude` by default.
+- `.threadloop/state/` and `.threadloop/artifacts/receipts/` are ignored via `.git/info/exclude` by default.
+- Local receipts are unsigned commit-bound evidence; signed CI authority is a separate integration.
 - `.threadloop` internal paths are excluded from artifact Git scope.
 - Legacy `.threadloop/state/state.json` data migrates to SQLite on first access and is kept as a backup file.

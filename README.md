@@ -29,6 +29,7 @@ Canonical session contract:
 - `threadloop session reconcile --session <id>|--all [--json]`
 - `threadloop session next --session <id> [--json]`
 - `threadloop session transition <target-state> --session <id> --expected-state-version <version> --idempotency-key <key> --actor <cli|agent> --input <json-object> [--json]`
+- `threadloop session gate run <gate-id> --session <id> [--json]`
 
 Compatibility surface:
 
@@ -53,6 +54,7 @@ Implemented storage:
 - `.threadloop/config.json`
 - `.threadloop/state/state.db`
 - `.threadloop/artifacts/*.md`
+- `.threadloop/artifacts/receipts/<session-id>/<receipt-id>/`
 
 Legacy repos with `.threadloop/state/state.json` migrate into SQLite on first init/read/write. The JSON file is
 intentionally left in place as a safety backup during this phase, but ThreadLoop reads from SQLite after migration.
@@ -121,8 +123,8 @@ npm run smoke:pack
 - creates `.threadloop/` if needed
 - creates or opens `.threadloop/state/state.db`
 - migrates legacy `.threadloop/state/state.json` into SQLite when present
-- ensures `.threadloop/state/` is ignored via `.git/info/exclude`
-- leaves `.threadloop/artifacts/` visible by default
+- ensures `.threadloop/state/` and `.threadloop/artifacts/receipts/` are ignored via `.git/info/exclude`
+- leaves normal `.threadloop/artifacts/*.md` review artifacts visible
 
 ## SQLite migration status
 
@@ -139,7 +141,10 @@ What is implemented now:
 - reconcile and snapshot persistence
 - daemon-driven mechanical refresh
 - deterministic, idempotent lifecycle transitions with optimistic state versions
-- a read-only next-action contract with live sanitized repository observations
+- immutable proof plans bound to a clean branch and baseline commit
+- shell-free execution of declared local gates with digest-bound, append-only receipts
+- current-HEAD staleness, artifact-integrity checks, and a transition-history-derived three-repair budget
+- a read-only next-action contract with authoritative local proof and live sanitized repository observations
 - protocol print / published agent-mode contract
 
 What is not implemented yet in this slice:
@@ -174,8 +179,10 @@ Recommended loop:
 6. `threadloop session reconcile --session "$session_id"` when Git-derived scope needs refresh
 7. rebase the task branch onto the latest `origin/main`
 8. `threadloop artifact generate pr-summary --session "$session_id"`
-9. call `session next --json` to inspect the deterministic candidate; stop when it reports deferred evidence
-10. leave completion blocked until #42 supplies authoritative approval and merge evidence
+9. record the exact proof plan during `framed -> proof_ready`
+10. call `session gate run <gate-id>` for each declared gate while verifying
+11. call `session next --json` to inspect current, missing, stale, failed, or corrupt proof and the repair budget
+12. leave review-owned transitions and completion blocked until #42 supplies review, approval, and merge evidence
 
 Use `threadloop protocol --json` as the machine-facing contract for current commands, entry kinds, artifact kinds,
 supported environment variables, and the published branch/rebase/PR workflow guidance.
@@ -183,9 +190,9 @@ supported environment variables, and the published branch/rebase/PR workflow gui
 The optional daemon only performs mechanical refresh work. It does not create semantic notes or replace explicit
 capture.
 
-The governed task lifecycle and schema-v3 migration contract are documented in [`docs/lifecycle.md`](docs/lifecycle.md).
-`session transition` fails closed where #40 owns proof, staleness, and repair-budget evidence or #42 owns review,
-approval, and merge evidence.
+The governed task lifecycle and schema-v4 proof contract are documented in [`docs/lifecycle.md`](docs/lifecycle.md).
+`session transition` uses local proof for issue #40-owned edges and remains fail-closed where #42 owns review, approval,
+and merge evidence.
 
 ## Longer notes with `$EDITOR`
 
@@ -239,6 +246,7 @@ installation. See the [contribution guide](CONTRIBUTING.md) for hook behavior an
   exists.
 - Compatibility root `status` fails with `SESSION_REQUIRED` when zero sessions match.
 - `.threadloop/state/` is ignored via `.git/info/exclude` by default.
+- `.threadloop/artifacts/receipts/` is ignored locally; normal review artifacts are not hidden.
 - Artifacts are local by default and may be committed when useful.
 
 ## Docs

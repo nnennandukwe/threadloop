@@ -10,6 +10,7 @@ import {
   type TransitionRequest,
   evaluateTransitionGuards,
 } from '../../domain/session-transition.js';
+import type { BoundProofPlan, GateReceiptPayload, GateReceiptResult, StoredGateReceipt } from '../../domain/proof.js';
 import type {
   ActiveState,
   Artifact,
@@ -26,11 +27,19 @@ import type { ThreadloopErrorCode } from '../../contracts/errors.js';
 import { threadloopPaths } from './repo.js';
 import { DatabaseSync } from './sqlite-driver.js';
 
-const CURRENT_SCHEMA_VERSION = 3;
+const CURRENT_SCHEMA_VERSION = 4;
 const INVALID_CONFIG_ERROR = 'Invalid .threadloop/config.json';
 const INVALID_STATE_JSON_ERROR = 'Invalid .threadloop/state/state.json';
 const INVALID_STATE_DB_ERROR = 'Invalid .threadloop/state/state.db';
 const SQLITE_BUSY_TIMEOUT_MS = 10_000;
+const PROOF_SCHEMA_TRIGGERS = [
+  'proof_plans_no_update',
+  'proof_plans_no_delete',
+  'proof_plans_no_replace',
+  'gate_receipts_no_update',
+  'gate_receipts_no_delete',
+  'gate_receipts_no_replace',
+] as const;
 
 class InvalidJsonError extends Error {}
 
@@ -118,6 +127,32 @@ type TransitionIdempotencyRow = {
   result_json: string;
 };
 
+type ProofPlanRow = {
+  session_id: string;
+  plan_json: string;
+  plan_sha256: string;
+  baseline_branch: string;
+  baseline_head_sha: string;
+  created_at: string;
+};
+
+type GateReceiptRow = {
+  sequence: number;
+  id: string;
+  session_id: string;
+  gate_id: string;
+  plan_sha256: string;
+  head_before: string;
+  head_after: string;
+  result: GateReceiptResult;
+  artifact_path: string;
+  artifact_sha256: string;
+  receipt_json: string;
+  receipt_sha256: string;
+  state_version: number;
+  created_at: string;
+};
+
 type StoredTransitionError = {
   code: ThreadloopErrorCode;
   message: string;
@@ -151,13 +186,28 @@ export type SessionTransitionResult =
         session: {
           ended_at: string | null;
         };
+        proof_plan?: {
+          sha256: string;
+          baseline_branch: string;
+          baseline_head_sha: string;
+        };
       };
     }
   | { ok: false; error: StoredTransitionError };
 
 export interface PersistSessionTransitionInput extends TransitionRequest, CanonicalTransitionRequest {
   idempotencyKey: string;
+  boundProofPlan?: BoundProofPlan;
 }
+
+export interface AppendGateReceiptInput {
+  receipt: GateReceiptPayload;
+  receiptJson: string;
+  receiptSha256: string;
+  stateVersion: number;
+}
+
+export class ReceiptAppendConflictError extends Error {}
 
 export type TransitionGuardEvaluator = (
   from: TaskStatus,
@@ -223,6 +273,137 @@ export async function readState(repoRoot: string): Promise<StateData> {
   }
 }
 
+export async function readSessionGateContext(repoRoot: string, sessionId: string) {
+  await ensureStateDatabase(repoRoot);
+  const db = openReadDatabase(repoRoot);
+  try {
+    const current = readTransitionSession(db, sessionId);
+    if (!current) {
+      return null;
+    }
+    const corruption = detectTransitionStateCorruption(db, current);
+    if (corruption) {
+      throw new Error(corruption);
+    }
+    const plan = db
+      .prepare(
+        `
+          SELECT session_id, plan_json, plan_sha256, baseline_branch, baseline_head_sha, created_at
+          FROM proof_plans
+          WHERE session_id = ?
+        `,
+      )
+      .get(sessionId) as ProofPlanRow | undefined;
+    return {
+      taskId: current.task_id,
+      sessionId: current.session_id,
+      state: current.status,
+      stateVersion: current.state_version,
+      blockedFromState: current.blocked_from_state,
+      plan: plan
+        ? {
+            sessionId: plan.session_id,
+            json: plan.plan_json,
+            sha256: plan.plan_sha256,
+            baselineBranch: plan.baseline_branch,
+            baselineHeadSha: plan.baseline_head_sha,
+            createdAt: plan.created_at,
+          }
+        : null,
+    };
+  } finally {
+    db.close();
+  }
+}
+
+export function readSessionProofEvidenceReadOnly(repoRoot: string, sessionId: string) {
+  const db = openReadDatabase(repoRoot);
+  try {
+    const plan = db
+      .prepare(
+        `
+          SELECT session_id, plan_json, plan_sha256, baseline_branch, baseline_head_sha, created_at
+          FROM proof_plans
+          WHERE session_id = ?
+        `,
+      )
+      .get(sessionId) as ProofPlanRow | undefined;
+    const receiptRows = db
+      .prepare(
+        `
+          SELECT
+            sequence, id, session_id, gate_id, plan_sha256, head_before, head_after, result,
+            artifact_path, artifact_sha256, receipt_json, receipt_sha256, state_version, created_at
+          FROM gate_receipts
+          WHERE session_id = ?
+          ORDER BY sequence
+        `,
+      )
+      .all(sessionId) as GateReceiptRow[];
+    const receipts: StoredGateReceipt[] = receiptRows.map((row) => ({
+      sequence: row.sequence,
+      id: row.id,
+      sessionId: row.session_id,
+      gateId: row.gate_id,
+      planSha256: row.plan_sha256,
+      headBefore: row.head_before,
+      headAfter: row.head_after,
+      result: row.result,
+      artifactPath: row.artifact_path,
+      artifactSha256: row.artifact_sha256,
+      receiptJson: row.receipt_json,
+      receiptSha256: row.receipt_sha256,
+      stateVersion: row.state_version,
+      createdAt: row.created_at,
+    }));
+    const attemptsUsed = readNumericValue(
+      db,
+      `
+        SELECT COUNT(*) AS count
+        FROM session_transitions
+        WHERE session_id = ? AND from_state = 'verifying' AND to_state = 'repairing'
+      `,
+      'count',
+      sessionId,
+    );
+    return {
+      plan: plan
+        ? {
+            sessionId: plan.session_id,
+            json: plan.plan_json,
+            sha256: plan.plan_sha256,
+            baselineBranch: plan.baseline_branch,
+            baselineHeadSha: plan.baseline_head_sha,
+            createdAt: plan.created_at,
+          }
+        : null,
+      receipts,
+      attemptsUsed,
+    };
+  } finally {
+    db.close();
+  }
+}
+
+export function hasSessionTransitionIdempotencyReadOnly(repoRoot: string, sessionId: string, idempotencyKey: string) {
+  const db = openReadDatabase(repoRoot);
+  try {
+    return Boolean(
+      db
+        .prepare(
+          `
+            SELECT 1 AS present
+            FROM transition_idempotency
+            WHERE session_id = ? AND idempotency_key = ?
+          `,
+        )
+        .get(sessionId, idempotencyKey),
+    );
+  } finally {
+    db.close();
+  }
+}
+
 export function readSessionLifecycleReadOnly(repoRoot: string, sessionId: string) {
   const { stateDbPath } = threadloopPaths(repoRoot);
   if (!existsSync(stateDbPath)) {
@@ -245,7 +426,7 @@ export function readSessionLifecycleReadOnly(repoRoot: string, sessionId: string
     if (version > CURRENT_SCHEMA_VERSION) {
       throw new Error(`Unsupported ThreadLoop schema version: ${rawVersion}`);
     }
-    if (version === 3) {
+    if (version >= 3) {
       const taskColumns = new Set(
         (db.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>).map((column) => column.name),
       );
@@ -253,6 +434,9 @@ export function readSessionLifecycleReadOnly(repoRoot: string, sessionId: string
         throw new Error('Invalid schema for tasks');
       }
       assertTransitionSchemaShape(db);
+    }
+    if (version >= 4) {
+      assertProofSchemaShape(db);
     }
 
     const blockedFromSelect = version >= 3 ? 'tasks.blocked_from_state' : 'NULL AS blocked_from_state';
@@ -418,6 +602,13 @@ export async function applySessionTransition(
       );
     }
 
+    if (input.boundProofPlan) {
+      if (current.status !== 'framed' || input.targetState !== 'proof_ready') {
+        throw new Error('A proof plan can only be persisted during framed -> proof_ready.');
+      }
+      insertProofPlan(db, input.sessionId, input.boundProofPlan);
+    }
+
     const createdAt = new Date().toISOString();
     const transitionId = createId('transition');
     const nextVersion = current.state_version + 1;
@@ -496,10 +687,71 @@ export async function applySessionTransition(
         session: {
           ended_at: endedAt,
         },
+        ...(input.boundProofPlan
+          ? {
+              proof_plan: {
+                sha256: input.boundProofPlan.sha256,
+                baseline_branch: input.boundProofPlan.baselineBranch,
+                baseline_head_sha: input.boundProofPlan.baselineHeadSha,
+              },
+            }
+          : {}),
       },
     };
     persistTransitionIdempotency(db, input, 'applied', transitionId, result, createdAt);
     return result;
+  });
+}
+
+export async function appendGateReceipt(repoRoot: string, input: AppendGateReceiptInput) {
+  return withWriteTransaction(repoRoot, (db) => {
+    const current = readTransitionSession(db, input.receipt.session_id);
+    if (!current) {
+      throw new ReceiptAppendConflictError(`Could not find session: ${input.receipt.session_id}`);
+    }
+    if (current.status !== 'verifying' || current.state_version !== input.stateVersion) {
+      throw new ReceiptAppendConflictError(
+        `Session ${input.receipt.session_id} changed while gate ${input.receipt.gate_id} was running.`,
+      );
+    }
+    const plan = db
+      .prepare(`SELECT plan_sha256 FROM proof_plans WHERE session_id = ?`)
+      .get(input.receipt.session_id) as { plan_sha256: string } | undefined;
+    if (!plan || plan.plan_sha256 !== input.receipt.plan_sha256) {
+      throw new ReceiptAppendConflictError(
+        `Session ${input.receipt.session_id} proof plan changed while gate ${input.receipt.gate_id} was running.`,
+      );
+    }
+
+    const inserted = db
+      .prepare(
+        `
+          INSERT INTO gate_receipts (
+            id, session_id, gate_id, plan_sha256, head_before, head_after, result,
+            artifact_path, artifact_sha256, receipt_json, receipt_sha256, state_version, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+      )
+      .run(
+        input.receipt.id,
+        input.receipt.session_id,
+        input.receipt.gate_id,
+        input.receipt.plan_sha256,
+        input.receipt.head_before,
+        input.receipt.head_after,
+        input.receipt.result,
+        input.receipt.artifact.path,
+        input.receipt.artifact.sha256,
+        input.receiptJson,
+        input.receiptSha256,
+        input.stateVersion,
+        input.receipt.ended_at,
+      );
+    const sequence = Number(inserted.lastInsertRowid);
+    if (!Number.isSafeInteger(sequence) || sequence < 1) {
+      throw new Error('ThreadLoop did not assign a valid gate receipt sequence.');
+    }
+    return sequence;
   });
 }
 
@@ -726,6 +978,7 @@ function ensureDatabaseReady(db: DatabaseSync, state: RepoConnectionState, repoR
       assertSupportedSchemaVersion(db);
       runPendingMigrations(db, repoRoot);
       assertTransitionSchemaShape(db);
+      assertProofSchemaShape(db);
       writeSchemaVersion(db);
     });
     assertSchemaVersion(db);
@@ -776,9 +1029,14 @@ function databaseNeedsSetup(db: DatabaseSync, repoRoot: string) {
     'repo_snapshots',
     'session_transitions',
     'transition_idempotency',
+    'proof_plans',
+    'gate_receipts',
   ];
 
   if (requiredTables.some((table) => !tableExists(db, table))) {
+    return true;
+  }
+  if (PROOF_SCHEMA_TRIGGERS.some((trigger) => !triggerExists(db, trigger))) {
     return true;
   }
 
@@ -928,6 +1186,81 @@ function bootstrapDatabase(db: DatabaseSync) {
       created_at TEXT NOT NULL,
       PRIMARY KEY(session_id, idempotency_key)
     );
+
+    CREATE TABLE IF NOT EXISTS proof_plans (
+      session_id TEXT PRIMARY KEY REFERENCES sessions(id),
+      plan_json TEXT NOT NULL,
+      plan_sha256 TEXT NOT NULL CHECK(length(plan_sha256) = 64),
+      baseline_branch TEXT NOT NULL,
+      baseline_head_sha TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS gate_receipts (
+      sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+      id TEXT NOT NULL UNIQUE,
+      session_id TEXT NOT NULL REFERENCES sessions(id),
+      gate_id TEXT NOT NULL,
+      plan_sha256 TEXT NOT NULL CHECK(length(plan_sha256) = 64),
+      head_before TEXT NOT NULL,
+      head_after TEXT NOT NULL,
+      result TEXT NOT NULL CHECK(
+        result IN (
+          'passed', 'failed', 'timed_out', 'aborted', 'invalidated',
+          'execution_error', 'cleanup_failed'
+        )
+      ),
+      artifact_path TEXT NOT NULL,
+      artifact_sha256 TEXT NOT NULL CHECK(length(artifact_sha256) = 64),
+      receipt_json TEXT NOT NULL,
+      receipt_sha256 TEXT NOT NULL CHECK(length(receipt_sha256) = 64),
+      state_version INTEGER NOT NULL CHECK(state_version >= 0),
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS gate_receipts_session_gate_sequence_idx
+      ON gate_receipts(session_id, gate_id, sequence DESC);
+
+    CREATE TRIGGER IF NOT EXISTS proof_plans_no_update
+    BEFORE UPDATE ON proof_plans
+    BEGIN
+      SELECT RAISE(ABORT, 'proof plans are immutable');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS proof_plans_no_delete
+    BEFORE DELETE ON proof_plans
+    BEGIN
+      SELECT RAISE(ABORT, 'proof plans are immutable');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS proof_plans_no_replace
+    BEFORE INSERT ON proof_plans
+    WHEN EXISTS (SELECT 1 FROM proof_plans WHERE session_id = NEW.session_id)
+    BEGIN
+      SELECT RAISE(ABORT, 'proof plans are immutable');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS gate_receipts_no_update
+    BEFORE UPDATE ON gate_receipts
+    BEGIN
+      SELECT RAISE(ABORT, 'gate receipts are immutable');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS gate_receipts_no_delete
+    BEFORE DELETE ON gate_receipts
+    BEGIN
+      SELECT RAISE(ABORT, 'gate receipts are immutable');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS gate_receipts_no_replace
+    BEFORE INSERT ON gate_receipts
+    WHEN EXISTS (
+      SELECT 1 FROM gate_receipts
+      WHERE id = NEW.id OR sequence = NEW.sequence
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'gate receipts are immutable');
+    END;
   `);
 
   db.prepare(
@@ -1129,6 +1462,38 @@ function assertTransitionSchemaShape(db: DatabaseSync) {
   ]);
 }
 
+function assertProofSchemaShape(db: DatabaseSync) {
+  assertTableColumns(db, 'proof_plans', [
+    'session_id',
+    'plan_json',
+    'plan_sha256',
+    'baseline_branch',
+    'baseline_head_sha',
+    'created_at',
+  ]);
+  assertTableColumns(db, 'gate_receipts', [
+    'sequence',
+    'id',
+    'session_id',
+    'gate_id',
+    'plan_sha256',
+    'head_before',
+    'head_after',
+    'result',
+    'artifact_path',
+    'artifact_sha256',
+    'receipt_json',
+    'receipt_sha256',
+    'state_version',
+    'created_at',
+  ]);
+  for (const trigger of PROOF_SCHEMA_TRIGGERS) {
+    if (!triggerExists(db, trigger)) {
+      throw new Error(`Invalid schema trigger: ${trigger}`);
+    }
+  }
+}
+
 function assertTableColumns(db: DatabaseSync, tableName: string, requiredColumns: string[]) {
   const columns = new Set(
     (db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>).map((column) => column.name),
@@ -1136,6 +1501,12 @@ function assertTableColumns(db: DatabaseSync, tableName: string, requiredColumns
   if (requiredColumns.some((column) => !columns.has(column))) {
     throw new Error(`Invalid schema for ${tableName}`);
   }
+}
+
+function triggerExists(db: DatabaseSync, triggerName: string) {
+  const row = db.prepare(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = ?`).get(triggerName) as
+    { name: string } | undefined;
+  return row?.name === triggerName;
 }
 
 function writeSchemaVersion(db: DatabaseSync) {
@@ -1486,6 +1857,16 @@ function insertTask(db: DatabaseSync, task: Task) {
   );
 }
 
+function insertProofPlan(db: DatabaseSync, sessionId: string, plan: BoundProofPlan) {
+  db.prepare(
+    `
+      INSERT INTO proof_plans (
+        session_id, plan_json, plan_sha256, baseline_branch, baseline_head_sha, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `,
+  ).run(sessionId, plan.json, plan.sha256, plan.baselineBranch, plan.baselineHeadSha, plan.createdAt);
+}
+
 function insertSession(db: DatabaseSync, session: Session) {
   db.prepare(
     `
@@ -1667,8 +2048,13 @@ function runInImmediateTransaction<T>(db: DatabaseSync, action: () => T): T {
   }
 }
 
-function readNumericValue(db: DatabaseSync, sql: string, column: string) {
-  const row = db.prepare(sql).get() as Record<string, number> | undefined;
+function readNumericValue(
+  db: DatabaseSync,
+  sql: string,
+  column: string,
+  ...params: Array<string | number | bigint | null | Uint8Array>
+) {
+  const row = db.prepare(sql).get(...params) as Record<string, number> | undefined;
   return row?.[column] ?? 0;
 }
 

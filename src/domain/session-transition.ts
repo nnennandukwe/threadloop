@@ -1,4 +1,7 @@
 import type { EntrySource, TaskStatus } from './types.js';
+import { canonicalizeJsonValue, isPlainObject } from './canonical-json.js';
+import type { BoundProofPlan } from './proof.js';
+import type { ProofEvidence, ProofEvidenceStatus } from './proof.js';
 
 export interface TransitionRequest {
   sessionId: string;
@@ -32,6 +35,20 @@ export interface TransitionGuardDecision {
   allowed: boolean;
   guardFailures: TransitionGuardFailure[];
   requiredWork: TransitionRequiredWork[];
+}
+
+export interface ProofGuardContext {
+  boundPlan?: BoundProofPlan;
+  plan?: BoundProofPlan | null;
+  evidence?: ProofEvidence;
+  repository?: {
+    branch: string | null;
+    headSha: string;
+    clean: boolean;
+    committedDiffFromBaseline: boolean;
+    committedRepairFromFailure: boolean;
+  };
+  attemptsUsed?: number;
 }
 
 export interface PlannedTransition {
@@ -72,6 +89,7 @@ export function evaluateTransitionGuards(
   to: TaskStatus,
   input: Record<string, unknown>,
   blockedFromState: TaskStatus | null,
+  proof: ProofGuardContext = {},
 ): TransitionGuardDecision {
   if (from === 'blocked' && blockedFromState === null) {
     return deniedGuards(
@@ -96,7 +114,148 @@ export function evaluateTransitionGuards(
   }
 
   const owner = guardOwner(from, to);
+  if (from === 'framed' && to === 'proof_ready' && proof.boundPlan) {
+    return allowedGuards();
+  }
+  if (owner === 40) {
+    return evaluateProofOwnedGuards(from, to, proof);
+  }
   return owner === 42 ? deferredReviewGuards(to) : deferredProofGuards();
+}
+
+function evaluateProofOwnedGuards(from: TaskStatus, to: TaskStatus, proof: ProofGuardContext): TransitionGuardDecision {
+  const plan = proof.plan;
+  const repository = proof.repository;
+  if (!plan || !repository) {
+    return deniedGuards(
+      {
+        code: 'PROOF_PLAN_REQUIRED',
+        message: 'This transition requires an immutable proof plan and live repository authority.',
+        owner_issue: 40,
+      },
+      {
+        code: 'RESTORE_PROOF_AUTHORITY',
+        description: 'Record or restore the session proof plan, then retry from a clean named branch.',
+        owner_issue: 40,
+      },
+    );
+  }
+
+  if (from === 'proof_ready' && to === 'implementing') {
+    if (repository.clean && repository.branch === plan.baselineBranch && repository.headSha === plan.baselineHeadSha) {
+      return allowedGuards();
+    }
+    return deniedGuards(
+      {
+        code: 'PROOF_BASELINE_MISMATCH',
+        message: 'The repository no longer matches the clean branch and HEAD bound to the proof plan.',
+        owner_issue: 40,
+      },
+      {
+        code: 'RESTORE_PROOF_BASELINE',
+        description: 'Restore the clean proof-plan branch and baseline HEAD before implementation begins.',
+        owner_issue: 40,
+      },
+    );
+  }
+
+  if (from === 'implementing' && to === 'verifying') {
+    if (
+      repository.clean &&
+      repository.branch === plan.baselineBranch &&
+      repository.headSha !== plan.baselineHeadSha &&
+      repository.committedDiffFromBaseline
+    ) {
+      return allowedGuards();
+    }
+    return deniedGuards(
+      {
+        code: 'COMMITTED_IMPLEMENTATION_REQUIRED',
+        message: 'Verification requires a clean committed diff from the proof-plan baseline.',
+        owner_issue: 40,
+      },
+      {
+        code: 'COMMIT_IMPLEMENTATION',
+        description: 'Commit the implementation on the proof-plan branch and clean the worktree.',
+        owner_issue: 40,
+      },
+    );
+  }
+
+  if (from === 'verifying' && to === 'reviewing') {
+    if (proof.evidence?.status !== 'passed') {
+      return deniedGuards(
+        {
+          code: 'CURRENT_PASSING_PROOF_REQUIRED',
+          message: 'Review requires every latest declared gate receipt to pass for the current HEAD.',
+          owner_issue: 40,
+        },
+        {
+          code: 'COMPLETE_CURRENT_PROOF',
+          description: 'Run or repair every declared gate until current-HEAD proof passes.',
+          owner_issue: 40,
+        },
+      );
+    }
+    if (!repository.clean || repository.branch !== plan.baselineBranch) {
+      return deniedGuards(
+        {
+          code: 'PROOF_CHECKOUT_MISMATCH',
+          message: 'Review requires current-HEAD passing proof from a clean checkout on the proof-plan branch.',
+          owner_issue: 40,
+        },
+        {
+          code: 'RESTORE_PROOF_CHECKOUT',
+          description: 'Restore the clean proof-plan branch while preserving the verified HEAD, then retry.',
+          owner_issue: 40,
+        },
+      );
+    }
+    return allowedGuards();
+  }
+
+  if (from === 'verifying' && to === 'repairing') {
+    if (proof.evidence?.status === 'failed' && (proof.attemptsUsed ?? 3) < 3) {
+      return allowedGuards();
+    }
+    const exhausted = (proof.attemptsUsed ?? 3) >= 3;
+    return deniedGuards(
+      {
+        code: exhausted ? 'REPAIR_BUDGET_EXHAUSTED' : 'CURRENT_FAILED_PROOF_REQUIRED',
+        message: exhausted
+          ? 'No fourth repair cycle is permitted.'
+          : 'Repairing requires a current-HEAD nonpassing gate receipt.',
+        owner_issue: 40,
+      },
+      {
+        code: exhausted ? 'TRANSITION_TO_BLOCKED' : 'RUN_CURRENT_GATES',
+        description: exhausted
+          ? 'Provide complete block evidence and explicitly transition the session to blocked.'
+          : 'Run the declared gates on the current clean HEAD and retain the failure receipt.',
+        owner_issue: 40,
+      },
+    );
+  }
+
+  if (from === 'repairing' && to === 'verifying') {
+    if (repository.clean && repository.branch === plan.baselineBranch && repository.committedRepairFromFailure) {
+      return allowedGuards();
+    }
+    return deniedGuards(
+      {
+        code: 'COMMITTED_REPAIR_REQUIRED',
+        message: 'Verification re-entry requires a clean committed repair after the failure HEAD.',
+        owner_issue: 40,
+      },
+      {
+        code: 'COMMIT_REPAIR',
+        description: 'Commit a repair on the proof-plan branch and clean the worktree before retrying.',
+        owner_issue: 40,
+      },
+    );
+  }
+
+  return deferredProofGuards();
 }
 
 export function validateTransitionEvidence(
@@ -137,6 +296,11 @@ export function planNextTransition(input: {
   state: TaskStatus;
   stateVersion: number;
   blockedFromState: TaskStatus | null;
+  proof?: {
+    status: ProofEvidenceStatus;
+    attemptsUsed: number;
+  };
+  proofGuardContext?: ProofGuardContext;
 }): PlannedTransition {
   if (input.state === 'completed') {
     return {
@@ -174,6 +338,10 @@ export function planNextTransition(input: {
     };
   }
 
+  if (input.state === 'verifying' && input.proof) {
+    return planVerifyingTransition(input.stateVersion, input.proof, input.proofGuardContext);
+  }
+
   const target = deterministicTarget(input.state);
   if (!target) {
     const owner = input.state === 'reviewing' ? 42 : 40;
@@ -186,7 +354,7 @@ export function planNextTransition(input: {
     };
   }
 
-  const guards = evaluateTransitionGuards(input.state, target, {}, input.blockedFromState);
+  const guards = evaluateTransitionGuards(input.state, target, {}, input.blockedFromState, input.proofGuardContext);
   return {
     candidate: {
       from_state: input.state,
@@ -196,6 +364,92 @@ export function planNextTransition(input: {
     },
     guardFailures: guards.guardFailures,
     requiredWork: guards.requiredWork,
+    terminalReason: null,
+  };
+}
+
+function planVerifyingTransition(
+  stateVersion: number,
+  proof: { status: ProofEvidenceStatus; attemptsUsed: number },
+  proofGuardContext: ProofGuardContext | undefined,
+): PlannedTransition {
+  if (proof.status === 'passed') {
+    const guards = evaluateTransitionGuards('verifying', 'reviewing', {}, null, proofGuardContext);
+    return {
+      candidate: {
+        from_state: 'verifying',
+        target_state: 'reviewing',
+        expected_state_version: stateVersion,
+        executable: guards.allowed,
+      },
+      guardFailures: guards.guardFailures,
+      requiredWork: guards.requiredWork,
+      terminalReason: null,
+    };
+  }
+  if (proof.status === 'failed' && proof.attemptsUsed < 3) {
+    return {
+      candidate: {
+        from_state: 'verifying',
+        target_state: 'repairing',
+        expected_state_version: stateVersion,
+        executable: true,
+      },
+      guardFailures: [],
+      requiredWork: [],
+      terminalReason: null,
+    };
+  }
+  if (proof.status === 'failed') {
+    return {
+      candidate: {
+        from_state: 'verifying',
+        target_state: 'blocked',
+        expected_state_version: stateVersion,
+        executable: false,
+      },
+      guardFailures: [
+        {
+          code: 'REPAIR_BUDGET_EXHAUSTED',
+          message: 'Proof still fails after all three repair cycles.',
+          owner_issue: 40,
+        },
+      ],
+      requiredWork: [
+        {
+          code: 'TRANSITION_TO_BLOCKED',
+          description: 'Provide complete block evidence and explicitly transition the session to blocked.',
+          owner_issue: 40,
+        },
+      ],
+      terminalReason: null,
+    };
+  }
+
+  const guidance = {
+    missing: {
+      code: 'PROOF_GATES_MISSING',
+      message: 'One or more declared gates do not have receipts for the current HEAD.',
+      workCode: 'RUN_MISSING_GATES',
+      description: 'Run every missing declared gate.',
+    },
+    stale: {
+      code: 'PROOF_RECEIPTS_STALE',
+      message: 'One or more latest gate receipts belong to another HEAD or proof plan.',
+      workCode: 'RERUN_STALE_GATES',
+      description: 'Rerun every stale declared gate on the current clean HEAD.',
+    },
+    corrupt: {
+      code: 'PROOF_RECEIPTS_CORRUPT',
+      message: 'One or more latest gate receipts or artifacts failed integrity validation.',
+      workCode: 'RERUN_CORRUPT_GATES',
+      description: 'Restore trusted receipt artifacts or rerun every corrupt declared gate.',
+    },
+  }[proof.status];
+  return {
+    candidate: null,
+    guardFailures: [{ code: guidance.code, message: guidance.message, owner_issue: 40 }],
+    requiredWork: [{ code: guidance.workCode, description: guidance.description, owner_issue: 40 }],
     terminalReason: null,
   };
 }
@@ -279,24 +533,4 @@ function hasRequiredTextFields(value: unknown, fields: string[]) {
   }
 
   return fields.every((field) => typeof value[field] === 'string' && value[field].trim().length > 0);
-}
-
-function canonicalizeJsonValue(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(canonicalizeJsonValue);
-  }
-
-  if (isPlainObject(value)) {
-    return Object.fromEntries(
-      Object.keys(value)
-        .sort()
-        .map((key) => [key, canonicalizeJsonValue(value[key])]),
-    );
-  }
-
-  return value;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

@@ -12,6 +12,7 @@ import { sessionCaptureCommand } from './commands/session-capture.js';
 import { sessionHeartbeatCommand } from './commands/session-heartbeat.js';
 import { sessionTransitionCommand } from './commands/session-transition.js';
 import { sessionNextCommand } from './commands/session-next.js';
+import { sessionGateRunCommand } from './commands/session-gate-run.js';
 import { sessionReconcileCommand } from './commands/session-reconcile.js';
 import { daemonRunCommand } from './commands/daemon.js';
 import { protocolPrintCommand } from './commands/protocol.js';
@@ -33,6 +34,7 @@ const program = createThreadloopProgram({
   sessionHeartbeat: commandAction('session heartbeat', sessionHeartbeatCommand),
   sessionTransition: commandAction('session transition', sessionTransitionCommand),
   sessionNext: commandAction('session next', sessionNextCommand),
+  sessionGateRun: commandAction('session gate run', sessionGateRunCommand),
   sessionReconcile: commandAction('session reconcile', sessionReconcileCommand),
   daemonRun: commandAction('daemon run', daemonRunCommand),
   protocol: commandAction('protocol', protocolPrintCommand),
@@ -92,6 +94,9 @@ function handleError(error: unknown) {
 
 function detectInvokedCommand(argv: string[]) {
   const tokens = argv.filter((token) => token !== '--json');
+  if (tokens[0] === 'session' && tokens[1] === 'gate' && tokens[2] === 'run') {
+    return 'session gate run';
+  }
   if (tokens[0] === 'session' && tokens[1]) {
     return `session ${tokens[1]}`;
   }
