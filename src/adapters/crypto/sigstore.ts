@@ -87,6 +87,8 @@ export async function verifySigstoreReceipt(
     '1.3.6.1.4.1.57264.1.12': policy.source_repository,
     '1.3.6.1.4.1.57264.1.13': receipt.artifact.source.head_sha,
     '1.3.6.1.4.1.57264.1.14': receipt.artifact.source.ref,
+    '1.3.6.1.4.1.57264.1.18': policy.certificate_identity,
+    '1.3.6.1.4.1.57264.1.19': receipt.artifact.source.head_sha,
     '1.3.6.1.4.1.57264.1.21': receipt.artifact.source.run_invocation_uri,
   };
   let signer: Awaited<ReturnType<SigstoreVerifyFunction>>;
@@ -95,8 +97,7 @@ export async function verifySigstoreReceipt(
       ctLogThreshold: 1,
       tlogThreshold: 1,
       certificateIssuer: policy.issuer,
-      certificateIdentityURI: `^${escapeRegExp(policy.certificate_identity)}$`,
-      certificateOIDs: expectedOids,
+      certificateIdentityURI: `^${escapeRegExp(policy.build_signer_uri)}$`,
     });
   } catch (error) {
     throw classifySigstoreError(error);
@@ -107,11 +108,12 @@ export async function verifySigstoreReceipt(
     (identity?.oids ?? []).flatMap((entry) => {
       const id = entry.oid?.id;
       const value = entry.value;
-      return id && value ? [[id.join('.'), Buffer.from(value).toString('utf8')] as const] : [];
+      const decodedValue = value ? decodeDerUtf8String(value) : null;
+      return id && decodedValue !== null ? [[id.join('.'), decodedValue] as const] : [];
     }),
   );
   const identityMatches =
-    identity?.subjectAlternativeName === policy.certificate_identity &&
+    identity?.subjectAlternativeName === policy.build_signer_uri &&
     identity.extensions?.issuer === policy.issuer &&
     Object.entries(expectedOids).every(([oid, value]) => actualOids.get(oid) === value);
   if (!identityMatches) {
@@ -186,6 +188,41 @@ function isRekorEntryConflict(error: unknown) {
     typeof cause.location === 'string' &&
     cause.location.startsWith('/api/v1/log/entries/')
   );
+}
+
+function decodeDerUtf8String(value: Uint8Array) {
+  const encoded = Buffer.from(value);
+  if (encoded[0] !== 0x0c || encoded.length < 2) {
+    return null;
+  }
+
+  const firstLengthByte = encoded[1];
+  if (firstLengthByte === undefined) {
+    return null;
+  }
+  let offset = 2;
+  let length = firstLengthByte;
+  if ((firstLengthByte & 0x80) !== 0) {
+    const lengthBytes = firstLengthByte & 0x7f;
+    if (lengthBytes === 0 || lengthBytes > 4 || encoded.length < offset + lengthBytes || encoded[offset] === 0) {
+      return null;
+    }
+    length = 0;
+    for (let index = 0; index < lengthBytes; index += 1) {
+      length = length * 256 + (encoded[offset + index] ?? 0);
+    }
+    if (length < 128) {
+      return null;
+    }
+    offset += lengthBytes;
+  }
+  if (offset + length !== encoded.length) {
+    return null;
+  }
+
+  const bytes = encoded.subarray(offset);
+  const decoded = bytes.toString('utf8');
+  return Buffer.from(decoded, 'utf8').equals(bytes) ? decoded : null;
 }
 
 function toObject(value: unknown) {

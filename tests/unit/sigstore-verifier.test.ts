@@ -107,13 +107,24 @@ function parsedReceipt(options: { transparency?: boolean } = {}) {
 }
 
 function oid(oidValue: string, value: string) {
-  return { oid: { id: oidValue.split('.').map(Number) }, value: Buffer.from(value) };
+  const bytes = Buffer.from(value);
+  const encodedLength =
+    bytes.length < 128
+      ? Buffer.from([bytes.length])
+      : (() => {
+          const lengthBytes = Buffer.from(bytes.length.toString(16).padStart(2, '0'), 'hex');
+          return Buffer.concat([Buffer.from([0x80 | lengthBytes.length]), lengthBytes]);
+        })();
+  return {
+    oid: { id: oidValue.split('.').map(Number) },
+    value: Buffer.concat([Buffer.from([0x0c]), encodedLength, bytes]),
+  };
 }
 
 function trustedSigner() {
   return {
     identity: {
-      subjectAlternativeName: certificateIdentity,
+      subjectAlternativeName: buildSignerUri,
       extensions: { issuer: policy.issuer },
       oids: [
         oid('1.3.6.1.4.1.57264.1.9', buildSignerUri),
@@ -122,6 +133,8 @@ function trustedSigner() {
         oid('1.3.6.1.4.1.57264.1.12', sourceRepository),
         oid('1.3.6.1.4.1.57264.1.13', sourceHead),
         oid('1.3.6.1.4.1.57264.1.14', sourceRef),
+        oid('1.3.6.1.4.1.57264.1.18', certificateIdentity),
+        oid('1.3.6.1.4.1.57264.1.19', sourceHead),
         oid('1.3.6.1.4.1.57264.1.21', runInvocationUri),
       ],
     },
@@ -187,16 +200,7 @@ describe('Sigstore receipt verifier', () => {
         tlogThreshold: 1,
         certificateIssuer: policy.issuer,
         certificateIdentityURI:
-          '^https://github\\.com/example/project/\\.github/workflows/threadloop\\.yml@refs/heads/issue-41/signed-ci-receipts$',
-        certificateOIDs: {
-          '1.3.6.1.4.1.57264.1.9': buildSignerUri,
-          '1.3.6.1.4.1.57264.1.10': buildSignerSha,
-          '1.3.6.1.4.1.57264.1.11': 'github-hosted',
-          '1.3.6.1.4.1.57264.1.12': sourceRepository,
-          '1.3.6.1.4.1.57264.1.13': sourceHead,
-          '1.3.6.1.4.1.57264.1.14': sourceRef,
-          '1.3.6.1.4.1.57264.1.21': runInvocationUri,
-        },
+          '^https://github\\.com/nnennandukwe/threadloop/\\.github/workflows/threadloop-gate-sensor\\.yml@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb$',
       }),
     );
     expect(signer).toEqual({
@@ -227,7 +231,31 @@ describe('Sigstore receipt verifier', () => {
         ...trustedSigner(),
         identity: {
           ...trustedSigner().identity,
-          subjectAlternativeName: 'https://github.com/example/project/.github/workflows/other.yml@refs/heads/main',
+          subjectAlternativeName:
+            'https://github.com/nnennandukwe/threadloop/.github/workflows/other.yml@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        },
+      }),
+    );
+
+    await expect(verifySigstoreReceipt(parsedReceipt(), policy, verify)).rejects.toEqual(
+      expect.objectContaining<Partial<SigstoreReceiptVerificationError>>({ reason: 'identity_mismatch' }),
+    );
+  });
+
+  it('rejects a caller workflow identity that does not match the immutable policy', async () => {
+    const verify = vi.fn<SigstoreVerifyFunction>(() =>
+      Promise.resolve({
+        ...trustedSigner(),
+        identity: {
+          ...trustedSigner().identity,
+          oids: trustedSigner().identity.oids.map((entry) =>
+            entry.oid.id.join('.') === '1.3.6.1.4.1.57264.1.18'
+              ? oid(
+                  '1.3.6.1.4.1.57264.1.18',
+                  'https://github.com/example/project/.github/workflows/other.yml@refs/heads/main',
+                )
+              : entry,
+          ),
         },
       }),
     );
