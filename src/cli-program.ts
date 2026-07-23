@@ -18,6 +18,7 @@ export interface ThreadloopCliHandlers {
   sessionHeartbeat: CliAction;
   sessionTransition: CliAction;
   sessionNext: CliAction;
+  sessionGateRun: CliAction;
   sessionReconcile: CliAction;
   daemonRun: CliAction;
   protocol: CliAction;
@@ -36,6 +37,7 @@ const PROTOCOL_COMMAND_RULES: Record<string, ProtocolCommandRule> = {
     requiredOptions: ['session', 'expectedStateVersion', 'idempotencyKey', 'actor', 'input'],
   },
   'session next': { requiredOptions: ['session'] },
+  'session gate run': { requiredOptions: ['session'] },
   'session reconcile': { usageOverride: '(--session <id> | --all) [--json]' },
 };
 
@@ -55,6 +57,7 @@ export function createNoopCliHandlers(): ThreadloopCliHandlers {
     sessionHeartbeat: noopAction,
     sessionTransition: noopAction,
     sessionNext: noopAction,
+    sessionGateRun: noopAction,
     sessionReconcile: noopAction,
     daemonRun: noopAction,
     protocol: noopAction,
@@ -191,6 +194,15 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
       .requiredOption('--session <id>', 'session id to inspect', parseRequiredText),
   ).action(handlers.sessionNext);
 
+  const sessionGate = session.command('gate').description('Execute gates declared by the immutable proof plan');
+  withJsonOption(
+    sessionGate
+      .command('run')
+      .description('Run one declared local gate and append an immutable receipt')
+      .argument('<gate-id>', 'declared proof-plan gate id', parseRequiredGateId)
+      .requiredOption('--session <id>', 'session id to target', parseRequiredText),
+  ).action(handlers.sessionGateRun);
+
   withJsonOption(
     session
       .command('reconcile')
@@ -254,6 +266,14 @@ function parseRequiredText(value: string) {
   const normalized = value.trim();
   if (!normalized) {
     throw new InvalidArgumentError('Session id must be non-empty.');
+  }
+  return normalized;
+}
+
+function parseRequiredGateId(value: string) {
+  const normalized = value.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(normalized) || normalized.length > 128) {
+    throw new InvalidArgumentError('Gate id must match [A-Za-z0-9][A-Za-z0-9._-]* and be at most 128 characters.');
   }
   return normalized;
 }

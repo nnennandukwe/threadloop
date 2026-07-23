@@ -490,7 +490,7 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     try {
       const schemaVersion = migrated.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get() as
         { value: string } | undefined;
-      expect(schemaVersion?.value).toBe('3');
+      expect(schemaVersion?.value).toBe('4');
       expect(migrated.prepare(`SELECT id, status, state_version FROM tasks ORDER BY id`).all()).toEqual([
         { id: 'task_active', status: 'queued', state_version: 0 },
         { id: 'task_completed', status: 'completed', state_version: 0 },
@@ -641,14 +641,14 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
           value TEXT NOT NULL
         );
       `);
-      db.prepare(`INSERT INTO metadata (key, value) VALUES ('schema_version', '4')`).run();
+      db.prepare(`INSERT INTO metadata (key, value) VALUES ('schema_version', '5')`).run();
       const journalMode = db.prepare(`PRAGMA journal_mode`).get() as { journal_mode: string };
       expect(journalMode.journal_mode).toBe('delete');
     } finally {
       db.close();
     }
 
-    await expect(runCli(repoDir, ['status'])).rejects.toThrow('Unsupported ThreadLoop schema version: 4');
+    await expect(runCli(repoDir, ['status'])).rejects.toThrow('Unsupported ThreadLoop schema version: 5');
 
     const unchanged = new DatabaseSync(dbPath, { readOnly: true });
     try {
@@ -863,8 +863,9 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     const exclude = await readExcludeFile(repoDir);
 
     expect(result.stdout).toContain('Initialized ThreadLoop');
-    expect(result.stdout).toContain('Created .git/info/exclude and added .threadloop/state/');
+    expect(result.stdout).toContain('Created .git/info/exclude and added ThreadLoop state and receipt exclusions');
     expect(exclude).toContain('.threadloop/state/');
+    expect(exclude).toContain('.threadloop/artifacts/receipts/');
   });
 
   it('updates existing .git/info/exclude without duplicating the state entry', async () => {
@@ -874,9 +875,10 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     const second = await runCli(repoDir, ['init']);
     const exclude = await readExcludeFile(repoDir);
 
-    expect(first.stdout).toContain('Updated .git/info/exclude to ignore .threadloop/state/');
-    expect(second.stdout).toContain('.git/info/exclude already ignores .threadloop/state/');
+    expect(first.stdout).toContain('Updated .git/info/exclude to ignore ThreadLoop state and local receipts');
+    expect(second.stdout).toContain('.git/info/exclude already ignores ThreadLoop state and local receipts');
     expect(exclude.match(/\.threadloop\/state\//g)?.length).toBe(1);
+    expect(exclude.match(/\.threadloop\/artifacts\/receipts\//g)?.length).toBe(1);
   });
 
   it('leaves tracked .gitignore unchanged and uses .git/info/exclude for ThreadLoop state', async () => {
@@ -889,6 +891,7 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     expect(result.stdout).toContain('.git/info/exclude');
     expect(gitignore).toBe('node_modules/\n');
     expect(exclude).toContain('.threadloop/state/');
+    expect(exclude).toContain('.threadloop/artifacts/receipts/');
   });
 
   it('filters ThreadLoop-owned paths from artifact scope without a base ref', async () => {

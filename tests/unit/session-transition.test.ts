@@ -75,20 +75,20 @@ describe('session transition domain', () => {
     });
   });
 
-  it('fails deferred transitions closed under their downstream owner', () => {
+  it('fails proof and review transitions closed under their downstream owner', () => {
     expect(evaluateTransitionGuards('framed', 'proof_ready', {}, null)).toEqual({
       allowed: false,
       guardFailures: [
         {
-          code: 'PROOF_AUTHORITY_DEFERRED',
-          message: 'Proof-plan and current-HEAD authority is not available in M002-2.',
+          code: 'PROOF_PLAN_REQUIRED',
+          message: 'This transition requires an immutable proof plan and live repository authority.',
           owner_issue: 40,
         },
       ],
       requiredWork: [
         {
-          code: 'IMPLEMENT_ISSUE_40',
-          description: 'Provide authoritative proof-plan, gate, staleness, and repair-budget evidence.',
+          code: 'RESTORE_PROOF_AUTHORITY',
+          description: 'Record or restore the session proof plan, then retry from a clean named branch.',
           owner_issue: 40,
         },
       ],
