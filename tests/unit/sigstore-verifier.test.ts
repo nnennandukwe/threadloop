@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import {
+  signSigstoreStatement,
   SigstoreReceiptVerificationError,
   verifySigstoreReceipt,
+  type SigstoreAttestFunction,
   type SigstoreVerifyFunction,
 } from '../../src/adapters/crypto/sigstore.js';
 import {
@@ -127,6 +129,38 @@ function trustedSigner() {
 }
 
 describe('Sigstore receipt verifier', () => {
+  it('disables internal retries and re-signs once after an exact Rekor entry conflict', async () => {
+    const conflict = Object.assign(new Error('equivalent entry exists'), {
+      code: 'TLOG_CREATE_ENTRY_ERROR',
+      cause: {
+        statusCode: 409,
+        location: `/api/v1/log/entries/${'a'.repeat(128)}`,
+      },
+    });
+    const bundle = { mediaType: 'application/vnd.dev.sigstore.bundle.v0.3+json' } as Awaited<
+      ReturnType<SigstoreAttestFunction>
+    >;
+    const attest = vi.fn<SigstoreAttestFunction>().mockRejectedValueOnce(conflict).mockResolvedValueOnce(bundle);
+
+    await expect(signSigstoreStatement(Buffer.from('statement'), IN_TOTO_PAYLOAD_TYPE, attest)).resolves.toBe(bundle);
+    expect(attest).toHaveBeenCalledTimes(2);
+    expect(attest).toHaveBeenNthCalledWith(1, Buffer.from('statement'), IN_TOTO_PAYLOAD_TYPE, {
+      retry: { retries: 0 },
+    });
+    expect(attest).toHaveBeenNthCalledWith(2, Buffer.from('statement'), IN_TOTO_PAYLOAD_TYPE, {
+      retry: { retries: 0 },
+    });
+  });
+
+  it('does not retry signing failures that are not exact Rekor entry conflicts', async () => {
+    const attest = vi.fn<SigstoreAttestFunction>().mockRejectedValue(new Error('Fulcio unavailable'));
+
+    await expect(signSigstoreStatement(Buffer.from('statement'), IN_TOTO_PAYLOAD_TYPE, attest)).rejects.toThrow(
+      'Fulcio unavailable',
+    );
+    expect(attest).toHaveBeenCalledOnce();
+  });
+
   it('pins CT, Rekor, caller, called workflow, source, ref, HEAD, and runner identity', async () => {
     const verify = vi.fn<SigstoreVerifyFunction>(() => Promise.resolve(trustedSigner()));
 

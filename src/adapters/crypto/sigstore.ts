@@ -1,4 +1,10 @@
-import { verify as sigstoreVerify, type Bundle, type VerifyOptions } from 'sigstore';
+import {
+  attest as sigstoreAttest,
+  verify as sigstoreVerify,
+  type Bundle,
+  type SignOptions,
+  type VerifyOptions,
+} from 'sigstore';
 import type { CiTrustPolicy } from '../../domain/proof.js';
 import type { SignedReceiptEnvelope } from '../../domain/attestation.js';
 
@@ -32,6 +38,8 @@ export type SigstoreVerifyFunction = (
     | undefined;
 }>;
 
+export type SigstoreAttestFunction = (payload: Buffer, payloadType: string, options: SignOptions) => Promise<Bundle>;
+
 export class SigstoreReceiptVerificationError extends Error {
   readonly reason: 'transparency_missing' | 'identity_mismatch' | 'signature_invalid' | 'verification_unavailable';
 
@@ -39,6 +47,22 @@ export class SigstoreReceiptVerificationError extends Error {
     super(message, options?.cause ? { cause: options.cause } : undefined);
     this.name = 'SigstoreReceiptVerificationError';
     this.reason = reason;
+  }
+}
+
+export async function signSigstoreStatement(
+  payload: Buffer,
+  payloadType: string,
+  attest: SigstoreAttestFunction = sigstoreAttest,
+): Promise<Bundle> {
+  const options = { retry: { retries: 0 } } satisfies SignOptions;
+  try {
+    return await attest(payload, payloadType, options);
+  } catch (error) {
+    if (!isRekorEntryConflict(error)) {
+      throw error;
+    }
+    return attest(payload, payloadType, options);
   }
 }
 
@@ -148,6 +172,17 @@ function classifySigstoreError(error: unknown) {
     'signature_invalid',
     'The Sigstore signature or verification material is invalid.',
     { cause: error },
+  );
+}
+
+function isRekorEntryConflict(error: unknown) {
+  const candidate = toObject(error);
+  const cause = toObject(candidate?.cause);
+  return (
+    candidate?.code === 'TLOG_CREATE_ENTRY_ERROR' &&
+    cause?.statusCode === 409 &&
+    typeof cause.location === 'string' &&
+    cause.location.startsWith('/api/v1/log/entries/')
   );
 }
 

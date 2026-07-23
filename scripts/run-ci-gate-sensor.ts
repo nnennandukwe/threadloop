@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { attest } from 'sigstore';
 import { sha256 } from '../src/adapters/crypto/sha256.js';
+import { signSigstoreStatement } from '../src/adapters/crypto/sigstore.js';
 import { observeProofRepository } from '../src/adapters/git/client.js';
 import { runGateProcess } from '../src/adapters/process/gate-runner.js';
 import {
@@ -134,7 +134,7 @@ const artifact: SignedGateReceiptArtifact = {
 };
 const canonicalArtifact = canonicalizeSignedGateReceiptArtifact(artifact, sha256);
 const statement = buildInTotoReceiptStatement(canonicalArtifact.artifact, canonicalArtifact.sha256);
-const bundle = await attest(Buffer.from(canonicalJson(statement)), IN_TOTO_PAYLOAD_TYPE);
+const bundle = await signSigstoreStatement(Buffer.from(canonicalJson(statement)), IN_TOTO_PAYLOAD_TYPE);
 await writeFile(
   outputPath,
   canonicalJson({
