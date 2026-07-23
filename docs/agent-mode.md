@@ -13,12 +13,14 @@ parsing.
 - The orchestrator starts a session and keeps the returned `session_id`.
 - Agents and tools write semantic notes with `threadloop session capture`.
 - ThreadLoop records mechanical repo state with `session heartbeat` and `session reconcile`.
+- Orchestrators inspect `session next` and submit guarded mutations through `session transition`.
 - Review artifacts are generated from the stored task, entry, and Git snapshot state.
 
 Semantic vs mechanical operations:
 
-- Semantic: `session start`, `session capture`, `artifact generate`, `session finish`
+- Semantic: `session start`, `session capture`, `artifact generate`, `session transition`
 - Mechanical: `session heartbeat`, `session reconcile`, `daemon run`
+- Read-only control: `session next`
 
 `session reconcile` and the daemon do not create semantic notes. They only refresh branch, head SHA, changed file scope,
 diff stats, and commit range.
@@ -34,8 +36,8 @@ The current operator model is one autonomous task per checkout or worktree.
 5. Capture intent, decisions, risks, validation, and reviewer guidance as the task evolves.
 6. Reconcile before artifact generation when Git-derived scope needs a refresh.
 7. Rebase the task branch onto the latest `origin/main` before PR open.
-8. Generate the artifact you need, then stop for human review. Until the guarded transition commands land, do not use
-   compatibility `session finish` as evidence of approval or merge.
+8. Generate the artifact you need and inspect `session next --json`.
+9. Stop when the candidate is not executable; never fabricate #40 proof or #42 review, approval, or merge evidence.
 
 Example:
 
@@ -64,6 +66,7 @@ threadloop session capture validation \
   --json
 
 threadloop session reconcile --session "$SESSION_ID" --json
+threadloop session next --session "$SESSION_ID" --json
 threadloop artifact generate pr-summary --session "$SESSION_ID" --json
 ```
 
@@ -125,7 +128,7 @@ What the daemon does not do:
 - create semantic entries
 - infer intent from transcripts
 - decide when work is complete
-- replace explicit orchestrator calls for capture or finish
+- replace explicit orchestrator calls for capture or guarded transition
 
 Use it when you want Git-derived state to stay warm while an agent works, but keep semantic capture under explicit
 orchestrator or agent control.

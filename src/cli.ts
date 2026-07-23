@@ -2,7 +2,6 @@
 import { Command, CommanderError } from 'commander';
 import { artifactGenerateCommand } from './commands/artifact.js';
 import { captureCommand } from './commands/capture.js';
-import { finishCommand } from './commands/finish.js';
 import { initCommand } from './commands/init.js';
 import { startCommand } from './commands/start.js';
 import { statusCommand } from './commands/status.js';
@@ -11,7 +10,8 @@ import { sessionListCommand } from './commands/session-list.js';
 import { sessionStatusCommand } from './commands/session-status.js';
 import { sessionCaptureCommand } from './commands/session-capture.js';
 import { sessionHeartbeatCommand } from './commands/session-heartbeat.js';
-import { sessionFinishCommand } from './commands/session-finish.js';
+import { sessionTransitionCommand } from './commands/session-transition.js';
+import { sessionNextCommand } from './commands/session-next.js';
 import { sessionReconcileCommand } from './commands/session-reconcile.js';
 import { daemonRunCommand } from './commands/daemon.js';
 import { protocolPrintCommand } from './commands/protocol.js';
@@ -26,13 +26,13 @@ const program = createThreadloopProgram({
   capture: commandAction('capture', captureCommand),
   status: commandAction('status', statusCommand),
   artifactGenerate: commandAction('artifact generate', artifactGenerateCommand),
-  finish: commandAction('finish', finishCommand),
   sessionStart: commandAction('session start', sessionStartCommand),
   sessionList: commandAction('session list', sessionListCommand),
   sessionStatus: commandAction('session status', sessionStatusCommand),
   sessionCapture: commandAction('session capture', sessionCaptureCommand),
   sessionHeartbeat: commandAction('session heartbeat', sessionHeartbeatCommand),
-  sessionFinish: commandAction('session finish', sessionFinishCommand),
+  sessionTransition: commandAction('session transition', sessionTransitionCommand),
+  sessionNext: commandAction('session next', sessionNextCommand),
   sessionReconcile: commandAction('session reconcile', sessionReconcileCommand),
   daemonRun: commandAction('daemon run', daemonRunCommand),
   protocol: commandAction('protocol', protocolPrintCommand),

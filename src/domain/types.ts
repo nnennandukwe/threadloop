@@ -40,6 +40,7 @@ export interface Task {
   repoRoot: string;
   status: TaskStatus;
   stateVersion: number;
+  blockedFromState: TaskStatus | null;
   createdAt: string;
 }
 

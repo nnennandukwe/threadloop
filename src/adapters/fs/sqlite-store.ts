@@ -3,6 +3,13 @@ import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { stateDataSchema, threadloopConfigSchema } from '../../schemas/state.js';
+import { evaluateLifecycleTransition, type LifecycleTransitionDecision } from '../../domain/lifecycle.js';
+import {
+  type CanonicalTransitionRequest,
+  type TransitionGuardDecision,
+  type TransitionRequest,
+  evaluateTransitionGuards,
+} from '../../domain/session-transition.js';
 import type {
   ActiveState,
   Artifact,
@@ -11,12 +18,15 @@ import type {
   Session,
   StateData,
   Task,
+  TaskStatus,
   ThreadloopConfig,
 } from '../../domain/types.js';
+import { TASK_STATUS } from '../../domain/types.js';
+import type { ThreadloopErrorCode } from '../../contracts/errors.js';
 import { threadloopPaths } from './repo.js';
 import { DatabaseSync } from './sqlite-driver.js';
 
-const CURRENT_SCHEMA_VERSION = 2;
+const CURRENT_SCHEMA_VERSION = 3;
 const INVALID_CONFIG_ERROR = 'Invalid .threadloop/config.json';
 const INVALID_STATE_JSON_ERROR = 'Invalid .threadloop/state/state.json';
 const INVALID_STATE_DB_ERROR = 'Invalid .threadloop/state/state.db';
@@ -47,6 +57,7 @@ type TaskRow = {
   repo_root: string;
   status: Task['status'];
   state_version: number;
+  blocked_from_state: Task['blockedFromState'];
   created_at: string;
 };
 
@@ -92,6 +103,69 @@ type ActiveSessionRow = {
   session_id: string;
 };
 
+type TransitionSessionRow = {
+  session_id: string;
+  task_id: string;
+  ended_at: string | null;
+  status: TaskStatus;
+  state_version: number;
+  blocked_from_state: TaskStatus | null;
+};
+
+type TransitionIdempotencyRow = {
+  request_json: string;
+  request_sha256: string;
+  result_json: string;
+};
+
+type StoredTransitionError = {
+  code: ThreadloopErrorCode;
+  message: string;
+  details?: Record<string, unknown>;
+};
+
+export type SessionTransitionResult =
+  | {
+      ok: true;
+      data: {
+        contract_version: 1;
+        session_id: string;
+        task_id: string;
+        idempotency_key: string;
+        request_sha256: string;
+        transition: {
+          id: string;
+          from_state: TaskStatus;
+          to_state: TaskStatus;
+          from_state_version: number;
+          to_state_version: number;
+          actor: TransitionRequest['actor'];
+          input: Record<string, unknown>;
+          created_at: string;
+        };
+        lifecycle: {
+          state: TaskStatus;
+          state_version: number;
+          blocked_from_state: TaskStatus | null;
+        };
+        session: {
+          ended_at: string | null;
+        };
+      };
+    }
+  | { ok: false; error: StoredTransitionError };
+
+export interface PersistSessionTransitionInput extends TransitionRequest, CanonicalTransitionRequest {
+  idempotencyKey: string;
+}
+
+export type TransitionGuardEvaluator = (
+  from: TaskStatus,
+  to: TaskStatus,
+  input: Record<string, unknown>,
+  blockedFromState: TaskStatus | null,
+) => TransitionGuardDecision;
+
 const repoConnections = new Map<string, RepoConnectionState>();
 
 export function createId(prefix: string) {
@@ -107,7 +181,9 @@ export async function ensureThreadloopLayout(repoRoot: string) {
 
 export async function ensureStateDatabase(repoRoot: string) {
   await ensureThreadloopLayout(repoRoot);
-  if (getRepoConnectionState(repoRoot).setup.status === 'ready') {
+  const state = getRepoConnectionState(repoRoot);
+  if (state.setup.status === 'ready') {
+    assertReadySchemaVersion(repoRoot, state);
     return;
   }
 
@@ -147,6 +223,78 @@ export async function readState(repoRoot: string): Promise<StateData> {
   }
 }
 
+export function readSessionLifecycleReadOnly(repoRoot: string, sessionId: string) {
+  const { stateDbPath } = threadloopPaths(repoRoot);
+  if (!existsSync(stateDbPath)) {
+    throw new Error('ThreadLoop state database is missing.');
+  }
+
+  const db = openReadDatabase(repoRoot);
+  try {
+    if (!tableExists(db, 'metadata')) {
+      throw new Error('Missing ThreadLoop schema version metadata.');
+    }
+    const rawVersion = readTextValue(db, `SELECT value FROM metadata WHERE key = 'schema_version'`, 'value');
+    if (!rawVersion) {
+      throw new Error('Missing ThreadLoop schema version metadata.');
+    }
+    const version = parseSchemaVersion(rawVersion);
+    if (version === 1) {
+      throw new Error('ThreadLoop schema version 1 requires migration before session next can read lifecycle state.');
+    }
+    if (version > CURRENT_SCHEMA_VERSION) {
+      throw new Error(`Unsupported ThreadLoop schema version: ${rawVersion}`);
+    }
+    if (version === 3) {
+      const taskColumns = new Set(
+        (db.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>).map((column) => column.name),
+      );
+      if (!taskColumns.has('blocked_from_state')) {
+        throw new Error('Invalid schema for tasks');
+      }
+      assertTransitionSchemaShape(db);
+    }
+
+    const blockedFromSelect = version >= 3 ? 'tasks.blocked_from_state' : 'NULL AS blocked_from_state';
+    const current = db
+      .prepare(
+        `
+          SELECT
+            sessions.id AS session_id,
+            sessions.task_id,
+            sessions.ended_at,
+            tasks.status,
+            tasks.state_version,
+            ${blockedFromSelect}
+          FROM sessions
+          INNER JOIN tasks ON tasks.id = sessions.task_id
+          WHERE sessions.id = ?
+        `,
+      )
+      .get(sessionId) as TransitionSessionRow | undefined;
+    if (!current) {
+      return null;
+    }
+
+    const corruption = detectTransitionStateCorruption(db, current);
+    if (corruption) {
+      throw new Error(corruption);
+    }
+
+    return {
+      taskId: current.task_id,
+      sessionId: current.session_id,
+      state: current.status,
+      stateVersion: current.state_version,
+      blockedFromState: current.blocked_from_state,
+      endedAt: current.ended_at,
+      schemaVersion: version,
+    };
+  } finally {
+    db.close();
+  }
+}
+
 export async function insertTaskSession(
   repoRoot: string,
   payload: {
@@ -178,6 +326,183 @@ export async function insertTaskSession(
   });
 }
 
+export async function applySessionTransition(
+  repoRoot: string,
+  input: PersistSessionTransitionInput,
+  evaluateGuards: TransitionGuardEvaluator = evaluateTransitionGuards,
+): Promise<SessionTransitionResult> {
+  return withWriteTransaction(repoRoot, (db) => {
+    const existing = readTransitionIdempotency(db, input.sessionId, input.idempotencyKey);
+    if (existing) {
+      if (existing.request_sha256 !== input.requestSha256 || existing.request_json !== input.requestJson) {
+        return failedTransition(
+          'IDEMPOTENCY_CONFLICT',
+          `Idempotency key ${input.idempotencyKey} is already associated with a different request.`,
+          {
+            session_id: input.sessionId,
+            idempotency_key: input.idempotencyKey,
+            request_sha256: input.requestSha256,
+            existing_request_sha256: existing.request_sha256,
+          },
+        );
+      }
+      return parseJsonText<SessionTransitionResult>(existing.result_json, INVALID_STATE_DB_ERROR);
+    }
+
+    const current = readTransitionSession(db, input.sessionId);
+    if (!current) {
+      return failedTransition('SESSION_NOT_FOUND', `Could not find session: ${input.sessionId}`, {
+        session_id: input.sessionId,
+      });
+    }
+
+    const corruption = detectTransitionStateCorruption(db, current);
+    if (corruption) {
+      return failedTransition('STATE_CORRUPTED', corruption, {
+        session_id: input.sessionId,
+        task_id: current.task_id,
+      });
+    }
+
+    if (input.expectedStateVersion !== current.state_version) {
+      return persistRejectedTransition(
+        db,
+        input,
+        failedTransition(
+          'STATE_VERSION_CONFLICT',
+          `Expected state version ${input.expectedStateVersion}, but ${input.sessionId} is at version ${current.state_version}.`,
+          {
+            session_id: input.sessionId,
+            expected_state_version: input.expectedStateVersion,
+            actual_state: current.status,
+            actual_state_version: current.state_version,
+            hint: `Run threadloop session next --session ${input.sessionId} --json before retrying.`,
+          },
+        ),
+      );
+    }
+
+    const structural: LifecycleTransitionDecision = evaluateLifecycleTransition(current.status, input.targetState, {
+      blockedFromState: current.blocked_from_state,
+    });
+    if (!structural.allowed) {
+      return persistRejectedTransition(
+        db,
+        input,
+        failedTransition('TRANSITION_NOT_ALLOWED', structural.message, {
+          session_id: input.sessionId,
+          from_state: current.status,
+          target_state: input.targetState,
+          decision_code: structural.code,
+          recovery: structural.recovery,
+        }),
+      );
+    }
+
+    const guards = evaluateGuards(current.status, input.targetState, input.canonicalInput, current.blocked_from_state);
+    if (!guards.allowed) {
+      return persistRejectedTransition(
+        db,
+        input,
+        failedTransition(
+          'TRANSITION_GUARD_FAILED',
+          `Lifecycle transition ${current.status} -> ${input.targetState} is not authorized.`,
+          {
+            session_id: input.sessionId,
+            from_state: current.status,
+            target_state: input.targetState,
+            guard_failures: guards.guardFailures,
+            required_work: guards.requiredWork,
+          },
+        ),
+      );
+    }
+
+    const createdAt = new Date().toISOString();
+    const transitionId = createId('transition');
+    const nextVersion = current.state_version + 1;
+    const blockedFromState = input.targetState === 'blocked' ? current.status : null;
+    const update = db
+      .prepare(
+        `
+          UPDATE tasks
+          SET status = ?, state_version = ?, blocked_from_state = ?
+          WHERE id = ? AND status = ? AND state_version = ?
+        `,
+      )
+      .run(input.targetState, nextVersion, blockedFromState, current.task_id, current.status, current.state_version);
+    if (Number(update.changes) !== 1) {
+      throw new Error('ThreadLoop transition compare-and-swap did not update exactly one task.');
+    }
+
+    const endedAt = input.targetState === 'completed' ? createdAt : null;
+    if (endedAt) {
+      const completion = db
+        .prepare(`UPDATE sessions SET ended_at = ? WHERE id = ? AND ended_at IS NULL`)
+        .run(endedAt, input.sessionId);
+      if (Number(completion.changes) !== 1) {
+        throw new Error('ThreadLoop transition completion did not update exactly one session.');
+      }
+      db.prepare(`DELETE FROM active_sessions WHERE session_id = ?`).run(input.sessionId);
+    } else {
+      insertActiveSession(db, { taskId: current.task_id, sessionId: input.sessionId });
+    }
+
+    db.prepare(
+      `
+        INSERT INTO session_transitions (
+          id, session_id, task_id, from_state, to_state, from_state_version, to_state_version,
+          actor, input_json, request_sha256, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+    ).run(
+      transitionId,
+      input.sessionId,
+      current.task_id,
+      current.status,
+      input.targetState,
+      current.state_version,
+      nextVersion,
+      input.actor,
+      JSON.stringify(input.canonicalInput),
+      input.requestSha256,
+      createdAt,
+    );
+    syncActiveStateCompat(db);
+
+    const result: SessionTransitionResult = {
+      ok: true,
+      data: {
+        contract_version: 1,
+        session_id: input.sessionId,
+        task_id: current.task_id,
+        idempotency_key: input.idempotencyKey,
+        request_sha256: input.requestSha256,
+        transition: {
+          id: transitionId,
+          from_state: current.status,
+          to_state: input.targetState,
+          from_state_version: current.state_version,
+          to_state_version: nextVersion,
+          actor: input.actor,
+          input: input.canonicalInput,
+          created_at: createdAt,
+        },
+        lifecycle: {
+          state: input.targetState,
+          state_version: nextVersion,
+          blocked_from_state: blockedFromState,
+        },
+        session: {
+          ended_at: endedAt,
+        },
+      },
+    };
+    persistTransitionIdempotency(db, input, 'applied', transitionId, result, createdAt);
+    return result;
+  });
+}
+
 export async function appendEntryToSession(repoRoot: string, sessionId: string, draft: Omit<Entry, 'sessionId'>) {
   return withWriteTransaction(repoRoot, (db) => appendEntry(db, sessionId, draft));
 }
@@ -185,17 +510,6 @@ export async function appendEntryToSession(repoRoot: string, sessionId: string, 
 export async function recordArtifact(repoRoot: string, artifact: Artifact) {
   await withWriteTransaction(repoRoot, (db) => {
     insertArtifact(db, artifact);
-  });
-}
-
-export async function completeSessionById(repoRoot: string, sessionId: string, endedAt: string): Promise<ActiveState> {
-  return withWriteTransaction(repoRoot, (db) => {
-    const session = readSessionRow(db, sessionId);
-    if (!session) {
-      throw new Error(`Unknown session id: ${sessionId}`);
-    }
-
-    return completeSession(db, session.id, session.task_id, endedAt);
   });
 }
 
@@ -383,7 +697,13 @@ async function withWriteTransaction<T>(repoRoot: string, action: (db: DatabaseSy
 
 function ensureDatabaseReady(db: DatabaseSync, state: RepoConnectionState, repoRoot: string) {
   if (state.setup.status === 'ready') {
-    return;
+    try {
+      assertSchemaVersion(db);
+      return;
+    } catch (error) {
+      state.setup = { status: 'failed', error };
+      throw error;
+    }
   }
 
   if (state.setup.status === 'failed') {
@@ -401,10 +721,11 @@ function ensureDatabaseReady(db: DatabaseSync, state: RepoConnectionState, repoR
     }
 
     db.exec('PRAGMA journal_mode = WAL');
-    bootstrapDatabase(db);
-    assertSupportedSchemaVersion(db);
     runInImmediateTransaction(db, () => {
+      bootstrapDatabase(db);
+      assertSupportedSchemaVersion(db);
       runPendingMigrations(db, repoRoot);
+      assertTransitionSchemaShape(db);
       writeSchemaVersion(db);
     });
     assertSchemaVersion(db);
@@ -412,6 +733,18 @@ function ensureDatabaseReady(db: DatabaseSync, state: RepoConnectionState, repoR
   } catch (error) {
     state.setup = isTransientSqliteSetupError(error) ? { status: 'unknown' } : { status: 'failed', error };
     throw error;
+  }
+}
+
+function assertReadySchemaVersion(repoRoot: string, state: RepoConnectionState) {
+  const db = openReadDatabase(repoRoot);
+  try {
+    assertSchemaVersion(db);
+  } catch (error) {
+    state.setup = { status: 'failed', error };
+    throw error;
+  } finally {
+    db.close();
   }
 }
 
@@ -429,7 +762,7 @@ function databaseNeedsSetup(db: DatabaseSync, repoRoot: string) {
   }
 
   const rawVersion = readTextValue(db, `SELECT value FROM metadata WHERE key = 'schema_version'`, 'value');
-  if (!rawVersion || Number(rawVersion) !== CURRENT_SCHEMA_VERSION) {
+  if (!rawVersion || parseSchemaVersion(rawVersion) !== CURRENT_SCHEMA_VERSION) {
     return true;
   }
 
@@ -441,6 +774,8 @@ function databaseNeedsSetup(db: DatabaseSync, repoRoot: string) {
     'active_state',
     'active_sessions',
     'repo_snapshots',
+    'session_transitions',
+    'transition_idempotency',
   ];
 
   if (requiredTables.some((table) => !tableExists(db, table))) {
@@ -457,7 +792,7 @@ function databaseNeedsSetup(db: DatabaseSync, repoRoot: string) {
   const taskColumns = new Set(
     (db.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>).map((column) => column.name),
   );
-  if (!taskColumns.has('issue_ref') || !taskColumns.has('state_version')) {
+  if (!taskColumns.has('issue_ref') || !taskColumns.has('state_version') || !taskColumns.has('blocked_from_state')) {
     return true;
   }
 
@@ -470,51 +805,11 @@ function databaseNeedsSetup(db: DatabaseSync, repoRoot: string) {
     return true;
   }
 
-  const activeState = readActiveStateRow(db);
-  const activeSessions = readActiveSessionRows(db);
-  if (activeSessions.length === 0) {
-    if (activeState) {
-      return true;
-    }
-  } else if (activeSessions.length === 1) {
-    const activeSession = activeSessions[0];
-    if (
-      !activeSession ||
-      !activeState ||
-      activeState.session_id !== activeSession.session_id ||
-      activeState.task_id !== activeSession.task_id
-    ) {
-      return true;
-    }
-  } else if (activeState) {
+  if (hasActiveStateCompatibilityMismatch(db)) {
     return true;
   }
 
-  const activeProjectionMismatchCount = readNumericValue(
-    db,
-    `
-      SELECT COUNT(*) AS count
-      FROM sessions
-      INNER JOIN tasks ON tasks.id = sessions.task_id
-      LEFT JOIN active_sessions ON active_sessions.session_id = sessions.id
-      WHERE
-        (
-          tasks.status <> 'completed'
-          AND sessions.ended_at IS NULL
-          AND (
-            active_sessions.session_id IS NULL
-            OR active_sessions.task_id <> sessions.task_id
-          )
-        )
-        OR
-        (
-          (tasks.status = 'completed' OR sessions.ended_at IS NOT NULL)
-          AND active_sessions.session_id IS NOT NULL
-        )
-    `,
-    'count',
-  );
-  if (activeProjectionMismatchCount > 0) {
+  if (readActiveProjectionMismatchCount(db) > 0) {
     return true;
   }
 
@@ -544,6 +839,7 @@ function bootstrapDatabase(db: DatabaseSync) {
       repo_root TEXT NOT NULL,
       status TEXT NOT NULL,
       state_version INTEGER NOT NULL DEFAULT 0,
+      blocked_from_state TEXT,
       created_at TEXT NOT NULL
     );
 
@@ -605,6 +901,33 @@ function bootstrapDatabase(db: DatabaseSync) {
       commit_range_json TEXT NOT NULL,
       reconciled_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS session_transitions (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id),
+      task_id TEXT NOT NULL REFERENCES tasks(id),
+      from_state TEXT NOT NULL,
+      to_state TEXT NOT NULL,
+      from_state_version INTEGER NOT NULL,
+      to_state_version INTEGER NOT NULL,
+      actor TEXT NOT NULL,
+      input_json TEXT NOT NULL,
+      request_sha256 TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(task_id, to_state_version)
+    );
+
+    CREATE TABLE IF NOT EXISTS transition_idempotency (
+      session_id TEXT NOT NULL REFERENCES sessions(id),
+      idempotency_key TEXT NOT NULL,
+      request_json TEXT NOT NULL,
+      request_sha256 TEXT NOT NULL,
+      outcome TEXT NOT NULL,
+      transition_id TEXT REFERENCES session_transitions(id),
+      result_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY(session_id, idempotency_key)
+    );
   `);
 
   db.prepare(
@@ -646,6 +969,10 @@ function ensureTaskLifecycleColumns(db: DatabaseSync) {
     db.prepare(`ALTER TABLE tasks ADD COLUMN state_version INTEGER NOT NULL DEFAULT 0`).run();
   }
 
+  if (!columnNames.has('blocked_from_state')) {
+    db.prepare(`ALTER TABLE tasks ADD COLUMN blocked_from_state TEXT`).run();
+  }
+
   db.prepare(`UPDATE tasks SET status = 'queued' WHERE status = 'active'`).run();
 }
 
@@ -657,6 +984,7 @@ function runPendingMigrations(db: DatabaseSync, repoRoot: string) {
   migrateLegacyJsonState(db, repoRoot);
   reconcileActiveSessionProjection(db);
   syncActiveStateCompat(db);
+  assertActiveSessionProjection(db);
 }
 
 function migrateActiveStateRegistry(db: DatabaseSync) {
@@ -689,6 +1017,57 @@ function reconcileActiveSessionProjection(db: DatabaseSync) {
   ).run();
 }
 
+function assertActiveSessionProjection(db: DatabaseSync) {
+  if (hasActiveStateCompatibilityMismatch(db) || readActiveProjectionMismatchCount(db) > 0) {
+    throw new Error('Invalid active-session projection after migration.');
+  }
+}
+
+function hasActiveStateCompatibilityMismatch(db: DatabaseSync) {
+  const activeState = readActiveStateRow(db);
+  const activeSessions = readActiveSessionRows(db);
+  if (activeSessions.length === 0) {
+    return Boolean(activeState);
+  }
+  if (activeSessions.length === 1) {
+    const activeSession = activeSessions[0];
+    return (
+      !activeSession ||
+      !activeState ||
+      activeState.session_id !== activeSession.session_id ||
+      activeState.task_id !== activeSession.task_id
+    );
+  }
+  return Boolean(activeState);
+}
+
+function readActiveProjectionMismatchCount(db: DatabaseSync) {
+  return readNumericValue(
+    db,
+    `
+      SELECT COUNT(*) AS count
+      FROM sessions
+      INNER JOIN tasks ON tasks.id = sessions.task_id
+      LEFT JOIN active_sessions ON active_sessions.session_id = sessions.id
+      WHERE
+        (
+          tasks.status <> 'completed'
+          AND sessions.ended_at IS NULL
+          AND (
+            active_sessions.session_id IS NULL
+            OR active_sessions.task_id <> sessions.task_id
+          )
+        )
+        OR
+        (
+          (tasks.status = 'completed' OR sessions.ended_at IS NOT NULL)
+          AND active_sessions.session_id IS NOT NULL
+        )
+    `,
+    'count',
+  );
+}
+
 function assertSupportedSchemaVersion(db: DatabaseSync) {
   const rawVersion = readTextValue(db, `SELECT value FROM metadata WHERE key = 'schema_version'`, 'value');
 
@@ -696,8 +1075,8 @@ function assertSupportedSchemaVersion(db: DatabaseSync) {
     throw new Error('Missing ThreadLoop schema version metadata.');
   }
 
-  const version = Number(rawVersion);
-  if (!Number.isInteger(version) || version < 1 || version > CURRENT_SCHEMA_VERSION) {
+  const version = parseSchemaVersion(rawVersion);
+  if (version < 1 || version > CURRENT_SCHEMA_VERSION) {
     throw new Error(`Unsupported ThreadLoop schema version: ${rawVersion}`);
   }
 
@@ -706,8 +1085,56 @@ function assertSupportedSchemaVersion(db: DatabaseSync) {
 
 function assertSchemaVersion(db: DatabaseSync) {
   const rawVersion = readTextValue(db, `SELECT value FROM metadata WHERE key = 'schema_version'`, 'value');
-  if (Number(rawVersion) !== CURRENT_SCHEMA_VERSION) {
+  if (!rawVersion || parseSchemaVersion(rawVersion) !== CURRENT_SCHEMA_VERSION) {
     throw new Error(`Unsupported ThreadLoop schema version: ${rawVersion}`);
+  }
+}
+
+function parseSchemaVersion(rawVersion: string) {
+  if (!/^[1-9][0-9]*$/.test(rawVersion)) {
+    throw new Error(`Unsupported ThreadLoop schema version: ${rawVersion}`);
+  }
+
+  const version = Number(rawVersion);
+  if (!Number.isSafeInteger(version) || String(version) !== rawVersion) {
+    throw new Error(`Unsupported ThreadLoop schema version: ${rawVersion}`);
+  }
+
+  return version;
+}
+
+function assertTransitionSchemaShape(db: DatabaseSync) {
+  assertTableColumns(db, 'session_transitions', [
+    'id',
+    'session_id',
+    'task_id',
+    'from_state',
+    'to_state',
+    'from_state_version',
+    'to_state_version',
+    'actor',
+    'input_json',
+    'request_sha256',
+    'created_at',
+  ]);
+  assertTableColumns(db, 'transition_idempotency', [
+    'session_id',
+    'idempotency_key',
+    'request_json',
+    'request_sha256',
+    'outcome',
+    'transition_id',
+    'result_json',
+    'created_at',
+  ]);
+}
+
+function assertTableColumns(db: DatabaseSync, tableName: string, requiredColumns: string[]) {
+  const columns = new Set(
+    (db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>).map((column) => column.name),
+  );
+  if (requiredColumns.some((column) => !columns.has(column))) {
+    throw new Error(`Invalid schema for ${tableName}`);
   }
 }
 
@@ -796,7 +1223,7 @@ function loadState(db: DatabaseSync): StateData {
     db
       .prepare(
         `
-        SELECT id, title, goal, constraints_json, repo_root, status, state_version, created_at
+        SELECT id, title, goal, constraints_json, repo_root, status, state_version, blocked_from_state, created_at
         , issue_ref
         FROM tasks
         ORDER BY rowid
@@ -812,6 +1239,7 @@ function loadState(db: DatabaseSync): StateData {
     repoRoot: row.repo_root,
     status: row.status,
     stateVersion: row.state_version,
+    blockedFromState: row.blocked_from_state,
     createdAt: row.created_at,
   }));
 
@@ -913,11 +1341,136 @@ function readSessionRow(db: DatabaseSync, sessionId: string) {
     .get(sessionId) as SessionRow | undefined;
 }
 
+function readTransitionSession(db: DatabaseSync, sessionId: string) {
+  return db
+    .prepare(
+      `
+        SELECT
+          sessions.id AS session_id,
+          sessions.task_id,
+          sessions.ended_at,
+          tasks.status,
+          tasks.state_version,
+          tasks.blocked_from_state
+        FROM sessions
+        INNER JOIN tasks ON tasks.id = sessions.task_id
+        WHERE sessions.id = ?
+      `,
+    )
+    .get(sessionId) as TransitionSessionRow | undefined;
+}
+
+function readTransitionIdempotency(db: DatabaseSync, sessionId: string, idempotencyKey: string) {
+  return db
+    .prepare(
+      `
+        SELECT request_json, request_sha256, result_json
+        FROM transition_idempotency
+        WHERE session_id = ? AND idempotency_key = ?
+      `,
+    )
+    .get(sessionId, idempotencyKey) as TransitionIdempotencyRow | undefined;
+}
+
+function detectTransitionStateCorruption(db: DatabaseSync, current: TransitionSessionRow) {
+  if (!TASK_STATUS.includes(current.status)) {
+    return `Session ${current.session_id} has an invalid lifecycle state.`;
+  }
+
+  if (current.blocked_from_state !== null && !TASK_STATUS.includes(current.blocked_from_state)) {
+    return `Session ${current.session_id} has an invalid blocked prior state.`;
+  }
+
+  if (!Number.isSafeInteger(current.state_version) || current.state_version < 0) {
+    return `Session ${current.session_id} has an invalid lifecycle state version.`;
+  }
+
+  if (
+    (current.status === 'blocked' &&
+      (!current.blocked_from_state || ['blocked', 'completed'].includes(current.blocked_from_state))) ||
+    (current.status !== 'blocked' && current.blocked_from_state !== null)
+  ) {
+    return `Session ${current.session_id} has an inconsistent blocked prior state.`;
+  }
+
+  if ((current.status === 'completed') !== (current.ended_at !== null)) {
+    return `Session ${current.session_id} has inconsistent task and completion state.`;
+  }
+
+  const active = db.prepare(`SELECT task_id FROM active_sessions WHERE session_id = ?`).get(current.session_id) as
+    { task_id: string } | undefined;
+  if (
+    (current.status === 'completed' && active) ||
+    (current.status !== 'completed' && (!active || active.task_id !== current.task_id))
+  ) {
+    return `Session ${current.session_id} has an inconsistent active-session projection.`;
+  }
+
+  if (hasActiveStateCompatibilityMismatch(db) || readActiveProjectionMismatchCount(db) > 0) {
+    return 'ThreadLoop active-session compatibility projection is inconsistent.';
+  }
+
+  return null;
+}
+
+function persistRejectedTransition(
+  db: DatabaseSync,
+  input: PersistSessionTransitionInput,
+  result: SessionTransitionResult & { ok: false },
+) {
+  persistTransitionIdempotency(db, input, 'rejected', null, result, new Date().toISOString());
+  return result;
+}
+
+function persistTransitionIdempotency(
+  db: DatabaseSync,
+  input: PersistSessionTransitionInput,
+  outcome: 'applied' | 'rejected',
+  transitionId: string | null,
+  result: SessionTransitionResult,
+  createdAt: string,
+) {
+  db.prepare(
+    `
+      INSERT INTO transition_idempotency (
+        session_id, idempotency_key, request_json, request_sha256, outcome,
+        transition_id, result_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    input.sessionId,
+    input.idempotencyKey,
+    input.requestJson,
+    input.requestSha256,
+    outcome,
+    transitionId,
+    JSON.stringify(result),
+    createdAt,
+  );
+}
+
+function failedTransition(
+  code: ThreadloopErrorCode,
+  message: string,
+  details?: Record<string, unknown>,
+): SessionTransitionResult & { ok: false } {
+  return {
+    ok: false,
+    error: {
+      code,
+      message,
+      ...(details ? { details } : {}),
+    },
+  };
+}
+
 function insertTask(db: DatabaseSync, task: Task) {
   db.prepare(
     `
-      INSERT INTO tasks (id, title, goal, constraints_json, issue_ref, repo_root, status, state_version, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO tasks (
+        id, title, goal, constraints_json, issue_ref, repo_root, status, state_version, blocked_from_state, created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
   ).run(
     task.id,
@@ -928,6 +1481,7 @@ function insertTask(db: DatabaseSync, task: Task) {
     task.repoRoot,
     task.status,
     task.stateVersion,
+    task.blockedFromState,
     task.createdAt,
   );
 }
@@ -1005,15 +1559,6 @@ function appendEntry(db: DatabaseSync, sessionId: string, draft: Omit<Entry, 'se
   return entry;
 }
 
-function completeSession(db: DatabaseSync, sessionId: string, taskId: string, endedAt: string) {
-  db.prepare(`UPDATE tasks SET status = 'completed', state_version = state_version + 1 WHERE id = ?`).run(taskId);
-  db.prepare(`UPDATE sessions SET ended_at = ? WHERE id = ?`).run(endedAt, sessionId);
-  db.prepare(`DELETE FROM active_sessions WHERE session_id = ?`).run(sessionId);
-  syncActiveStateCompat(db);
-
-  return { taskId, sessionId };
-}
-
 function normalizeStateData(state: StateData): StateData {
   return {
     ...state,
@@ -1021,6 +1566,7 @@ function normalizeStateData(state: StateData): StateData {
       ...task,
       issueRef: task.issueRef ?? null,
       stateVersion: task.stateVersion ?? 0,
+      blockedFromState: task.blockedFromState ?? null,
     })),
     sessions: state.sessions.map((session) => ({
       ...session,

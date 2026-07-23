@@ -9,7 +9,6 @@ import { readRepoSnapshot } from '../../src/adapters/fs/sqlite-store.js';
 import { isThreadloopError } from '../../src/contracts/errors.js';
 import {
   captureEntry,
-  finishSession,
   generateArtifact,
   getStatus,
   initThreadloop,
@@ -160,33 +159,6 @@ describe('session service', () => {
       expect((error as { code?: string }).code).toBe('STATE_CORRUPTED');
       return true;
     });
-  });
-
-  it('keeps explicit status available after finishing a session', async () => {
-    const repoDir = await makeRepo();
-    await initThreadloop(repoDir);
-
-    const started = await startTask({
-      cwd: repoDir,
-      title: 'Finishable task',
-      goal: 'Retain ended session visibility',
-      constraints: [],
-      baseRef: null,
-      allowMultipleActive: true,
-    });
-
-    await finishSession(repoDir, { sessionId: started.session.id });
-
-    const status = await getStatus(repoDir, { sessionId: started.session.id });
-    expect(status.active?.session.id).toBe(started.session.id);
-    expect(status.active?.session.endedAt).toBeTruthy();
-    expect(status.repoSnapshot).toBeNull();
-
-    const listed = await listSessions(repoDir);
-    expect(listed.sessions).toHaveLength(1);
-    expect(listed.sessions[0]?.active).toBe(false);
-    expect(listed.sessions[0]?.task).toMatchObject({ status: 'completed', stateVersion: 1 });
-    expect(listed.sessions[0]?.session.endedAt).toBeTruthy();
   });
 
   it('blocks legacy root start when a session is already active', async () => {

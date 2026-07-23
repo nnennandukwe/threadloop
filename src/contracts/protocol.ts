@@ -66,7 +66,8 @@ export function buildProtocolContract(): ProtocolContract {
     },
     notes: [
       'Only commands whose usage includes [--json] support machine-readable output.',
-      'Session status, capture, heartbeat, and finish require --session <id>; session reconcile requires either --session <id> or --all.',
+      'Session status, capture, heartbeat, transition, and next require --session <id>; session reconcile requires either --session <id> or --all.',
+      'Session next is read-only; lifecycle completion is available only through an evidence-authorized session transition.',
       'Legacy root commands may auto-resolve a single active session when --session is omitted.',
       'ThreadLoop-owned paths (.threadloop/) are excluded from Git scope.',
       'Reconcile refreshes metadata without creating semantic entries.',
