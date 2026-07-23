@@ -47,10 +47,7 @@ export async function validateCommunityRepository(repositoryRoot: string): Promi
   const pullRequestTemplatePath = path.join(repositoryRoot, '.github', 'pull_request_template.md');
   await validatePullRequestTemplate(repositoryRoot, pullRequestTemplatePath, errors, links);
 
-  for (const markdownPath of [
-    path.join(repositoryRoot, 'README.md'),
-    path.join(repositoryRoot, 'CONTRIBUTING.md'),
-  ]) {
+  for (const markdownPath of [path.join(repositoryRoot, 'README.md'), path.join(repositoryRoot, 'CONTRIBUTING.md')]) {
     await collectLinksFromMarkdownFile(repositoryRoot, markdownPath, errors, links);
   }
 
@@ -141,10 +138,7 @@ async function validateIssueForm(
     if (bodyItem.validations !== undefined) {
       if (!isRecord(bodyItem.validations)) {
         errors.push(`${itemLabel}.validations must be an object`);
-      } else if (
-        bodyItem.validations.required !== undefined &&
-        typeof bodyItem.validations.required !== 'boolean'
-      ) {
+      } else if (bodyItem.validations.required !== undefined && typeof bodyItem.validations.required !== 'boolean') {
         errors.push(`${itemLabel}.validations.required must be a boolean`);
       }
     }
@@ -336,11 +330,7 @@ async function readYaml(repositoryRoot: string, filePath: string, errors: string
   return document.toJS();
 }
 
-async function readTextFile(
-  repositoryRoot: string,
-  filePath: string,
-  errors: string[],
-): Promise<string | undefined> {
+async function readTextFile(repositoryRoot: string, filePath: string, errors: string[]): Promise<string | undefined> {
   try {
     return await readFile(filePath, 'utf8');
   } catch {
@@ -349,11 +339,7 @@ async function readTextFile(
   }
 }
 
-async function readDirectory(
-  directoryPath: string,
-  errors: string[],
-  repositoryRoot: string,
-): Promise<string[]> {
+async function readDirectory(directoryPath: string, errors: string[], repositoryRoot: string): Promise<string[]> {
   try {
     return await readdir(directoryPath);
   } catch {

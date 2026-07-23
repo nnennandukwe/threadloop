@@ -43,12 +43,12 @@ Closes #
 
 <!-- Record the actual outcome. Use "Not run" with a reason when a check does not apply. -->
 
-| Check | Result | Notes |
-| --- | --- | --- |
-| `npm test` |  |  |
-| `npm run build` |  |  |
-| `npm run smoke:pack` |  |  |
-| `git diff --check origin/main...HEAD` |  |  |
+| Check                                 | Result | Notes |
+| ------------------------------------- | ------ | ----- |
+| `npm test`                            |        |       |
+| `npm run build`                       |        |       |
+| `npm run smoke:pack`                  |        |       |
+| `git diff --check origin/main...HEAD` |        |       |
 
 ## Risk and recovery
 

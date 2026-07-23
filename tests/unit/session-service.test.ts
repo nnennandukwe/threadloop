@@ -91,11 +91,13 @@ describe('session service', () => {
       allowMultipleActive: true,
     });
 
-    await expect(captureEntry({
-      cwd: repoDir,
-      kind: 'note',
-      body: 'Implicit capture should fail',
-    })).rejects.toSatisfy((error: unknown) => {
+    await expect(
+      captureEntry({
+        cwd: repoDir,
+        kind: 'note',
+        body: 'Implicit capture should fail',
+      }),
+    ).rejects.toSatisfy((error: unknown) => {
       expect(isThreadloopError(error)).toBe(true);
       expect((error as { code?: string }).code).toBe('SESSION_AMBIGUOUS');
       return true;

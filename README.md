@@ -1,6 +1,8 @@
 # ThreadLoop
 
-ThreadLoop is a local-first CLI companion for AI-assisted coding work. It captures the small set of task intent, decisions, risks, validation notes, and reviewer guidance that matter, then renders that context into a review-ready artifact.
+ThreadLoop is a local-first CLI companion for AI-assisted coding work. It captures the small set of task intent,
+decisions, risks, validation notes, and reviewer guidance that matter, then renders that context into a review-ready
+artifact.
 
 For the orchestrated v2 workflow, see [docs/agent-mode.md](docs/agent-mode.md).
 
@@ -9,6 +11,7 @@ For the orchestrated v2 workflow, see [docs/agent-mode.md](docs/agent-mode.md).
 ThreadLoop is deliberately not a passive provenance recorder and not a generic PR template generator.
 
 It is:
+
 - task-first
 - repo-local
 - Markdown-first
@@ -17,6 +20,7 @@ It is:
 ## Current command surfaces
 
 Canonical session contract:
+
 - `threadloop session start <title> --goal <goal> [--json]`
 - `threadloop session list [--json]`
 - `threadloop session status --session <id> [--json]`
@@ -26,6 +30,7 @@ Canonical session contract:
 - `threadloop session finish --session <id> [--json]`
 
 Compatibility surface:
+
 - `threadloop init`
 - `threadloop start <title> [--json]`
 - `threadloop capture <kind> [text] [--session <id>] [--json]`
@@ -34,23 +39,28 @@ Compatibility surface:
 - `threadloop finish [--session <id>] [--json]`
 
 Compatibility rule:
+
 - legacy `capture`, `artifact generate`, and `finish` auto-resolve only when exactly one active session exists
-- legacy `start` preserves the legacy single-active-session behavior and refuses to open a second legacy root session in the same repo
+- legacy `start` preserves the legacy single-active-session behavior and refuses to open a second legacy root session in
+  the same repo
 - legacy `status` fails with `SESSION_REQUIRED` when zero sessions match
 - when zero sessions match for `capture`, `artifact generate`, and `finish`, they fail with `SESSION_REQUIRED`
 - when multiple sessions match for any legacy command, they fail with `SESSION_AMBIGUOUS`
 - pass `--session <id>` or use `threadloop session ...` for deterministic targeting
 
 Implemented storage:
+
 - `.threadloop/config.json`
 - `.threadloop/state/state.db`
 - `.threadloop/artifacts/*.md`
 
-Legacy repos with `.threadloop/state/state.json` migrate into SQLite on first init/read/write. The JSON file is intentionally left in place as a safety backup during this phase, but ThreadLoop reads from SQLite after migration.
+Legacy repos with `.threadloop/state/state.json` migrate into SQLite on first init/read/write. The JSON file is
+intentionally left in place as a safety backup during this phase, but ThreadLoop reads from SQLite after migration.
 
 ## Install
 
 Prerequisites:
+
 - Node 22.13.0 or newer
 - a Git repository
 
@@ -80,7 +90,8 @@ threadloop session capture decision "Retry only idempotent jobs" --session "$ses
 threadloop session status --session "$session_id" --json
 ```
 
-Use this path for day-to-day local development. It does not require adding ThreadLoop to the consumer repo's dependencies.
+Use this path for day-to-day local development. It does not require adding ThreadLoop to the consumer repo's
+dependencies.
 
 ### 2. `npm pack` for install verification
 
@@ -118,6 +129,7 @@ npm run smoke:pack
 The current SQLite work is the storage foundation for ThreadLoop v2 autonomous agent mode.
 
 What is implemented now:
+
 - SQLite-backed durable state
 - transactional writes for core mutations
 - migration from legacy `state.json`
@@ -129,6 +141,7 @@ What is implemented now:
 - protocol print / published agent-mode contract
 
 What is not implemented yet in this slice:
+
 - same-checkout autonomous multi-task concurrency hardening
 
 ## Quick start
@@ -160,9 +173,11 @@ Recommended loop:
 8. `threadloop artifact generate pr-summary --session "$session_id"`
 9. `threadloop session finish --session "$session_id"`
 
-Use `threadloop protocol --json` as the machine-facing contract for current commands, entry kinds, artifact kinds, supported environment variables, and the published branch/rebase/PR workflow guidance.
+Use `threadloop protocol --json` as the machine-facing contract for current commands, entry kinds, artifact kinds,
+supported environment variables, and the published branch/rebase/PR workflow guidance.
 
-The optional daemon only performs mechanical refresh work. It does not create semantic notes or replace explicit capture.
+The optional daemon only performs mechanical refresh work. It does not create semantic notes or replace explicit
+capture.
 
 ## Longer notes with `$EDITOR`
 
@@ -178,6 +193,7 @@ npx threadloop session start "Reshape queue workers" --goal-edit --json
 ## Entry kinds
 
 Supported entry kinds:
+
 - `intent`
 - `note`
 - `decision`
@@ -207,7 +223,8 @@ npm run smoke:pack
 - ThreadLoop requires a Git repository.
 - Prefer `threadloop session ...` commands for explicit session work.
 - Compatibility root `start` keeps one active session per repo.
-- Compatibility root `capture`, `artifact generate`, and `finish` work without `--session` only when exactly one active session exists.
+- Compatibility root `capture`, `artifact generate`, and `finish` work without `--session` only when exactly one active
+  session exists.
 - Compatibility root `status` fails with `SESSION_REQUIRED` when zero sessions match.
 - `.threadloop/state/` is ignored via `.git/info/exclude` by default.
 - Artifacts are local by default and may be committed when useful.

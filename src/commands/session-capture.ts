@@ -2,7 +2,13 @@ import { readTextFromEditor } from '../adapters/fs/editor.js';
 import { ThreadloopError, createInvalidArgumentError } from '../contracts/errors.js';
 import { ENTRY_KINDS, type EntryKind, type EntrySource } from '../domain/types.js';
 import { captureEntry } from '../services/session-service.js';
-import { toSessionId, type CommandContext, type JsonOption, type SessionOption, writeCommandSuccess } from './runtime.js';
+import {
+  toSessionId,
+  type CommandContext,
+  type JsonOption,
+  type SessionOption,
+  writeCommandSuccess,
+} from './runtime.js';
 
 export interface SessionCaptureOptions extends JsonOption, SessionOption {
   because?: string;

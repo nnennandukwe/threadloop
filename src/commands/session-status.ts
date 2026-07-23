@@ -1,10 +1,21 @@
-import { countEntryKinds, toSessionId, type CommandContext, type JsonOption, type SessionOption, writeCommandSuccess } from './runtime.js';
+import {
+  countEntryKinds,
+  toSessionId,
+  type CommandContext,
+  type JsonOption,
+  type SessionOption,
+  writeCommandSuccess,
+} from './runtime.js';
 import { ThreadloopError } from '../contracts/errors.js';
 import { getStatus } from '../services/session-service.js';
 
 export type SessionStatusOptions = JsonOption & SessionOption;
 
-export async function sessionStatusCommand(context: CommandContext, options: SessionStatusOptions, allowLegacySingleActive = false) {
+export async function sessionStatusCommand(
+  context: CommandContext,
+  options: SessionStatusOptions,
+  allowLegacySingleActive = false,
+) {
   const sessionId = toSessionId(options);
   if (!sessionId && !allowLegacySingleActive) {
     throw new ThreadloopError('SESSION_REQUIRED', 'A session id is required for this command.', {
@@ -43,7 +54,13 @@ export async function sessionStatusCommand(context: CommandContext, options: Ses
       `Base ref: ${session.baseRef ?? 'not set'}`,
       `Entries: ${result.entries.length}`,
       `Changed files: ${result.repoSnapshot?.changedFiles.length ?? 0}`,
-      `Entry kinds: ${Object.keys(counts).length > 0 ? Object.entries(counts).map(([kind, count]) => `${kind}=${count}`).join(', ') : 'none'}`,
+      `Entry kinds: ${
+        Object.keys(counts).length > 0
+          ? Object.entries(counts)
+              .map(([kind, count]) => `${kind}=${count}`)
+              .join(', ')
+          : 'none'
+      }`,
     ],
     data: {
       session_id: session.id,

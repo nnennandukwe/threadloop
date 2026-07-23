@@ -1,6 +1,6 @@
 name: Documentation improvement
 description: Report missing, inaccurate, or unclear ThreadLoop documentation.
-title: "[Docs]: "
+title: '[Docs]: '
 labels:
   - documentation
 assignees: []
@@ -43,7 +43,7 @@ body:
     attributes:
       label: Location
       description: Link to the page or name the file, section, command, or example involved.
-      placeholder: "docs/cli.md — session capture"
+      placeholder: 'docs/cli.md — session capture'
     validations:
       required: true
 

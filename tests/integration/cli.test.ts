@@ -21,7 +21,10 @@ const tsxCli = path.join(projectRoot, 'node_modules/tsx/dist/cli.mjs');
 const cliEntry = path.join(projectRoot, 'src/cli.ts');
 
 async function runCli(cwd: string, args: string[], env?: NodeJS.ProcessEnv) {
-  return execFileAsync('node', [tsxCli, cliEntry, ...args], { cwd, env: env ? { ...process.env, ...env } : process.env });
+  return execFileAsync('node', [tsxCli, cliEntry, ...args], {
+    cwd,
+    env: env ? { ...process.env, ...env } : process.env,
+  });
 }
 
 async function runCliFailure(cwd: string, args: string[], env?: NodeJS.ProcessEnv) {
@@ -50,9 +53,18 @@ function readStateSnapshot(repoDir: string) {
 
   try {
     return {
-      taskStatuses: db.prepare('SELECT status FROM tasks ORDER BY rowid').all().map((row) => String(row.status)),
-      entryKinds: db.prepare('SELECT kind FROM entries ORDER BY rowid').all().map((row) => String(row.kind)),
-      entryBodies: db.prepare('SELECT body FROM entries ORDER BY rowid').all().map((row) => String(row.body)),
+      taskStatuses: db
+        .prepare('SELECT status FROM tasks ORDER BY rowid')
+        .all()
+        .map((row) => String(row.status)),
+      entryKinds: db
+        .prepare('SELECT kind FROM entries ORDER BY rowid')
+        .all()
+        .map((row) => String(row.kind)),
+      entryBodies: db
+        .prepare('SELECT body FROM entries ORDER BY rowid')
+        .all()
+        .map((row) => String(row.body)),
     };
   } finally {
     db.close();
@@ -139,7 +151,9 @@ async function runConcurrentMutationBurst(repoDir: string, sessionId: string, la
 
   const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
   try {
-    const entries = db.prepare(`SELECT body, source FROM entries WHERE session_id = ? ORDER BY rowid`).all(sessionId) as Array<{
+    const entries = db
+      .prepare(`SELECT body, source FROM entries WHERE session_id = ? ORDER BY rowid`)
+      .all(sessionId) as Array<{
       body: string;
       source: string;
     }>;
@@ -155,7 +169,9 @@ async function runConcurrentMutationBurst(repoDir: string, sessionId: string, la
     expect(new Set(bodies.filter((body) => captureBodies.includes(body)))).toEqual(new Set(captureBodies));
     expect(bodies.filter((body) => agentBodies.includes(body))).toHaveLength(agentBodies.length);
     expect(new Set(bodies.filter((body) => agentBodies.includes(body)))).toEqual(new Set(agentBodies));
-    expect(entries.filter((entry) => agentBodies.includes(entry.body)).every((entry) => entry.source === 'agent')).toBe(true);
+    expect(entries.filter((entry) => agentBodies.includes(entry.body)).every((entry) => entry.source === 'agent')).toBe(
+      true,
+    );
     expect(snapshotCount).toBe(1);
   } finally {
     db.close();
@@ -175,7 +191,13 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
   it('initializes, starts, captures, generates an artifact, and finishes', async () => {
     await runCli(repoDir, ['init']);
     await runCli(repoDir, ['start', 'Add retry logic', '--goal', 'Reduce transient failures']);
-    await runCli(repoDir, ['capture', 'decision', 'Retry only idempotent jobs', '--because', 'Non-idempotent replay is unsafe']);
+    await runCli(repoDir, [
+      'capture',
+      'decision',
+      'Retry only idempotent jobs',
+      '--because',
+      'Non-idempotent replay is unsafe',
+    ]);
     await runCli(repoDir, ['artifact', 'generate']);
     await runCli(repoDir, ['finish']);
 
@@ -223,8 +245,11 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
 
     const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
     try {
-      const taskRow = db.prepare(`SELECT issue_ref FROM tasks WHERE id = ?`).get(started.data.task.id) as { issue_ref: string | null } | undefined;
-      const entries = db.prepare(`SELECT kind, source FROM entries WHERE session_id = ? ORDER BY rowid`).all(started.data.session_id) as Array<{
+      const taskRow = db.prepare(`SELECT issue_ref FROM tasks WHERE id = ?`).get(started.data.task.id) as
+        { issue_ref: string | null } | undefined;
+      const entries = db
+        .prepare(`SELECT kind, source FROM entries WHERE session_id = ? ORDER BY rowid`)
+        .all(started.data.session_id) as Array<{
         kind: string;
         source: string;
       }>;
@@ -317,7 +342,11 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
       `${JSON.stringify({ version: 1, createdAt: '2026-03-14T12:00:00.000Z' }, null, 2)}\n`,
       'utf8',
     );
-    await writeFile(path.join(repoDir, '.threadloop/state/state.json'), `${JSON.stringify(legacyState, null, 2)}\n`, 'utf8');
+    await writeFile(
+      path.join(repoDir, '.threadloop/state/state.json'),
+      `${JSON.stringify(legacyState, null, 2)}\n`,
+      'utf8',
+    );
 
     const status = await runCli(repoDir, ['status']);
     await runCli(repoDir, ['capture', 'note', 'Migrated capture still works']);
@@ -373,7 +402,11 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
       `${JSON.stringify({ version: 1, createdAt: '2026-03-14T12:00:00.000Z' }, null, 2)}\n`,
       'utf8',
     );
-    await writeFile(path.join(repoDir, '.threadloop/state/state.json'), `${JSON.stringify(legacyState, null, 2)}\n`, 'utf8');
+    await writeFile(
+      path.join(repoDir, '.threadloop/state/state.json'),
+      `${JSON.stringify(legacyState, null, 2)}\n`,
+      'utf8',
+    );
 
     const dbPath = path.join(repoDir, '.threadloop/state/state.db');
     const db = new DatabaseSync(dbPath);
@@ -481,7 +514,11 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
 
   it('supports capture via $EDITOR and alternate artifact renderers', async () => {
     const editorScript = path.join(repoDir, 'fake-editor.sh');
-    await writeFile(editorScript, '#!/bin/sh\nprintf "Reviewer should inspect retry cancellation path" > "$1"\n', 'utf8');
+    await writeFile(
+      editorScript,
+      '#!/bin/sh\nprintf "Reviewer should inspect retry cancellation path" > "$1"\n',
+      'utf8',
+    );
     await execFileAsync('chmod', ['+x', editorScript], { cwd: repoDir });
 
     await runCli(repoDir, ['init']);
@@ -522,7 +559,15 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     );
 
     await writeFile(path.join(repoDir, 'feature.ts'), 'export const feature = 18;\n', 'utf8');
-    await runCli(repoDir, ['session', 'capture', 'decision', 'Keep the summary PR-ready', '--session', started.data.session_id, '--json']);
+    await runCli(repoDir, [
+      'session',
+      'capture',
+      'decision',
+      'Keep the summary PR-ready',
+      '--session',
+      started.data.session_id,
+      '--json',
+    ]);
     await runCli(repoDir, ['artifact', 'generate', 'pr-summary', '--session', started.data.session_id, '--json']);
 
     const prSummary = await readArtifact(repoDir, 'prepare-pr-summary.pr-summary.md');
@@ -538,7 +583,16 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     const started = parseJsonOutput<{
       data: { session_id: string };
     }>(
-      (await runCli(repoDir, ['session', 'start', 'Live snapshot artifact', '--goal', 'Use current repo scope', '--json'])).stdout,
+      (
+        await runCli(repoDir, [
+          'session',
+          'start',
+          'Live snapshot artifact',
+          '--goal',
+          'Use current repo scope',
+          '--json',
+        ])
+      ).stdout,
     );
 
     await writeFile(path.join(repoDir, 'active-change.ts'), 'export const activeChange = true;\n', 'utf8');
@@ -625,7 +679,8 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
 
   it('persists a final snapshot on session finish without a separate reconcile', async () => {
     const started = parseJsonOutput<{ data: { session_id: string } }>(
-      (await runCli(repoDir, ['session', 'start', 'Finish snapshot', '--goal', 'Persist closeout snapshot', '--json'])).stdout,
+      (await runCli(repoDir, ['session', 'start', 'Finish snapshot', '--goal', 'Persist closeout snapshot', '--json']))
+        .stdout,
     );
 
     await writeFile(path.join(repoDir, 'closeout.ts'), 'export const closeout = true;\n', 'utf8');
@@ -637,7 +692,9 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
 
   it('fails cleanly for a missing base ref', async () => {
     await runCli(repoDir, ['init']);
-    await expect(runCli(repoDir, ['start', 'Add retry logic', '--goal', 'Reduce transient failures', '--base', 'missing-branch'])).rejects.toThrow();
+    await expect(
+      runCli(repoDir, ['start', 'Add retry logic', '--goal', 'Reduce transient failures', '--base', 'missing-branch']),
+    ).rejects.toThrow();
   });
 
   it('fails with SESSION_REQUIRED when legacy status has no active session', async () => {
@@ -833,13 +890,29 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     );
     expect(captured).toMatchObject({ ok: true, command: 'session capture' });
     expect(captured.data.session_id).toBe(started.data.session_id);
-    expect(captured.data.entry).toMatchObject({ kind: 'decision', body: 'Keep the explicit contract', source: 'agent' });
+    expect(captured.data.entry).toMatchObject({
+      kind: 'decision',
+      body: 'Keep the explicit contract',
+      source: 'agent',
+    });
 
     const heartbeat = parseJsonOutput<{
       ok: true;
       command: string;
       data: { session_id: string; session: { last_heartbeat_at: string | null; last_heartbeat_source: string | null } };
-    }>((await runCli(repoDir, ['session', 'heartbeat', '--session', started.data.session_id, '--source', 'cli', '--json'])).stdout);
+    }>(
+      (
+        await runCli(repoDir, [
+          'session',
+          'heartbeat',
+          '--session',
+          started.data.session_id,
+          '--source',
+          'cli',
+          '--json',
+        ])
+      ).stdout,
+    );
     expect(heartbeat).toMatchObject({ ok: true, command: 'session heartbeat' });
     expect(heartbeat.data.session_id).toBe(started.data.session_id);
     expect(heartbeat.data.session.last_heartbeat_at).toBeTruthy();
@@ -922,7 +995,9 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     expect(statusFailure.stderr).toContain('Hint: Pass --session <id>.');
 
     const captureFailure = await runCliFailure(repoDir, ['session', 'capture', 'note', 'Need a session first']);
-    expect(captureFailure.stderr).toContain('threadloop [SESSION_REQUIRED]: A session id is required for this command.');
+    expect(captureFailure.stderr).toContain(
+      'threadloop [SESSION_REQUIRED]: A session id is required for this command.',
+    );
     expect(captureFailure.stderr).toContain('Hint: Pass --session <id>.');
   });
 
@@ -999,7 +1074,9 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
       'reviewer_guidance',
     ]);
     expect(protocol.data.artifactKinds).toEqual(['change-brief', 'pr-summary', 'handoff']);
-    expect(protocol.data.commands['artifact generate']).toContain('threadloop artifact generate [kind] [--session <id>] [--json]');
+    expect(protocol.data.commands['artifact generate']).toContain(
+      'threadloop artifact generate [kind] [--session <id>] [--json]',
+    );
     expect(protocol.data.commands['session capture']).toContain(
       'threadloop session capture <kind> [text] --session <id> [--because <reason>] [--actor <actor>] [--edit] [--json]',
     );
@@ -1087,92 +1164,117 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     await writeFile(path.join(repoDir, 'feature.ts'), 'export const feature = true;\n', 'utf8');
 
     const started = parseJsonOutput<{ data: { session_id: string } }>(
-      (await runCli(repoDir, ['session', 'start', 'Concurrent flow', '--goal', 'Stress SQLite writes', '--json'])).stdout,
+      (await runCli(repoDir, ['session', 'start', 'Concurrent flow', '--goal', 'Stress SQLite writes', '--json']))
+        .stdout,
     );
     await runConcurrentMutationBurst(repoDir, started.data.session_id, 'Concurrent flow');
   }, 15_000);
 
-  it(
-    'reopens cached sqlite handles after close/reset hooks and keeps writes working',
-    async () => {
-      await runCli(repoDir, ['init']);
+  it('reopens cached sqlite handles after close/reset hooks and keeps writes working', async () => {
+    await runCli(repoDir, ['init']);
+    const started = parseJsonOutput<{ data: { session_id: string } }>(
+      (await runCli(repoDir, ['session', 'start', 'Resettable flow', '--goal', 'Exercise lifecycle hooks', '--json']))
+        .stdout,
+    );
+    const sessionId = started.data.session_id;
+
+    await runCli(repoDir, [
+      'session',
+      'capture',
+      'decision',
+      'First write before reset',
+      '--session',
+      sessionId,
+      '--json',
+    ]);
+    await resetSqliteConnectionLifecycle();
+
+    const statusAfterReset = parseJsonOutput<{
+      data: { entries: { count: number; kinds: Record<string, number> } };
+    }>((await runCli(repoDir, ['session', 'status', '--session', sessionId, '--json'])).stdout);
+
+    expect(statusAfterReset.data.entries.count).toBe(2);
+    expect(statusAfterReset.data.entries.kinds.intent).toBe(1);
+    expect(statusAfterReset.data.entries.kinds.decision).toBe(1);
+
+    await runCli(repoDir, ['session', 'capture', 'note', 'Second write after reset', '--session', sessionId, '--json']);
+    const statusAfterReuse = parseJsonOutput<{
+      data: { entries: { count: number; kinds: Record<string, number> } };
+    }>((await runCli(repoDir, ['session', 'status', '--session', sessionId, '--json'])).stdout);
+
+    expect(statusAfterReuse.data.entries.count).toBe(3);
+    expect(statusAfterReuse.data.entries.kinds.note).toBe(1);
+  }, 15_000);
+
+  it('keeps SQLite-backed state intact across repeated concurrent mutation bursts in one process', async () => {
+    await runCli(repoDir, ['init']);
+    await writeFile(path.join(repoDir, 'feature.ts'), 'export const feature = true;\n', 'utf8');
+
+    const roundCount = 2;
+    for (let round = 0; round < roundCount; round += 1) {
       const started = parseJsonOutput<{ data: { session_id: string } }>(
-        (await runCli(repoDir, ['session', 'start', 'Resettable flow', '--goal', 'Exercise lifecycle hooks', '--json']))
-          .stdout,
+        (
+          await runCli(repoDir, [
+            'session',
+            'start',
+            `Concurrent flow ${round + 1}`,
+            '--goal',
+            'Stress SQLite writes',
+            '--json',
+          ])
+        ).stdout,
       );
-      const sessionId = started.data.session_id;
 
-      await runCli(repoDir, ['session', 'capture', 'decision', 'First write before reset', '--session', sessionId, '--json']);
+      await runConcurrentMutationBurst(repoDir, started.data.session_id, `Concurrent flow ${round + 1}`);
       await resetSqliteConnectionLifecycle();
+    }
 
-      const statusAfterReset = parseJsonOutput<{
-        data: { entries: { count: number; kinds: Record<string, number> } };
-      }>((await runCli(repoDir, ['session', 'status', '--session', sessionId, '--json'])).stdout);
-
-      expect(statusAfterReset.data.entries.count).toBe(2);
-      expect(statusAfterReset.data.entries.kinds.intent).toBe(1);
-      expect(statusAfterReset.data.entries.kinds.decision).toBe(1);
-
-      await runCli(repoDir, ['session', 'capture', 'note', 'Second write after reset', '--session', sessionId, '--json']);
-      const statusAfterReuse = parseJsonOutput<{
-        data: { entries: { count: number; kinds: Record<string, number> } };
-      }>((await runCli(repoDir, ['session', 'status', '--session', sessionId, '--json'])).stdout);
-
-      expect(statusAfterReuse.data.entries.count).toBe(3);
-      expect(statusAfterReuse.data.entries.kinds.note).toBe(1);
-    },
-    15_000,
-  );
-
-  it(
-    'keeps SQLite-backed state intact across repeated concurrent mutation bursts in one process',
-    async () => {
-      await runCli(repoDir, ['init']);
-      await writeFile(path.join(repoDir, 'feature.ts'), 'export const feature = true;\n', 'utf8');
-
-      const roundCount = 2;
-      for (let round = 0; round < roundCount; round += 1) {
-        const started = parseJsonOutput<{ data: { session_id: string } }>(
-          (
-            await runCli(repoDir, [
-              'session',
-              'start',
-              `Concurrent flow ${round + 1}`,
-              '--goal',
-              'Stress SQLite writes',
-              '--json',
-            ])
-          ).stdout,
-        );
-
-        await runConcurrentMutationBurst(repoDir, started.data.session_id, `Concurrent flow ${round + 1}`);
-        await resetSqliteConnectionLifecycle();
-      }
-
-      const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
-      try {
-        expect(readScalarCount(db, 'SELECT COUNT(*) AS count FROM sessions')).toBe(roundCount);
-        expect(readScalarCount(db, 'SELECT COUNT(*) AS count FROM repo_snapshots')).toBe(roundCount);
-        expect(readScalarCount(db, 'SELECT COUNT(*) AS count FROM active_sessions')).toBe(roundCount);
-      } finally {
-        db.close();
-      }
-    },
-    30_000,
-  );
+    const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
+    try {
+      expect(readScalarCount(db, 'SELECT COUNT(*) AS count FROM sessions')).toBe(roundCount);
+      expect(readScalarCount(db, 'SELECT COUNT(*) AS count FROM repo_snapshots')).toBe(roundCount);
+      expect(readScalarCount(db, 'SELECT COUNT(*) AS count FROM active_sessions')).toBe(roundCount);
+    } finally {
+      db.close();
+    }
+  }, 30_000);
 
   it('assembles the explicit v2 flow end to end on SQLite state', async () => {
     await runCli(repoDir, ['init']);
     await writeFile(path.join(repoDir, 'feature.ts'), 'export const value = 1;\n', 'utf8');
 
     const started = parseJsonOutput<{ data: { session_id: string } }>(
-      (await runCli(repoDir, ['session', 'start', 'Full v2 flow', '--goal', 'Prove the assembled session contract', '--json']))
-        .stdout,
+      (
+        await runCli(repoDir, [
+          'session',
+          'start',
+          'Full v2 flow',
+          '--goal',
+          'Prove the assembled session contract',
+          '--json',
+        ])
+      ).stdout,
     );
     const sessionId = started.data.session_id;
 
-    await runCli(repoDir, ['session', 'capture', 'decision', 'Keep explicit session targeting', '--session', sessionId, '--json']);
-    await runCli(repoDir, ['session', 'capture', 'validation', 'Verified stored snapshot refresh', '--session', sessionId, '--json']);
+    await runCli(repoDir, [
+      'session',
+      'capture',
+      'decision',
+      'Keep explicit session targeting',
+      '--session',
+      sessionId,
+      '--json',
+    ]);
+    await runCli(repoDir, [
+      'session',
+      'capture',
+      'validation',
+      'Verified stored snapshot refresh',
+      '--session',
+      sessionId,
+      '--json',
+    ]);
     await runCli(repoDir, ['session', 'heartbeat', '--session', sessionId, '--source', 'daemon', '--json']);
     await runCli(repoDir, ['session', 'reconcile', '--session', sessionId, '--json']);
 

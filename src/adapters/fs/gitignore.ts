@@ -17,13 +17,19 @@ export async function ensureThreadloopStateIgnored(repoRoot: string): Promise<Gi
   }
 
   const current = await readFile(excludePath, 'utf8');
-  const lines = current.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const lines = current
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
 
   if (coversThreadloopState(lines)) {
     return 'already-correct';
   }
 
-  const next = current.endsWith('\n') || current.length === 0 ? `${current}${STATE_IGNORE_ENTRY}\n` : `${current}\n${STATE_IGNORE_ENTRY}\n`;
+  const next =
+    current.endsWith('\n') || current.length === 0
+      ? `${current}${STATE_IGNORE_ENTRY}\n`
+      : `${current}\n${STATE_IGNORE_ENTRY}\n`;
   await writeFile(excludePath, next, 'utf8');
   return 'updated';
 }

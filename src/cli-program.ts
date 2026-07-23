@@ -104,7 +104,10 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
   ).action(handlers.capture);
 
   withJsonOption(
-    program.command('status').description('Show the current task/session status').option('--session <id>', 'session id to target'),
+    program
+      .command('status')
+      .description('Show the current task/session status')
+      .option('--session <id>', 'session id to target'),
   ).action(handlers.status);
 
   const artifact = program.command('artifact').description('Generate artifacts from session context');
@@ -117,7 +120,10 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
   ).action(handlers.artifactGenerate);
 
   withJsonOption(
-    program.command('finish').description('Complete the active session').option('--session <id>', 'session id to target'),
+    program
+      .command('finish')
+      .description('Complete the active session')
+      .option('--session <id>', 'session id to target'),
   ).action(handlers.finish);
 
   const session = program.command('session').description('Manage explicit ThreadLoop sessions');
@@ -135,10 +141,15 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
       .option('--goal-edit', 'open $EDITOR for the goal text'),
   ).action(handlers.sessionStart);
 
-  withJsonOption(session.command('list').description('List sessions in the current workspace')).action(handlers.sessionList);
+  withJsonOption(session.command('list').description('List sessions in the current workspace')).action(
+    handlers.sessionList,
+  );
 
   withJsonOption(
-    session.command('status').description('Show status for an explicit session').option('--session <id>', 'session id to target'),
+    session
+      .command('status')
+      .description('Show status for an explicit session')
+      .option('--session <id>', 'session id to target'),
   ).action(handlers.sessionStatus);
 
   withJsonOption(
@@ -162,7 +173,10 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
   ).action(handlers.sessionHeartbeat);
 
   withJsonOption(
-    session.command('finish').description('Finish an explicit session').option('--session <id>', 'session id to target'),
+    session
+      .command('finish')
+      .description('Finish an explicit session')
+      .option('--session <id>', 'session id to target'),
   ).action(handlers.sessionFinish);
 
   withJsonOption(
@@ -183,10 +197,7 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
   ).action(handlers.daemonRun);
 
   withJsonOption(
-    program
-      .command('protocol')
-      .description('Print the agent integration protocol')
-      .action(handlers.protocol),
+    program.command('protocol').description('Print the agent integration protocol').action(handlers.protocol),
   );
 
   return program;

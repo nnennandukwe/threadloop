@@ -1,6 +1,6 @@
 name: Usage question
 description: Ask for help with a ThreadLoop workflow after checking the docs.
-title: "[Question]: "
+title: '[Question]: '
 labels:
   - question
 assignees: []
@@ -69,7 +69,9 @@ body:
     id: environment
     attributes:
       label: Environment and context
-      description: When relevant, include the ThreadLoop version or commit, Node.js version, operating system, install method, and sanitized output.
+      description:
+        When relevant, include the ThreadLoop version or commit, Node.js version, operating system, install method, and
+        sanitized output.
 
   - type: checkboxes
     id: sensitive-data

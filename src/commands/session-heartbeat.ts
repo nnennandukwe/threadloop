@@ -1,7 +1,13 @@
 import { ThreadloopError, createInvalidArgumentError } from '../contracts/errors.js';
 import { HEARTBEAT_SOURCES, type HeartbeatSource } from '../domain/types.js';
 import { heartbeatSession } from '../services/session-service.js';
-import { toSessionId, type CommandContext, type JsonOption, type SessionOption, writeCommandSuccess } from './runtime.js';
+import {
+  toSessionId,
+  type CommandContext,
+  type JsonOption,
+  type SessionOption,
+  writeCommandSuccess,
+} from './runtime.js';
 
 interface SessionHeartbeatOptions extends JsonOption, SessionOption {
   source?: string;

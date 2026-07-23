@@ -2,11 +2,13 @@
 
 ThreadLoop v2 is a repo-local control plane for orchestrated coding workflows.
 
-The external orchestrator owns task selection, agent launch, and policy. ThreadLoop owns durable session state, Git-derived snapshots, structured notes, and review artifacts.
+The external orchestrator owns task selection, agent launch, and policy. ThreadLoop owns durable session state,
+Git-derived snapshots, structured notes, and review artifacts.
 
 ## Mental model
 
-Use ThreadLoop when you want agents to exchange structured state through the repository instead of through transcript parsing.
+Use ThreadLoop when you want agents to exchange structured state through the repository instead of through transcript
+parsing.
 
 - The orchestrator starts a session and keeps the returned `session_id`.
 - Agents and tools write semantic notes with `threadloop session capture`.
@@ -18,7 +20,8 @@ Semantic vs mechanical operations:
 - Semantic: `session start`, `session capture`, `artifact generate`, `session finish`
 - Mechanical: `session heartbeat`, `session reconcile`, `daemon run`
 
-`session reconcile` and the daemon do not create semantic notes. They only refresh branch, head SHA, changed file scope, diff stats, and commit range.
+`session reconcile` and the daemon do not create semantic notes. They only refresh branch, head SHA, changed file scope,
+diff stats, and commit range.
 
 ## Recommended orchestrator flow
 
@@ -80,9 +83,11 @@ Current environment-variable contract:
 
 - `EDITOR`: used only by `--edit` and `--goal-edit`
 
-ThreadLoop does not currently use environment variables for session targeting or workspace selection. Pass `--session <id>` explicitly and run commands from the intended repository root or subdirectory.
+ThreadLoop does not currently use environment variables for session targeting or workspace selection. Pass
+`--session <id>` explicitly and run commands from the intended repository root or subdirectory.
 
-ThreadLoop also does not perform Git fetch, branch creation, rebase, or PR open for you in this slice. Those remain orchestrator responsibilities.
+ThreadLoop also does not perform Git fetch, branch creation, rebase, or PR open for you in this slice. Those remain
+orchestrator responsibilities.
 
 ## Human-assisted flows
 
@@ -122,7 +127,8 @@ What the daemon does not do:
 - decide when work is complete
 - replace explicit orchestrator calls for capture or finish
 
-Use it when you want Git-derived state to stay warm while an agent works, but keep semantic capture under explicit orchestrator or agent control.
+Use it when you want Git-derived state to stay warm while an agent works, but keep semantic capture under explicit
+orchestrator or agent control.
 
 ## Concurrency and workspace expectations
 
@@ -145,7 +151,8 @@ Not the intended v2 operating model:
 - multiple autonomous tasks mutating the same checkout concurrently
 - depending on legacy root commands in multi-session automation
 
-Legacy root commands exist for compatibility, but automation should prefer the explicit `threadloop session ...` namespace because it avoids ambiguity.
+Legacy root commands exist for compatibility, but automation should prefer the explicit `threadloop session ...`
+namespace because it avoids ambiguity.
 
 ## Operator notes
 

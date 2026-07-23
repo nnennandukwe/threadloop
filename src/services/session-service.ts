@@ -93,9 +93,13 @@ export async function startTask(input: StartTaskInput) {
   if (!input.allowMultipleActive) {
     const state = await readState(repoRoot);
     if (state.activeSessions.length > 0) {
-      throw new ThreadloopError('SESSION_AMBIGUOUS', 'A legacy root session already exists in this repo. Finish it before starting another.', {
-        details: { activeSessions: state.activeSessions.length },
-      });
+      throw new ThreadloopError(
+        'SESSION_AMBIGUOUS',
+        'A legacy root session already exists in this repo. Finish it before starting another.',
+        {
+          details: { activeSessions: state.activeSessions.length },
+        },
+      );
     }
   }
 
@@ -298,9 +302,8 @@ export async function getStatus(cwd: string, selector: SessionSelector = {}) {
       });
 
   const entries = state.entries.filter((entry) => entry.sessionId === record.session.id);
-  const repoSnapshot = record.session.endedAt === null
-    ? await snapshotRepo(repoRoot, record.session.id, record.session.baseRef)
-    : null;
+  const repoSnapshot =
+    record.session.endedAt === null ? await snapshotRepo(repoRoot, record.session.id, record.session.baseRef) : null;
   return { repoRoot, active: { task: record.task, session: record.session }, entries, repoSnapshot };
 }
 
@@ -438,15 +441,23 @@ function resolveSessionFromState(state: StateData, selector: SessionSelector): R
   }
 
   if (state.activeSessions.length === 0) {
-    throw new ThreadloopError('SESSION_REQUIRED', 'No active session exists in this repo. Start one with `threadloop session start`.', {
-      details: { activeSessions: 0 },
-    });
+    throw new ThreadloopError(
+      'SESSION_REQUIRED',
+      'No active session exists in this repo. Start one with `threadloop session start`.',
+      {
+        details: { activeSessions: 0 },
+      },
+    );
   }
 
   if (state.activeSessions.length > 1) {
-    throw new ThreadloopError('SESSION_AMBIGUOUS', 'Multiple active sessions exist in this repo. Select one explicitly.', {
-      details: { sessionIds: state.activeSessions.map((item) => item.sessionId) },
-    });
+    throw new ThreadloopError(
+      'SESSION_AMBIGUOUS',
+      'Multiple active sessions exist in this repo. Select one explicitly.',
+      {
+        details: { sessionIds: state.activeSessions.map((item) => item.sessionId) },
+      },
+    );
   }
 
   const active = state.activeSessions[0];
@@ -461,9 +472,13 @@ function materializeSessionRecord(state: StateData, active: ActiveState): Sessio
   const session = state.sessions.find((item) => item.id === active.sessionId && item.endedAt === null);
 
   if (!task || !session) {
-    throw new ThreadloopError('STATE_CORRUPTED', 'ThreadLoop session registry is inconsistent with persisted tasks or sessions.', {
-      details: { taskId: active.taskId, sessionId: active.sessionId },
-    });
+    throw new ThreadloopError(
+      'STATE_CORRUPTED',
+      'ThreadLoop session registry is inconsistent with persisted tasks or sessions.',
+      {
+        details: { taskId: active.taskId, sessionId: active.sessionId },
+      },
+    );
   }
 
   return { task, session };
@@ -494,11 +509,13 @@ function mustFindTask(state: StateData, taskId: string) {
 }
 
 function slugify(value: string) {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '') || 'artifact';
+  return (
+    value
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'artifact'
+  );
 }
 
 function normalizeOptionalText(value: string | null | undefined) {

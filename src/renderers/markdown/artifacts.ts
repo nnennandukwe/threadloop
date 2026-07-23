@@ -69,11 +69,40 @@ function renderChangeBrief(input: ArtifactRenderInput) {
       `- Started: ${session.startedAt}`,
       `- Base ref: ${session.baseRef ?? 'Not set'}`,
     ]),
-    section('What changed', repoSnapshot.changedFiles.length > 0 ? repoSnapshot.changedFiles.map((file) => `- ${file}`) : ['- No changed files detected']),
-    section('Key decisions and why', bullets(entries.filter((entry) => entry.kind === 'decision'), 'No decisions recorded.')),
-    section('Risks and follow-ups', bullets(entries.filter((entry) => entry.kind === 'risk'), 'No explicit risks recorded.')),
-    section('Validation performed', bullets(entries.filter((entry) => entry.kind === 'validation'), 'No validation recorded.')),
-    section('Reviewer guidance', bullets(entries.filter((entry) => entry.kind === 'reviewer_guidance'), 'No reviewer guidance recorded.')),
+    section(
+      'What changed',
+      repoSnapshot.changedFiles.length > 0
+        ? repoSnapshot.changedFiles.map((file) => `- ${file}`)
+        : ['- No changed files detected'],
+    ),
+    section(
+      'Key decisions and why',
+      bullets(
+        entries.filter((entry) => entry.kind === 'decision'),
+        'No decisions recorded.',
+      ),
+    ),
+    section(
+      'Risks and follow-ups',
+      bullets(
+        entries.filter((entry) => entry.kind === 'risk'),
+        'No explicit risks recorded.',
+      ),
+    ),
+    section(
+      'Validation performed',
+      bullets(
+        entries.filter((entry) => entry.kind === 'validation'),
+        'No validation recorded.',
+      ),
+    ),
+    section(
+      'Reviewer guidance',
+      bullets(
+        entries.filter((entry) => entry.kind === 'reviewer_guidance'),
+        'No reviewer guidance recorded.',
+      ),
+    ),
     gitAppendix(repoSnapshot),
   ].join('\n');
 }
@@ -91,10 +120,33 @@ function renderPrSummary(input: ArtifactRenderInput) {
       `- Issue: ${task.issueRef ?? 'Not recorded'}`,
       ...(task.issueRef ? [`- Closing reference: Closes ${task.issueRef}`] : []),
     ]),
-    section('Changes in scope', repoSnapshot.changedFiles.length > 0 ? repoSnapshot.changedFiles.map((file) => `- ${file}`) : ['- No changed files detected']),
-    section('Key decisions', bullets(entries.filter((entry) => entry.kind === 'decision'), 'No decisions recorded.')),
-    section('Validation', bullets(entries.filter((entry) => entry.kind === 'validation'), 'No validation recorded.')),
-    section('Reviewer guidance', bullets(entries.filter((entry) => entry.kind === 'reviewer_guidance'), 'No reviewer guidance recorded.')),
+    section(
+      'Changes in scope',
+      repoSnapshot.changedFiles.length > 0
+        ? repoSnapshot.changedFiles.map((file) => `- ${file}`)
+        : ['- No changed files detected'],
+    ),
+    section(
+      'Key decisions',
+      bullets(
+        entries.filter((entry) => entry.kind === 'decision'),
+        'No decisions recorded.',
+      ),
+    ),
+    section(
+      'Validation',
+      bullets(
+        entries.filter((entry) => entry.kind === 'validation'),
+        'No validation recorded.',
+      ),
+    ),
+    section(
+      'Reviewer guidance',
+      bullets(
+        entries.filter((entry) => entry.kind === 'reviewer_guidance'),
+        'No reviewer guidance recorded.',
+      ),
+    ),
   ].join('\n');
 }
 
@@ -110,10 +162,34 @@ function renderHandoff(input: ArtifactRenderInput) {
       `- Base ref: ${session.baseRef ?? 'Not set'}`,
       `- Changed files: ${repoSnapshot.changedFiles.length}`,
     ]),
-    section('Open risks', bullets(entries.filter((entry) => entry.kind === 'risk'), 'No explicit risks recorded.')),
-    section('Important notes', bullets(entries.filter((entry) => entry.kind === 'note' || entry.kind === 'constraint'), 'No additional notes recorded.')),
-    section('Validation already done', bullets(entries.filter((entry) => entry.kind === 'validation'), 'No validation recorded.')),
-    section('Suggested reviewer/operator focus', bullets(entries.filter((entry) => entry.kind === 'reviewer_guidance'), 'No reviewer guidance recorded.')),
+    section(
+      'Open risks',
+      bullets(
+        entries.filter((entry) => entry.kind === 'risk'),
+        'No explicit risks recorded.',
+      ),
+    ),
+    section(
+      'Important notes',
+      bullets(
+        entries.filter((entry) => entry.kind === 'note' || entry.kind === 'constraint'),
+        'No additional notes recorded.',
+      ),
+    ),
+    section(
+      'Validation already done',
+      bullets(
+        entries.filter((entry) => entry.kind === 'validation'),
+        'No validation recorded.',
+      ),
+    ),
+    section(
+      'Suggested reviewer/operator focus',
+      bullets(
+        entries.filter((entry) => entry.kind === 'reviewer_guidance'),
+        'No reviewer guidance recorded.',
+      ),
+    ),
     gitAppendix(repoSnapshot),
   ].join('\n');
 }

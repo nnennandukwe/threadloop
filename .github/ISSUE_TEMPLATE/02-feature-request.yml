@@ -1,6 +1,6 @@
 name: Feature request
 description: Propose an outcome that would improve a real ThreadLoop workflow.
-title: "[Feature]: "
+title: '[Feature]: '
 labels:
   - enhancement
 assignees: []
@@ -90,7 +90,9 @@ body:
     id: contract-impact
     attributes:
       label: Contract and compatibility considerations
-      description: Note likely effects on CLI syntax, JSON output, persisted state, artifacts, supported runtimes, or existing automation.
+      description:
+        Note likely effects on CLI syntax, JSON output, persisted state, artifacts, supported runtimes, or existing
+        automation.
 
   - type: textarea
     id: context

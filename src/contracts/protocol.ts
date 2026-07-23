@@ -127,10 +127,12 @@ function formatOptionToken(option: Option, requiredOptions: Set<string>) {
 }
 
 function getLongOptionForm(option: Option) {
-  return option.flags
-    .split(', ')
-    .find((part) => part.startsWith('--'))
-    ?.trim() ?? option.flags;
+  return (
+    option.flags
+      .split(', ')
+      .find((part) => part.startsWith('--'))
+      ?.trim() ?? option.flags
+  );
 }
 
 function deriveEnvVars(program: Command) {

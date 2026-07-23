@@ -36,10 +36,14 @@ describe('daemon command', () => {
     const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const stopController = new AbortController();
 
-    const daemon = daemonRunCommand(createContext(), { interval: 1 }, {
-      stopSignal: stopController.signal,
-      registerProcessSignalHandlers: false,
-    });
+    const daemon = daemonRunCommand(
+      createContext(),
+      { interval: 1 },
+      {
+        stopSignal: stopController.signal,
+        registerProcessSignalHandlers: false,
+      },
+    );
 
     await vi.advanceTimersByTimeAsync(1_000);
 
@@ -62,18 +66,20 @@ describe('daemon command', () => {
   });
 
   it('logs reconcile errors and continues running until interrupted', async () => {
-    mockedReconcileSession
-      .mockRejectedValueOnce(new Error('reconcile failed'))
-      .mockResolvedValueOnce([]);
+    mockedReconcileSession.mockRejectedValueOnce(new Error('reconcile failed')).mockResolvedValueOnce([]);
 
     const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const stopController = new AbortController();
 
-    const daemon = daemonRunCommand(createContext(), { interval: 1 }, {
-      stopSignal: stopController.signal,
-      registerProcessSignalHandlers: false,
-    });
+    const daemon = daemonRunCommand(
+      createContext(),
+      { interval: 1 },
+      {
+        stopSignal: stopController.signal,
+        registerProcessSignalHandlers: false,
+      },
+    );
 
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.advanceTimersByTimeAsync(1_000);

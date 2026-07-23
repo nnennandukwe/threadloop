@@ -8,7 +8,9 @@ export async function sessionListCommand(context: CommandContext) {
     text: [
       `Active sessions: ${result.sessions.length}`,
       ...(result.sessions.length > 0
-        ? result.sessions.map(({ task, session, active }) => `${session.id}  ${active ? 'active' : 'completed'}  ${task.title}`)
+        ? result.sessions.map(
+            ({ task, session, active }) => `${session.id}  ${active ? 'active' : 'completed'}  ${task.title}`,
+          )
         : ['none']),
     ],
     data: {
