@@ -40,4 +40,19 @@ describe('signed gate reusable workflow', () => {
       if: "${{ always() && hashFiles('receipt-output/signed-receipt.json') != '' }}",
     });
   });
+
+  it('scopes actionlint runtime-context suppressions to the reusable sensor', async () => {
+    const configPath = path.join(process.cwd(), '.github/actionlint.yaml');
+    const config = object(parse(await readFile(configPath, 'utf8')) as unknown);
+    const paths = object(config.paths);
+
+    expect(paths).toEqual({
+      '.github/workflows/threadloop-gate-sensor.yml': {
+        ignore: [
+          'property "workflow_repository" is not defined in object type',
+          'property "workflow_sha" is not defined in object type',
+        ],
+      },
+    });
+  });
 });

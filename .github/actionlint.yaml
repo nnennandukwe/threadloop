@@ -1,0 +1,5 @@
+paths:
+  .github/workflows/threadloop-gate-sensor.yml:
+    ignore:
+      - 'property "workflow_repository" is not defined in object type'
+      - 'property "workflow_sha" is not defined in object type'
