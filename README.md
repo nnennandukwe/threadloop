@@ -30,6 +30,7 @@ Canonical session contract:
 - `threadloop session next --session <id> [--json]`
 - `threadloop session transition <target-state> --session <id> --expected-state-version <version> --idempotency-key <key> --actor <cli|agent> --input <json-object> [--json]`
 - `threadloop session gate run <gate-id> --session <id> [--json]`
+- `threadloop session gate import <package-path> --session <id> [--json]`
 
 Compatibility surface:
 
@@ -181,8 +182,9 @@ Recommended loop:
 8. `threadloop artifact generate pr-summary --session "$session_id"`
 9. record the exact proof plan during `framed -> proof_ready`
 10. call `session gate run <gate-id>` for each declared gate while verifying
-11. call `session next --json` to inspect current, missing, stale, failed, or corrupt proof and the repair budget
-12. leave review-owned transitions and completion blocked until #42 supplies review, approval, and merge evidence
+11. import each matching receipt from the commit-pinned reusable GitHub workflow
+12. call `session next --json` to inspect independent local/CI proof and the repair budget
+13. leave review-owned transitions and completion blocked until #42 supplies review, approval, and merge evidence
 
 Use `threadloop protocol --json` as the machine-facing contract for current commands, entry kinds, artifact kinds,
 supported environment variables, and the published branch/rebase/PR workflow guidance.
@@ -190,9 +192,10 @@ supported environment variables, and the published branch/rebase/PR workflow gui
 The optional daemon only performs mechanical refresh work. It does not create semantic notes or replace explicit
 capture.
 
-The governed task lifecycle and schema-v4 proof contract are documented in [`docs/lifecycle.md`](docs/lifecycle.md).
-`session transition` uses local proof for issue #40-owned edges and remains fail-closed where #42 owns review, approval,
-and merge evidence.
+The governed task lifecycle and schema-v5 proof contract are documented in [`docs/lifecycle.md`](docs/lifecycle.md). The
+signed package and reusable workflow are specified in
+[`docs/attestations/receipt-v1.md`](docs/attestations/receipt-v1.md). `session transition` uses local proof for repair,
+signed CI proof for review authorization, and remains fail-closed where #42 owns review, approval, and merge evidence.
 
 ## Longer notes with `$EDITOR`
 

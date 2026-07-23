@@ -90,8 +90,8 @@ Reads one deterministic transition candidate, current lifecycle state/version, g
 sanitized repository identity, branch, HEAD, and worktree cleanliness. This command does not heartbeat, reconcile,
 refresh snapshots, migrate the database, repair projections, or mutate lifecycle state.
 
-The response reports each declared gate as `missing`, `passed`, `failed`, `stale`, or `corrupt`, plus the latest receipt
-id, current-HEAD staleness, and repair attempts used/remaining. Completed and blocked sessions return terminal reasons.
+JSON contract v2 preserves local `proof`, then adds `ci_proof` with `policy_missing`, `missing`, `passed`, `stale`, or
+`corrupt` status and one signed-receipt projection per gate. Completed and blocked sessions return terminal reasons.
 Schema-v2/v3 reads report `migration_required` without mutating the database.
 
 ### `threadloop session transition <target-state> [options]`
@@ -116,7 +116,16 @@ Proof-plan input:
 ```json
 {
   "proof_plan": {
-    "acceptance_criteria": ["All repository checks pass"],
+    "contract_version": 2,
+    "acceptance_criteria": ["All repository checks pass locally and in CI"],
+    "ci": {
+      "provider": "github-actions",
+      "issuer": "https://token.actions.githubusercontent.com",
+      "certificate_identity": "https://github.com/OWNER/REPO/.github/workflows/threadloop.yml@refs/heads/BRANCH",
+      "source_repository": "https://github.com/OWNER/REPO",
+      "build_signer_uri": "https://github.com/nnennandukwe/threadloop/.github/workflows/threadloop-gate-sensor.yml@FULL_SHA",
+      "build_signer_sha": "FULL_SHA"
+    },
     "gates": [
       {
         "id": "repository-check",
@@ -130,7 +139,8 @@ Proof-plan input:
 ```
 
 All gates are required. Gate ids must be unique, commands are exact argv arrays, working directories must exist and
-resolve inside the repository, and timeouts must be positive integers no greater than one day.
+resolve inside the repository, and timeouts must be positive integers no greater than one day. New proof plans require
+the v2 immutable CI policy and must match the checkout's GitHub origin and named branch.
 
 ### `threadloop session gate run <gate-id> --session <id> [--json]`
 
@@ -140,6 +150,15 @@ timeout, or shell override. It is available only in `verifying` on a clean commi
 The runner captures stdout and stderr separately, waits for process and stream closure, records non-zero, timeout,
 abort, spawn, cleanup, and repository-drift outcomes, then appends an immutable receipt. Gate execution never changes
 lifecycle state. A later receipt for the same gate supersedes an earlier receipt by database sequence.
+
+### `threadloop session gate import <package-path> --session <id> [--json]`
+
+Verifies and appends one signed GitHub Actions gate receipt. The input is limited to 10 MiB and the command accepts no
+trust-policy override. Identical reimports are no-ops; conflicting receipt ids fail closed. Successful import appends
+proof only and does not change lifecycle state or `state_version`.
+
+See [Signed gate receipt v1](attestations/receipt-v1.md) for the package, Sigstore verification, reusable workflow, and
+failure contracts.
 
 ### `threadloop daemon run [--json]`
 
@@ -218,9 +237,10 @@ ThreadLoop stores state locally in the repo:
 If an older repo still has `.threadloop/state/state.json`, ThreadLoop migrates that data into SQLite on first access and
 intentionally leaves the JSON file in place as a safety backup. After migration, ThreadLoop reads from SQLite.
 
-SQLite schema v4 stores transition/idempotency records, one immutable proof plan per session, and append-only local gate
-receipts. Migration is atomic, and schema metadata accepts canonical unsigned decimal text only. Update, delete, and
-replace attempts against plans and receipts are rejected by persistent triggers.
+SQLite schema v5 stores transition/idempotency records, one immutable proof plan per session, append-only local gate
+receipts, and append-only verified signed gate receipts. Migration is atomic, and schema metadata accepts canonical
+unsigned decimal text only. Update, delete, and replace attempts against plans and receipts are rejected by persistent
+triggers.
 
 Recommended default:
 
