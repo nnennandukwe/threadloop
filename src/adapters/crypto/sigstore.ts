@@ -55,15 +55,17 @@ export async function signSigstoreStatement(
   payloadType: string,
   attest: SigstoreAttestFunction = sigstoreAttest,
 ): Promise<Bundle> {
-  const options = { retry: { retries: 0 } } satisfies SignOptions;
-  try {
-    return await attest(payload, payloadType, options);
-  } catch (error) {
-    if (!isRekorEntryConflict(error)) {
-      throw error;
+  const options = { retry: { retries: 2 } } satisfies SignOptions;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await attest(payload, payloadType, options);
+    } catch (error) {
+      if (!isRekorEntryConflict(error) || attempt === 2) {
+        throw error;
+      }
     }
-    return attest(payload, payloadType, options);
   }
+  throw new Error('Sigstore signing exhausted its bounded retry policy.');
 }
 
 export async function verifySigstoreReceipt(
