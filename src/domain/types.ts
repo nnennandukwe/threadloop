@@ -12,6 +12,7 @@ export const ARTIFACT_KINDS = ['change-brief', 'pr-summary', 'handoff'] as const
 export const TASK_STATUS = ['active', 'completed'] as const;
 export const HEARTBEAT_SOURCES = ['cli', 'daemon', 'reconcile'] as const;
 export const ENTRY_SOURCES = ['cli', 'agent'] as const;
+export const DEFAULT_BASE_REF = 'main' as const;
 
 export type EntryKind = (typeof ENTRY_KINDS)[number];
 export type ArtifactKind = (typeof ARTIFACT_KINDS)[number];
@@ -24,6 +25,7 @@ export interface Task {
   title: string;
   goal: string;
   constraints: string[];
+  issueRef: string | null;
   repoRoot: string;
   status: TaskStatus;
   createdAt: string;

@@ -24,6 +24,7 @@ import type {
   ArtifactKind,
   Entry,
   EntryKind,
+  EntrySource,
   HeartbeatSource,
   RepoSnapshot,
   Session,
@@ -40,6 +41,8 @@ export interface StartTaskInput {
   goal: string;
   constraints: string[];
   baseRef: string | null;
+  issueRef?: string | null;
+  actor?: EntrySource;
   allowMultipleActive?: boolean;
 }
 
@@ -49,6 +52,7 @@ export interface CaptureInput {
   body: string;
   because?: string;
   sessionId?: string;
+  actor?: EntrySource;
 }
 
 export interface SessionSelector {
@@ -73,23 +77,13 @@ interface ResolvedSession extends SessionRecord {
 
 export async function initThreadloop(cwd: string) {
   const repoRoot = await resolveRepositoryRoot(cwd);
-  await ensureThreadloopLayout(repoRoot);
-
-  const created = !isThreadloopInitialized(repoRoot);
-  if (created) {
-    await writeConfig(repoRoot, { version: 1, createdAt: new Date().toISOString() });
-  } else {
-    await readConfig(repoRoot);
-  }
-  await ensureStateDatabase(repoRoot);
-
-  const gitignoreStatus = await ensureThreadloopStateIgnored(repoRoot);
+  const { created, gitignoreStatus } = await initializeThreadloopRepo(repoRoot);
   return { repoRoot, created, gitignoreStatus };
 }
 
 export async function startTask(input: StartTaskInput) {
   const repoRoot = await resolveRepositoryRoot(input.cwd);
-  await assertInitialized(repoRoot);
+  await initializeThreadloopRepo(repoRoot);
 
   if (!input.allowMultipleActive) {
     const state = await readState(repoRoot);
@@ -113,6 +107,7 @@ export async function startTask(input: StartTaskInput) {
     title: input.title,
     goal: input.goal,
     constraints: input.constraints,
+    issueRef: normalizeOptionalText(input.issueRef),
     repoRoot,
     status: 'active',
     createdAt: now,
@@ -138,9 +133,23 @@ export async function startTask(input: StartTaskInput) {
       sessionId: session.id,
       kind: 'intent',
       body: `Task started: ${task.title}`,
-      metadata: { goal: task.goal, constraints: task.constraints },
+      metadata: {
+        goal: task.goal,
+        constraints: task.constraints,
+        ...(task.issueRef ? { issueRef: task.issueRef } : {}),
+      },
       createdAt: now,
-      source: 'cli',
+      source: input.actor ?? 'cli',
+    },
+    initialSnapshot: {
+      sessionId: session.id,
+      branch: snapshot.branch,
+      headSha: snapshot.headSha,
+      baseRef: snapshot.baseRef,
+      changedFiles: snapshot.changedFiles,
+      diffStats: snapshot.diffStats,
+      commitRange: snapshot.commitRange,
+      reconciledAt: now,
     },
   });
   return { repoRoot, task, session };
@@ -272,7 +281,7 @@ export async function captureEntry(input: CaptureInput) {
     body: input.body,
     metadata: input.because ? { because: input.because } : {},
     createdAt: new Date().toISOString(),
-    source: 'cli',
+    source: input.actor ?? 'cli',
   });
   return { repoRoot, task: resolved.task, session: resolved.session, entry };
 }
@@ -307,10 +316,7 @@ export async function generateArtifact(
   const storedSnapshot = await readRepoSnapshot(repoRoot, resolved.session.id);
   let snapshot: RepoSnapshot;
   let snapshotSource: 'stored' | 'live';
-  if (storedSnapshot) {
-    snapshot = storedSnapshot;
-    snapshotSource = 'stored';
-  } else {
+  if (resolved.session.endedAt === null || !storedSnapshot) {
     snapshot = await snapshotRepo(repoRoot, resolved.session.id, resolved.session.baseRef);
     snapshotSource = 'live';
     await upsertRepoSnapshot(repoRoot, {
@@ -323,6 +329,9 @@ export async function generateArtifact(
       commitRange: snapshot.commitRange,
       reconciledAt: new Date().toISOString(),
     });
+  } else {
+    snapshot = storedSnapshot;
+    snapshotSource = 'stored';
   }
   const generatedAt = new Date().toISOString();
   const filename = `${slugify(resolved.task.title)}.${artifactKind}.md`;
@@ -353,7 +362,19 @@ export async function generateArtifact(
 export async function finishSession(cwd: string, selector: SessionSelector = { allowLegacySingleActive: true }) {
   const { repoRoot, state } = await loadStateContext(cwd);
   const resolved = resolveSessionFromState(state, selector);
-  const active = await completeSessionById(repoRoot, resolved.session.id, new Date().toISOString());
+  const endedAt = new Date().toISOString();
+  const finalSnapshot = await snapshotRepo(repoRoot, resolved.session.id, resolved.session.baseRef);
+  await upsertRepoSnapshot(repoRoot, {
+    sessionId: resolved.session.id,
+    branch: finalSnapshot.branch,
+    headSha: finalSnapshot.headSha,
+    baseRef: finalSnapshot.baseRef,
+    changedFiles: finalSnapshot.changedFiles,
+    diffStats: finalSnapshot.diffStats,
+    commitRange: finalSnapshot.commitRange,
+    reconciledAt: endedAt,
+  });
+  const active = await completeSessionById(repoRoot, resolved.session.id, endedAt);
   return { repoRoot, taskId: active.taskId, sessionId: active.sessionId };
 }
 
@@ -371,6 +392,21 @@ async function resolveRepositoryRoot(cwd: string) {
       cause: error,
     });
   }
+}
+
+async function initializeThreadloopRepo(repoRoot: string) {
+  await ensureThreadloopLayout(repoRoot);
+
+  const created = !isThreadloopInitialized(repoRoot);
+  if (created) {
+    await writeConfig(repoRoot, { version: 1, createdAt: new Date().toISOString() });
+  } else {
+    await readConfig(repoRoot);
+  }
+
+  await ensureStateDatabase(repoRoot);
+  const gitignoreStatus = await ensureThreadloopStateIgnored(repoRoot);
+  return { created, gitignoreStatus };
 }
 
 async function assertInitialized(repoRoot: string) {
@@ -461,4 +497,9 @@ function slugify(value: string) {
     .trim()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '') || 'artifact';
+}
+
+function normalizeOptionalText(value: string | null | undefined) {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
 }

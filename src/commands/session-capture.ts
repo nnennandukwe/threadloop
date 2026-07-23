@@ -1,12 +1,13 @@
 import { readTextFromEditor } from '../adapters/fs/editor.js';
 import { ThreadloopError, createInvalidArgumentError } from '../contracts/errors.js';
-import { ENTRY_KINDS, type EntryKind } from '../domain/types.js';
+import { ENTRY_KINDS, type EntryKind, type EntrySource } from '../domain/types.js';
 import { captureEntry } from '../services/session-service.js';
 import { toSessionId, type CommandContext, type JsonOption, type SessionOption, writeCommandSuccess } from './runtime.js';
 
 export interface SessionCaptureOptions extends JsonOption, SessionOption {
   because?: string;
   edit?: boolean;
+  actor?: EntrySource;
 }
 
 export async function sessionCaptureCommand(
@@ -40,6 +41,7 @@ export async function sessionCaptureCommand(
     kind: kindValue as EntryKind,
     body,
     because: options.because,
+    actor: options.actor,
   });
 
   writeCommandSuccess(context, {

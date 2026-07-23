@@ -46,6 +46,7 @@ type TaskRow = {
   title: string;
   goal: string;
   constraints_json: string;
+  issue_ref: string | null;
   repo_root: string;
   status: Task['status'];
   created_at: string;
@@ -148,12 +149,32 @@ export async function readState(repoRoot: string): Promise<StateData> {
   }
 }
 
-export async function insertTaskSession(repoRoot: string, payload: { task: Task; session: Session; intentEntry: Entry }) {
+export async function insertTaskSession(
+  repoRoot: string,
+  payload: {
+    task: Task;
+    session: Session;
+    intentEntry: Entry;
+    initialSnapshot?: {
+      sessionId: string;
+      branch: string;
+      headSha: string;
+      baseRef: string | null;
+      changedFiles: string[];
+      diffStats: { files: number; insertions: number; deletions: number };
+      commitRange: string[];
+      reconciledAt: string;
+    };
+  },
+) {
   await withWriteTransaction(repoRoot, (db) => {
       const { task, session, intentEntry } = payload;
       insertTask(db, task);
       insertSession(db, session);
       insertEntry(db, intentEntry);
+      if (payload.initialSnapshot) {
+        writeRepoSnapshot(db, payload.initialSnapshot);
+      }
       insertActiveSession(db, { taskId: task.id, sessionId: session.id });
       syncActiveStateCompat(db);
   });
@@ -247,21 +268,7 @@ export async function upsertRepoSnapshot(
   },
 ) {
   await withWriteTransaction(repoRoot, (db) => {
-      db.prepare(
-        `
-          INSERT OR REPLACE INTO repo_snapshots (session_id, branch, head_sha, base_ref, changed_files_json, diff_stats_json, commit_range_json, reconciled_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-      ).run(
-        snapshot.sessionId,
-        snapshot.branch,
-        snapshot.headSha,
-        snapshot.baseRef,
-        JSON.stringify(snapshot.changedFiles),
-        JSON.stringify(snapshot.diffStats),
-        JSON.stringify(snapshot.commitRange),
-        snapshot.reconciledAt,
-      );
+      writeRepoSnapshot(db, snapshot);
   });
 }
 
@@ -453,6 +460,11 @@ function databaseNeedsSetup(db: DatabaseSync, repoRoot: string) {
     return true;
   }
 
+  const taskColumns = new Set((db.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>).map((column) => column.name));
+  if (!taskColumns.has('issue_ref')) {
+    return true;
+  }
+
   const activeState = readActiveStateRow(db);
   const activeSessions = readActiveSessionRows(db);
   if (activeSessions.length === 0) {
@@ -491,6 +503,7 @@ function bootstrapDatabase(db: DatabaseSync) {
       title TEXT NOT NULL,
       goal TEXT NOT NULL,
       constraints_json TEXT NOT NULL,
+      issue_ref TEXT,
       repo_root TEXT NOT NULL,
       status TEXT NOT NULL,
       created_at TEXT NOT NULL
@@ -578,7 +591,17 @@ function ensureSessionHeartbeatColumns(db: DatabaseSync) {
   }
 }
 
+function ensureTaskIssueRefColumn(db: DatabaseSync) {
+  const columns = db.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>;
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has('issue_ref')) {
+    db.prepare(`ALTER TABLE tasks ADD COLUMN issue_ref TEXT`).run();
+  }
+}
+
 function runPendingMigrations(db: DatabaseSync, repoRoot: string) {
+  ensureTaskIssueRefColumn(db);
   ensureSessionHeartbeatColumns(db);
   migrateActiveStateRegistry(db);
   migrateLegacyJsonState(db, repoRoot);
@@ -686,6 +709,7 @@ function loadState(db: DatabaseSync): StateData {
     .prepare(
       `
         SELECT id, title, goal, constraints_json, repo_root, status, created_at
+        , issue_ref
         FROM tasks
         ORDER BY rowid
       `,
@@ -695,6 +719,7 @@ function loadState(db: DatabaseSync): StateData {
     title: row.title,
     goal: row.goal,
     constraints: parseJsonText<string[]>(row.constraints_json, INVALID_STATE_DB_ERROR),
+    issueRef: row.issue_ref ?? null,
     repoRoot: row.repo_root,
     status: row.status,
     createdAt: row.created_at,
@@ -795,10 +820,19 @@ function readSessionRow(db: DatabaseSync, sessionId: string) {
 function insertTask(db: DatabaseSync, task: Task) {
   db.prepare(
     `
-      INSERT INTO tasks (id, title, goal, constraints_json, repo_root, status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO tasks (id, title, goal, constraints_json, issue_ref, repo_root, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `,
-  ).run(task.id, task.title, task.goal, JSON.stringify(task.constraints), task.repoRoot, task.status, task.createdAt);
+  ).run(
+    task.id,
+    task.title,
+    task.goal,
+    JSON.stringify(task.constraints),
+    task.issueRef,
+    task.repoRoot,
+    task.status,
+    task.createdAt,
+  );
 }
 
 function insertSession(db: DatabaseSync, session: Session) {
@@ -878,6 +912,10 @@ function completeSession(db: DatabaseSync, sessionId: string, taskId: string, en
 function normalizeStateData(state: StateData): StateData {
   return {
     ...state,
+    tasks: state.tasks.map((task) => ({
+      ...task,
+      issueRef: task.issueRef ?? null,
+    })),
     sessions: state.sessions.map((session) => ({
       ...session,
       lastHeartbeatAt: session.lastHeartbeatAt ?? null,
@@ -904,6 +942,36 @@ function syncActiveStateCompat(db: DatabaseSync) {
   }
 
   db.prepare(`DELETE FROM active_state WHERE id = 1`).run();
+}
+
+function writeRepoSnapshot(
+  db: DatabaseSync,
+  snapshot: {
+    sessionId: string;
+    branch: string;
+    headSha: string;
+    baseRef: string | null;
+    changedFiles: string[];
+    diffStats: { files: number; insertions: number; deletions: number };
+    commitRange: string[];
+    reconciledAt: string;
+  },
+) {
+  db.prepare(
+    `
+      INSERT OR REPLACE INTO repo_snapshots (session_id, branch, head_sha, base_ref, changed_files_json, diff_stats_json, commit_range_json, reconciled_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    snapshot.sessionId,
+    snapshot.branch,
+    snapshot.headSha,
+    snapshot.baseRef,
+    JSON.stringify(snapshot.changedFiles),
+    JSON.stringify(snapshot.diffStats),
+    JSON.stringify(snapshot.commitRange),
+    snapshot.reconciledAt,
+  );
 }
 
 function parseJsonText<T>(value: string, invalidMessage: string): T {
