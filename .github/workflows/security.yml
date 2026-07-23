@@ -41,7 +41,7 @@ jobs:
           annotations: true
           online-audits: false
           persona: pedantic
-          version: 1.28.0
+          version: 1.26.1
 
   secrets:
     name: Secret scanning
