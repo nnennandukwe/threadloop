@@ -1,20 +1,22 @@
 import { existsSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { resolveGitPath } from '../git/client.js';
 
 const STATE_IGNORE_ENTRY = '.threadloop/state/';
 
 export type GitignoreStatus = 'created' | 'updated' | 'already-correct';
 
 export async function ensureThreadloopStateIgnored(repoRoot: string): Promise<GitignoreStatus> {
-  const gitignorePath = path.join(repoRoot, '.gitignore');
+  const excludePath = await resolveGitPath(repoRoot, 'info/exclude');
+  await mkdir(path.dirname(excludePath), { recursive: true });
 
-  if (!existsSync(gitignorePath)) {
-    await writeFile(gitignorePath, `${STATE_IGNORE_ENTRY}\n`, 'utf8');
+  if (!existsSync(excludePath)) {
+    await writeFile(excludePath, `${STATE_IGNORE_ENTRY}\n`, 'utf8');
     return 'created';
   }
 
-  const current = await readFile(gitignorePath, 'utf8');
+  const current = await readFile(excludePath, 'utf8');
   const lines = current.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 
   if (coversThreadloopState(lines)) {
@@ -22,7 +24,7 @@ export async function ensureThreadloopStateIgnored(repoRoot: string): Promise<Gi
   }
 
   const next = current.endsWith('\n') || current.length === 0 ? `${current}${STATE_IGNORE_ENTRY}\n` : `${current}\n${STATE_IGNORE_ENTRY}\n`;
-  await writeFile(gitignorePath, next, 'utf8');
+  await writeFile(excludePath, next, 'utf8');
   return 'updated';
 }
 

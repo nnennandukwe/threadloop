@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import path from 'node:path';
 import { promisify } from 'node:util';
 import type { RepoSnapshot } from '../../domain/types.js';
 import { filterThreadloopPaths, isThreadloopOwnedPath } from './filter.js';
@@ -16,6 +17,11 @@ export async function resolveRepoRoot(cwd: string) {
   } catch {
     throw new Error('ThreadLoop requires a Git repository. Run `git init` first.');
   }
+}
+
+export async function resolveGitPath(repoRoot: string, relativePath: string) {
+  const gitPath = await git(repoRoot, ['rev-parse', '--git-path', relativePath]);
+  return path.isAbsolute(gitPath) ? gitPath : path.resolve(repoRoot, gitPath);
 }
 
 export async function refExists(repoRoot: string, ref: string) {

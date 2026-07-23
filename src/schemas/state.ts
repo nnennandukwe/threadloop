@@ -6,6 +6,7 @@ export const taskSchema = z.object({
   title: z.string(),
   goal: z.string(),
   constraints: z.array(z.string()),
+  issueRef: z.string().nullable().optional().default(null),
   repoRoot: z.string(),
   status: z.enum(TASK_STATUS),
   createdAt: z.string(),
@@ -58,6 +59,10 @@ export const stateDataSchema = z
   })
   .transform((state) => ({
     ...state,
+    tasks: state.tasks.map((task) => ({
+      ...task,
+      issueRef: task.issueRef ?? null,
+    })),
     activeSessions: state.activeSessions ?? (state.active ? [state.active] : []),
   }));
 

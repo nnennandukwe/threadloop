@@ -1,12 +1,32 @@
 import type { Argument, Command, Option } from 'commander';
-import { ARTIFACT_KINDS, ENTRY_KINDS } from '../domain/types.js';
+import { ARTIFACT_KINDS, DEFAULT_BASE_REF, ENTRY_KINDS } from '../domain/types.js';
 import { createNoopCliHandlers, createThreadloopProgram, getProtocolCommandRules } from '../cli-program.js';
+
+export interface WorkflowContract {
+  defaultBaseRef: string;
+  branchNaming: {
+    default: string;
+    withIssue: string;
+  };
+  rebaseBeforePr: {
+    required: boolean;
+    upstream: string;
+  };
+  pr: {
+    baseRef: string;
+    bodyArtifact: string;
+    titleSource: string;
+    closingKeyword: string;
+  };
+  trackedFileMutations: 'none';
+}
 
 export interface ProtocolContract {
   envVars: Record<string, string>;
   commands: Record<string, string>;
   captureKinds: string[];
   artifactKinds: string[];
+  workflow: WorkflowContract;
   notes: string[];
 }
 
@@ -26,12 +46,32 @@ export function buildProtocolContract(): ProtocolContract {
     commands,
     captureKinds: [...ENTRY_KINDS],
     artifactKinds: [...ARTIFACT_KINDS],
+    workflow: {
+      defaultBaseRef: DEFAULT_BASE_REF,
+      branchNaming: {
+        default: 'threadloop/<slug>',
+        withIssue: 'issue-<issue>/<slug>',
+      },
+      rebaseBeforePr: {
+        required: true,
+        upstream: `origin/${DEFAULT_BASE_REF}`,
+      },
+      pr: {
+        baseRef: DEFAULT_BASE_REF,
+        bodyArtifact: 'pr-summary',
+        titleSource: 'task.title',
+        closingKeyword: 'Closes',
+      },
+      trackedFileMutations: 'none',
+    },
     notes: [
       'Only commands whose usage includes [--json] support machine-readable output.',
       'Session status, capture, heartbeat, and finish require --session <id>; session reconcile requires either --session <id> or --all.',
       'Legacy root commands may auto-resolve a single active session when --session is omitted.',
       'ThreadLoop-owned paths (.threadloop/) are excluded from Git scope.',
       'Reconcile refreshes metadata without creating semantic entries.',
+      'Session start auto-initializes ThreadLoop state when the repo has not been initialized yet.',
+      'Orchestrators own fetch, branch creation, rebase, and PR opening; ThreadLoop records and renders the workflow state.',
     ],
   };
 }

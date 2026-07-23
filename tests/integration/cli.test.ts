@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -40,6 +40,10 @@ async function readArtifact(repoDir: string, name: string) {
   return readFile(path.join(repoDir, `.threadloop/artifacts/${name}`), 'utf8');
 }
 
+async function readExcludeFile(repoDir: string) {
+  return readFile(path.join(repoDir, '.git/info/exclude'), 'utf8');
+}
+
 function parseJsonOutput<T>(output: string) {
   return JSON.parse(output) as T;
 }
@@ -53,6 +57,32 @@ function readStateSnapshot(repoDir: string) {
       entryKinds: db.prepare('SELECT kind FROM entries ORDER BY rowid').all().map((row) => String(row.kind)),
       entryBodies: db.prepare('SELECT body FROM entries ORDER BY rowid').all().map((row) => String(row.body)),
     };
+  } finally {
+    db.close();
+  }
+}
+
+function readStoredRepoSnapshot(repoDir: string, sessionId: string) {
+  const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
+
+  try {
+    const row = db
+      .prepare(
+        `
+          SELECT branch, base_ref, changed_files_json
+          FROM repo_snapshots
+          WHERE session_id = ?
+        `,
+      )
+      .get(sessionId) as { branch: string; base_ref: string | null; changed_files_json: string } | undefined;
+
+    return row
+      ? {
+          branch: row.branch,
+          baseRef: row.base_ref,
+          changedFiles: JSON.parse(row.changed_files_json) as string[],
+        }
+      : null;
   } finally {
     db.close();
   }
@@ -170,6 +200,86 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     const snapshot = readStateSnapshot(repoDir);
     expect(snapshot.taskStatuses).toContain('completed');
     expect(snapshot.entryKinds).toContain('decision');
+  });
+
+  it('auto-initializes on session start and records initial actor and issue metadata', async () => {
+    const started = parseJsonOutput<{
+      data: {
+        session_id: string;
+        task: { id: string; issueRef: string | null };
+        session: { id: string };
+      };
+    }>(
+      (
+        await runCli(repoDir, [
+          'session',
+          'start',
+          'Bootstrap task',
+          '--goal',
+          'Allow zero-touch agent startup',
+          '--issue',
+          'ISSUE-42',
+          '--actor',
+          'agent',
+          '--json',
+        ])
+      ).stdout,
+    );
+
+    expect(started.data.task.issueRef).toBe('ISSUE-42');
+    expect(existsSync(path.join(repoDir, '.threadloop/config.json'))).toBe(true);
+    expect(existsSync(path.join(repoDir, '.threadloop/state/state.db'))).toBe(true);
+    expect(existsSync(path.join(repoDir, '.gitignore'))).toBe(false);
+
+    const exclude = await readExcludeFile(repoDir);
+    expect(exclude).toContain('.threadloop/state/');
+
+    const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
+    try {
+      const taskRow = db.prepare(`SELECT issue_ref FROM tasks WHERE id = ?`).get(started.data.task.id) as { issue_ref: string | null } | undefined;
+      const entries = db.prepare(`SELECT kind, source FROM entries WHERE session_id = ? ORDER BY rowid`).all(started.data.session_id) as Array<{
+        kind: string;
+        source: string;
+      }>;
+      const snapshotCount = readParameterizedCount(
+        db,
+        `SELECT COUNT(*) AS count FROM repo_snapshots WHERE session_id = ?`,
+        started.data.session_id,
+      );
+
+      expect(taskRow?.issue_ref).toBe('ISSUE-42');
+      expect(entries[0]).toMatchObject({ kind: 'intent', source: 'agent' });
+      expect(snapshotCount).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('defaults an omitted session base to main when the ref exists', async () => {
+    await execFileAsync('git', ['commit', '--allow-empty', '-m', 'main baseline'], { cwd: repoDir });
+    await execFileAsync('git', ['branch', '-M', 'main'], { cwd: repoDir });
+    await execFileAsync('git', ['switch', '-c', 'threadloop/default-base'], { cwd: repoDir });
+
+    const started = parseJsonOutput<{
+      data: {
+        session_id: string;
+        session: { baseRef: string | null };
+      };
+    }>(
+      (
+        await runCli(repoDir, [
+          'session',
+          'start',
+          'Default base task',
+          '--goal',
+          'Match the published workflow contract',
+          '--json',
+        ])
+      ).stdout,
+    );
+
+    expect(started.data.session.baseRef).toBe('main');
+    expect(readStoredRepoSnapshot(repoDir, started.data.session_id)?.baseRef).toBe('main');
   });
 
   it('migrates legacy state.json into SQLite and keeps the JSON file as backup', async () => {
@@ -401,35 +511,94 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     expect(handoff).toContain('# Handoff: Add retry logic');
   });
 
-  it('creates .gitignore on init when missing', async () => {
-    const result = await runCli(repoDir, ['init']);
-    const gitignore = await readFile(path.join(repoDir, '.gitignore'), 'utf8');
+  it('renders branch, base ref, issue ref, and closing reference in pr-summary artifacts', async () => {
+    await writeFile(path.join(repoDir, 'base.txt'), 'base\n', 'utf8');
+    await execFileAsync('git', ['add', 'base.txt'], { cwd: repoDir });
+    await execFileAsync('git', ['commit', '-m', 'base commit'], { cwd: repoDir });
+    await execFileAsync('git', ['branch', '-M', 'main'], { cwd: repoDir });
 
-    expect(result.stdout).toContain('Initialized ThreadLoop');
-    expect(result.stdout).toContain('Created .gitignore and added .threadloop/state/');
-    expect(gitignore).toBe('.threadloop/state/\n');
+    const started = parseJsonOutput<{ data: { session_id: string } }>(
+      (
+        await runCli(repoDir, [
+          'session',
+          'start',
+          'Prepare PR summary',
+          '--goal',
+          'Render PR metadata',
+          '--base',
+          'main',
+          '--issue',
+          'ISSUE-18',
+          '--json',
+        ])
+      ).stdout,
+    );
+
+    await writeFile(path.join(repoDir, 'feature.ts'), 'export const feature = 18;\n', 'utf8');
+    await runCli(repoDir, ['session', 'capture', 'decision', 'Keep the summary PR-ready', '--session', started.data.session_id, '--json']);
+    await runCli(repoDir, ['artifact', 'generate', 'pr-summary', '--session', started.data.session_id, '--json']);
+
+    const prSummary = await readArtifact(repoDir, 'prepare-pr-summary.pr-summary.md');
+    expect(prSummary).toContain('issue_ref: ISSUE-18');
+    expect(prSummary).toContain('## PR metadata');
+    expect(prSummary).toContain('- Branch: main');
+    expect(prSummary).toContain('- Base ref: main');
+    expect(prSummary).toContain('- Issue: ISSUE-18');
+    expect(prSummary).toContain('- Closing reference: Closes ISSUE-18');
   });
 
-  it('updates existing .gitignore without duplicating the state entry', async () => {
-    await writeFile(path.join(repoDir, '.gitignore'), 'node_modules/\n', 'utf8');
+  it('uses a live snapshot when generating an artifact for an active session', async () => {
+    const started = parseJsonOutput<{
+      data: { session_id: string };
+    }>(
+      (await runCli(repoDir, ['session', 'start', 'Live snapshot artifact', '--goal', 'Use current repo scope', '--json'])).stdout,
+    );
+
+    await writeFile(path.join(repoDir, 'active-change.ts'), 'export const activeChange = true;\n', 'utf8');
+
+    const artifact = parseJsonOutput<{
+      data: { artifact: { snapshotSource: string } };
+    }>((await runCli(repoDir, ['artifact', 'generate', '--session', started.data.session_id, '--json'])).stdout);
+    const storedSnapshot = readStoredRepoSnapshot(repoDir, started.data.session_id);
+    const renderedArtifact = await readArtifact(repoDir, 'live-snapshot-artifact.change-brief.md');
+
+    expect(artifact.data.artifact.snapshotSource).toBe('live');
+    expect(storedSnapshot?.changedFiles).toContain('active-change.ts');
+    expect(renderedArtifact).toContain('active-change.ts');
+  });
+
+  it('creates .git/info/exclude on init when missing', async () => {
+    await rm(path.join(repoDir, '.git/info/exclude'));
+    const result = await runCli(repoDir, ['init']);
+    const exclude = await readExcludeFile(repoDir);
+
+    expect(result.stdout).toContain('Initialized ThreadLoop');
+    expect(result.stdout).toContain('Created .git/info/exclude and added .threadloop/state/');
+    expect(exclude).toContain('.threadloop/state/');
+  });
+
+  it('updates existing .git/info/exclude without duplicating the state entry', async () => {
+    await writeFile(path.join(repoDir, '.git/info/exclude'), '*.log\n', 'utf8');
 
     const first = await runCli(repoDir, ['init']);
     const second = await runCli(repoDir, ['init']);
-    const gitignore = await readFile(path.join(repoDir, '.gitignore'), 'utf8');
+    const exclude = await readExcludeFile(repoDir);
 
-    expect(first.stdout).toContain('Updated .gitignore to ignore .threadloop/state/');
-    expect(second.stdout).toContain('.gitignore already ignores .threadloop/state/');
-    expect(gitignore.match(/\.threadloop\/state\//g)?.length).toBe(1);
+    expect(first.stdout).toContain('Updated .git/info/exclude to ignore .threadloop/state/');
+    expect(second.stdout).toContain('.git/info/exclude already ignores .threadloop/state/');
+    expect(exclude.match(/\.threadloop\/state\//g)?.length).toBe(1);
   });
 
-  it('leaves .gitignore unchanged when a broader ignore already covers ThreadLoop state', async () => {
-    await writeFile(path.join(repoDir, '.gitignore'), '.threadloop/\n', 'utf8');
+  it('leaves tracked .gitignore unchanged and uses .git/info/exclude for ThreadLoop state', async () => {
+    await writeFile(path.join(repoDir, '.gitignore'), 'node_modules/\n', 'utf8');
 
     const result = await runCli(repoDir, ['init']);
     const gitignore = await readFile(path.join(repoDir, '.gitignore'), 'utf8');
+    const exclude = await readExcludeFile(repoDir);
 
-    expect(result.stdout).toContain('.gitignore already ignores .threadloop/state/');
-    expect(gitignore).toBe('.threadloop/\n');
+    expect(result.stdout).toContain('.git/info/exclude');
+    expect(gitignore).toBe('node_modules/\n');
+    expect(exclude).toContain('.threadloop/state/');
   });
 
   it('filters ThreadLoop-owned paths from artifact scope without a base ref', async () => {
@@ -467,6 +636,18 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     expect(artifact).not.toContain('.threadloop/');
   });
 
+  it('persists a final snapshot on session finish without a separate reconcile', async () => {
+    const started = parseJsonOutput<{ data: { session_id: string } }>(
+      (await runCli(repoDir, ['session', 'start', 'Finish snapshot', '--goal', 'Persist closeout snapshot', '--json'])).stdout,
+    );
+
+    await writeFile(path.join(repoDir, 'closeout.ts'), 'export const closeout = true;\n', 'utf8');
+    await runCli(repoDir, ['session', 'finish', '--session', started.data.session_id, '--json']);
+
+    const snapshot = readStoredRepoSnapshot(repoDir, started.data.session_id);
+    expect(snapshot?.changedFiles).toContain('closeout.ts');
+  });
+
   it('fails cleanly for a missing base ref', async () => {
     await runCli(repoDir, ['init']);
     await expect(runCli(repoDir, ['start', 'Add retry logic', '--goal', 'Reduce transient failures', '--base', 'missing-branch'])).rejects.toThrow();
@@ -493,7 +674,7 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     const captured = parseJsonOutput<{
       ok: true;
       command: string;
-      data: { session_id: string; entry: { kind: string; body: string } };
+      data: { session_id: string; entry: { kind: string; body: string; source: string } };
     }>(
       (
         await runCli(repoDir, [
@@ -611,11 +792,27 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     const started = parseJsonOutput<{
       ok: true;
       command: string;
-      data: { session_id: string; task_id: string };
-    }>((await runCli(repoDir, ['session', 'start', 'Explicit task', '--goal', 'Track the explicit session', '--json'])).stdout);
+      data: { session_id: string; task_id: string; task: { issueRef: string | null } };
+    }>(
+      (
+        await runCli(repoDir, [
+          'session',
+          'start',
+          'Explicit task',
+          '--goal',
+          'Track the explicit session',
+          '--issue',
+          'ISSUE-7',
+          '--actor',
+          'agent',
+          '--json',
+        ])
+      ).stdout,
+    );
 
     expect(started).toMatchObject({ ok: true, command: 'session start' });
     expect(started.data.session_id).toBeTruthy();
+    expect(started.data.task.issueRef).toBe('ISSUE-7');
 
     const listed = parseJsonOutput<{
       ok: true;
@@ -641,13 +838,15 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
           started.data.session_id,
           '--because',
           'Machine consumers need a stable envelope',
+          '--actor',
+          'agent',
           '--json',
         ])
       ).stdout,
     );
     expect(captured).toMatchObject({ ok: true, command: 'session capture' });
     expect(captured.data.session_id).toBe(started.data.session_id);
-    expect(captured.data.entry).toMatchObject({ kind: 'decision', body: 'Keep the explicit contract' });
+    expect(captured.data.entry).toMatchObject({ kind: 'decision', body: 'Keep the explicit contract', source: 'agent' });
 
     const heartbeat = parseJsonOutput<{
       ok: true;
@@ -662,13 +861,19 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     const status = parseJsonOutput<{
       ok: true;
       command: string;
-      data: { session_id: string; entries: { count: number; kinds: Record<string, number> }; session: { ended_at: string | null } };
+      data: {
+        session_id: string;
+        entries: { count: number; kinds: Record<string, number> };
+        session: { ended_at: string | null };
+        task: { issue_ref: string | null };
+      };
     }>((await runCli(repoDir, ['session', 'status', '--session', started.data.session_id, '--json'])).stdout);
     expect(status).toMatchObject({ ok: true, command: 'session status' });
     expect(status.data.session_id).toBe(started.data.session_id);
     expect(status.data.entries.count).toBe(2);
     expect(status.data.entries.kinds.intent).toBe(1);
     expect(status.data.entries.kinds.decision).toBe(1);
+    expect(status.data.task.issue_ref).toBe('ISSUE-7');
 
     const finished = parseJsonOutput<{
       ok: true;
@@ -743,9 +948,14 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
 
     const startHelp = await runCli(repoDir, ['start', '--help']);
     expect(startHelp.stdout).toContain('--json');
+    expect(startHelp.stdout).toContain('defaults to');
+    expect(startHelp.stdout).toContain('main when available');
+    expect(startHelp.stdout).toContain('--issue <ref>');
+    expect(startHelp.stdout).toContain('--actor <actor>');
 
     const captureHelp = await runCli(repoDir, ['capture', '--help']);
     expect(captureHelp.stdout).toContain('--session <id>');
+    expect(captureHelp.stdout).toContain('--actor <actor>');
     expect(captureHelp.stdout).toContain('--json');
 
     const statusHelp = await runCli(repoDir, ['status', '--help']);
@@ -773,6 +983,10 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     expect(sessionStartHelp.stdout).toContain('--json');
     expect(sessionStartHelp.stdout).toContain('--goal <goal>');
     expect(sessionStartHelp.stdout).toContain('--constraint <constraint...>');
+    expect(sessionStartHelp.stdout).toContain('defaults to');
+    expect(sessionStartHelp.stdout).toContain('main when available');
+    expect(sessionStartHelp.stdout).toContain('--issue <ref>');
+    expect(sessionStartHelp.stdout).toContain('--actor <actor>');
     expect(sessionStartHelp.stderr).toBe('');
   });
 
@@ -800,9 +1014,14 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     expect(protocol.data.artifactKinds).toEqual(['change-brief', 'pr-summary', 'handoff']);
     expect(protocol.data.commands['artifact generate']).toContain('threadloop artifact generate [kind] [--session <id>] [--json]');
     expect(protocol.data.commands['session capture']).toContain(
-      'threadloop session capture <kind> [text] --session <id> [--because <reason>] [--edit] [--json]',
+      'threadloop session capture <kind> [text] --session <id> [--because <reason>] [--actor <actor>] [--edit] [--json]',
     );
     expect(protocol.data.commands.init).toBe('threadloop init - Initialize ThreadLoop in the current Git repo');
+    expect(protocol.data.workflow.defaultBaseRef).toBe('main');
+    expect(protocol.data.workflow.branchNaming.default).toBe('threadloop/<slug>');
+    expect(protocol.data.workflow.rebaseBeforePr.upstream).toBe('origin/main');
+    expect(protocol.data.workflow.pr.bodyArtifact).toBe('pr-summary');
+    expect(protocol.data.workflow.trackedFileMutations).toBe('none');
     expect(protocol.data.notes).not.toContain('Use --json flag for machine-readable output on any command');
   });
 

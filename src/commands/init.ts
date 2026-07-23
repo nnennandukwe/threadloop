@@ -7,10 +7,10 @@ export async function initCommand() {
     : `ThreadLoop already initialized in ${result.repoRoot}`;
   const gitignoreMessage =
     result.gitignoreStatus === 'created'
-      ? 'Created .gitignore and added .threadloop/state/'
+      ? 'Created .git/info/exclude and added .threadloop/state/'
       : result.gitignoreStatus === 'updated'
-        ? 'Updated .gitignore to ignore .threadloop/state/'
-        : '.gitignore already ignores .threadloop/state/';
+        ? 'Updated .git/info/exclude to ignore .threadloop/state/'
+        : '.git/info/exclude already ignores .threadloop/state/';
 
   console.log(initMessage);
   console.log(gitignoreMessage);

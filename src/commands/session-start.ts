@@ -1,3 +1,4 @@
+import type { EntrySource } from '../domain/types.js';
 import prompts from 'prompts';
 import { readTextFromEditor } from '../adapters/fs/editor.js';
 import { writeCommandSuccess, type CommandContext } from './runtime.js';
@@ -7,6 +8,8 @@ export interface StartOptions {
   goal?: string;
   constraint?: string[];
   base?: string;
+  issue?: string;
+  actor?: EntrySource;
   goalEdit?: boolean;
 }
 
@@ -36,7 +39,9 @@ export async function sessionStartCommand(
     title,
     goal,
     constraints: options.constraint ?? [],
-    baseRef: options.base ?? null,
+    baseRef: options.base,
+    issueRef: options.issue,
+    actor: options.actor,
     allowMultipleActive,
   });
 
@@ -45,6 +50,7 @@ export async function sessionStartCommand(
       `Started task: ${result.task.title}`,
       `Goal: ${result.task.goal}`,
       `Constraints: ${result.task.constraints.length > 0 ? result.task.constraints.join('; ') : 'none'}`,
+      `Issue: ${result.task.issueRef ?? 'none'}`,
       `Session: ${result.session.id}`,
     ],
     data: {

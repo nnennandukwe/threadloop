@@ -45,6 +45,18 @@ export async function protocolPrintCommand(context: CommandContext, options: Pro
 
   lines.push('## Artifact Kinds', '', protocol.artifactKinds.map((kind) => `- \`${kind}\``).join('\n'), '');
 
+  lines.push(
+    '## Workflow',
+    '',
+    `- Default base ref: \`${protocol.workflow.defaultBaseRef}\``,
+    `- Branch naming: \`${protocol.workflow.branchNaming.default}\`; with issue \`${protocol.workflow.branchNaming.withIssue}\``,
+    `- Rebase before PR: ${protocol.workflow.rebaseBeforePr.required ? `required onto \`${protocol.workflow.rebaseBeforePr.upstream}\`` : 'not required'}`,
+    `- PR body artifact: \`${protocol.workflow.pr.bodyArtifact}\``,
+    `- PR closing keyword: \`${protocol.workflow.pr.closingKeyword}\``,
+    `- Tracked file mutations: \`${protocol.workflow.trackedFileMutations}\``,
+    '',
+  );
+
   lines.push('## Notes', '');
 
   for (const note of protocol.notes) {

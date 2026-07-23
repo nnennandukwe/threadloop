@@ -1,5 +1,5 @@
 import { Command, InvalidArgumentError, Option } from 'commander';
-import { ARTIFACT_KINDS, ENTRY_KINDS, HEARTBEAT_SOURCES } from './domain/types.js';
+import { ARTIFACT_KINDS, ENTRY_KINDS, ENTRY_SOURCES, HEARTBEAT_SOURCES } from './domain/types.js';
 
 type CliAction = (...args: any[]) => unknown;
 
@@ -83,7 +83,9 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
       .argument('<title>', 'task title')
       .option('--goal <goal>', 'goal for the task')
       .option('--constraint <constraint...>', 'constraints that matter for this task')
-      .option('--base <ref>', 'base Git ref used for comparisons')
+      .option('--base <ref>', 'base Git ref used for comparisons; defaults to main when available')
+      .option('--issue <ref>', 'issue reference for branch and PR traceability')
+      .option('--actor <actor>', 'entry actor for the initial intent record', parseEntrySource, 'cli')
       .option('--goal-edit', 'open $EDITOR for the goal text'),
   ).action(handlers.start);
 
@@ -95,6 +97,7 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
       .argument('[text]', 'entry text')
       .option('--session <id>', 'session id to target')
       .option('--because <reason>', 'optional reasoning or context')
+      .option('--actor <actor>', 'entry actor for the captured note', parseEntrySource, 'cli')
       .option('--edit', 'open $EDITOR for longer text'),
   ).action(handlers.capture);
 
@@ -124,7 +127,9 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
       .argument('<title>', 'task title')
       .option('--goal <goal>', 'goal for the task')
       .option('--constraint <constraint...>', 'constraints that matter for this task')
-      .option('--base <ref>', 'base Git ref used for comparisons')
+      .option('--base <ref>', 'base Git ref used for comparisons; defaults to main when available')
+      .option('--issue <ref>', 'issue reference for branch and PR traceability')
+      .option('--actor <actor>', 'entry actor for the initial intent record', parseEntrySource, 'cli')
       .option('--goal-edit', 'open $EDITOR for the goal text'),
   ).action(handlers.sessionStart);
 
@@ -142,6 +147,7 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
       .argument('[text]', 'entry text')
       .option('--session <id>', 'session id to target')
       .option('--because <reason>', 'optional reasoning or context')
+      .option('--actor <actor>', 'entry actor for the captured note', parseEntrySource, 'cli')
       .option('--edit', 'open $EDITOR for longer text'),
   ).action(handlers.sessionCapture);
 
@@ -203,6 +209,13 @@ function parseHeartbeatSource(value: string) {
     throw new InvalidArgumentError(`Heartbeat source must be one of: ${HEARTBEAT_SOURCES.join(', ')}`);
   }
   return value as (typeof HEARTBEAT_SOURCES)[number];
+}
+
+function parseEntrySource(value: string) {
+  if (!ENTRY_SOURCES.includes(value as (typeof ENTRY_SOURCES)[number])) {
+    throw new InvalidArgumentError(`Actor must be one of: ${ENTRY_SOURCES.join(', ')}`);
+  }
+  return value as (typeof ENTRY_SOURCES)[number];
 }
 
 function parseIntervalSeconds(value: string): number {

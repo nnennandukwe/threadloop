@@ -74,10 +74,9 @@ npm link
 In another Git repo:
 
 ```bash
-threadloop init
-threadloop session start "Add retry logic" --goal "Reduce transient failures" --json
+threadloop session start "Add retry logic" --goal "Reduce transient failures" --actor agent --json
 session_id="session_123" # replace with the session_id returned from session start
-threadloop session capture decision "Retry only idempotent jobs" --session "$session_id" --because "Replay must stay safe"
+threadloop session capture decision "Retry only idempotent jobs" --session "$session_id" --because "Replay must stay safe" --actor agent
 threadloop session status --session "$session_id" --json
 ```
 
@@ -95,7 +94,6 @@ Then in another Git repo, install the generated tarball:
 
 ```bash
 npm install /absolute/path/to/threadloop-0.1.0.tgz
-npx threadloop init
 npx threadloop session start "Add retry logic" --goal "Reduce transient failures" --json
 ```
 
@@ -112,7 +110,7 @@ npm run smoke:pack
 - creates `.threadloop/` if needed
 - creates or opens `.threadloop/state/state.db`
 - migrates legacy `.threadloop/state/state.json` into SQLite when present
-- ensures `.threadloop/state/` is ignored in the target repo's `.gitignore`
+- ensures `.threadloop/state/` is ignored via `.git/info/exclude`
 - leaves `.threadloop/artifacts/` visible by default
 
 ## SQLite migration status
@@ -136,10 +134,9 @@ What is not implemented yet in this slice:
 ## Quick start
 
 ```bash
-npx threadloop init
-npx threadloop session start "Add retry logic to job runner" --goal "Reduce transient failure rate" --base main --json
+npx threadloop session start "Add retry logic to job runner" --goal "Reduce transient failure rate" --base main --actor agent --json
 session_id="session_123" # replace with the session_id returned from session start
-npx threadloop session capture decision "Retry only idempotent jobs" --session "$session_id" --because "Non-idempotent replay is unsafe"
+npx threadloop session capture decision "Retry only idempotent jobs" --session "$session_id" --because "Non-idempotent replay is unsafe" --actor agent
 npx threadloop session capture validation "Ran targeted tests for retry backoff and cancellation" --session "$session_id"
 npx threadloop session status --session "$session_id" --json
 npx threadloop protocol --json
@@ -153,15 +150,17 @@ Use explicit session commands for automation and keep one autonomous task per ch
 
 Recommended loop:
 
-1. `threadloop init`
-2. `threadloop session start ... --json`
-3. persist the returned `session_id`
-4. `threadloop session capture ... --session "$session_id"`
-5. `threadloop session reconcile --session "$session_id"` when Git-derived scope needs refresh
-6. `threadloop artifact generate ... --session "$session_id"`
-7. `threadloop session finish --session "$session_id"`
+1. fetch `origin` and fast-forward local `main` to `origin/main`
+2. create a fresh task branch from updated `main`
+3. `threadloop session start ... --base main --actor agent --json`
+4. persist the returned `session_id`
+5. `threadloop session capture ... --session "$session_id" --actor agent`
+6. `threadloop session reconcile --session "$session_id"` when Git-derived scope needs refresh
+7. rebase the task branch onto the latest `origin/main`
+8. `threadloop artifact generate pr-summary --session "$session_id"`
+9. `threadloop session finish --session "$session_id"`
 
-Use `threadloop protocol --json` as the machine-facing contract for current commands, entry kinds, artifact kinds, and supported environment variables.
+Use `threadloop protocol --json` as the machine-facing contract for current commands, entry kinds, artifact kinds, supported environment variables, and the published branch/rebase/PR workflow guidance.
 
 The optional daemon only performs mechanical refresh work. It does not create semantic notes or replace explicit capture.
 
@@ -210,7 +209,7 @@ npm run smoke:pack
 - Compatibility root `start` keeps one active session per repo.
 - Compatibility root `capture`, `artifact generate`, and `finish` work without `--session` only when exactly one active session exists.
 - Compatibility root `status` fails with `SESSION_REQUIRED` when zero sessions match.
-- `.threadloop/state/` is gitignored by default.
+- `.threadloop/state/` is ignored via `.git/info/exclude` by default.
 - Artifacts are local by default and may be committed when useful.
 
 ## Docs

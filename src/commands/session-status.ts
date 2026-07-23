@@ -37,6 +37,7 @@ export async function sessionStatusCommand(context: CommandContext, options: Ses
       `Task: ${task.title}`,
       `Session: ${session.id}`,
       `Goal: ${task.goal}`,
+      `Issue: ${task.issueRef ?? 'not set'}`,
       `Status: ${task.status}`,
       `Branch: ${result.repoSnapshot?.branch ?? session.branch}`,
       `Base ref: ${session.baseRef ?? 'not set'}`,
@@ -51,6 +52,7 @@ export async function sessionStatusCommand(context: CommandContext, options: Ses
         id: task.id,
         title: task.title,
         goal: task.goal,
+        issue_ref: task.issueRef,
         status: task.status,
       },
       session: {
