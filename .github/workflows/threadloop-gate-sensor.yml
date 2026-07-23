@@ -30,7 +30,7 @@ jobs:
     timeout-minutes: 360
     permissions:
       contents: read
-      id-token: write
+      id-token: write # Required only to obtain the Fulcio signing certificate.
 
     steps:
       - name: Check out caller source
