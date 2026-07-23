@@ -251,6 +251,10 @@ function parsePorcelainPaths(output: string) {
       paths.push(changedPath);
     }
     if (/[RC]/.test(status)) {
+      const originalPath = records[index + 1];
+      if (originalPath) {
+        paths.push(originalPath);
+      }
       index += 1;
     }
   }

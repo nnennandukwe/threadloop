@@ -763,6 +763,28 @@ describe('session transition command', { timeout: 20_000 }, () => {
 });
 
 describe('session next command', { timeout: 15_000 }, () => {
+  it('reports both repository paths for a pending rename', async () => {
+    const repoDir = await makeRepo();
+    await execFileAsync('git', ['config', 'user.email', 'test@example.com'], { cwd: repoDir });
+    await execFileAsync('git', ['config', 'user.name', 'Test User'], { cwd: repoDir });
+    await writeFile(path.join(repoDir, 'renamed-from.txt'), 'rename fixture\n', 'utf8');
+    await execFileAsync('git', ['add', 'renamed-from.txt'], { cwd: repoDir });
+    await execFileAsync('git', ['commit', '-m', 'add rename fixture'], { cwd: repoDir });
+    const started = parseJson<{ data: { session_id: string } }>(
+      (await runCli(repoDir, ['session', 'start', 'Rename task', '--goal', 'Observe both rename paths', '--json']))
+        .stdout,
+    );
+    await execFileAsync('git', ['mv', 'renamed-from.txt', 'renamed-to.txt'], { cwd: repoDir });
+
+    const next = parseJson<{
+      data: { repository: { worktree: { changed_files: string[] } } };
+    }>((await runCli(repoDir, ['session', 'next', '--session', started.data.session_id, '--json'])).stdout);
+
+    expect(next.data.repository.worktree.changed_files).toEqual(
+      expect.arrayContaining(['renamed-from.txt', 'renamed-to.txt']),
+    );
+  });
+
   it('returns live sanitized repository facts without mutating ThreadLoop state', async () => {
     const repoDir = await makeRepo();
     await writeFile(path.join(repoDir, 'README.md'), '# fixture\n', 'utf8');
