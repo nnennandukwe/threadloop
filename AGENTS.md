@@ -14,9 +14,8 @@ Typical commands:
 
 ```bash
 npm ci
-npm test
-npm run build
-npm run smoke:pack
+npm run check
+npm run security:dependencies
 ```
 
 ## Rules
@@ -24,6 +23,7 @@ npm run smoke:pack
 - Run commands directly on the host from the repository root.
 - Prefer the existing npm scripts over ad hoc command variants when they cover the task.
 - Keep the documented local workflow aligned with `package.json` engines and scripts.
+- Run `npm run check` before review; use narrower scripts only for iteration.
 
 ## Git Workflow
 

@@ -213,10 +213,14 @@ Example artifacts live in `examples/`.
 ## Development
 
 ```bash
-npm run test
-npm run build
-npm run smoke:pack
+npm ci
+npm run check
+npm run security:dependencies
 ```
+
+`npm run check` is the canonical deterministic quality gate. It covers formatting, source and Markdown linting,
+repository-wide type checking, dead-code analysis, community-file validation, tests, the production build, and packaged
+installation. See the [contribution guide](CONTRIBUTING.md) for hook behavior and security-check details.
 
 ## Notes
 

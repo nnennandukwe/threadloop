@@ -45,9 +45,8 @@ Closes #
 
 | Check                                 | Result | Notes |
 | ------------------------------------- | ------ | ----- |
-| `npm test`                            |        |       |
-| `npm run build`                       |        |       |
-| `npm run smoke:pack`                  |        |       |
+| `npm run check`                       |        |       |
+| `npm run security:dependencies`       |        |       |
 | `git diff --check origin/main...HEAD` |        |       |
 
 ## Risk and recovery

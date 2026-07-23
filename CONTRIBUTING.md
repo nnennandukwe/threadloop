@@ -29,9 +29,12 @@ From the repository root:
 
 ```bash
 npm ci
-npm test
-npm run build
+npm run check
 ```
+
+`npm ci` installs the repository-managed Git hooks. The full check runs formatting verification, ESLint, Markdownlint,
+TypeScript, dead-code analysis, community-file validation, tests, the production build, and the packaged-install smoke
+test.
 
 See the [README](README.md) for local `npm link` and packaged-install workflows.
 
@@ -79,14 +82,32 @@ focused regression coverage.
 Run the complete local validation suite from the repository root:
 
 ```bash
-npm test
-npm run build
-npm run smoke:pack
+npm run check
+npm run security:dependencies
 git diff --check origin/main...HEAD
 ```
 
+`npm run security:dependencies` blocks high and critical npm advisories. CI also runs OSV-Scanner against the lockfile.
+Unlike formatting, linting, and type checking, dependency advisory results can change when vulnerability databases are
+updated.
+
 If a check does not apply or cannot run, record that explicitly in the pull request with the reason and any narrower
 validation performed. Do not describe a check as passing unless it completed successfully.
+
+## Git hooks
+
+The pre-commit hook rejects whitespace errors and runs only the staged-file checks that apply to the change. TypeScript
+or tooling changes also trigger whole-project type and dead-code checks. The pre-push hook runs the test suite and
+production build; CI additionally runs the packaged-install smoke test and security jobs.
+
+Hooks are guardrails, not the source of truth. Use `--no-verify` only when a hook itself is broken or the repository is
+being bootstrapped, record the reason in the pull request, and run the equivalent commands before review.
+
+## Security exceptions
+
+Do not add blanket vulnerability or secret-scanning baselines. An unavoidable dependency exception must name one
+advisory in `osv-scanner.toml`, explain why the vulnerable behavior is unreachable, link a remediation issue, and expire
+within 30 days. High or critical advisories must be fixed rather than ignored.
 
 ## Pull request quality
 
