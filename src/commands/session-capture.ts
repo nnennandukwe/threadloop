@@ -37,11 +37,11 @@ export async function sessionCaptureCommand(
 
   const result = await captureEntry({
     cwd: context.cwd,
-    sessionId,
     kind: kindValue as EntryKind,
     body,
-    because: options.because,
-    actor: options.actor,
+    ...(sessionId ? { sessionId } : {}),
+    ...(options.because ? { because: options.because } : {}),
+    ...(options.actor ? { actor: options.actor } : {}),
   });
 
   writeCommandSuccess(context, {

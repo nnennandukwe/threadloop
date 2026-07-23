@@ -25,7 +25,7 @@ export async function sessionHeartbeatCommand(context: CommandContext, options: 
   const result = await heartbeatSession({
     cwd: context.cwd,
     sessionId,
-    source: source as HeartbeatSource | undefined,
+    ...(source ? { source: source as HeartbeatSource } : {}),
   });
 
   writeCommandSuccess(context, {

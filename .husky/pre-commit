@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+
+git diff --cached --check
+npx lint-staged --concurrent false

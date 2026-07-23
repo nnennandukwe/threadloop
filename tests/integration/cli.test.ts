@@ -5,19 +5,16 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { beforeEach, describe, expect, it } from 'vitest';
-import * as sqliteStore from '../../src/adapters/fs/sqlite-store.js';
+import {
+  appendEntryToSession,
+  closeSqliteConnections,
+  createId,
+  resetSqliteConnections,
+} from '../../src/adapters/fs/sqlite-store.js';
 import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
 import { buildProtocolContract } from '../../src/contracts/protocol.js';
 
 const execFileAsync = promisify(execFile);
-const { appendEntryToSession, createId } = sqliteStore;
-
-type SqliteStoreLifecycleHooks = typeof sqliteStore & {
-  closeSqliteConnections?: () => void | Promise<void>;
-  resetSqliteConnections?: () => void | Promise<void>;
-};
-
-const sqliteStoreLifecycle = sqliteStore as SqliteStoreLifecycleHooks;
 
 const projectRoot = process.cwd();
 const tsxCli = path.join(projectRoot, 'node_modules/tsx/dist/cli.mjs');
@@ -89,18 +86,8 @@ function readStoredRepoSnapshot(repoDir: string, sessionId: string) {
 }
 
 async function resetSqliteConnectionLifecycle() {
-  const { closeSqliteConnections, resetSqliteConnections } = sqliteStoreLifecycle;
-
-  if (typeof closeSqliteConnections !== 'function') {
-    throw new Error('Expected sqlite store to export closeSqliteConnections for lifecycle coverage.');
-  }
-
-  if (typeof resetSqliteConnections !== 'function') {
-    throw new Error('Expected sqlite store to export resetSqliteConnections for lifecycle coverage.');
-  }
-
-  await Promise.resolve(closeSqliteConnections());
-  await Promise.resolve(resetSqliteConnections());
+  await closeSqliteConnections();
+  await resetSqliteConnections();
 }
 
 async function runConcurrentMutationBurst(repoDir: string, sessionId: string, label: string) {
@@ -892,8 +879,8 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     expect(relisted.data.sessions[0]).toMatchObject({
       session_id: started.data.session_id,
       active: false,
-      ended_at: expect.any(String),
     });
+    expect(relisted.data.sessions[0]?.ended_at).toEqual(expect.any(String));
 
     const finalStatus = parseJsonOutput<{
       ok: true;
@@ -1050,17 +1037,13 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     const reReconcile = parseJsonOutput<{
       data: { sessions: Array<{ session_id: string; previous_head_sha: string | null }> };
     }>((await runCli(repoDir, ['session', 'reconcile', '--session', sessionId, '--json'])).stdout);
-    expect(reReconcile.data.sessions[0].previous_head_sha).toBeTruthy();
+    expect(reReconcile.data.sessions[0]?.previous_head_sha).toBeTruthy();
   });
 
   it('reconciles all active sessions with --all', async () => {
     await runCli(repoDir, ['init']);
-    const first = parseJsonOutput<{ data: { session_id: string } }>(
-      (await runCli(repoDir, ['session', 'start', 'First task', '--goal', 'First goal', '--json'])).stdout,
-    );
-    const second = parseJsonOutput<{ data: { session_id: string } }>(
-      (await runCli(repoDir, ['session', 'start', 'Second task', '--goal', 'Second goal', '--json'])).stdout,
-    );
+    await runCli(repoDir, ['session', 'start', 'First task', '--goal', 'First goal', '--json']);
+    await runCli(repoDir, ['session', 'start', 'Second task', '--goal', 'Second goal', '--json']);
 
     const reconcile = parseJsonOutput<{
       data: { reconciled: number };
@@ -1218,11 +1201,12 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     expect(status.data.session.last_heartbeat_source).toBe('daemon');
     expect(status.data.repo_snapshot?.changedFiles).toContain('feature.ts');
     expect(finished.data.session_id).toBe(sessionId);
-    expect(listed.data.sessions).toContainEqual(expect.objectContaining({
+    const listedSession = listed.data.sessions.find((session) => session.session_id === sessionId);
+    expect(listedSession).toMatchObject({
       session_id: sessionId,
       active: false,
-      ended_at: expect.any(String),
-    }));
+    });
+    expect(listedSession?.ended_at).toEqual(expect.any(String));
 
     const renderedArtifact = await readFile(path.join(repoDir, artifact.data.artifact.path), 'utf8');
     expect(renderedArtifact).toContain('feature.ts');

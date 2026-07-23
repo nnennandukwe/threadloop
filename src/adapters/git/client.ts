@@ -115,10 +115,10 @@ function parseNumstat(output: string) {
     .map((line) => line.split('\t'))
     .filter((parts) => parts.length >= 3 && !isThreadloopOwnedPath(parts[2] ?? ''))
     .reduce(
-      (acc, [insertions, deletions]) => ({
+      (acc, parts) => ({
         files: acc.files + 1,
-        insertions: acc.insertions + parseNumstatValue(insertions),
-        deletions: acc.deletions + parseNumstatValue(deletions),
+        insertions: acc.insertions + parseNumstatValue(parts[0] ?? ''),
+        deletions: acc.deletions + parseNumstatValue(parts[1] ?? ''),
       }),
       { files: 0, insertions: 0, deletions: 0 },
     );

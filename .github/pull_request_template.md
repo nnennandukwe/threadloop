@@ -1,3 +1,5 @@
+<!-- markdownlint-disable-file MD041 -->
+
 <!--
 Thanks for contributing to ThreadLoop.
 

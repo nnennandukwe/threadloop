@@ -1,0 +1,13 @@
+{
+  "config": {
+    "MD013": false
+  },
+  "globs": [
+    "**/*.md",
+    "!**/.gsd/**",
+    "!**/.threadloop/**",
+    "!**/coverage/**",
+    "!**/dist/**",
+    "!**/node_modules/**"
+  ]
+}

@@ -13,6 +13,10 @@ describe('protocol contract', () => {
     for (const command of leafCommands) {
       const path = getCommandPath(command);
       const usage = contract.commands[path];
+      expect(usage).toBeDefined();
+      if (!usage) {
+        throw new Error(`Missing protocol usage for ${path}`);
+      }
       const supportsJson = command.options.some((option) => option.long === '--json');
       expect(usage.startsWith(`threadloop ${path}`)).toBe(true);
       expect(usage.includes('[--json]')).toBe(supportsJson);

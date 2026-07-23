@@ -19,7 +19,7 @@ export interface ThreadloopErrorOptions {
 
 export class ThreadloopError extends Error {
   readonly code: ThreadloopErrorCode;
-  readonly details?: Record<string, unknown>;
+  readonly details: Record<string, unknown> | undefined;
 
   constructor(code: ThreadloopErrorCode, message: string, options: ThreadloopErrorOptions = {}) {
     super(message, options.cause ? { cause: options.cause } : undefined);
@@ -34,7 +34,7 @@ export function isThreadloopError(error: unknown): error is ThreadloopError {
 }
 
 export function createInvalidArgumentError(message: string, details?: Record<string, unknown>) {
-  return new ThreadloopError('INVALID_ARGUMENT', message, { details });
+  return new ThreadloopError('INVALID_ARGUMENT', message, details ? { details } : {});
 }
 
 export function toThreadloopError(error: unknown) {

@@ -4,7 +4,7 @@ import { writeCommandSuccess } from './runtime.js';
 
 export type ProtocolPrintOptions = { json?: boolean };
 
-export async function protocolPrintCommand(context: CommandContext, options: ProtocolPrintOptions) {
+export function protocolPrintCommand(context: CommandContext, options: ProtocolPrintOptions) {
   const protocol = buildProtocolContract();
 
   if (options.json) {

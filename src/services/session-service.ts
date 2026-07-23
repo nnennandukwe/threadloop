@@ -175,12 +175,6 @@ export async function listSessions(cwd: string) {
   };
 }
 
-export async function getSession(cwd: string, sessionId: string) {
-  const { repoRoot, state } = await loadStateContext(cwd);
-  const record = resolveSessionRecord(state, sessionId);
-  return { repoRoot, task: record.task, session: record.session };
-}
-
 export async function heartbeatSession(input: HeartbeatInput) {
   const { repoRoot, state } = await loadStateContext(input.cwd);
   const resolved = resolveSessionFromState(state, { sessionId: input.sessionId });
@@ -276,8 +270,8 @@ export async function reconcileSession(input: ReconcileInput): Promise<Reconcile
 export async function captureEntry(input: CaptureInput) {
   const { repoRoot, state } = await loadStateContext(input.cwd);
   const resolved = resolveSessionFromState(state, {
-    sessionId: input.sessionId,
     allowLegacySingleActive: !input.sessionId,
+    ...(input.sessionId ? { sessionId: input.sessionId } : {}),
   });
 
   const entry: Entry = await appendEntryToSession(repoRoot, resolved.session.id, {
@@ -455,7 +449,10 @@ function resolveSessionFromState(state: StateData, selector: SessionSelector): R
     });
   }
 
-  const [active] = state.activeSessions;
+  const active = state.activeSessions[0];
+  if (!active) {
+    throw new ThreadloopError('STATE_CORRUPTED', 'ThreadLoop active session registry is inconsistent.');
+  }
   return { active, ...materializeSessionRecord(state, active) };
 }
 

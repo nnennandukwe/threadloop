@@ -180,20 +180,6 @@ export async function insertTaskSession(
   });
 }
 
-export async function appendEntryToActiveSession(
-  repoRoot: string,
-  draft: Omit<Entry, 'sessionId'>,
-): Promise<Entry> {
-  return withWriteTransaction(repoRoot, (db) => {
-      const active = readActiveStateRow(db);
-      if (!active) {
-        throw new Error('No active session in this repo. Start one with `threadloop session start`.');
-      }
-
-      return appendEntry(db, active.session_id, draft);
-  });
-}
-
 export async function appendEntryToSession(repoRoot: string, sessionId: string, draft: Omit<Entry, 'sessionId'>) {
   return withWriteTransaction(repoRoot, (db) => appendEntry(db, sessionId, draft));
 }
@@ -201,17 +187,6 @@ export async function appendEntryToSession(repoRoot: string, sessionId: string, 
 export async function recordArtifact(repoRoot: string, artifact: Artifact) {
   await withWriteTransaction(repoRoot, (db) => {
     insertArtifact(db, artifact);
-  });
-}
-
-export async function completeActiveSession(repoRoot: string, endedAt: string): Promise<ActiveState> {
-  return withWriteTransaction(repoRoot, (db) => {
-      const active = readActiveStateRow(db);
-      if (!active) {
-        throw new Error('No active session in this repo. Start one with `threadloop session start`.');
-      }
-
-      return completeSession(db, active.session_id, active.task_id, endedAt);
   });
 }
 
@@ -319,6 +294,7 @@ export async function closeSqliteConnections(repoRoot?: string) {
   }
 }
 
+// Tests and long-lived hosts use this alias to assert that both lifecycle entry points remain safe.
 export async function resetSqliteConnections(repoRoot?: string) {
   await closeSqliteConnections(repoRoot);
 }
@@ -472,8 +448,13 @@ function databaseNeedsSetup(db: DatabaseSync, repoRoot: string) {
       return true;
     }
   } else if (activeSessions.length === 1) {
-    const [activeSession] = activeSessions;
-    if (!activeState || activeState.session_id !== activeSession.session_id || activeState.task_id !== activeSession.task_id) {
+    const activeSession = activeSessions[0];
+    if (
+      !activeSession ||
+      !activeState ||
+      activeState.session_id !== activeSession.session_id ||
+      activeState.task_id !== activeSession.task_id
+    ) {
       return true;
     }
   } else if (activeState) {
@@ -784,7 +765,7 @@ function loadState(db: DatabaseSync): StateData {
     taskId: row.task_id,
     sessionId: row.session_id,
   }));
-  const active = activeSessions.length === 1 ? activeSessions[0] : null;
+  const active = activeSessions.length === 1 ? (activeSessions[0] ?? null) : null;
 
   return normalizeStateData({ tasks, sessions, entries, artifacts, active, activeSessions });
 }
@@ -928,7 +909,10 @@ function normalizeStateData(state: StateData): StateData {
 function syncActiveStateCompat(db: DatabaseSync) {
   const activeSessions = readActiveSessionRows(db);
   if (activeSessions.length === 1) {
-    const [active] = activeSessions;
+    const active = activeSessions[0];
+    if (!active) {
+      throw new Error('ThreadLoop active session registry is inconsistent.');
+    }
     db.prepare(
       `
         INSERT INTO active_state (id, task_id, session_id)

@@ -3,17 +3,17 @@ import { createRequire } from 'node:module';
 const SQLITE_EXPERIMENTAL_WARNING = 'SQLite is an experimental feature and might change at any time';
 
 const require = createRequire(import.meta.url);
-const originalEmitWarning = process.emitWarning.bind(process);
+const originalEmitWarning: typeof process.emitWarning = process.emitWarning.bind(process);
 
-process.emitWarning = function suppressNodeSqliteExperimentalWarning(warning, type, ...args) {
-  const warningMessage = typeof warning === 'string' ? warning : warning?.message;
-  const warningType = readWarningType(warning, type);
+process.emitWarning = (warning, typeOrOptions, ...args) => {
+  const warningMessage = typeof warning === 'string' ? warning : warning.message;
+  const warningType = readWarningType(warning, typeOrOptions);
 
   if (warningType === 'ExperimentalWarning' && warningMessage?.includes(SQLITE_EXPERIMENTAL_WARNING)) {
     return;
   }
 
-  return originalEmitWarning(warning, type, ...args);
+  Reflect.apply(originalEmitWarning, process, [warning, typeOrOptions, ...args]);
 };
 
 const sqlite = (() => {
@@ -24,15 +24,16 @@ const sqlite = (() => {
   }
 })();
 
-export const { DatabaseSync } = sqlite;
+export const DatabaseSync = sqlite.DatabaseSync;
+export type DatabaseSync = InstanceType<typeof sqlite.DatabaseSync>;
 
-function readWarningType(warning: string | Error, type: unknown) {
-  if (typeof type === 'string') {
-    return type;
+function readWarningType(warning: string | Error, typeOrOptions: unknown) {
+  if (typeof typeOrOptions === 'string') {
+    return typeOrOptions;
   }
 
-  if (type && typeof type === 'object' && 'type' in type) {
-    const objectType = type.type;
+  if (typeOrOptions && typeof typeOrOptions === 'object' && 'type' in typeOrOptions) {
+    const objectType = typeOrOptions.type;
     return typeof objectType === 'string' ? objectType : undefined;
   }
 

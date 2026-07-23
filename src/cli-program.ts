@@ -1,7 +1,9 @@
 import { Command, InvalidArgumentError, Option } from 'commander';
 import { ARTIFACT_KINDS, ENTRY_KINDS, ENTRY_SOURCES, HEARTBEAT_SOURCES } from './domain/types.js';
 
-type CliAction = (...args: any[]) => unknown;
+// Commander intentionally models command action arguments as a variadic any[] boundary.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type CliAction = (...args: any[]) => void | Promise<void>;
 
 export interface ThreadloopCliHandlers {
   init: CliAction;
