@@ -155,7 +155,7 @@ afterEach(async () => {
   temporaryRepos.length = 0;
 });
 
-describe('schema v4 proof persistence', () => {
+describe('schema v5 signed-proof persistence', () => {
   it('migrates a canonical schema-v2 database without changing lifecycle state', async () => {
     const repoDir = await makeRepo();
     const dbPath = createSchemaV2(repoDir);
@@ -165,20 +165,21 @@ describe('schema v4 proof persistence', () => {
 
     const db = new DatabaseSync(dbPath, { readOnly: true });
     try {
-      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '4' });
+      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '5' });
       expect(
         (db.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>).map((column) => column.name),
       ).toContain('blocked_from_state');
       expect(
         db
           .prepare(
-            `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('session_transitions', 'transition_idempotency', 'proof_plans', 'gate_receipts') ORDER BY name`,
+            `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('session_transitions', 'transition_idempotency', 'proof_plans', 'gate_receipts', 'signed_gate_receipts') ORDER BY name`,
           )
           .all(),
       ).toEqual([
         { name: 'gate_receipts' },
         { name: 'proof_plans' },
         { name: 'session_transitions' },
+        { name: 'signed_gate_receipts' },
         { name: 'transition_idempotency' },
       ]);
       expect(db.prepare(`SELECT status, state_version, blocked_from_state FROM tasks`).get()).toEqual({
@@ -302,7 +303,7 @@ describe('schema v4 proof persistence', () => {
     }
   });
 
-  it('rolls back every schema-v4 change when migration validation fails', async () => {
+  it('rolls back every schema-v5 change when migration validation fails', async () => {
     const repoDir = await makeRepo();
     const dbPath = createSchemaV2(repoDir);
     const incompatible = new DatabaseSync(dbPath);
@@ -845,7 +846,7 @@ describe('session next command', { timeout: 15_000 }, () => {
       ok: true,
       command: 'session next',
       data: {
-        contract_version: 1,
+        contract_version: 2,
         session_id: started.data.session_id,
         lifecycle: { state: 'queued', state_version: 0, blocked_from_state: null },
         candidate: { from_state: 'queued', target_state: 'framed', expected_state_version: 0, executable: true },
