@@ -31,6 +31,11 @@ function passedProofContext(repository: Partial<NonNullable<ProofGuardContext['r
       failedReceiptIds: [],
       corruptReceiptIds: [],
     },
+    ciEvidence: {
+      status: 'passed',
+      policy: null,
+      gates: [],
+    },
     attemptsUsed: 0,
     repository: {
       branch: 'main',
@@ -192,6 +197,34 @@ describe('session transition domain', () => {
           description: 'Restore the clean proof-plan branch while preserving the verified HEAD, then retry.',
         },
       ],
+    });
+  });
+
+  it.each([
+    ['policy_missing', 'CI_PROOF_POLICY_REQUIRED', 'START_SESSION_WITH_CI_POLICY'],
+    ['missing', 'SIGNED_CI_PROOF_REQUIRED', 'IMPORT_SIGNED_CI_PROOF'],
+    ['stale', 'CURRENT_SIGNED_CI_PROOF_REQUIRED', 'RERUN_AND_IMPORT_CI_PROOF'],
+    ['corrupt', 'UNCORRUPTED_SIGNED_CI_PROOF_REQUIRED', 'RESTORE_SIGNED_CI_PROOF'],
+  ] as const)('blocks review when signed CI proof is %s without selecting repair', (status, code, workCode) => {
+    const proofGuardContext = passedProofContext();
+    proofGuardContext.ciEvidence = { status, policy: null, gates: [] };
+
+    expect(evaluateTransitionGuards('verifying', 'reviewing', {}, null, proofGuardContext)).toMatchObject({
+      allowed: false,
+      guardFailures: [{ code, owner_issue: 41 }],
+      requiredWork: [{ code: workCode, owner_issue: 41 }],
+    });
+    expect(
+      planNextTransition({
+        state: 'verifying',
+        stateVersion: 4,
+        blockedFromState: null,
+        proof: { status: 'passed', attemptsUsed: 0 },
+        proofGuardContext,
+      }),
+    ).toMatchObject({
+      candidate: { target_state: 'reviewing', executable: false },
+      guardFailures: [{ code, owner_issue: 41 }],
     });
   });
 

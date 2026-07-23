@@ -3,6 +3,7 @@ import { TASK_STATUS, type EntrySource, type TaskStatus } from './types.js';
 import { canonicalizeJsonValue, isPlainObject } from './canonical-json.js';
 import type { BoundProofPlan } from './proof.js';
 import type { ProofEvidence, ProofEvidenceStatus } from './proof.js';
+import type { CiProofEvidence } from './attestation.js';
 
 export interface TransitionRequest {
   sessionId: string;
@@ -23,13 +24,13 @@ export type RequestDigest = (value: string) => string;
 export interface TransitionGuardFailure {
   code: string;
   message: string;
-  owner_issue?: 40 | 42;
+  owner_issue?: 40 | 41 | 42;
 }
 
 export interface TransitionRequiredWork {
   code: string;
   description: string;
-  owner_issue?: 40 | 42;
+  owner_issue?: 40 | 41 | 42;
 }
 
 export interface TransitionGuardDecision {
@@ -44,6 +45,7 @@ export interface ProofGuardContext {
   boundPlan?: BoundProofPlan;
   plan?: BoundProofPlan | null;
   evidence?: ProofEvidence;
+  ciEvidence?: CiProofEvidence;
   repository?: {
     branch: string | null;
     headSha: string;
@@ -248,6 +250,9 @@ function evaluateProofOwnedGuards(
         },
       );
     }
+    if (proof.ciEvidence?.status !== 'passed') {
+      return signedCiProofGuard(proof.ciEvidence?.status ?? 'missing');
+    }
     return allowedGuards();
   }
 
@@ -293,6 +298,45 @@ function evaluateProofOwnedGuards(
   }
 
   return deferredProofGuards();
+}
+
+function signedCiProofGuard(status: CiProofEvidence['status']): TransitionGuardDecision {
+  const details = {
+    policy_missing: {
+      failure: 'CI_PROOF_POLICY_REQUIRED',
+      message: 'Review requires an immutable v2 signed-CI trust policy.',
+      work: 'START_SESSION_WITH_CI_POLICY',
+      description: 'Start a new session with a v2 proof plan; immutable legacy plans cannot be rewritten.',
+    },
+    missing: {
+      failure: 'SIGNED_CI_PROOF_REQUIRED',
+      message: 'Review requires a verified signed CI receipt for every declared gate.',
+      work: 'IMPORT_SIGNED_CI_PROOF',
+      description: 'Run the trusted reusable workflow and import every current-HEAD passing receipt.',
+    },
+    stale: {
+      failure: 'CURRENT_SIGNED_CI_PROOF_REQUIRED',
+      message: 'Review requires signed CI proof for the current repository HEAD.',
+      work: 'RERUN_AND_IMPORT_CI_PROOF',
+      description: 'Rerun the trusted CI gates at the current HEAD and import their signed receipts.',
+    },
+    corrupt: {
+      failure: 'UNCORRUPTED_SIGNED_CI_PROOF_REQUIRED',
+      message: 'Stored signed CI proof failed its local integrity checks.',
+      work: 'RESTORE_SIGNED_CI_PROOF',
+      description: 'Restore the accepted receipt package from trusted storage or rerun and import the CI gate.',
+    },
+    passed: {
+      failure: 'SIGNED_CI_PROOF_REQUIRED',
+      message: 'Review requires verified signed CI proof.',
+      work: 'IMPORT_SIGNED_CI_PROOF',
+      description: 'Import verified signed CI proof.',
+    },
+  }[status];
+  return deniedGuards(
+    { code: details.failure, message: details.message, owner_issue: 41 },
+    { code: details.work, description: details.description, owner_issue: 41 },
+  );
 }
 
 export function validateTransitionEvidence(
