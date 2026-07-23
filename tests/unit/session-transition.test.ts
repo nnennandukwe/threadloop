@@ -4,8 +4,42 @@ import {
   canonicalizeTransitionRequest,
   evaluateTransitionGuards,
   planNextTransition,
+  type ProofGuardContext,
   validateTransitionEvidence,
 } from '../../src/domain/session-transition.js';
+
+function passedProofContext(repository: Partial<NonNullable<ProofGuardContext['repository']>> = {}): ProofGuardContext {
+  const headSha = 'a'.repeat(40);
+  return {
+    plan: {
+      plan: {
+        acceptance_criteria: ['All repository checks pass'],
+        gates: [],
+      },
+      json: '{"acceptance_criteria":["All repository checks pass"],"gates":[]}',
+      sha256: 'b'.repeat(64),
+      baselineBranch: 'main',
+      baselineHeadSha: headSha,
+      createdAt: '2026-07-23T00:00:00.000Z',
+    },
+    evidence: {
+      status: 'passed',
+      gates: [],
+      staleReceiptIds: [],
+      failedReceiptIds: [],
+      corruptReceiptIds: [],
+    },
+    attemptsUsed: 0,
+    repository: {
+      branch: 'main',
+      headSha,
+      clean: true,
+      committedDiffFromBaseline: true,
+      committedRepairFromFailure: false,
+      ...repository,
+    },
+  };
+}
 
 describe('session transition domain', () => {
   it('uses the injected digest for the canonical request bytes', () => {
@@ -96,6 +130,57 @@ describe('session transition domain', () => {
     expect(evaluateTransitionGuards('ready_for_human', 'completed', {}, null)).toMatchObject({
       allowed: false,
       guardFailures: [{ code: 'APPROVAL_AND_MERGE_EVIDENCE_DEFERRED', owner_issue: 42 }],
+    });
+  });
+
+  it.each([
+    ['a dirty worktree', { clean: false }],
+    ['another branch at the passing HEAD', { branch: 'alternate' }],
+  ])('denies review for %s in both guard and next-action planning', (_scenario, repository) => {
+    const proofGuardContext = passedProofContext(repository);
+
+    expect(evaluateTransitionGuards('verifying', 'reviewing', {}, null, proofGuardContext)).toMatchObject({
+      allowed: false,
+      guardFailures: [
+        {
+          code: 'PROOF_CHECKOUT_MISMATCH',
+          message: 'Review requires current-HEAD passing proof from a clean checkout on the proof-plan branch.',
+        },
+      ],
+      requiredWork: [
+        {
+          code: 'RESTORE_PROOF_CHECKOUT',
+          description: 'Restore the clean proof-plan branch while preserving the verified HEAD, then retry.',
+        },
+      ],
+    });
+    expect(
+      planNextTransition({
+        state: 'verifying',
+        stateVersion: 4,
+        blockedFromState: null,
+        proof: { status: 'passed', attemptsUsed: 0 },
+        proofGuardContext,
+      }),
+    ).toMatchObject({
+      candidate: {
+        from_state: 'verifying',
+        target_state: 'reviewing',
+        expected_state_version: 4,
+        executable: false,
+      },
+      guardFailures: [
+        {
+          code: 'PROOF_CHECKOUT_MISMATCH',
+          message: 'Review requires current-HEAD passing proof from a clean checkout on the proof-plan branch.',
+        },
+      ],
+      requiredWork: [
+        {
+          code: 'RESTORE_PROOF_CHECKOUT',
+          description: 'Restore the clean proof-plan branch while preserving the verified HEAD, then retry.',
+        },
+      ],
     });
   });
 

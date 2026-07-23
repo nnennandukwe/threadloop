@@ -56,7 +56,7 @@ evidence.
 | `framed -> proof_ready`       | Valid immutable plan plus clean named branch and baseline HEAD                              |
 | `proof_ready -> implementing` | Repository still matches the plan baseline                                                  |
 | `implementing -> verifying`   | Clean committed diff from the baseline                                                      |
-| `verifying -> reviewing`      | Every latest declared gate passes for current HEAD                                          |
+| `verifying -> reviewing`      | Every latest gate passes for current HEAD, with a clean checkout on the proof-plan branch   |
 | `verifying -> repairing`      | Current-HEAD failure and fewer than three repair cycles                                     |
 | `repairing -> verifying`      | Clean committed repair after the failure HEAD                                               |
 | `verifying -> blocked`        | Explicit block evidence after repair exhaustion (or the existing general blocking contract) |

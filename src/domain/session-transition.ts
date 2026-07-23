@@ -183,21 +183,35 @@ function evaluateProofOwnedGuards(from: TaskStatus, to: TaskStatus, proof: Proof
   }
 
   if (from === 'verifying' && to === 'reviewing') {
-    if (proof.evidence?.status === 'passed') {
-      return allowedGuards();
+    if (proof.evidence?.status !== 'passed') {
+      return deniedGuards(
+        {
+          code: 'CURRENT_PASSING_PROOF_REQUIRED',
+          message: 'Review requires every latest declared gate receipt to pass for the current HEAD.',
+          owner_issue: 40,
+        },
+        {
+          code: 'COMPLETE_CURRENT_PROOF',
+          description: 'Run or repair every declared gate until current-HEAD proof passes.',
+          owner_issue: 40,
+        },
+      );
     }
-    return deniedGuards(
-      {
-        code: 'CURRENT_PASSING_PROOF_REQUIRED',
-        message: 'Review requires every latest declared gate receipt to pass for the current HEAD.',
-        owner_issue: 40,
-      },
-      {
-        code: 'COMPLETE_CURRENT_PROOF',
-        description: 'Run or repair every declared gate until current-HEAD proof passes.',
-        owner_issue: 40,
-      },
-    );
+    if (!repository.clean || repository.branch !== plan.baselineBranch) {
+      return deniedGuards(
+        {
+          code: 'PROOF_CHECKOUT_MISMATCH',
+          message: 'Review requires current-HEAD passing proof from a clean checkout on the proof-plan branch.',
+          owner_issue: 40,
+        },
+        {
+          code: 'RESTORE_PROOF_CHECKOUT',
+          description: 'Restore the clean proof-plan branch while preserving the verified HEAD, then retry.',
+          owner_issue: 40,
+        },
+      );
+    }
+    return allowedGuards();
   }
 
   if (from === 'verifying' && to === 'repairing') {
@@ -325,7 +339,7 @@ export function planNextTransition(input: {
   }
 
   if (input.state === 'verifying' && input.proof) {
-    return planVerifyingTransition(input.stateVersion, input.proof);
+    return planVerifyingTransition(input.stateVersion, input.proof, input.proofGuardContext);
   }
 
   const target = deterministicTarget(input.state);
@@ -357,17 +371,19 @@ export function planNextTransition(input: {
 function planVerifyingTransition(
   stateVersion: number,
   proof: { status: ProofEvidenceStatus; attemptsUsed: number },
+  proofGuardContext: ProofGuardContext | undefined,
 ): PlannedTransition {
   if (proof.status === 'passed') {
+    const guards = evaluateTransitionGuards('verifying', 'reviewing', {}, null, proofGuardContext);
     return {
       candidate: {
         from_state: 'verifying',
         target_state: 'reviewing',
         expected_state_version: stateVersion,
-        executable: true,
+        executable: guards.allowed,
       },
-      guardFailures: [],
-      requiredWork: [],
+      guardFailures: guards.guardFailures,
+      requiredWork: guards.requiredWork,
       terminalReason: null,
     };
   }

@@ -724,6 +724,80 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
     });
   });
 
+  it.each([
+    {
+      name: 'the worktree becomes dirty',
+      mutateCheckout: async (repoDir: string) => {
+        await writeFile(path.join(repoDir, 'post-proof-change.txt'), 'uncommitted\n', 'utf8');
+      },
+    },
+    {
+      name: 'another branch points at the passing HEAD',
+      mutateCheckout: async (repoDir: string) => {
+        await execFileAsync('git', ['switch', '-c', 'alternate-proof-branch'], { cwd: repoDir });
+      },
+    },
+  ])('denies review without mutating lifecycle state when $name', async ({ mutateCheckout }) => {
+    const repoDir = await makeCommittedRepo();
+    const sessionId = await startFramedSession(repoDir);
+    await recordProofPlan(repoDir, sessionId);
+    await forceVerifying(repoDir);
+    await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json']);
+    await mutateCheckout(repoDir);
+
+    const next = parseJson<{
+      data: {
+        candidate: { target_state: string; executable: boolean };
+        guard_failures: Array<{ code: string }>;
+        required_work: Array<{ code: string }>;
+        proof: { status: string };
+      };
+    }>((await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout);
+    expect(next.data).toMatchObject({
+      candidate: { target_state: 'reviewing', executable: false },
+      guard_failures: [{ code: 'PROOF_CHECKOUT_MISMATCH' }],
+      required_work: [{ code: 'RESTORE_PROOF_CHECKOUT' }],
+      proof: { status: 'passed' },
+    });
+
+    const failedTransition = await runCliFailure(repoDir, [
+      'session',
+      'transition',
+      'reviewing',
+      '--session',
+      sessionId,
+      '--expected-state-version',
+      '4',
+      '--idempotency-key',
+      'review:unsafe-checkout',
+      '--actor',
+      'agent',
+      '--input',
+      '{}',
+      '--json',
+    ]);
+    expect(
+      parseJson<{ error: { code: string; details: { guard_failures: Array<{ code: string }> } } }>(
+        failedTransition.stderr,
+      ),
+    ).toMatchObject({
+      error: {
+        code: 'TRANSITION_GUARD_FAILED',
+        details: { guard_failures: [{ code: 'PROOF_CHECKOUT_MISMATCH' }] },
+      },
+    });
+
+    const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
+    try {
+      expect(db.prepare(`SELECT status, state_version FROM tasks`).get()).toEqual({
+        status: 'verifying',
+        state_version: 4,
+      });
+    } finally {
+      db.close();
+    }
+  });
+
   it('authorizes implementation, verification, and review from clean committed proof evidence', async () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
