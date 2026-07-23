@@ -4,7 +4,7 @@ import { writeCommandSuccess } from './runtime.js';
 
 export type ProtocolPrintOptions = { json?: boolean };
 
-export async function protocolPrintCommand(context: CommandContext, options: ProtocolPrintOptions) {
+export function protocolPrintCommand(context: CommandContext, options: ProtocolPrintOptions) {
   const protocol = buildProtocolContract();
 
   if (options.json) {
@@ -12,12 +12,7 @@ export async function protocolPrintCommand(context: CommandContext, options: Pro
     return;
   }
 
-  const lines = [
-    '# ThreadLoop Agent Protocol',
-    '',
-    '## Environment Variables',
-    '',
-  ];
+  const lines = ['# ThreadLoop Agent Protocol', '', '## Environment Variables', ''];
 
   if (Object.keys(protocol.envVars).length === 0) {
     lines.push('No environment variables are part of the current contract.', '');
@@ -28,10 +23,7 @@ export async function protocolPrintCommand(context: CommandContext, options: Pro
     lines.push('');
   }
 
-  lines.push(
-    '## Commands',
-    '',
-  );
+  lines.push('## Commands', '');
 
   for (const [name, cmd] of Object.entries(protocol.commands)) {
     lines.push(`### ${name}`);

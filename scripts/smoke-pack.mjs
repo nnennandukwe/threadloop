@@ -40,7 +40,11 @@ async function main() {
   await writeFile(path.join(consumerRepo, 'app.js'), 'export const value = 1;\n', 'utf8');
 
   await run('npx', ['threadloop', 'init'], consumerRepo);
-  await run('npx', ['threadloop', 'start', 'Smoke packaged install', '--goal', 'Verify packaged CLI works'], consumerRepo);
+  await run(
+    'npx',
+    ['threadloop', 'start', 'Smoke packaged install', '--goal', 'Verify packaged CLI works'],
+    consumerRepo,
+  );
   await run('npx', ['threadloop', 'capture', 'note', 'Installed from tarball and started session'], consumerRepo);
   await run('npx', ['threadloop', 'artifact', 'generate'], consumerRepo);
   const status = await run('npx', ['threadloop', 'status'], consumerRepo);

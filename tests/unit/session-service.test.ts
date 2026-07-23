@@ -93,11 +93,13 @@ describe('session service', () => {
       allowMultipleActive: true,
     });
 
-    await expect(captureEntry({
-      cwd: repoDir,
-      kind: 'note',
-      body: 'Implicit capture should fail',
-    })).rejects.toSatisfy((error: unknown) => {
+    await expect(
+      captureEntry({
+        cwd: repoDir,
+        kind: 'note',
+        body: 'Implicit capture should fail',
+      }),
+    ).rejects.toSatisfy((error: unknown) => {
       expect(isThreadloopError(error)).toBe(true);
       expect((error as { code?: string }).code).toBe('SESSION_AMBIGUOUS');
       return true;
@@ -141,10 +143,7 @@ describe('session service', () => {
 
     const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'));
     try {
-      db.prepare(`UPDATE active_sessions SET task_id = ? WHERE session_id = ?`).run(
-        second.task.id,
-        first.session.id,
-      );
+      db.prepare(`UPDATE active_sessions SET task_id = ? WHERE session_id = ?`).run(second.task.id, first.session.id);
     } finally {
       db.close();
     }

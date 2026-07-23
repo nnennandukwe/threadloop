@@ -113,7 +113,8 @@ export async function daemonRunCommand(
       });
       output.write(`[daemon] Reconciled ${results.length} session(s)\n`);
     } catch (error) {
-      process.stderr.write(`[daemon] Error: ${error}\n`);
+      const message = String(error);
+      process.stderr.write(`[daemon] Error: ${message}\n`);
     }
   }
 

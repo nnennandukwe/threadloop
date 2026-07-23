@@ -10,8 +10,8 @@ export async function sessionReconcileCommand(context: CommandContext, options: 
 
   const results = await reconcileSession({
     cwd: context.cwd,
-    sessionId,
     reconcileAll,
+    ...(sessionId ? { sessionId } : {}),
   });
 
   if (results.length === 0) {

@@ -24,10 +24,7 @@ const SQLITE_BUSY_TIMEOUT_MS = 10_000;
 
 class InvalidJsonError extends Error {}
 
-type SetupState =
-  | { status: 'unknown' }
-  | { status: 'ready' }
-  | { status: 'failed'; error: unknown };
+type SetupState = { status: 'unknown' } | { status: 'ready' } | { status: 'failed'; error: unknown };
 
 type RepoConnectionState = {
   writer: DatabaseSync | null;
@@ -169,29 +166,15 @@ export async function insertTaskSession(
   },
 ) {
   await withWriteTransaction(repoRoot, (db) => {
-      const { task, session, intentEntry } = payload;
-      insertTask(db, task);
-      insertSession(db, session);
-      insertEntry(db, intentEntry);
-      if (payload.initialSnapshot) {
-        writeRepoSnapshot(db, payload.initialSnapshot);
-      }
-      insertActiveSession(db, { taskId: task.id, sessionId: session.id });
-      syncActiveStateCompat(db);
-  });
-}
-
-export async function appendEntryToActiveSession(
-  repoRoot: string,
-  draft: Omit<Entry, 'sessionId'>,
-): Promise<Entry> {
-  return withWriteTransaction(repoRoot, (db) => {
-      const active = readActiveStateRow(db);
-      if (!active) {
-        throw new Error('No active session in this repo. Start one with `threadloop session start`.');
-      }
-
-      return appendEntry(db, active.session_id, draft);
+    const { task, session, intentEntry } = payload;
+    insertTask(db, task);
+    insertSession(db, session);
+    insertEntry(db, intentEntry);
+    if (payload.initialSnapshot) {
+      writeRepoSnapshot(db, payload.initialSnapshot);
+    }
+    insertActiveSession(db, { taskId: task.id, sessionId: session.id });
+    syncActiveStateCompat(db);
   });
 }
 
@@ -205,25 +188,14 @@ export async function recordArtifact(repoRoot: string, artifact: Artifact) {
   });
 }
 
-export async function completeActiveSession(repoRoot: string, endedAt: string): Promise<ActiveState> {
-  return withWriteTransaction(repoRoot, (db) => {
-      const active = readActiveStateRow(db);
-      if (!active) {
-        throw new Error('No active session in this repo. Start one with `threadloop session start`.');
-      }
-
-      return completeSession(db, active.session_id, active.task_id, endedAt);
-  });
-}
-
 export async function completeSessionById(repoRoot: string, sessionId: string, endedAt: string): Promise<ActiveState> {
   return withWriteTransaction(repoRoot, (db) => {
-      const session = readSessionRow(db, sessionId);
-      if (!session) {
-        throw new Error(`Unknown session id: ${sessionId}`);
-      }
+    const session = readSessionRow(db, sessionId);
+    if (!session) {
+      throw new Error(`Unknown session id: ${sessionId}`);
+    }
 
-      return completeSession(db, session.id, session.task_id, endedAt);
+    return completeSession(db, session.id, session.task_id, endedAt);
   });
 }
 
@@ -232,18 +204,18 @@ export async function recordSessionHeartbeat(
   payload: { sessionId: string; branch: string; headSha: string; lastHeartbeatAt: string; source: HeartbeatSource },
 ) {
   await withWriteTransaction(repoRoot, (db) => {
-      const session = readSessionRow(db, payload.sessionId);
-      if (!session) {
-        throw new Error(`Unknown session id: ${payload.sessionId}`);
-      }
+    const session = readSessionRow(db, payload.sessionId);
+    if (!session) {
+      throw new Error(`Unknown session id: ${payload.sessionId}`);
+    }
 
-      db.prepare(
-        `
+    db.prepare(
+      `
           UPDATE sessions
           SET branch = ?, head_sha = ?, last_heartbeat_at = ?, last_heartbeat_source = ?
           WHERE id = ?
         `,
-      ).run(payload.branch, payload.headSha, payload.lastHeartbeatAt, payload.source, payload.sessionId);
+    ).run(payload.branch, payload.headSha, payload.lastHeartbeatAt, payload.source, payload.sessionId);
   });
 }
 
@@ -269,7 +241,7 @@ export async function upsertRepoSnapshot(
   },
 ) {
   await withWriteTransaction(repoRoot, (db) => {
-      writeRepoSnapshot(db, snapshot);
+    writeRepoSnapshot(db, snapshot);
   });
 }
 
@@ -278,13 +250,26 @@ export async function readRepoSnapshot(repoRoot: string, sessionId: string) {
 
   const db = openReadDatabase(repoRoot);
   try {
-    const row = db.prepare(
-      `
+    const row = db
+      .prepare(
+        `
         SELECT session_id, branch, head_sha, base_ref, changed_files_json, diff_stats_json, commit_range_json, reconciled_at
         FROM repo_snapshots
         WHERE session_id = ?
       `,
-    ).get(sessionId) as { session_id: string; branch: string; head_sha: string; base_ref: string | null; changed_files_json: string; diff_stats_json: string; commit_range_json: string; reconciled_at: string } | undefined;
+      )
+      .get(sessionId) as
+      | {
+          session_id: string;
+          branch: string;
+          head_sha: string;
+          base_ref: string | null;
+          changed_files_json: string;
+          diff_stats_json: string;
+          commit_range_json: string;
+          reconciled_at: string;
+        }
+      | undefined;
 
     if (!row) {
       return null;
@@ -296,7 +281,10 @@ export async function readRepoSnapshot(repoRoot: string, sessionId: string) {
       headSha: row.head_sha,
       baseRef: row.base_ref,
       changedFiles: parseJsonText<string[]>(row.changed_files_json, INVALID_STATE_DB_ERROR),
-      diffStats: parseJsonText<{ files: number; insertions: number; deletions: number }>(row.diff_stats_json, INVALID_STATE_DB_ERROR),
+      diffStats: parseJsonText<{ files: number; insertions: number; deletions: number }>(
+        row.diff_stats_json,
+        INVALID_STATE_DB_ERROR,
+      ),
       commitRange: parseJsonText<string[]>(row.commit_range_json, INVALID_STATE_DB_ERROR),
       reconciledAt: row.reconciled_at,
     };
@@ -320,6 +308,7 @@ export async function closeSqliteConnections(repoRoot?: string) {
   }
 }
 
+// Tests and long-lived hosts use this alias to assert that both lifecycle entry points remain safe.
 export async function resetSqliteConnections(repoRoot?: string) {
   await closeSqliteConnections(repoRoot);
 }
@@ -421,17 +410,13 @@ function ensureDatabaseReady(db: DatabaseSync, state: RepoConnectionState, repoR
     assertSchemaVersion(db);
     state.setup = { status: 'ready' };
   } catch (error) {
-    state.setup = isTransientSqliteSetupError(error)
-      ? { status: 'unknown' }
-      : { status: 'failed', error };
+    state.setup = isTransientSqliteSetupError(error) ? { status: 'unknown' } : { status: 'failed', error };
     throw error;
   }
 }
 
 function isTransientSqliteSetupError(error: unknown): error is SqliteError {
-  return isSqliteError(error)
-    && error.errcode === 5
-    && error.errstr === 'database is locked';
+  return isSqliteError(error) && error.errcode === 5 && error.errstr === 'database is locked';
 }
 
 function isSqliteError(error: unknown): error is SqliteError {
@@ -462,17 +447,25 @@ function databaseNeedsSetup(db: DatabaseSync, repoRoot: string) {
     return true;
   }
 
-  const sessionColumns = new Set((db.prepare(`PRAGMA table_info(sessions)`).all() as Array<{ name: string }>).map((column) => column.name));
+  const sessionColumns = new Set(
+    (db.prepare(`PRAGMA table_info(sessions)`).all() as Array<{ name: string }>).map((column) => column.name),
+  );
   if (!sessionColumns.has('last_heartbeat_at') || !sessionColumns.has('last_heartbeat_source')) {
     return true;
   }
 
-  const taskColumns = new Set((db.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>).map((column) => column.name));
+  const taskColumns = new Set(
+    (db.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>).map((column) => column.name),
+  );
   if (!taskColumns.has('issue_ref') || !taskColumns.has('state_version')) {
     return true;
   }
 
-  const legacyStatusCount = readNumericValue(db, `SELECT COUNT(*) AS count FROM tasks WHERE status = 'active'`, 'count');
+  const legacyStatusCount = readNumericValue(
+    db,
+    `SELECT COUNT(*) AS count FROM tasks WHERE status = 'active'`,
+    'count',
+  );
   if (legacyStatusCount > 0) {
     return true;
   }
@@ -484,8 +477,13 @@ function databaseNeedsSetup(db: DatabaseSync, repoRoot: string) {
       return true;
     }
   } else if (activeSessions.length === 1) {
-    const [activeSession] = activeSessions;
-    if (!activeState || activeState.session_id !== activeSession.session_id || activeState.task_id !== activeSession.task_id) {
+    const activeSession = activeSessions[0];
+    if (
+      !activeSession ||
+      !activeState ||
+      activeState.session_id !== activeSession.session_id ||
+      activeState.task_id !== activeSession.task_id
+    ) {
       return true;
     }
   } else if (activeState) {
@@ -526,8 +524,7 @@ function databaseNeedsSetup(db: DatabaseSync, repoRoot: string) {
 
 function tableExists(db: DatabaseSync, tableName: string) {
   const row = db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`).get(tableName) as
-    | { name: string }
-    | undefined;
+    { name: string } | undefined;
   return row?.name === tableName;
 }
 
@@ -774,35 +771,39 @@ function databaseIsEmpty(db: DatabaseSync) {
       `,
     )
     .get() as {
-      tasks_count: number;
-      sessions_count: number;
-      entries_count: number;
-      artifacts_count: number;
-      active_count: number;
-      active_sessions_count: number;
-      snapshots_count: number;
-    };
+    tasks_count: number;
+    sessions_count: number;
+    entries_count: number;
+    artifacts_count: number;
+    active_count: number;
+    active_sessions_count: number;
+    snapshots_count: number;
+  };
 
-  return counts.tasks_count === 0
-    && counts.sessions_count === 0
-    && counts.entries_count === 0
-    && counts.artifacts_count === 0
-    && counts.active_count === 0
-    && counts.active_sessions_count === 0
-    && counts.snapshots_count === 0;
+  return (
+    counts.tasks_count === 0 &&
+    counts.sessions_count === 0 &&
+    counts.entries_count === 0 &&
+    counts.artifacts_count === 0 &&
+    counts.active_count === 0 &&
+    counts.active_sessions_count === 0 &&
+    counts.snapshots_count === 0
+  );
 }
 
 function loadState(db: DatabaseSync): StateData {
-  const tasks = (db
-    .prepare(
-      `
+  const tasks = (
+    db
+      .prepare(
+        `
         SELECT id, title, goal, constraints_json, repo_root, status, state_version, created_at
         , issue_ref
         FROM tasks
         ORDER BY rowid
       `,
-    )
-    .all() as TaskRow[]).map((row) => ({
+      )
+      .all() as TaskRow[]
+  ).map((row) => ({
     id: row.id,
     title: row.title,
     goal: row.goal,
@@ -814,15 +815,17 @@ function loadState(db: DatabaseSync): StateData {
     createdAt: row.created_at,
   }));
 
-  const sessions = (db
-    .prepare(
-      `
+  const sessions = (
+    db
+      .prepare(
+        `
         SELECT id, task_id, started_at, ended_at, base_ref, branch, head_sha, last_heartbeat_at, last_heartbeat_source
         FROM sessions
         ORDER BY rowid
       `,
-    )
-    .all() as SessionRow[]).map((row) => ({
+      )
+      .all() as SessionRow[]
+  ).map((row) => ({
     id: row.id,
     taskId: row.task_id,
     startedAt: row.started_at,
@@ -834,15 +837,17 @@ function loadState(db: DatabaseSync): StateData {
     lastHeartbeatSource: row.last_heartbeat_source ?? null,
   }));
 
-  const entries = (db
-    .prepare(
-      `
+  const entries = (
+    db
+      .prepare(
+        `
         SELECT id, session_id, kind, body, metadata_json, created_at, source
         FROM entries
         ORDER BY rowid
       `,
-    )
-    .all() as EntryRow[]).map((row) => ({
+      )
+      .all() as EntryRow[]
+  ).map((row) => ({
     id: row.id,
     sessionId: row.session_id,
     kind: row.kind,
@@ -852,15 +857,17 @@ function loadState(db: DatabaseSync): StateData {
     source: row.source,
   }));
 
-  const artifacts = (db
-    .prepare(
-      `
+  const artifacts = (
+    db
+      .prepare(
+        `
         SELECT id, session_id, kind, path, template_version, generated_at
         FROM artifacts
         ORDER BY rowid
       `,
-    )
-    .all() as ArtifactRow[]).map((row) => ({
+      )
+      .all() as ArtifactRow[]
+  ).map((row) => ({
     id: row.id,
     sessionId: row.session_id,
     kind: row.kind,
@@ -873,7 +880,7 @@ function loadState(db: DatabaseSync): StateData {
     taskId: row.task_id,
     sessionId: row.session_id,
   }));
-  const active = activeSessions.length === 1 ? activeSessions[0] : null;
+  const active = activeSessions.length === 1 ? (activeSessions[0] ?? null) : null;
 
   return normalizeStateData({ tasks, sessions, entries, artifacts, active, activeSessions });
 }
@@ -950,7 +957,15 @@ function insertEntry(db: DatabaseSync, entry: Entry) {
       INSERT INTO entries (id, session_id, kind, body, metadata_json, created_at, source)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `,
-  ).run(entry.id, entry.sessionId, entry.kind, entry.body, JSON.stringify(entry.metadata), entry.createdAt, entry.source);
+  ).run(
+    entry.id,
+    entry.sessionId,
+    entry.kind,
+    entry.body,
+    JSON.stringify(entry.metadata),
+    entry.createdAt,
+    entry.source,
+  );
 }
 
 function insertArtifact(db: DatabaseSync, artifact: Artifact) {
@@ -1019,7 +1034,10 @@ function normalizeStateData(state: StateData): StateData {
 function syncActiveStateCompat(db: DatabaseSync) {
   const activeSessions = readActiveSessionRows(db);
   if (activeSessions.length === 1) {
-    const [active] = activeSessions;
+    const active = activeSessions[0];
+    if (!active) {
+      throw new Error('ThreadLoop active session registry is inconsistent.');
+    }
     db.prepare(
       `
         INSERT INTO active_state (id, task_id, session_id)

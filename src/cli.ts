@@ -46,7 +46,7 @@ function run<T extends unknown[]>(handler: (...args: T) => Promise<void>) {
 
 function commandAction<T extends unknown[]>(
   commandName: string,
-  handler: (context: ReturnType<typeof createCommandContext>, ...args: T) => Promise<void>,
+  handler: (context: ReturnType<typeof createCommandContext>, ...args: T) => void | Promise<void>,
 ) {
   return (...args: [...T, Command]) => {
     const command = args.at(-1);
@@ -54,7 +54,9 @@ function commandAction<T extends unknown[]>(
       throw createInvalidArgumentError('ThreadLoop could not determine the invoked command context.');
     }
 
-    return handler(createCommandContext(commandName, command), ...(args.slice(0, -1) as T)).catch(handleError);
+    return Promise.resolve(handler(createCommandContext(commandName, command), ...(args.slice(0, -1) as T))).catch(
+      handleError,
+    );
   };
 }
 
@@ -80,7 +82,7 @@ function handleError(error: unknown) {
       {
         code: threadloopError.code,
         message: threadloopError.message,
-        details: threadloopError.details,
+        ...(threadloopError.details ? { details: threadloopError.details } : {}),
       },
       json,
     )}\n`,

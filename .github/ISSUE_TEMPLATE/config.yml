@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: ThreadLoop documentation
+    url: https://github.com/nnennandukwe/threadloop#readme
+    about: Start with installation, CLI usage, agent-mode guidance, and development commands.
+  - name: Contribution guide
+    url: https://github.com/nnennandukwe/threadloop/blob/main/CONTRIBUTING.md
+    about: Review the issue, branch, validation, and pull request workflow before contributing.

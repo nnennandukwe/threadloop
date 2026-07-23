@@ -127,14 +127,3 @@ export interface StoredRepoSnapshot {
   commitRange: string[];
   reconciledAt: string;
 }
-
-export {
-  evaluateLifecycleTransition,
-  isActiveTaskStatus,
-  LIFECYCLE_DECISION_CODES,
-} from './lifecycle.js';
-export type {
-  LifecycleDecisionCode,
-  LifecycleTransitionContext,
-  LifecycleTransitionDecision,
-} from './lifecycle.js';

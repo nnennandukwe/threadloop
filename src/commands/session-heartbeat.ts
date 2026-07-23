@@ -1,7 +1,13 @@
 import { ThreadloopError, createInvalidArgumentError } from '../contracts/errors.js';
 import { HEARTBEAT_SOURCES, type HeartbeatSource } from '../domain/types.js';
 import { heartbeatSession } from '../services/session-service.js';
-import { toSessionId, type CommandContext, type JsonOption, type SessionOption, writeCommandSuccess } from './runtime.js';
+import {
+  toSessionId,
+  type CommandContext,
+  type JsonOption,
+  type SessionOption,
+  writeCommandSuccess,
+} from './runtime.js';
 
 interface SessionHeartbeatOptions extends JsonOption, SessionOption {
   source?: string;
@@ -25,7 +31,7 @@ export async function sessionHeartbeatCommand(context: CommandContext, options: 
   const result = await heartbeatSession({
     cwd: context.cwd,
     sessionId,
-    source: source as HeartbeatSource | undefined,
+    ...(source ? { source: source as HeartbeatSource } : {}),
   });
 
   writeCommandSuccess(context, {

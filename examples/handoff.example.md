@@ -10,6 +10,7 @@ changed_files:
   - src/job-runner.ts
   - tests/job-runner.test.ts
 ---
+
 # Handoff: Add retry logic to job runner
 
 ## Current state

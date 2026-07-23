@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+set -e
+
+.husky/run-with-clean-git-env npm test
+.husky/run-with-clean-git-env npm run build

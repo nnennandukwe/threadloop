@@ -1,0 +1,82 @@
+name: Usage question
+description: Ask for help with a ThreadLoop workflow after checking the docs.
+title: '[Question]: '
+labels:
+  - question
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form when the current documentation does not answer a ThreadLoop usage or integration question.
+
+        Before filing:
+        - Search the [existing issues](https://github.com/nnennandukwe/threadloop/issues?q=is%3Aissue) for a prior answer.
+        - Review the [README](https://github.com/nnennandukwe/threadloop#readme), [CLI reference](https://github.com/nnennandukwe/threadloop/blob/main/docs/cli.md), and [agent-mode guide](https://github.com/nnennandukwe/threadloop/blob/main/docs/agent-mode.md).
+        - Remove tokens, credentials, private repository content, and other sensitive data from output.
+
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Prerequisites
+      options:
+        - label: I checked the documentation and searched open and closed issues before asking.
+          required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Question area
+      options:
+        - Installation or setup
+        - Session workflow
+        - Agent or orchestrator integration
+        - JSON output or protocol contract
+        - Generated Markdown or review artifacts
+        - Storage or migration
+        - Git integration
+        - Daemon or reconciliation
+        - Contributing
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What are you trying to accomplish?
+    validations:
+      required: true
+
+  - type: textarea
+    id: attempted
+    attributes:
+      label: What have you tried?
+      description: Include the relevant commands, documentation, and approaches you already tried.
+    validations:
+      required: true
+
+  - type: textarea
+    id: blocker
+    attributes:
+      label: Where are you blocked?
+      description: State the specific behavior, output, or decision that is unclear.
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment and context
+      description:
+        When relevant, include the ThreadLoop version or commit, Node.js version, operating system, install method, and
+        sanitized output.
+
+  - type: checkboxes
+    id: sensitive-data
+    attributes:
+      label: Sensitive data
+      options:
+        - label: I removed secrets and sensitive repository content from this question.
+          required: true

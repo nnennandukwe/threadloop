@@ -5,7 +5,11 @@ import { toSessionId, writeCommandSuccess } from './runtime.js';
 
 export async function artifactGenerateCommand(context: CommandContext, kind: ArtifactKind, options: SessionOption) {
   const sessionId = toSessionId(options);
-  const result = await generateArtifact(context.cwd, kind, sessionId ? { sessionId } : { allowLegacySingleActive: true });
+  const result = await generateArtifact(
+    context.cwd,
+    kind,
+    sessionId ? { sessionId } : { allowLegacySingleActive: true },
+  );
 
   writeCommandSuccess(context, {
     text: [`Generated ${result.artifact.kind}: ${result.artifact.path}`],

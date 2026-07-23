@@ -1,0 +1,147 @@
+name: Bug report
+description: Report reproducible behavior that is incorrect or unexpected.
+title: '[Bug]: '
+labels:
+  - bug
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve ThreadLoop.
+
+        Before filing:
+        - Search the [existing issues](https://github.com/nnennandukwe/threadloop/issues?q=is%3Aissue) for the same behavior.
+        - Review the [README](https://github.com/nnennandukwe/threadloop#readme), [CLI reference](https://github.com/nnennandukwe/threadloop/blob/main/docs/cli.md), and [contribution guide](https://github.com/nnennandukwe/threadloop/blob/main/CONTRIBUTING.md).
+        - Remove tokens, credentials, private repository content, and other sensitive data from logs and examples.
+
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Prerequisites
+      options:
+        - label: I searched open and closed issues and did not find an existing report for this behavior.
+          required: true
+        - label: I reduced the report to the smallest reproduction I can provide.
+          required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      description: Which ThreadLoop surface is most directly affected?
+      options:
+        - Session commands
+        - Legacy compatibility commands
+        - JSON output or protocol contract
+        - Generated Markdown or review artifacts
+        - Storage or migration
+        - Git integration or repository discovery
+        - Daemon or reconciliation
+        - Installation or packaging
+        - Documentation
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Bug summary
+      description: Briefly describe the incorrect behavior and its impact.
+      placeholder: ThreadLoop does ... when I expect ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Include the exact commands, inputs, repository state, and sequence needed to reproduce the problem.
+      placeholder: |
+        1. In a Git repository with ...
+        2. Run `npx threadloop ...`
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened? Include expected output or state when useful.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead? Include the exit code when reporting a CLI failure.
+    validations:
+      required: true
+
+  - type: input
+    id: threadloop-version
+    attributes:
+      label: ThreadLoop version or commit
+      description: Provide the package version or Git commit SHA you tested.
+      placeholder: '0.1.0 or 750ae36'
+    validations:
+      required: true
+
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js version
+      description: Paste the output of `node --version`.
+      placeholder: 'v22.13.0'
+    validations:
+      required: true
+
+  - type: dropdown
+    id: operating-system
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation method
+      options:
+        - npm link
+        - npm pack or local tarball
+        - npm dependency
+        - Running from source
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: Paste sanitized command output, stack traces, or logs. This field is rendered as shell output.
+      render: shell
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description:
+        Add anything else that may affect reproduction, such as shell, Git version, repository shape, or screenshots.
+
+  - type: checkboxes
+    id: sensitive-data
+    attributes:
+      label: Sensitive data
+      options:
+        - label: I removed secrets and sensitive repository content from this report.
+          required: true

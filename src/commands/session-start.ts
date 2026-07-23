@@ -29,9 +29,12 @@ export async function sessionStartCommand(
       type: 'text',
       name: 'goal',
       message: 'What is the goal of this task?',
-      validate: (value) => (value.trim() ? true : 'Goal is required'),
+      validate: (value: string) => (value.trim() ? true : 'Goal is required'),
     });
-    goal = response.goal;
+    if (typeof response.goal !== 'string' || !response.goal.trim()) {
+      throw new Error('Goal is required.');
+    }
+    goal = response.goal.trim();
   }
 
   const result = await startTask({
@@ -39,10 +42,10 @@ export async function sessionStartCommand(
     title,
     goal,
     constraints: options.constraint ?? [],
-    baseRef: options.base,
-    issueRef: options.issue,
-    actor: options.actor,
     allowMultipleActive,
+    ...(options.base ? { baseRef: options.base } : {}),
+    ...(options.issue ? { issueRef: options.issue } : {}),
+    ...(options.actor ? { actor: options.actor } : {}),
   });
 
   writeCommandSuccess(context, {
