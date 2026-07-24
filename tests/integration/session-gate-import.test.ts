@@ -9,6 +9,7 @@ import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import type { VerifiedSigstoreSigner } from '../../src/adapters/crypto/sigstore.js';
 import { SigstoreReceiptVerificationError } from '../../src/adapters/crypto/sigstore.js';
 import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
+import { nodeSignedReceiptFileSystem } from '../../src/adapters/fs/signed-receipt-files.js';
 import { resetSqliteConnections } from '../../src/adapters/fs/sqlite-store.js';
 import {
   buildInTotoReceiptStatement,
@@ -18,7 +19,10 @@ import {
   type SignedGateReceiptArtifact,
 } from '../../src/domain/attestation.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
-import { importSessionGateReceipt } from '../../src/services/session-service.js';
+import {
+  importSessionGateReceipt as importSessionGateReceiptWithDependencies,
+  type ImportSessionGateReceiptInput,
+} from '../../src/services/session-service.js';
 
 const execFileAsync = promisify(execFile);
 const temporaryDirectories: string[] = [];
@@ -30,6 +34,13 @@ const sourceRepository = 'https://github.com/example/project';
 const buildSignerSha = 'b'.repeat(40);
 const buildSignerUri = `https://github.com/nnennandukwe/threadloop/.github/workflows/threadloop-gate-sensor.yml@${buildSignerSha}`;
 const certificateIdentity = `${sourceRepository}/.github/workflows/threadloop.yml@refs/heads/${branch}`;
+
+function importSessionGateReceipt(input: Omit<ImportSessionGateReceiptInput, 'receiptFileSystem'>) {
+  return importSessionGateReceiptWithDependencies({
+    ...input,
+    receiptFileSystem: nodeSignedReceiptFileSystem,
+  });
+}
 
 async function runCli(cwd: string, args: string[]) {
   return execFileAsync('node', [tsxCli, cliEntry, ...args], { cwd });

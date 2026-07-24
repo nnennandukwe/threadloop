@@ -1,4 +1,5 @@
 import { importSessionGateReceipt } from '../services/session-service.js';
+import { nodeSignedReceiptFileSystem } from '../adapters/fs/signed-receipt-files.js';
 import { type CommandContext, type JsonOption, writeCommandSuccess } from './runtime.js';
 
 export interface SessionGateImportOptions extends JsonOption {
@@ -14,6 +15,7 @@ export async function sessionGateImportCommand(
     cwd: context.cwd,
     sessionId: options.session,
     packagePath,
+    receiptFileSystem: nodeSignedReceiptFileSystem,
   });
   writeCommandSuccess(context, {
     text: [

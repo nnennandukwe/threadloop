@@ -1,5 +1,4 @@
 import path from 'node:path';
-import { linkSync, readFileSync, unlinkSync } from 'node:fs';
 import { mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { sha256, sha256File } from '../adapters/crypto/sha256.js';
 import { ensureThreadloopStateIgnored } from '../adapters/fs/gitignore.js';
@@ -84,6 +83,7 @@ import type {
   Task,
 } from '../domain/types.js';
 import { renderArtifact } from '../renderers/markdown/artifacts.js';
+import type { SignedReceiptFileSystem } from './signed-receipt-files.js';
 
 export interface StartTaskInput {
   cwd: string;
@@ -137,6 +137,7 @@ export interface ImportSessionGateReceiptInput {
   sessionId: string;
   packagePath: string;
   verifyReceipt?: typeof verifySigstoreReceipt;
+  receiptFileSystem: SignedReceiptFileSystem;
 }
 
 interface StateContext {
@@ -793,19 +794,19 @@ export async function importSessionGateReceipt(input: ImportSessionGateReceiptIn
       verifiedAt,
       promotePackage: () => {
         try {
-          linkSync(stagedPackagePath, finalPackagePath);
+          input.receiptFileSystem.linkExclusive(stagedPackagePath, finalPackagePath);
           promoted = true;
         } catch (error) {
           if (!isErrorCode(error, 'EEXIST')) {
             throw error;
           }
-          const existingDigest = readFileSha256OrNull(finalPackagePath);
+          const existingDigest = input.receiptFileSystem.sha256OrNull(finalPackagePath);
           if (existingDigest !== receipt.packageSha256) {
             throw error;
           }
           // The matching final file is a promotion that survived a prior crash.
         }
-        unlinkSync(stagedPackagePath);
+        input.receiptFileSystem.unlink(stagedPackagePath);
       },
     });
     if (appended.alreadyImported) {
@@ -880,14 +881,6 @@ export async function importSessionGateReceipt(input: ImportSessionGateReceiptIn
 
 function isErrorCode(error: unknown, code: string) {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
-}
-
-function readFileSha256OrNull(filePath: string) {
-  try {
-    return sha256(readFileSync(filePath));
-  } catch {
-    return null;
-  }
 }
 
 function projectCiProofAfterImport(
