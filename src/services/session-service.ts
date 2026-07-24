@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { linkSync, unlinkSync } from 'node:fs';
+import { linkSync, readFileSync, unlinkSync } from 'node:fs';
 import { mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { sha256, sha256File } from '../adapters/crypto/sha256.js';
 import { ensureThreadloopStateIgnored } from '../adapters/fs/gitignore.js';
@@ -792,8 +792,19 @@ export async function importSessionGateReceipt(input: ImportSessionGateReceiptIn
       stateVersion: context.stateVersion,
       verifiedAt,
       promotePackage: () => {
-        linkSync(stagedPackagePath, finalPackagePath);
-        promoted = true;
+        try {
+          linkSync(stagedPackagePath, finalPackagePath);
+          promoted = true;
+        } catch (error) {
+          if (!isErrorCode(error, 'EEXIST')) {
+            throw error;
+          }
+          const existingDigest = readFileSha256OrNull(finalPackagePath);
+          if (existingDigest !== receipt.packageSha256) {
+            throw error;
+          }
+          // The matching final file is a promotion that survived a prior crash.
+        }
         unlinkSync(stagedPackagePath);
       },
     });
@@ -869,6 +880,14 @@ export async function importSessionGateReceipt(input: ImportSessionGateReceiptIn
 
 function isErrorCode(error: unknown, code: string) {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
+}
+
+function readFileSha256OrNull(filePath: string) {
+  try {
+    return sha256(readFileSync(filePath));
+  } catch {
+    return null;
+  }
 }
 
 function projectCiProofAfterImport(

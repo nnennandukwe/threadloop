@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -221,6 +221,19 @@ async function writePackage(
   return packagePath;
 }
 
+function controlledPackagePath(
+  fixture: Awaited<ReturnType<typeof makeVerifyingSession>>,
+  receiptId = 'receipt_signed_123',
+) {
+  return path.join(
+    fixture.repoDir,
+    '.threadloop/artifacts/receipts',
+    fixture.sessionId,
+    receiptId,
+    'signed-receipt.json',
+  );
+}
+
 function verifier(
   fixture: Awaited<ReturnType<typeof makeVerifyingSession>>,
   receiptArtifact?: SignedGateReceiptArtifact,
@@ -356,6 +369,88 @@ describe('signed gate receipt import', { timeout: 20_000 }, () => {
     } finally {
       immutable.close();
     }
+  });
+
+  it('adopts a matching unindexed package left by an interrupted promotion', async () => {
+    const fixture = await makeVerifyingSession();
+    const packagePath = await writePackage(fixture, signedArtifact(fixture));
+    const finalPackagePath = controlledPackagePath(fixture);
+    await mkdir(path.dirname(finalPackagePath), { recursive: true });
+    await writeFile(finalPackagePath, canonicalJson(JSON.parse(await readFile(packagePath, 'utf8')) as unknown));
+
+    const imported = await importSessionGateReceipt({
+      cwd: fixture.repoDir,
+      sessionId: fixture.sessionId,
+      packagePath,
+      verifyReceipt: verifier(fixture),
+    });
+
+    expect(imported).toMatchObject({
+      receipt: { id: 'receipt_signed_123', sequence: 1 },
+      already_imported: false,
+      ci_proof: { status: 'passed' },
+    });
+    expect(sha256(await readFile(finalPackagePath))).toBe(imported.receipt.package.sha256);
+    const db = new DatabaseSync(path.join(fixture.repoDir, '.threadloop/state/state.db'), { readOnly: true });
+    try {
+      expect(db.prepare(`SELECT COUNT(*) AS count FROM signed_gate_receipts`).get()).toEqual({ count: 1 });
+    } finally {
+      db.close();
+    }
+  });
+
+  it('rejects a mismatched unindexed package without a row or overwrite', async () => {
+    const fixture = await makeVerifyingSession();
+    const packagePath = await writePackage(fixture, signedArtifact(fixture));
+    const finalPackagePath = controlledPackagePath(fixture);
+    const unindexedBytes = Buffer.from('unindexed package\n');
+    await mkdir(path.dirname(finalPackagePath), { recursive: true });
+    await writeFile(finalPackagePath, unindexedBytes);
+
+    await expect(
+      importSessionGateReceipt({
+        cwd: fixture.repoDir,
+        sessionId: fixture.sessionId,
+        packagePath,
+        verifyReceipt: verifier(fixture),
+      }),
+    ).rejects.toMatchObject({ code: 'SIGNED_RECEIPT_CONFLICT' });
+
+    expect(await readFile(finalPackagePath)).toEqual(unindexedBytes);
+    const db = new DatabaseSync(path.join(fixture.repoDir, '.threadloop/state/state.db'), { readOnly: true });
+    try {
+      expect(db.prepare(`SELECT COUNT(*) AS count FROM signed_gate_receipts`).get()).toEqual({ count: 0 });
+    } finally {
+      db.close();
+    }
+  });
+
+  it('does not repair a missing controlled package during duplicate import', async () => {
+    const fixture = await makeVerifyingSession();
+    const packagePath = await writePackage(fixture, signedArtifact(fixture));
+    const first = await importSessionGateReceipt({
+      cwd: fixture.repoDir,
+      sessionId: fixture.sessionId,
+      packagePath,
+      verifyReceipt: verifier(fixture),
+    });
+    const finalPackagePath = path.join(fixture.repoDir, first.receipt.package.path);
+    await rm(finalPackagePath);
+
+    await expect(
+      importSessionGateReceipt({
+        cwd: fixture.repoDir,
+        sessionId: fixture.sessionId,
+        packagePath,
+        verifyReceipt: verifier(fixture),
+      }),
+    ).rejects.toMatchObject({ code: 'SIGNED_RECEIPT_CONFLICT' });
+
+    expect(existsSync(finalPackagePath)).toBe(false);
+    const next = parseJson<{ data: { ci_proof: { status: string; gates: Array<{ status: string }> } } }>(
+      (await runCli(fixture.repoDir, ['session', 'next', '--session', fixture.sessionId, '--json'])).stdout,
+    );
+    expect(next.data.ci_proof).toMatchObject({ status: 'corrupt', gates: [{ status: 'corrupt' }] });
   });
 
   it('rejects a genuinely verified failing gate without a row or retained final package', async () => {
