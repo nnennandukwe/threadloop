@@ -639,20 +639,24 @@ export async function importSessionGateReceipt(input: ImportSessionGateReceiptIn
   const repoRoot = await resolveRepositoryRoot(input.cwd);
   await assertInitializedReadOnly(repoRoot);
 
-  let packageBytes: Buffer;
+  let packageRead: Awaited<ReturnType<SignedReceiptFileSystem['readWithinLimit']>>;
   try {
-    packageBytes = await readFile(path.resolve(input.cwd, input.packagePath));
+    packageRead = await input.receiptFileSystem.readWithinLimit(
+      path.resolve(input.cwd, input.packagePath),
+      MAX_SIGNED_RECEIPT_PACKAGE_BYTES,
+    );
   } catch (error) {
     throw new ThreadloopError('SIGNED_RECEIPT_INVALID', 'The signed receipt package could not be read.', {
       cause: error,
       details: { package_path: input.packagePath },
     });
   }
-  if (packageBytes.length > MAX_SIGNED_RECEIPT_PACKAGE_BYTES) {
+  if (packageRead.status === 'too_large') {
     throw new ThreadloopError('SIGNED_RECEIPT_INVALID', 'The signed receipt package exceeds the 10 MiB limit.', {
-      details: { package_path: input.packagePath, size_bytes: packageBytes.length },
+      details: { package_path: input.packagePath, size_bytes: packageRead.sizeBytes },
     });
   }
+  const packageBytes = packageRead.bytes;
 
   let envelope: ReturnType<typeof parseSignedReceiptEnvelope>;
   try {

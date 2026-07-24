@@ -269,6 +269,50 @@ afterEach(async () => {
 });
 
 describe('signed gate receipt import', { timeout: 20_000 }, () => {
+  it('rejects an oversized input through the bounded reader before verification or persistence', async () => {
+    const fixture = await makeVerifyingSession();
+    const packagePath = await writePackage(fixture, signedArtifact(fixture));
+    const oversizedPackageBytes = 10 * 1024 * 1024 + 1;
+    await truncate(packagePath, oversizedPackageBytes);
+    let boundedReadCalled = false;
+    let signatureVerificationCalled = false;
+    const boundedReceiptFileSystem = {
+      ...nodeSignedReceiptFileSystem,
+      readWithinLimit: async (requestedPath: string, maxBytes: number) => {
+        boundedReadCalled = true;
+        expect(requestedPath).toBe(packagePath);
+        expect(maxBytes).toBe(10 * 1024 * 1024);
+        return nodeSignedReceiptFileSystem.readWithinLimit(requestedPath, maxBytes);
+      },
+    };
+
+    await expect(
+      importSessionGateReceiptWithDependencies({
+        cwd: fixture.repoDir,
+        sessionId: fixture.sessionId,
+        packagePath,
+        receiptFileSystem: boundedReceiptFileSystem,
+        verifyReceipt: () => {
+          signatureVerificationCalled = true;
+          return verifier(fixture)();
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'SIGNED_RECEIPT_INVALID' });
+
+    expect(boundedReadCalled).toBe(true);
+    expect(signatureVerificationCalled).toBe(false);
+    const db = new DatabaseSync(path.join(fixture.repoDir, '.threadloop/state/state.db'), { readOnly: true });
+    try {
+      expect(db.prepare(`SELECT COUNT(*) AS count FROM signed_gate_receipts`).get()).toEqual({ count: 0 });
+      expect(db.prepare(`SELECT status, state_version FROM tasks`).get()).toEqual({
+        status: 'verifying',
+        state_version: 4,
+      });
+    } finally {
+      db.close();
+    }
+  });
+
   it('imports one verified package idempotently without advancing lifecycle state', async () => {
     const fixture = await makeVerifyingSession();
     const packagePath = await writePackage(fixture, signedArtifact(fixture));
