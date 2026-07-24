@@ -11,6 +11,7 @@ export interface GateProcessInput {
   timeoutMs: number;
   stdoutPath: string;
   stderrPath: string;
+  env?: NodeJS.ProcessEnv;
   abortSignal?: AbortSignal;
 }
 
@@ -47,7 +48,7 @@ export async function runGateProcess(input: GateProcessInput): Promise<GateProce
     cwd: input.cwd,
     shell: false,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: process.env,
+    env: input.env ?? process.env,
   });
   const stdoutPipeline = settlePipeline(pipeline(child.stdout, stdoutDigest, stdoutWrite));
   const stderrPipeline = settlePipeline(pipeline(child.stderr, stderrDigest, stderrWrite));

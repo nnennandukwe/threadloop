@@ -55,4 +55,47 @@ describe('gate process runner', () => {
     expect(result.result).toBe('cleanup_failed');
     expect(result.error?.code).toBe('EEXIST');
   });
+
+  it('uses an explicit environment without leaking parent OIDC or control paths', async () => {
+    const directory = await makeDirectory();
+    const sensitiveNames = ['ACTIONS_ID_TOKEN_REQUEST_TOKEN', 'ACTIONS_ID_TOKEN_REQUEST_URL', 'THREADLOOP_REPORT_PATH'];
+    const priorValues = new Map(sensitiveNames.map((name) => [name, process.env[name]]));
+    for (const name of sensitiveNames) {
+      process.env[name] = `parent-${name}`;
+    }
+    const gateEnvironment: NodeJS.ProcessEnv = { ...process.env, THREADLOOP_GATE_VISIBLE: 'allowed' };
+    for (const name of sensitiveNames) {
+      delete gateEnvironment[name];
+    }
+
+    try {
+      const result = await runGateProcess({
+        command: [
+          'node',
+          '-e',
+          `
+            const blocked = ${JSON.stringify(sensitiveNames)};
+            const leaked = blocked.some((name) => process.env[name]);
+            process.exit(!leaked && process.env.THREADLOOP_GATE_VISIBLE === 'allowed' ? 0 : 9);
+          `,
+        ],
+        cwd: directory,
+        timeoutMs: 5_000,
+        stdoutPath: path.join(directory, 'stdout.log'),
+        stderrPath: path.join(directory, 'stderr.log'),
+        env: gateEnvironment,
+      });
+
+      expect(result.result).toBe('passed');
+      expect(result.exitStatus).toBe(0);
+    } finally {
+      for (const [name, value] of priorValues) {
+        if (value === undefined) {
+          delete process.env[name];
+        } else {
+          process.env[name] = value;
+        }
+      }
+    }
+  });
 });

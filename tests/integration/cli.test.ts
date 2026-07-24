@@ -490,7 +490,7 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     try {
       const schemaVersion = migrated.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get() as
         { value: string } | undefined;
-      expect(schemaVersion?.value).toBe('4');
+      expect(schemaVersion?.value).toBe('5');
       expect(migrated.prepare(`SELECT id, status, state_version FROM tasks ORDER BY id`).all()).toEqual([
         { id: 'task_active', status: 'queued', state_version: 0 },
         { id: 'task_completed', status: 'completed', state_version: 0 },
@@ -641,14 +641,14 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
           value TEXT NOT NULL
         );
       `);
-      db.prepare(`INSERT INTO metadata (key, value) VALUES ('schema_version', '5')`).run();
+      db.prepare(`INSERT INTO metadata (key, value) VALUES ('schema_version', '6')`).run();
       const journalMode = db.prepare(`PRAGMA journal_mode`).get() as { journal_mode: string };
       expect(journalMode.journal_mode).toBe('delete');
     } finally {
       db.close();
     }
 
-    await expect(runCli(repoDir, ['status'])).rejects.toThrow('Unsupported ThreadLoop schema version: 5');
+    await expect(runCli(repoDir, ['status'])).rejects.toThrow('Unsupported ThreadLoop schema version: 6');
 
     const unchanged = new DatabaseSync(dbPath, { readOnly: true });
     try {

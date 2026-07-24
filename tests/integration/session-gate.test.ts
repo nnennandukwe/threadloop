@@ -13,6 +13,9 @@ const temporaryRepos: string[] = [];
 const projectRoot = process.cwd();
 const tsxCli = path.join(projectRoot, 'node_modules/tsx/dist/cli.mjs');
 const cliEntry = path.join(projectRoot, 'src/cli.ts');
+const fixtureRepository = 'https://github.com/example/threadloop-fixture';
+const fixtureBranch = 'issue-41/signed-receipts';
+const sensorSha = 'a'.repeat(40);
 
 async function runCli(cwd: string, args: string[]) {
   return execFileAsync('node', [tsxCli, cliEntry, ...args], { cwd });
@@ -41,9 +44,11 @@ async function makeCommittedRepo() {
   await execFileAsync('git', ['init'], { cwd: repoDir });
   await execFileAsync('git', ['config', 'user.email', 'test@example.com'], { cwd: repoDir });
   await execFileAsync('git', ['config', 'user.name', 'Test User'], { cwd: repoDir });
+  await execFileAsync('git', ['remote', 'add', 'origin', `${fixtureRepository}.git`], { cwd: repoDir });
   await writeFile(path.join(repoDir, 'README.md'), '# gate fixture\n', 'utf8');
   await execFileAsync('git', ['add', 'README.md'], { cwd: repoDir });
   await execFileAsync('git', ['commit', '-m', 'fixture'], { cwd: repoDir });
+  await execFileAsync('git', ['branch', '-M', fixtureBranch], { cwd: repoDir });
   return repoDir;
 }
 
@@ -89,7 +94,16 @@ function proofPlan(
   workingDirectory = '.',
 ) {
   return {
+    contract_version: 2,
     acceptance_criteria: ['All repository checks pass'],
+    ci: {
+      provider: 'github-actions',
+      issuer: 'https://token.actions.githubusercontent.com',
+      certificate_identity: `${fixtureRepository}/.github/workflows/threadloop.yml@refs/heads/${fixtureBranch}`,
+      source_repository: fixtureRepository,
+      build_signer_uri: `https://github.com/nnennandukwe/threadloop/.github/workflows/threadloop-gate-sensor.yml@${sensorSha}`,
+      build_signer_sha: sensorSha,
+    },
     gates: [
       {
         id: 'repository-check',
@@ -202,7 +216,7 @@ describe('proof plan persistence', { timeout: 20_000 }, () => {
     await resetSqliteConnections(repoDir);
     const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
     try {
-      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '4' });
+      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '5' });
       expect(
         db
           .prepare(
@@ -214,8 +228,7 @@ describe('proof plan persistence', { timeout: 20_000 }, () => {
           .get(),
       ).toMatchObject({
         session_id: sessionId,
-        plan_json:
-          '{"acceptance_criteria":["All repository checks pass"],"gates":[{"command":["node","-e","process.stdout.write(\\"ok\\\\n\\")"],"id":"repository-check","timeout_ms":5000,"working_directory":"."}]}',
+        plan_json: `{"acceptance_criteria":["All repository checks pass"],"ci":{"build_signer_sha":"${sensorSha}","build_signer_uri":"https://github.com/nnennandukwe/threadloop/.github/workflows/threadloop-gate-sensor.yml@${sensorSha}","certificate_identity":"${fixtureRepository}/.github/workflows/threadloop.yml@refs/heads/${fixtureBranch}","issuer":"https://token.actions.githubusercontent.com","provider":"github-actions","source_repository":"${fixtureRepository}"},"contract_version":2,"gates":[{"command":["node","-e","process.stdout.write(\\"ok\\\\n\\")"],"id":"repository-check","timeout_ms":5000,"working_directory":"."}]}`,
         plan_sha256: result.data.proof_plan.sha256,
         baseline_branch: branch,
         baseline_head_sha: head,
@@ -678,7 +691,7 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
     });
   });
 
-  it('authorizes reviewing only when every latest declared receipt passes for the current HEAD', async () => {
+  it('keeps review blocked when local proof passes but signed CI proof is missing', async () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
     await recordProofPlan(repoDir, sessionId);
@@ -689,6 +702,7 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
 
     const next = parseJson<{
       data: {
+        contract_version: number;
         candidate: { from_state: string; target_state: string; executable: boolean };
         proof: {
           status: string;
@@ -696,15 +710,19 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
         };
         staleness: { status: string; is_stale: boolean; stale_receipt_ids: string[] };
         repair_budget: { status: string; attempts_used: number; limit: number; remaining: number; exhausted: boolean };
+        ci_proof: { status: string; gates: Array<{ status: string }> };
+        guard_failures: Array<{ code: string }>;
       };
     }>((await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout);
 
     expect(next.data).toMatchObject({
+      contract_version: 2,
       candidate: {
         from_state: 'verifying',
         target_state: 'reviewing',
-        executable: true,
+        executable: false,
       },
+      guard_failures: [{ code: 'SIGNED_CI_PROOF_REQUIRED' }],
       proof: {
         status: 'passed',
         gates: [{ gate_id: 'repository-check', status: 'passed', receipt_id: gate.data.receipt.id }],
@@ -721,6 +739,7 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
         remaining: 3,
         exhausted: false,
       },
+      ci_proof: { status: 'missing', gates: [{ status: 'missing' }] },
     });
   });
 
@@ -798,7 +817,7 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
     }
   });
 
-  it('authorizes implementation, verification, and review from clean committed proof evidence', async () => {
+  it('authorizes implementation and verification but rejects review without signed CI evidence', async () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
     await recordProofPlan(repoDir, sessionId);
@@ -834,8 +853,31 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
       data: { lifecycle: { state: 'verifying', state_version: 4 } },
     });
     await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json']);
-    await expect(transition(repoDir, sessionId, 'reviewing', 4, 'review:gate-task')).resolves.toMatchObject({
-      data: { lifecycle: { state: 'reviewing', state_version: 5 } },
+    const rejectedReview = await runCliFailure(repoDir, [
+      'session',
+      'transition',
+      'reviewing',
+      '--session',
+      sessionId,
+      '--expected-state-version',
+      '4',
+      '--idempotency-key',
+      'review:gate-task',
+      '--actor',
+      'agent',
+      '--input',
+      '{}',
+      '--json',
+    ]);
+    expect(
+      parseJson<{ error: { code: string; details: { guard_failures: Array<{ code: string; owner_issue: number }> } } }>(
+        rejectedReview.stderr,
+      ),
+    ).toMatchObject({
+      error: {
+        code: 'TRANSITION_GUARD_FAILED',
+        details: { guard_failures: [{ code: 'SIGNED_CI_PROOF_REQUIRED', owner_issue: 41 }] },
+      },
     });
   });
 
@@ -924,7 +966,7 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
     ).resolves.toMatchObject({
       data: { lifecycle: { state: 'blocked', state_version: version + 1 } },
     });
-  });
+  }, 30_000);
 
   it('marks a passing receipt stale after a commit and accepts a fresh current-HEAD rerun', async () => {
     const repoDir = await makeCommittedRepo();

@@ -1,0 +1,137 @@
+name: ThreadLoop signed gate sensor
+
+on:
+  workflow_call:
+    inputs:
+      session_id:
+        description: ThreadLoop session id
+        required: true
+        type: string
+      plan_sha256:
+        description: Canonical v2 proof-plan digest
+        required: true
+        type: string
+      gate_id:
+        description: Declared gate id
+        required: true
+        type: string
+      gate_json:
+        description: Canonical declared gate JSON
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  execute_gate:
+    name: Execute gate / ${{ inputs.gate_id }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out caller source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: source
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Check out pinned ThreadLoop sensor
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: threadloop-sensor
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22.13.0
+          cache: npm
+          cache-dependency-path: threadloop-sensor/package-lock.json
+
+      - name: Install pinned sensor dependencies
+        run: npm ci --ignore-scripts
+        working-directory: threadloop-sensor
+
+      - name: Execute declared gate
+        id: execute_gate
+        run: npm run sensor:ci-gate:run
+        working-directory: threadloop-sensor
+        env:
+          THREADLOOP_SESSION_ID: ${{ inputs.session_id }}
+          THREADLOOP_PLAN_SHA256: ${{ inputs.plan_sha256 }}
+          THREADLOOP_GATE_ID: ${{ inputs.gate_id }}
+          THREADLOOP_GATE_JSON: ${{ inputs.gate_json }}
+          THREADLOOP_SOURCE_ROOT: ${{ github.workspace }}/source
+          THREADLOOP_REPORT_PATH: ${{ github.workspace }}/gate-observation/gate-report.json
+
+      - name: Upload captured gate report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: threadloop-gate-report-${{ inputs.gate_id }}-${{ github.run_attempt }}
+          path: gate-observation/gate-report.json
+          if-no-files-found: error
+          retention-days: 1
+
+  sign_receipt:
+    name: Sign gate receipt / ${{ inputs.gate_id }}
+    needs: execute_gate
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write # Available only after the caller-controlled gate runner has ended.
+
+    steps:
+      - name: Check out pinned ThreadLoop sensor
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: threadloop-sensor
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22.13.0
+          cache: npm
+          cache-dependency-path: threadloop-sensor/package-lock.json
+
+      - name: Install pinned sensor dependencies
+        run: npm ci --ignore-scripts
+        working-directory: threadloop-sensor
+
+      - name: Download captured gate report
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: threadloop-gate-report-${{ inputs.gate_id }}-${{ github.run_attempt }}
+          path: gate-observation
+
+      - name: Sign captured gate receipt
+        run: npm run sensor:ci-gate:sign
+        working-directory: threadloop-sensor
+        env:
+          THREADLOOP_SESSION_ID: ${{ inputs.session_id }}
+          THREADLOOP_PLAN_SHA256: ${{ inputs.plan_sha256 }}
+          THREADLOOP_GATE_ID: ${{ inputs.gate_id }}
+          THREADLOOP_GATE_JSON: ${{ inputs.gate_json }}
+          THREADLOOP_GATE_JOB_RESULT: ${{ needs.execute_gate.result }}
+          THREADLOOP_REPORT_PATH: ${{ github.workspace }}/gate-observation/gate-report.json
+          THREADLOOP_OUTPUT_PATH: ${{ github.workspace }}/receipt-output/signed-receipt.json
+
+      - name: Upload signed receipt
+        if: ${{ always() && hashFiles('receipt-output/signed-receipt.json') != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: threadloop-signed-receipt-${{ inputs.gate_id }}-${{ github.run_attempt }}
+          path: receipt-output/signed-receipt.json
+          if-no-files-found: error
+          retention-days: 30

@@ -1,10 +1,11 @@
 import path from 'node:path';
-import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { sha256, sha256File } from '../adapters/crypto/sha256.js';
 import { ensureThreadloopStateIgnored } from '../adapters/fs/gitignore.js';
 import {
   appendEntryToSession,
   appendGateReceipt,
+  appendSignedGateReceipt,
   applySessionTransition,
   createId,
   ensureStateDatabase,
@@ -23,6 +24,7 @@ import {
   writeArtifactFile,
   writeConfig,
   ReceiptAppendConflictError,
+  SignedReceiptAppendConflictError,
 } from '../adapters/fs/sqlite-store.js';
 import { isThreadloopInitialized } from '../adapters/fs/repo.js';
 import {
@@ -36,6 +38,7 @@ import {
 } from '../adapters/git/client.js';
 import { runGateProcess } from '../adapters/process/gate-runner.js';
 import { ThreadloopError } from '../contracts/errors.js';
+import { SigstoreReceiptVerificationError, verifySigstoreReceipt } from '../adapters/crypto/sigstore.js';
 import {
   canonicalizeTransitionRequest,
   evaluateTransitionGuards,
@@ -46,12 +49,23 @@ import type { ProofGuardContext, TransitionRequest } from '../domain/session-tra
 import {
   canonicalizeProofPlan,
   evaluateProofEvidence,
+  hasCiTrustPolicy,
   ProofValidationError,
   type BoundProofPlan,
   type ProofEvidence,
   type StoredGateReceipt,
 } from '../domain/proof.js';
 import type { GateReceiptPayload } from '../domain/proof.js';
+import {
+  AttestationValidationError,
+  evaluateCiProofEvidence,
+  parseSignedReceiptEnvelope,
+  parseSignedReceiptPackage,
+  validateSignedReceiptStatement,
+  type CiProofEvidence,
+  type CiProofGateEvidence,
+  type StoredSignedGateReceipt,
+} from '../domain/attestation.js';
 import { canonicalJson } from '../domain/canonical-json.js';
 import { DEFAULT_BASE_REF, TASK_STATUS } from '../domain/types.js';
 import type {
@@ -69,6 +83,9 @@ import type {
   Task,
 } from '../domain/types.js';
 import { renderArtifact } from '../renderers/markdown/artifacts.js';
+import type { SignedReceiptFileSystem } from './signed-receipt-files.js';
+
+const MAX_SIGNED_RECEIPT_PACKAGE_BYTES = 10 * 1024 * 1024;
 
 export interface StartTaskInput {
   cwd: string;
@@ -115,6 +132,14 @@ export interface RunSessionGateInput {
   cwd: string;
   sessionId: string;
   gateId: string;
+}
+
+export interface ImportSessionGateReceiptInput {
+  cwd: string;
+  sessionId: string;
+  packagePath: string;
+  verifyReceipt?: typeof verifySigstoreReceipt;
+  receiptFileSystem: SignedReceiptFileSystem;
 }
 
 interface StateContext {
@@ -340,8 +365,11 @@ export async function transitionSession(input: TransitionSessionInput) {
 }
 
 async function prepareBoundProofPlan(repoRoot: string, value: unknown): Promise<BoundProofPlan> {
-  const canonical = canonicalizeProofPlan(value, sha256);
-  const repository = await observeProofRepository(repoRoot);
+  const canonical = canonicalizeProofPlan(value, sha256, { requireCiPolicy: true });
+  const [repository, liveRepository] = await Promise.all([
+    observeProofRepository(repoRoot),
+    observeRepository(repoRoot),
+  ]);
   if (!repository.clean || !repository.branch) {
     throw new ThreadloopError(
       'TRANSITION_GUARD_FAILED',
@@ -366,6 +394,27 @@ async function prepareBoundProofPlan(repoRoot: string, value: unknown): Promise<
           hint: 'Commit or clean the repository, then retry the same transition with a new idempotency key.',
         },
       },
+    );
+  }
+  if (!hasCiTrustPolicy(canonical.plan)) {
+    throw new ProofValidationError('proof_plan.ci', 'proof_plan.ci must define an immutable CI trust policy.');
+  }
+  const expectedSourceRepository =
+    liveRepository.identity.source === 'origin' &&
+    liveRepository.identity.host === 'github.com' &&
+    liveRepository.identity.owner
+      ? `https://github.com/${liveRepository.identity.owner}/${liveRepository.identity.name}`
+      : null;
+  if (!expectedSourceRepository || canonical.plan.ci.source_repository !== expectedSourceRepository) {
+    throw new ProofValidationError(
+      'proof_plan.ci.source_repository',
+      'proof_plan.ci.source_repository must match the GitHub origin repository.',
+    );
+  }
+  if (!canonical.plan.ci.certificate_identity.endsWith(`@refs/heads/${repository.branch}`)) {
+    throw new ProofValidationError(
+      'proof_plan.ci.certificate_identity',
+      'proof_plan.ci.certificate_identity must bind the current proof-plan branch.',
     );
   }
 
@@ -586,6 +635,377 @@ export async function runSessionGate(input: RunSessionGateInput) {
   };
 }
 
+export async function importSessionGateReceipt(input: ImportSessionGateReceiptInput) {
+  const repoRoot = await resolveRepositoryRoot(input.cwd);
+  await assertInitializedReadOnly(repoRoot);
+
+  let packageRead: Awaited<ReturnType<SignedReceiptFileSystem['readWithinLimit']>>;
+  try {
+    packageRead = await input.receiptFileSystem.readWithinLimit(
+      path.resolve(input.cwd, input.packagePath),
+      MAX_SIGNED_RECEIPT_PACKAGE_BYTES,
+    );
+  } catch (error) {
+    throw new ThreadloopError('SIGNED_RECEIPT_INVALID', 'The signed receipt package could not be read.', {
+      cause: error,
+      details: { package_path: input.packagePath },
+    });
+  }
+  if (packageRead.status === 'too_large') {
+    throw new ThreadloopError('SIGNED_RECEIPT_INVALID', 'The signed receipt package exceeds the 10 MiB limit.', {
+      details: { package_path: input.packagePath, size_bytes: packageRead.sizeBytes },
+    });
+  }
+  const packageBytes = packageRead.bytes;
+
+  let envelope: ReturnType<typeof parseSignedReceiptEnvelope>;
+  try {
+    envelope = parseSignedReceiptEnvelope(JSON.parse(packageBytes.toString('utf8')) as unknown, sha256);
+  } catch (error) {
+    throw mapSignedReceiptParseError(error);
+  }
+
+  const lifecycle = readSessionLifecycleReadOnly(repoRoot, input.sessionId);
+  if (!lifecycle) {
+    throw new ThreadloopError('SESSION_NOT_FOUND', `Could not find session: ${input.sessionId}`, {
+      details: { session_id: input.sessionId },
+    });
+  }
+  if (lifecycle.schemaVersion < 4) {
+    throw new ThreadloopError(
+      'SIGNED_RECEIPT_IDENTITY_MISMATCH',
+      'This session predates immutable proof plans and cannot accept signed CI receipts.',
+    );
+  }
+  const storedProof = readSessionProofEvidenceReadOnly(repoRoot, input.sessionId);
+  const context = {
+    state: lifecycle.state,
+    stateVersion: lifecycle.stateVersion,
+    plan: storedProof.plan,
+  };
+  if (context.state !== 'verifying') {
+    throw new ThreadloopError('SIGNED_RECEIPT_CONFLICT', 'Signed gate receipts can be imported only while verifying.', {
+      details: { session_id: input.sessionId, lifecycle_state: context.state },
+    });
+  }
+  if (!context.plan) {
+    throw new ThreadloopError('PROOF_PLAN_MISSING', 'The session has no immutable proof plan.', {
+      details: { session_id: input.sessionId },
+    });
+  }
+
+  let canonicalPlan: ReturnType<typeof canonicalizeProofPlan>;
+  try {
+    canonicalPlan = canonicalizeProofPlan(JSON.parse(context.plan.json) as unknown, sha256);
+  } catch (error) {
+    throw new ThreadloopError('PROOF_PLAN_CORRUPTED', 'The stored proof plan is invalid.', { cause: error });
+  }
+  if (canonicalPlan.json !== context.plan.json || canonicalPlan.sha256 !== context.plan.sha256) {
+    throw new ThreadloopError('PROOF_PLAN_CORRUPTED', 'The stored proof plan digest does not match its contents.');
+  }
+  if (!hasCiTrustPolicy(canonicalPlan.plan)) {
+    throw new ThreadloopError(
+      'SIGNED_RECEIPT_IDENTITY_MISMATCH',
+      'This session has no immutable signed-CI trust policy. Start a new session with a v2 proof plan.',
+    );
+  }
+
+  const artifact = envelope.artifact;
+  const gate = canonicalPlan.plan.gates.find((candidate) => candidate.id === artifact.gate.id);
+  const repository = await observeRepository(repoRoot);
+  const proofRepository = await observeProofRepository(repoRoot);
+  const expectedRepository =
+    repository.identity.source === 'origin' && repository.identity.host === 'github.com' && repository.identity.owner
+      ? `https://github.com/${repository.identity.owner}/${repository.identity.name}`
+      : null;
+
+  const verifier = input.verifyReceipt ?? verifySigstoreReceipt;
+  let signer: Awaited<ReturnType<typeof verifySigstoreReceipt>>;
+  try {
+    signer = await verifier(envelope, canonicalPlan.plan.ci);
+  } catch (error) {
+    throw mapSigstoreReceiptError(error);
+  }
+  let receipt: ReturnType<typeof parseSignedReceiptPackage>;
+  try {
+    receipt = validateSignedReceiptStatement(envelope);
+  } catch (error) {
+    throw mapSignedReceiptParseError(error);
+  }
+  if (
+    signer.issuer !== canonicalPlan.plan.ci.issuer ||
+    signer.certificateIdentity !== canonicalPlan.plan.ci.certificate_identity ||
+    signer.buildSignerUri !== canonicalPlan.plan.ci.build_signer_uri ||
+    signer.buildSignerSha !== canonicalPlan.plan.ci.build_signer_sha ||
+    signer.sourceRepository !== artifact.source.repository ||
+    signer.sourceHeadSha !== artifact.source.head_sha ||
+    signer.sourceRef !== artifact.source.ref ||
+    signer.runnerEnvironment !== 'github-hosted' ||
+    signer.runInvocationUri !== artifact.source.run_invocation_uri
+  ) {
+    throw new ThreadloopError(
+      'SIGNED_RECEIPT_IDENTITY_MISMATCH',
+      'The verified signer projection does not match the signed receipt and immutable CI policy.',
+    );
+  }
+  assertSignedReceiptContext({
+    requestedSessionId: input.sessionId,
+    contextPlanSha256: context.plan.sha256,
+    expectedRepository,
+    currentBranch: proofRepository.branch,
+    currentHead: proofRepository.headSha,
+    receipt,
+    gate,
+    policy: canonicalPlan.plan.ci,
+  });
+  if (
+    artifact.result !== 'passed' ||
+    artifact.exit_status !== 0 ||
+    artifact.signal !== null ||
+    artifact.head_before !== artifact.head_after ||
+    !artifact.clean_before ||
+    !artifact.clean_after
+  ) {
+    throw new ThreadloopError(
+      'SIGNED_RECEIPT_RESULT_REJECTED',
+      'Only a clean, unchanged, passing CI gate receipt is authoritative proof.',
+      { details: { receipt_id: artifact.receipt_id, result: artifact.result } },
+    );
+  }
+  const proofBeforeAppend = await evaluateSessionProof(repoRoot, input.sessionId, proofRepository.headSha);
+
+  const relativePackagePath = [
+    '.threadloop',
+    'artifacts',
+    'receipts',
+    artifact.session_id,
+    artifact.receipt_id,
+    'signed-receipt.json',
+  ].join('/');
+  const finalPackagePath = path.join(repoRoot, ...relativePackagePath.split('/'));
+  const receiptDirectory = path.dirname(finalPackagePath);
+  const stagedPackagePath = path.join(receiptDirectory, `.signed-receipt.${createId('stage')}.tmp`);
+  await mkdir(receiptDirectory, { recursive: true });
+  await writeFile(stagedPackagePath, receipt.packageJson, { encoding: 'utf8', flag: 'wx' });
+
+  const verifiedAt = new Date().toISOString();
+  let promoted = false;
+  let completed = false;
+  try {
+    const appended = await appendSignedGateReceipt(repoRoot, {
+      receipt,
+      signer,
+      packagePath: relativePackagePath,
+      stateVersion: context.stateVersion,
+      verifiedAt,
+      promotePackage: () => {
+        try {
+          input.receiptFileSystem.linkExclusive(stagedPackagePath, finalPackagePath);
+          promoted = true;
+        } catch (error) {
+          if (!isErrorCode(error, 'EEXIST')) {
+            throw error;
+          }
+          const existingDigest = input.receiptFileSystem.sha256WithinLimitOrNull(
+            finalPackagePath,
+            MAX_SIGNED_RECEIPT_PACKAGE_BYTES,
+          );
+          if (existingDigest !== receipt.packageSha256) {
+            throw error;
+          }
+          // The matching final file is a promotion that survived a prior crash.
+        }
+        input.receiptFileSystem.unlink(stagedPackagePath);
+      },
+    });
+    if (appended.alreadyImported) {
+      let storedDigest: string | null = null;
+      try {
+        storedDigest = sha256(await readFile(finalPackagePath));
+      } catch {
+        storedDigest = null;
+      }
+      if (storedDigest !== receipt.packageSha256) {
+        throw new ThreadloopError(
+          'SIGNED_RECEIPT_CONFLICT',
+          'The previously imported signed receipt package is missing or corrupt.',
+          { details: { receipt_id: artifact.receipt_id } },
+        );
+      }
+    }
+    const ciProof = appended.alreadyImported
+      ? proofBeforeAppend.ciEvidence
+      : projectCiProofAfterImport(
+          proofBeforeAppend.ciEvidence,
+          artifact.gate.id,
+          artifact.receipt_id,
+          appended.sequence,
+          artifact.source.head_sha,
+          receipt.packageSha256,
+          appended.verifiedAt,
+        );
+    const result = {
+      contract_version: 1 as const,
+      receipt: {
+        id: artifact.receipt_id,
+        sequence: appended.sequence,
+        gate_id: artifact.gate.id,
+        result: artifact.result,
+        subject_head_sha: artifact.source.head_sha,
+        artifact: { sha256: receipt.artifactSha256 },
+        statement: { sha256: receipt.statementSha256 },
+        package: { path: relativePackagePath, sha256: receipt.packageSha256 },
+        signer,
+        verified_at: appended.verifiedAt,
+      },
+      already_imported: appended.alreadyImported,
+      ci_proof: {
+        status: ciProof.status,
+        policy: ciProof.policy ?? {},
+        gates: ciProof.gates,
+      },
+      lifecycle: { state: context.state, state_version: context.stateVersion },
+    };
+    completed = true;
+    return result;
+  } catch (error) {
+    if (error instanceof SignedReceiptAppendConflictError) {
+      throw new ThreadloopError('SIGNED_RECEIPT_CONFLICT', error.message, { cause: error });
+    }
+    if (isErrorCode(error, 'EEXIST')) {
+      throw new ThreadloopError(
+        'SIGNED_RECEIPT_CONFLICT',
+        `Signed receipt ${artifact.receipt_id} already has an unindexed package at its controlled path.`,
+        { cause: error },
+      );
+    }
+    throw error;
+  } finally {
+    await rm(stagedPackagePath, { force: true });
+    if (promoted && !completed) {
+      await rm(finalPackagePath, { force: true });
+    }
+  }
+}
+
+function isErrorCode(error: unknown, code: string) {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
+}
+
+function projectCiProofAfterImport(
+  before: CiProofEvidence,
+  gateId: string,
+  receiptId: string,
+  sequence: number,
+  subjectHeadSha: string,
+  packageSha256: string,
+  verifiedAt: string,
+): CiProofEvidence {
+  const gates = before.gates.map((gate): CiProofGateEvidence =>
+    gate.gate_id === gateId
+      ? {
+          gate_id: gateId,
+          status: 'passed',
+          receipt_id: receiptId,
+          sequence,
+          subject_head_sha: subjectHeadSha,
+          package_sha256: packageSha256,
+          verified_at: verifiedAt,
+        }
+      : gate,
+  );
+  const status = gates.every((gate) => gate.status === 'passed')
+    ? ('passed' as const)
+    : gates.some((gate) => gate.status === 'corrupt')
+      ? ('corrupt' as const)
+      : gates.some((gate) => gate.status === 'stale')
+        ? ('stale' as const)
+        : ('missing' as const);
+  return { status, policy: before.policy, gates };
+}
+
+function assertSignedReceiptContext(input: {
+  requestedSessionId: string;
+  contextPlanSha256: string;
+  expectedRepository: string | null;
+  currentBranch: string | null;
+  currentHead: string;
+  receipt: ReturnType<typeof parseSignedReceiptPackage>;
+  gate: BoundProofPlan['plan']['gates'][number] | undefined;
+  policy: Extract<BoundProofPlan['plan'], { contract_version: 2 }>['ci'];
+}) {
+  const artifact = input.receipt.artifact;
+  if (artifact.session_id !== input.requestedSessionId || artifact.plan_sha256 !== input.contextPlanSha256) {
+    throw new ThreadloopError(
+      'SIGNED_RECEIPT_INVALID',
+      'The signed receipt does not match the selected session and plan.',
+    );
+  }
+  if (!input.gate || canonicalJson(input.gate) !== canonicalJson(artifact.gate)) {
+    throw new ThreadloopError('SIGNED_RECEIPT_INVALID', 'The signed receipt gate does not match a declared gate.');
+  }
+  if (
+    !input.expectedRepository ||
+    input.expectedRepository !== input.policy.source_repository ||
+    artifact.source.repository !== input.policy.source_repository
+  ) {
+    throw new ThreadloopError(
+      'SIGNED_RECEIPT_IDENTITY_MISMATCH',
+      'The signed receipt source repository is not trusted.',
+    );
+  }
+  if (!input.currentBranch || artifact.source.ref !== `refs/heads/${input.currentBranch}`) {
+    throw new ThreadloopError(
+      'SIGNED_RECEIPT_IDENTITY_MISMATCH',
+      'The signed receipt source ref is not the current branch.',
+    );
+  }
+  if (
+    artifact.source.head_sha !== input.currentHead ||
+    artifact.head_before !== input.currentHead ||
+    artifact.head_after !== input.currentHead
+  ) {
+    throw new ThreadloopError(
+      'SIGNED_RECEIPT_HEAD_MISMATCH',
+      'The signed receipt does not prove the current repository HEAD.',
+    );
+  }
+}
+
+function mapSignedReceiptParseError(error: unknown) {
+  if (error instanceof AttestationValidationError) {
+    const artifactMismatch =
+      error.field.startsWith('statement.subject') || error.field.startsWith('statement.predicate.artifact');
+    return new ThreadloopError(
+      artifactMismatch ? 'SIGNED_RECEIPT_ARTIFACT_MISMATCH' : 'SIGNED_RECEIPT_INVALID',
+      error.message,
+      { cause: error, details: { field: error.field } },
+    );
+  }
+  return new ThreadloopError('SIGNED_RECEIPT_INVALID', 'The signed receipt package is not valid JSON.', {
+    cause: error,
+  });
+}
+
+function mapSigstoreReceiptError(error: unknown) {
+  if (!(error instanceof SigstoreReceiptVerificationError)) {
+    return new ThreadloopError('SIGNED_RECEIPT_SIGNATURE_INVALID', 'The signed receipt could not be verified.', {
+      cause: error,
+    });
+  }
+  const code = {
+    transparency_missing: 'SIGNED_RECEIPT_TRANSPARENCY_MISSING',
+    identity_mismatch: 'SIGNED_RECEIPT_IDENTITY_MISMATCH',
+    signature_invalid: 'SIGNED_RECEIPT_SIGNATURE_INVALID',
+    verification_unavailable: 'SIGNED_RECEIPT_VERIFICATION_UNAVAILABLE',
+  }[error.reason] as
+    | 'SIGNED_RECEIPT_TRANSPARENCY_MISSING'
+    | 'SIGNED_RECEIPT_IDENTITY_MISMATCH'
+    | 'SIGNED_RECEIPT_SIGNATURE_INVALID'
+    | 'SIGNED_RECEIPT_VERIFICATION_UNAVAILABLE';
+  return new ThreadloopError(code, error.message, { cause: error });
+}
+
 async function resolveProofWorkingDirectory(repoRoot: string, gateId: string, workingDirectory: string) {
   const canonicalRepoRoot = await realpath(repoRoot);
   let gateDirectory: string;
@@ -686,7 +1106,7 @@ export async function getNextSessionAction(input: NextSessionInput) {
         exhausted: null,
       };
   return {
-    contract_version: 1 as const,
+    contract_version: 2 as const,
     session_id: lifecycle.sessionId,
     task_id: lifecycle.taskId,
     lifecycle: {
@@ -721,6 +1141,17 @@ export async function getNextSessionAction(input: NextSessionInput) {
           baseline_head_sha: null,
           gates: [],
         },
+    ci_proof: proofState
+      ? {
+          status: proofState.ciEvidence.status,
+          policy: proofState.ciEvidence.policy ?? {},
+          gates: proofState.ciEvidence.gates,
+        }
+      : {
+          status: 'policy_missing' as const,
+          policy: {},
+          gates: [],
+        },
     staleness: proofState
       ? {
           status:
@@ -750,9 +1181,11 @@ async function evaluateSessionProof(
   currentHead: string | null,
 ): Promise<{
   evidence: ProofEvidence;
+  ciEvidence: CiProofEvidence;
   attemptsUsed: number;
   plan: BoundProofPlan | null;
   receipts: StoredGateReceipt[];
+  signedReceipts: StoredSignedGateReceipt[];
 }> {
   const stored = readSessionProofEvidenceReadOnly(repoRoot, sessionId);
   if (!stored.plan) {
@@ -764,9 +1197,11 @@ async function evaluateSessionProof(
         failedReceiptIds: [],
         corruptReceiptIds: [],
       },
+      ciEvidence: { status: 'policy_missing', policy: null, gates: [] },
       attemptsUsed: stored.attemptsUsed,
       plan: null,
       receipts: stored.receipts,
+      signedReceipts: stored.signedReceipts,
     };
   }
 
@@ -782,9 +1217,11 @@ async function evaluateSessionProof(
         failedReceiptIds: [],
         corruptReceiptIds: [],
       },
+      ciEvidence: { status: 'corrupt', policy: null, gates: [] },
       attemptsUsed: stored.attemptsUsed,
       plan: null,
       receipts: stored.receipts,
+      signedReceipts: stored.signedReceipts,
     };
   }
   if (canonical.json !== stored.plan.json || canonical.sha256 !== stored.plan.sha256) {
@@ -796,9 +1233,11 @@ async function evaluateSessionProof(
         failedReceiptIds: [],
         corruptReceiptIds: [],
       },
+      ciEvidence: { status: 'corrupt', policy: null, gates: [] },
       attemptsUsed: stored.attemptsUsed,
       plan: null,
       receipts: stored.receipts,
+      signedReceipts: stored.signedReceipts,
     };
   }
   const plan: BoundProofPlan = {
@@ -807,7 +1246,10 @@ async function evaluateSessionProof(
     baselineHeadSha: stored.plan.baselineHeadSha,
     createdAt: stored.plan.createdAt,
   };
-  const artifactDigests = await readReceiptArtifactDigests(repoRoot, sessionId, stored.receipts);
+  const [artifactDigests, packageContents] = await Promise.all([
+    readReceiptArtifactDigests(repoRoot, sessionId, stored.receipts),
+    readSignedReceiptPackageContents(repoRoot, sessionId, stored.signedReceipts),
+  ]);
   return {
     evidence: evaluateProofEvidence({
       sessionId,
@@ -817,9 +1259,18 @@ async function evaluateSessionProof(
       artifactDigests,
       digest: sha256,
     }),
+    ciEvidence: evaluateCiProofEvidence({
+      sessionId,
+      plan,
+      receipts: stored.signedReceipts,
+      currentHead,
+      packageContents,
+      digest: sha256,
+    }),
     attemptsUsed: stored.attemptsUsed,
     plan,
     receipts: stored.receipts,
+    signedReceipts: stored.signedReceipts,
   };
 }
 
@@ -842,6 +1293,7 @@ async function buildProofGuardContext(
   return {
     plan,
     evidence: proofState.evidence,
+    ciEvidence: proofState.ciEvidence,
     attemptsUsed: proofState.attemptsUsed,
     repository: {
       branch: repository.branch,
@@ -851,6 +1303,44 @@ async function buildProofGuardContext(
       committedRepairFromFailure,
     },
   };
+}
+
+async function readSignedReceiptPackageContents(
+  repoRoot: string,
+  sessionId: string,
+  receipts: StoredSignedGateReceipt[],
+) {
+  const contents = new Map<string, string | null>();
+  const expectedRoot = path.resolve(repoRoot, '.threadloop', 'artifacts', 'receipts', sessionId);
+  for (const receipt of receipts) {
+    const packagePath = path.resolve(repoRoot, receipt.packagePath);
+    const relative = path.relative(expectedRoot, packagePath);
+    if (
+      path.isAbsolute(receipt.packagePath) ||
+      relative === '..' ||
+      relative.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relative)
+    ) {
+      contents.set(receipt.id, null);
+      continue;
+    }
+    try {
+      const [canonicalRoot, canonicalPackage] = await Promise.all([realpath(expectedRoot), realpath(packagePath)]);
+      const canonicalRelative = path.relative(canonicalRoot, canonicalPackage);
+      if (
+        canonicalRelative === '..' ||
+        canonicalRelative.startsWith(`..${path.sep}`) ||
+        path.isAbsolute(canonicalRelative)
+      ) {
+        contents.set(receipt.id, null);
+        continue;
+      }
+      contents.set(receipt.id, await readFile(canonicalPackage, 'utf8'));
+    } catch {
+      contents.set(receipt.id, null);
+    }
+  }
+  return contents;
 }
 
 async function readReceiptArtifactDigests(repoRoot: string, sessionId: string, receipts: StoredGateReceipt[]) {

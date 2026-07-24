@@ -20,10 +20,28 @@ export interface ProofGate {
   timeout_ms: number;
 }
 
-export interface ProofPlan {
+export interface LegacyProofPlan {
   acceptance_criteria: string[];
   gates: ProofGate[];
 }
+
+export interface CiTrustPolicy {
+  provider: 'github-actions';
+  issuer: 'https://token.actions.githubusercontent.com';
+  certificate_identity: string;
+  source_repository: string;
+  build_signer_uri: string;
+  build_signer_sha: string;
+}
+
+export interface CiProofPlan {
+  contract_version: 2;
+  acceptance_criteria: string[];
+  ci: CiTrustPolicy;
+  gates: ProofGate[];
+}
+
+export type ProofPlan = LegacyProofPlan | CiProofPlan;
 
 export interface CanonicalProofPlan {
   plan: ProofPlan;
@@ -113,14 +131,27 @@ export class ProofValidationError extends Error {
   }
 }
 
-export function canonicalizeProofPlan(value: unknown, digest: ProofDigest): CanonicalProofPlan {
-  const plan = validateProofPlan(value);
+export function canonicalizeProofPlan(
+  value: unknown,
+  digest: ProofDigest,
+  options: { requireCiPolicy?: boolean } = {},
+): CanonicalProofPlan {
+  const plan = validateProofPlan(value, options);
   const json = canonicalJson(plan);
   return { plan, json, sha256: digest(json) };
 }
 
-export function validateProofPlan(value: unknown): ProofPlan {
-  const plan = requireExactObject(value, 'proof_plan', ['acceptance_criteria', 'gates']);
+export function validateProofPlan(value: unknown, options: { requireCiPolicy?: boolean } = {}): ProofPlan {
+  const candidate = requireObject(value, 'proof_plan');
+  const isVersionTwo = candidate.contract_version === 2;
+  if (!isVersionTwo && options.requireCiPolicy) {
+    throw invalid('proof_plan.contract_version', 'must be 2 for newly recorded proof plans');
+  }
+  const plan = requireExactObject(
+    candidate,
+    'proof_plan',
+    isVersionTwo ? ['contract_version', 'acceptance_criteria', 'ci', 'gates'] : ['acceptance_criteria', 'gates'],
+  );
   const acceptanceCriteria = plan.acceptance_criteria;
   if (!Array.isArray(acceptanceCriteria) || acceptanceCriteria.length === 0) {
     throw invalid('proof_plan.acceptance_criteria', 'must be a non-empty array of strings');
@@ -183,7 +214,20 @@ export function validateProofPlan(value: unknown): ProofPlan {
     };
   });
 
-  return { acceptance_criteria: normalizedCriteria, gates };
+  if (!isVersionTwo) {
+    return { acceptance_criteria: normalizedCriteria, gates };
+  }
+
+  return {
+    contract_version: 2,
+    acceptance_criteria: normalizedCriteria,
+    ci: validateCiTrustPolicy(plan.ci),
+    gates,
+  };
+}
+
+export function hasCiTrustPolicy(plan: ProofPlan): plan is CiProofPlan {
+  return 'contract_version' in plan && plan.contract_version === 2;
 }
 
 export function evaluateProofEvidence(input: {
@@ -340,11 +384,7 @@ function aggregateProofStatus(gates: ProofGateEvidence[]): ProofEvidenceStatus {
 }
 
 function requireExactObject(value: unknown, field: string, expectedKeys: string[]) {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw invalid(field, 'must be an object');
-  }
-
-  const record = value as Record<string, unknown>;
+  const record = requireObject(value, field);
   const keys = Object.keys(record).sort();
   const expected = [...expectedKeys].sort();
   if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) {
@@ -353,11 +393,77 @@ function requireExactObject(value: unknown, field: string, expectedKeys: string[
   return record;
 }
 
+function requireObject(value: unknown, field: string) {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw invalid(field, 'must be an object');
+  }
+  return value as Record<string, unknown>;
+}
+
 function requireNonEmptyText(value: unknown, field: string, maximumLength: number) {
   if (typeof value !== 'string' || value.trim().length === 0 || value.length > maximumLength || value.includes('\0')) {
     throw invalid(field, `must be a non-empty string no longer than ${maximumLength} characters`);
   }
   return value;
+}
+
+function validateCiTrustPolicy(value: unknown): CiTrustPolicy {
+  const field = 'proof_plan.ci';
+  const policy = requireExactObject(value, field, [
+    'provider',
+    'issuer',
+    'certificate_identity',
+    'source_repository',
+    'build_signer_uri',
+    'build_signer_sha',
+  ]);
+  if (policy.provider !== 'github-actions') {
+    throw invalid(`${field}.provider`, 'must be github-actions');
+  }
+  if (policy.issuer !== 'https://token.actions.githubusercontent.com') {
+    throw invalid(`${field}.issuer`, 'must be https://token.actions.githubusercontent.com');
+  }
+
+  const sourceRepository = requireNonEmptyText(policy.source_repository, `${field}.source_repository`, 512);
+  if (!/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(sourceRepository)) {
+    throw invalid(`${field}.source_repository`, 'must be an exact GitHub repository URI without a .git suffix');
+  }
+
+  const certificateIdentity = requireNonEmptyText(policy.certificate_identity, `${field}.certificate_identity`, 1_024);
+  const escapedSource = escapeRegExp(sourceRepository);
+  if (
+    !new RegExp(`^${escapedSource}/\\.github/workflows/[A-Za-z0-9._-]+\\.ya?ml@refs/heads/[A-Za-z0-9._/-]+$`).test(
+      certificateIdentity,
+    )
+  ) {
+    throw invalid(
+      `${field}.certificate_identity`,
+      'must identify an exact workflow and branch in the source repository',
+    );
+  }
+
+  const buildSignerSha = requireNonEmptyText(policy.build_signer_sha, `${field}.build_signer_sha`, 40);
+  if (!/^[0-9a-f]{40}$/.test(buildSignerSha)) {
+    throw invalid(`${field}.build_signer_sha`, 'must be a full lowercase Git commit SHA');
+  }
+  const buildSignerUri = requireNonEmptyText(policy.build_signer_uri, `${field}.build_signer_uri`, 1_024);
+  const expectedSignerUri = `https://github.com/nnennandukwe/threadloop/.github/workflows/threadloop-gate-sensor.yml@${buildSignerSha}`;
+  if (buildSignerUri !== expectedSignerUri) {
+    throw invalid(`${field}.build_signer_uri`, `must equal ${expectedSignerUri}`);
+  }
+
+  return {
+    provider: 'github-actions',
+    issuer: 'https://token.actions.githubusercontent.com',
+    certificate_identity: certificateIdentity,
+    source_repository: sourceRepository,
+    build_signer_uri: buildSignerUri,
+    build_signer_sha: buildSignerSha,
+  };
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function invalid(field: string, message: string) {

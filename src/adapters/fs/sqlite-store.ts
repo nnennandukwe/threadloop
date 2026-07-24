@@ -11,6 +11,8 @@ import {
   evaluateTransitionGuards,
 } from '../../domain/session-transition.js';
 import type { BoundProofPlan, GateReceiptPayload, GateReceiptResult, StoredGateReceipt } from '../../domain/proof.js';
+import type { ParsedSignedReceiptPackage, StoredSignedGateReceipt } from '../../domain/attestation.js';
+import type { VerifiedSigstoreSigner } from '../crypto/sigstore.js';
 import type {
   ActiveState,
   Artifact,
@@ -27,7 +29,7 @@ import type { ThreadloopErrorCode } from '../../contracts/errors.js';
 import { threadloopPaths } from './repo.js';
 import { DatabaseSync } from './sqlite-driver.js';
 
-const CURRENT_SCHEMA_VERSION = 4;
+const CURRENT_SCHEMA_VERSION = 5;
 const INVALID_CONFIG_ERROR = 'Invalid .threadloop/config.json';
 const INVALID_STATE_JSON_ERROR = 'Invalid .threadloop/state/state.json';
 const INVALID_STATE_DB_ERROR = 'Invalid .threadloop/state/state.db';
@@ -39,6 +41,11 @@ const PROOF_SCHEMA_TRIGGERS = [
   'gate_receipts_no_update',
   'gate_receipts_no_delete',
   'gate_receipts_no_replace',
+] as const;
+const SIGNED_RECEIPT_SCHEMA_TRIGGERS = [
+  'signed_gate_receipts_no_update',
+  'signed_gate_receipts_no_delete',
+  'signed_gate_receipts_no_replace',
 ] as const;
 
 class InvalidJsonError extends Error {}
@@ -153,6 +160,31 @@ type GateReceiptRow = {
   created_at: string;
 };
 
+type SignedGateReceiptRow = {
+  sequence: number;
+  id: string;
+  session_id: string;
+  gate_id: string;
+  plan_sha256: string;
+  subject_head_sha: string;
+  result: 'passed';
+  package_path: string;
+  package_sha256: string;
+  artifact_json: string;
+  artifact_sha256: string;
+  statement_json: string;
+  statement_sha256: string;
+  issuer: string;
+  certificate_identity: string;
+  build_signer_uri: string;
+  build_signer_sha: string;
+  source_repository: string;
+  source_ref: string;
+  run_invocation_uri: string;
+  state_version: number;
+  verified_at: string;
+};
+
 type StoredTransitionError = {
   code: ThreadloopErrorCode;
   message: string;
@@ -207,7 +239,17 @@ export interface AppendGateReceiptInput {
   stateVersion: number;
 }
 
+export interface AppendSignedGateReceiptInput {
+  receipt: ParsedSignedReceiptPackage;
+  signer: VerifiedSigstoreSigner;
+  packagePath: string;
+  stateVersion: number;
+  verifiedAt: string;
+  promotePackage: () => void;
+}
+
 export class ReceiptAppendConflictError extends Error {}
+export class SignedReceiptAppendConflictError extends Error {}
 
 export type TransitionGuardEvaluator = (
   sourceState: TaskStatus,
@@ -356,6 +398,46 @@ export function readSessionProofEvidenceReadOnly(repoRoot: string, sessionId: st
       stateVersion: row.state_version,
       createdAt: row.created_at,
     }));
+    const signedReceiptRows = tableExists(db, 'signed_gate_receipts')
+      ? (db
+          .prepare(
+            `
+              SELECT
+                sequence, id, session_id, gate_id, plan_sha256, subject_head_sha, result,
+                package_path, package_sha256, artifact_json, artifact_sha256, statement_json,
+                statement_sha256, issuer, certificate_identity, build_signer_uri, build_signer_sha,
+                source_repository, source_ref, run_invocation_uri, state_version, verified_at
+              FROM signed_gate_receipts
+              WHERE session_id = ?
+              ORDER BY sequence
+            `,
+          )
+          .all(sessionId) as SignedGateReceiptRow[])
+      : [];
+    const signedReceipts: StoredSignedGateReceipt[] = signedReceiptRows.map((row) => ({
+      sequence: row.sequence,
+      id: row.id,
+      sessionId: row.session_id,
+      gateId: row.gate_id,
+      planSha256: row.plan_sha256,
+      subjectHeadSha: row.subject_head_sha,
+      result: row.result,
+      packagePath: row.package_path,
+      packageSha256: row.package_sha256,
+      artifactJson: row.artifact_json,
+      artifactSha256: row.artifact_sha256,
+      statementJson: row.statement_json,
+      statementSha256: row.statement_sha256,
+      issuer: row.issuer,
+      certificateIdentity: row.certificate_identity,
+      buildSignerUri: row.build_signer_uri,
+      buildSignerSha: row.build_signer_sha,
+      sourceRepository: row.source_repository,
+      sourceRef: row.source_ref,
+      runInvocationUri: row.run_invocation_uri,
+      stateVersion: row.state_version,
+      verifiedAt: row.verified_at,
+    }));
     const attemptsUsed = readNumericValue(
       db,
       `
@@ -380,6 +462,7 @@ export function readSessionProofEvidenceReadOnly(repoRoot: string, sessionId: st
           }
         : null,
       receipts,
+      signedReceipts,
       attemptsUsed,
     };
   } finally {
@@ -439,6 +522,9 @@ export function readSessionLifecycleReadOnly(repoRoot: string, sessionId: string
     }
     if (version >= 4) {
       assertProofSchemaShape(db);
+    }
+    if (version >= 5) {
+      assertSignedReceiptSchemaShape(db);
     }
 
     const blockedFromSelect = version >= 3 ? 'tasks.blocked_from_state' : 'NULL AS blocked_from_state';
@@ -757,6 +843,94 @@ export async function appendGateReceipt(repoRoot: string, input: AppendGateRecei
   });
 }
 
+export async function appendSignedGateReceipt(repoRoot: string, input: AppendSignedGateReceiptInput) {
+  return withWriteTransaction(repoRoot, (db) => {
+    const artifact = input.receipt.artifact;
+    const existing = db
+      .prepare(
+        `
+          SELECT sequence, id, session_id, package_sha256, verified_at
+          FROM signed_gate_receipts
+          WHERE id = ? OR (session_id = ? AND package_sha256 = ?)
+          ORDER BY sequence
+          LIMIT 1
+        `,
+      )
+      .get(artifact.receipt_id, artifact.session_id, input.receipt.packageSha256) as
+      Pick<SignedGateReceiptRow, 'sequence' | 'id' | 'session_id' | 'package_sha256' | 'verified_at'> | undefined;
+    if (existing) {
+      if (
+        existing.id === artifact.receipt_id &&
+        existing.session_id === artifact.session_id &&
+        existing.package_sha256 === input.receipt.packageSha256
+      ) {
+        return { sequence: existing.sequence, alreadyImported: true, verifiedAt: existing.verified_at };
+      }
+      throw new SignedReceiptAppendConflictError(
+        `Signed receipt ${artifact.receipt_id} conflicts with previously imported content.`,
+      );
+    }
+
+    const current = readTransitionSession(db, artifact.session_id);
+    if (!current) {
+      throw new SignedReceiptAppendConflictError(`Could not find session: ${artifact.session_id}`);
+    }
+    if (current.status !== 'verifying' || current.state_version !== input.stateVersion) {
+      throw new SignedReceiptAppendConflictError(
+        `Session ${artifact.session_id} changed while signed gate ${artifact.gate.id} was being imported.`,
+      );
+    }
+    const plan = db.prepare(`SELECT plan_sha256 FROM proof_plans WHERE session_id = ?`).get(artifact.session_id) as
+      { plan_sha256: string } | undefined;
+    if (!plan || plan.plan_sha256 !== artifact.plan_sha256) {
+      throw new SignedReceiptAppendConflictError(
+        `Session ${artifact.session_id} proof plan changed while signed gate ${artifact.gate.id} was being imported.`,
+      );
+    }
+
+    const inserted = db
+      .prepare(
+        `
+          INSERT INTO signed_gate_receipts (
+            id, session_id, gate_id, plan_sha256, subject_head_sha, result,
+            package_path, package_sha256, artifact_json, artifact_sha256, statement_json,
+            statement_sha256, issuer, certificate_identity, build_signer_uri, build_signer_sha,
+            source_repository, source_ref, run_invocation_uri, state_version, verified_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+      )
+      .run(
+        artifact.receipt_id,
+        artifact.session_id,
+        artifact.gate.id,
+        artifact.plan_sha256,
+        artifact.source.head_sha,
+        'passed',
+        input.packagePath,
+        input.receipt.packageSha256,
+        input.receipt.artifactJson,
+        input.receipt.artifactSha256,
+        input.receipt.statementJson,
+        input.receipt.statementSha256,
+        input.signer.issuer,
+        input.signer.certificateIdentity,
+        input.signer.buildSignerUri,
+        input.signer.buildSignerSha,
+        input.signer.sourceRepository,
+        input.signer.sourceRef,
+        input.signer.runInvocationUri,
+        input.stateVersion,
+        input.verifiedAt,
+      );
+    const sequence = Number(inserted.lastInsertRowid);
+    if (!Number.isSafeInteger(sequence) || sequence < 1) {
+      throw new Error('ThreadLoop did not assign a valid signed gate receipt sequence.');
+    }
+    input.promotePackage();
+    return { sequence, alreadyImported: false, verifiedAt: input.verifiedAt };
+  });
+}
+
 export async function appendEntryToSession(repoRoot: string, sessionId: string, draft: Omit<Entry, 'sessionId'>) {
   return withWriteTransaction(repoRoot, (db) => appendEntry(db, sessionId, draft));
 }
@@ -981,6 +1155,7 @@ function ensureDatabaseReady(db: DatabaseSync, state: RepoConnectionState, repoR
       runPendingMigrations(db, repoRoot);
       assertTransitionSchemaShape(db);
       assertProofSchemaShape(db);
+      assertSignedReceiptSchemaShape(db);
       writeSchemaVersion(db);
     });
     assertSchemaVersion(db);
@@ -1033,12 +1208,16 @@ function databaseNeedsSetup(db: DatabaseSync, repoRoot: string) {
     'transition_idempotency',
     'proof_plans',
     'gate_receipts',
+    'signed_gate_receipts',
   ];
 
   if (requiredTables.some((table) => !tableExists(db, table))) {
     return true;
   }
   if (PROOF_SCHEMA_TRIGGERS.some((trigger) => !triggerExists(db, trigger))) {
+    return true;
+  }
+  if (SIGNED_RECEIPT_SCHEMA_TRIGGERS.some((trigger) => !triggerExists(db, trigger))) {
     return true;
   }
 
@@ -1223,6 +1402,35 @@ function bootstrapDatabase(db: DatabaseSync) {
     CREATE INDEX IF NOT EXISTS gate_receipts_session_gate_sequence_idx
       ON gate_receipts(session_id, gate_id, sequence DESC);
 
+    CREATE TABLE IF NOT EXISTS signed_gate_receipts (
+      sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+      id TEXT NOT NULL UNIQUE,
+      session_id TEXT NOT NULL REFERENCES sessions(id),
+      gate_id TEXT NOT NULL,
+      plan_sha256 TEXT NOT NULL CHECK(length(plan_sha256) = 64),
+      subject_head_sha TEXT NOT NULL CHECK(length(subject_head_sha) = 40),
+      result TEXT NOT NULL CHECK(result = 'passed'),
+      package_path TEXT NOT NULL,
+      package_sha256 TEXT NOT NULL CHECK(length(package_sha256) = 64),
+      artifact_json TEXT NOT NULL,
+      artifact_sha256 TEXT NOT NULL CHECK(length(artifact_sha256) = 64),
+      statement_json TEXT NOT NULL,
+      statement_sha256 TEXT NOT NULL CHECK(length(statement_sha256) = 64),
+      issuer TEXT NOT NULL,
+      certificate_identity TEXT NOT NULL,
+      build_signer_uri TEXT NOT NULL,
+      build_signer_sha TEXT NOT NULL CHECK(length(build_signer_sha) = 40),
+      source_repository TEXT NOT NULL,
+      source_ref TEXT NOT NULL,
+      run_invocation_uri TEXT NOT NULL,
+      state_version INTEGER NOT NULL CHECK(state_version >= 0),
+      verified_at TEXT NOT NULL,
+      UNIQUE(session_id, package_sha256)
+    );
+
+    CREATE INDEX IF NOT EXISTS signed_gate_receipts_session_gate_sequence_idx
+      ON signed_gate_receipts(session_id, gate_id, sequence DESC);
+
     CREATE TRIGGER IF NOT EXISTS proof_plans_no_update
     BEFORE UPDATE ON proof_plans
     BEGIN
@@ -1262,6 +1470,31 @@ function bootstrapDatabase(db: DatabaseSync) {
     )
     BEGIN
       SELECT RAISE(ABORT, 'gate receipts are immutable');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS signed_gate_receipts_no_update
+    BEFORE UPDATE ON signed_gate_receipts
+    BEGIN
+      SELECT RAISE(ABORT, 'signed gate receipts are immutable');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS signed_gate_receipts_no_delete
+    BEFORE DELETE ON signed_gate_receipts
+    BEGIN
+      SELECT RAISE(ABORT, 'signed gate receipts are immutable');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS signed_gate_receipts_no_replace
+    BEFORE INSERT ON signed_gate_receipts
+    WHEN EXISTS (
+      SELECT 1 FROM signed_gate_receipts
+      WHERE
+        id = NEW.id
+        OR sequence = NEW.sequence
+        OR (session_id = NEW.session_id AND package_sha256 = NEW.package_sha256)
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'signed gate receipts are immutable');
     END;
   `);
 
@@ -1492,6 +1725,38 @@ function assertProofSchemaShape(db: DatabaseSync) {
     'created_at',
   ]);
   for (const trigger of PROOF_SCHEMA_TRIGGERS) {
+    if (!triggerExists(db, trigger)) {
+      throw new Error(`Invalid schema trigger: ${trigger}`);
+    }
+  }
+}
+
+function assertSignedReceiptSchemaShape(db: DatabaseSync) {
+  assertTableColumns(db, 'signed_gate_receipts', [
+    'sequence',
+    'id',
+    'session_id',
+    'gate_id',
+    'plan_sha256',
+    'subject_head_sha',
+    'result',
+    'package_path',
+    'package_sha256',
+    'artifact_json',
+    'artifact_sha256',
+    'statement_json',
+    'statement_sha256',
+    'issuer',
+    'certificate_identity',
+    'build_signer_uri',
+    'build_signer_sha',
+    'source_repository',
+    'source_ref',
+    'run_invocation_uri',
+    'state_version',
+    'verified_at',
+  ]);
+  for (const trigger of SIGNED_RECEIPT_SCHEMA_TRIGGERS) {
     if (!triggerExists(db, trigger)) {
       throw new Error(`Invalid schema trigger: ${trigger}`);
     }

@@ -13,6 +13,7 @@ import { sessionHeartbeatCommand } from './commands/session-heartbeat.js';
 import { sessionTransitionCommand } from './commands/session-transition.js';
 import { sessionNextCommand } from './commands/session-next.js';
 import { sessionGateRunCommand } from './commands/session-gate-run.js';
+import { sessionGateImportCommand } from './commands/session-gate-import.js';
 import { sessionReconcileCommand } from './commands/session-reconcile.js';
 import { daemonRunCommand } from './commands/daemon.js';
 import { protocolPrintCommand } from './commands/protocol.js';
@@ -35,6 +36,7 @@ const program = createThreadloopProgram({
   sessionTransition: commandAction('session transition', sessionTransitionCommand),
   sessionNext: commandAction('session next', sessionNextCommand),
   sessionGateRun: commandAction('session gate run', sessionGateRunCommand),
+  sessionGateImport: commandAction('session gate import', sessionGateImportCommand),
   sessionReconcile: commandAction('session reconcile', sessionReconcileCommand),
   daemonRun: commandAction('daemon run', daemonRunCommand),
   protocol: commandAction('protocol', protocolPrintCommand),
@@ -94,8 +96,8 @@ function handleError(error: unknown) {
 
 function detectInvokedCommand(argv: string[]) {
   const tokens = argv.filter((token) => token !== '--json');
-  if (tokens[0] === 'session' && tokens[1] === 'gate' && tokens[2] === 'run') {
-    return 'session gate run';
+  if (tokens[0] === 'session' && tokens[1] === 'gate' && ['run', 'import'].includes(tokens[2] ?? '')) {
+    return `session gate ${tokens[2]}`;
   }
   if (tokens[0] === 'session' && tokens[1]) {
     return `session ${tokens[1]}`;
