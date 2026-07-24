@@ -1,4 +1,4 @@
-import type { TaskStatus } from './types.js';
+import { TASK_STATUS, type TaskStatus } from './types.js';
 
 export const LIFECYCLE_DECISION_CODES = [
   'TRANSITION_ALLOWED',
@@ -21,25 +21,25 @@ export interface LifecycleTransitionDecision {
   recovery: string | null;
 }
 
-const FORWARD_TRANSITIONS = {
-  queued: ['framed'],
-  framed: ['proof_ready'],
-  proof_ready: ['implementing'],
-  implementing: ['verifying'],
-  verifying: ['reviewing', 'repairing'],
-  reviewing: ['repairing', 'ready_for_human'],
-  repairing: ['verifying'],
-  ready_for_human: ['completed'],
-  blocked: [],
-  completed: [],
-} as const satisfies Record<TaskStatus, readonly TaskStatus[]>;
+const FORWARD_TRANSITIONS: Readonly<Record<TaskStatus, readonly TaskStatus[]>> = {
+  [TASK_STATUS.QUEUED]: [TASK_STATUS.FRAMED],
+  [TASK_STATUS.FRAMED]: [TASK_STATUS.PROOF_READY],
+  [TASK_STATUS.PROOF_READY]: [TASK_STATUS.IMPLEMENTING],
+  [TASK_STATUS.IMPLEMENTING]: [TASK_STATUS.VERIFYING],
+  [TASK_STATUS.VERIFYING]: [TASK_STATUS.REVIEWING, TASK_STATUS.REPAIRING],
+  [TASK_STATUS.REVIEWING]: [TASK_STATUS.REPAIRING, TASK_STATUS.READY_FOR_HUMAN],
+  [TASK_STATUS.REPAIRING]: [TASK_STATUS.VERIFYING],
+  [TASK_STATUS.READY_FOR_HUMAN]: [TASK_STATUS.COMPLETED],
+  [TASK_STATUS.BLOCKED]: [],
+  [TASK_STATUS.COMPLETED]: [],
+};
 
 export function evaluateLifecycleTransition(
-  from: TaskStatus,
-  to: TaskStatus,
+  sourceState: TaskStatus,
+  targetState: TaskStatus,
   context: LifecycleTransitionContext = {},
 ): LifecycleTransitionDecision {
-  if (from === 'completed') {
+  if (sourceState === TASK_STATUS.COMPLETED) {
     return denied(
       'COMPLETED_TERMINAL',
       'The completed lifecycle state is terminal.',
@@ -47,8 +47,12 @@ export function evaluateLifecycleTransition(
     );
   }
 
-  if (from === 'blocked') {
-    if (!context.blockedFromState || ['blocked', 'completed'].includes(context.blockedFromState)) {
+  if (sourceState === TASK_STATUS.BLOCKED) {
+    if (
+      !context.blockedFromState ||
+      context.blockedFromState === TASK_STATUS.BLOCKED ||
+      context.blockedFromState === TASK_STATUS.COMPLETED
+    ) {
       return denied(
         'BLOCKED_RESUME_REQUIRED',
         'A blocked session can resume only to its recorded prior state.',
@@ -56,41 +60,50 @@ export function evaluateLifecycleTransition(
       );
     }
 
-    if (to !== context.blockedFromState) {
+    if (targetState !== context.blockedFromState) {
       return denied(
         'BLOCKED_RESUME_MISMATCH',
-        `Blocked session recovery must return to ${context.blockedFromState}, not ${to}.`,
+        `Blocked session recovery must return to ${context.blockedFromState}, not ${targetState}.`,
         `Retry the transition to ${context.blockedFromState} with explicit human approval.`,
       );
     }
 
-    return allowed(from, to);
+    return allowed(sourceState, targetState);
   }
 
-  if (to === 'blocked') {
-    return allowed(from, to);
+  if (targetState === TASK_STATUS.BLOCKED) {
+    return allowed(sourceState, targetState);
   }
 
-  if ((FORWARD_TRANSITIONS[from] as readonly TaskStatus[]).includes(to)) {
-    return allowed(from, to);
+  if (isForwardLifecycleTransition(sourceState, targetState)) {
+    return allowed(sourceState, targetState);
   }
 
   return denied(
     'INVALID_TRANSITION',
-    `Lifecycle transition ${from} -> ${to} is not structurally allowed.`,
+    `Lifecycle transition ${sourceState} -> ${targetState} is not structurally allowed.`,
     'Run `threadloop session next --json` and satisfy the reported guard before retrying.',
   );
 }
 
 export function isActiveTaskStatus(status: TaskStatus) {
-  return status !== 'completed';
+  return status !== TASK_STATUS.COMPLETED;
 }
 
-function allowed(from: TaskStatus, to: TaskStatus): LifecycleTransitionDecision {
+export function isForwardLifecycleTransition(sourceState: TaskStatus, targetState: TaskStatus) {
+  return FORWARD_TRANSITIONS[sourceState].includes(targetState);
+}
+
+export function getDeterministicForwardTarget(status: TaskStatus): TaskStatus | null {
+  const targets = FORWARD_TRANSITIONS[status];
+  return targets.length === 1 ? (targets[0] ?? null) : null;
+}
+
+function allowed(sourceState: TaskStatus, targetState: TaskStatus): LifecycleTransitionDecision {
   return {
     allowed: true,
     code: 'TRANSITION_ALLOWED',
-    message: `Lifecycle transition ${from} -> ${to} is structurally allowed.`,
+    message: `Lifecycle transition ${sourceState} -> ${targetState} is structurally allowed.`,
     recovery: null,
   };
 }

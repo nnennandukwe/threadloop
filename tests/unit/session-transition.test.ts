@@ -3,7 +3,9 @@ import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import {
   canonicalizeTransitionRequest,
   evaluateTransitionGuards,
+  getTransitionGuardRequirement,
   planNextTransition,
+  requiresProofGuardContext,
   type ProofGuardContext,
   validateTransitionEvidence,
 } from '../../src/domain/session-transition.js';
@@ -42,6 +44,15 @@ function passedProofContext(repository: Partial<NonNullable<ProofGuardContext['r
 }
 
 describe('session transition domain', () => {
+  it('derives guard ownership from the canonical structural workflow', () => {
+    expect(getTransitionGuardRequirement('queued', 'framed')).toBe('none');
+    expect(getTransitionGuardRequirement('framed', 'proof_ready')).toBe('proof_plan');
+    expect(getTransitionGuardRequirement('verifying', 'reviewing')).toBe('proof');
+    expect(getTransitionGuardRequirement('reviewing', 'ready_for_human')).toBe('review');
+    expect(requiresProofGuardContext('verifying', 'reviewing')).toBe(true);
+    expect(requiresProofGuardContext('queued', 'reviewing')).toBe(false);
+  });
+
   it('uses the injected digest for the canonical request bytes', () => {
     const digest = vi.fn(() => 'injected-sha256');
     const result = canonicalizeTransitionRequest(

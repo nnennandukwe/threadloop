@@ -22,7 +22,7 @@ import type {
   TaskStatus,
   ThreadloopConfig,
 } from '../../domain/types.js';
-import { TASK_STATUS } from '../../domain/types.js';
+import { TASK_STATUS, isTaskStatus } from '../../domain/types.js';
 import type { ThreadloopErrorCode } from '../../contracts/errors.js';
 import { threadloopPaths } from './repo.js';
 import { DatabaseSync } from './sqlite-driver.js';
@@ -210,8 +210,8 @@ export interface AppendGateReceiptInput {
 export class ReceiptAppendConflictError extends Error {}
 
 export type TransitionGuardEvaluator = (
-  from: TaskStatus,
-  to: TaskStatus,
+  sourceState: TaskStatus,
+  targetState: TaskStatus,
   input: Record<string, unknown>,
   blockedFromState: TaskStatus | null,
 ) => TransitionGuardDecision;
@@ -361,10 +361,12 @@ export function readSessionProofEvidenceReadOnly(repoRoot: string, sessionId: st
       `
         SELECT COUNT(*) AS count
         FROM session_transitions
-        WHERE session_id = ? AND from_state = 'verifying' AND to_state = 'repairing'
+        WHERE session_id = ? AND from_state = ? AND to_state = ?
       `,
       'count',
       sessionId,
+      TASK_STATUS.VERIFYING,
+      TASK_STATUS.REPAIRING,
     );
     return {
       plan: plan
@@ -603,7 +605,7 @@ export async function applySessionTransition(
     }
 
     if (input.boundProofPlan) {
-      if (current.status !== 'framed' || input.targetState !== 'proof_ready') {
+      if (current.status !== TASK_STATUS.FRAMED || input.targetState !== TASK_STATUS.PROOF_READY) {
         throw new Error('A proof plan can only be persisted during framed -> proof_ready.');
       }
       insertProofPlan(db, input.sessionId, input.boundProofPlan);
@@ -612,7 +614,7 @@ export async function applySessionTransition(
     const createdAt = new Date().toISOString();
     const transitionId = createId('transition');
     const nextVersion = current.state_version + 1;
-    const blockedFromState = input.targetState === 'blocked' ? current.status : null;
+    const blockedFromState = input.targetState === TASK_STATUS.BLOCKED ? current.status : null;
     const update = db
       .prepare(
         `
@@ -626,7 +628,7 @@ export async function applySessionTransition(
       throw new Error('ThreadLoop transition compare-and-swap did not update exactly one task.');
     }
 
-    const endedAt = input.targetState === 'completed' ? createdAt : null;
+    const endedAt = input.targetState === TASK_STATUS.COMPLETED ? createdAt : null;
     if (endedAt) {
       const completion = db
         .prepare(`UPDATE sessions SET ended_at = ? WHERE id = ? AND ended_at IS NULL`)
@@ -709,7 +711,7 @@ export async function appendGateReceipt(repoRoot: string, input: AppendGateRecei
     if (!current) {
       throw new ReceiptAppendConflictError(`Could not find session: ${input.receipt.session_id}`);
     }
-    if (current.status !== 'verifying' || current.state_version !== input.stateVersion) {
+    if (current.status !== TASK_STATUS.VERIFYING || current.state_version !== input.stateVersion) {
       throw new ReceiptAppendConflictError(
         `Session ${input.receipt.session_id} changed while gate ${input.receipt.gate_id} was running.`,
       );
@@ -1306,7 +1308,7 @@ function ensureTaskLifecycleColumns(db: DatabaseSync) {
     db.prepare(`ALTER TABLE tasks ADD COLUMN blocked_from_state TEXT`).run();
   }
 
-  db.prepare(`UPDATE tasks SET status = 'queued' WHERE status = 'active'`).run();
+  db.prepare(`UPDATE tasks SET status = ? WHERE status = 'active'`).run(TASK_STATUS.QUEUED);
 }
 
 function runPendingMigrations(db: DatabaseSync, repoRoot: string) {
@@ -1345,9 +1347,9 @@ function reconcileActiveSessionProjection(db: DatabaseSync) {
       SELECT sessions.id, sessions.task_id
       FROM sessions
       INNER JOIN tasks ON tasks.id = sessions.task_id
-      WHERE tasks.status <> 'completed' AND sessions.ended_at IS NULL
+      WHERE tasks.status <> ? AND sessions.ended_at IS NULL
     `,
-  ).run();
+  ).run(TASK_STATUS.COMPLETED);
 }
 
 function assertActiveSessionProjection(db: DatabaseSync) {
@@ -1384,7 +1386,7 @@ function readActiveProjectionMismatchCount(db: DatabaseSync) {
       LEFT JOIN active_sessions ON active_sessions.session_id = sessions.id
       WHERE
         (
-          tasks.status <> 'completed'
+          tasks.status <> ?
           AND sessions.ended_at IS NULL
           AND (
             active_sessions.session_id IS NULL
@@ -1393,11 +1395,13 @@ function readActiveProjectionMismatchCount(db: DatabaseSync) {
         )
         OR
         (
-          (tasks.status = 'completed' OR sessions.ended_at IS NOT NULL)
+          (tasks.status = ? OR sessions.ended_at IS NOT NULL)
           AND active_sessions.session_id IS NOT NULL
         )
     `,
     'count',
+    TASK_STATUS.COMPLETED,
+    TASK_STATUS.COMPLETED,
   );
 }
 
@@ -1744,11 +1748,11 @@ function readTransitionIdempotency(db: DatabaseSync, sessionId: string, idempote
 }
 
 function detectTransitionStateCorruption(db: DatabaseSync, current: TransitionSessionRow) {
-  if (!TASK_STATUS.includes(current.status)) {
+  if (!isTaskStatus(current.status)) {
     return `Session ${current.session_id} has an invalid lifecycle state.`;
   }
 
-  if (current.blocked_from_state !== null && !TASK_STATUS.includes(current.blocked_from_state)) {
+  if (current.blocked_from_state !== null && !isTaskStatus(current.blocked_from_state)) {
     return `Session ${current.session_id} has an invalid blocked prior state.`;
   }
 
@@ -1757,22 +1761,24 @@ function detectTransitionStateCorruption(db: DatabaseSync, current: TransitionSe
   }
 
   if (
-    (current.status === 'blocked' &&
-      (!current.blocked_from_state || ['blocked', 'completed'].includes(current.blocked_from_state))) ||
-    (current.status !== 'blocked' && current.blocked_from_state !== null)
+    (current.status === TASK_STATUS.BLOCKED &&
+      (!current.blocked_from_state ||
+        current.blocked_from_state === TASK_STATUS.BLOCKED ||
+        current.blocked_from_state === TASK_STATUS.COMPLETED)) ||
+    (current.status !== TASK_STATUS.BLOCKED && current.blocked_from_state !== null)
   ) {
     return `Session ${current.session_id} has an inconsistent blocked prior state.`;
   }
 
-  if ((current.status === 'completed') !== (current.ended_at !== null)) {
+  if ((current.status === TASK_STATUS.COMPLETED) !== (current.ended_at !== null)) {
     return `Session ${current.session_id} has inconsistent task and completion state.`;
   }
 
   const active = db.prepare(`SELECT task_id FROM active_sessions WHERE session_id = ?`).get(current.session_id) as
     { task_id: string } | undefined;
   if (
-    (current.status === 'completed' && active) ||
-    (current.status !== 'completed' && (!active || active.task_id !== current.task_id))
+    (current.status === TASK_STATUS.COMPLETED && active) ||
+    (current.status !== TASK_STATUS.COMPLETED && (!active || active.task_id !== current.task_id))
   ) {
     return `Session ${current.session_id} has an inconsistent active-session projection.`;
   }

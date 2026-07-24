@@ -1,9 +1,16 @@
 import { z } from 'zod';
-import { ARTIFACT_KINDS, ENTRY_KINDS, ENTRY_SOURCES, HEARTBEAT_SOURCES, TASK_STATUS } from '../domain/types.js';
+import {
+  ARTIFACT_KINDS,
+  ENTRY_KINDS,
+  ENTRY_SOURCES,
+  HEARTBEAT_SOURCES,
+  TASK_STATUS,
+  TASK_STATUS_VALUES,
+} from '../domain/types.js';
 
 const persistedTaskStatusSchema = z
-  .union([z.enum(TASK_STATUS), z.literal('active')])
-  .transform((status) => (status === 'active' ? 'queued' : status));
+  .union([z.enum(TASK_STATUS_VALUES), z.literal('active')])
+  .transform((status) => (status === 'active' ? TASK_STATUS.QUEUED : status));
 
 export const taskSchema = z.object({
   id: z.string(),
@@ -14,7 +21,7 @@ export const taskSchema = z.object({
   repoRoot: z.string(),
   status: persistedTaskStatusSchema,
   stateVersion: z.number().int().nonnegative().optional().default(0),
-  blockedFromState: z.enum(TASK_STATUS).nullable().optional().default(null),
+  blockedFromState: z.enum(TASK_STATUS_VALUES).nullable().optional().default(null),
   createdAt: z.string(),
 });
 
