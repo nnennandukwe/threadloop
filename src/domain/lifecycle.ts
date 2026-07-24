@@ -35,11 +35,11 @@ const FORWARD_TRANSITIONS: Readonly<Record<TaskStatus, readonly TaskStatus[]>> =
 };
 
 export function evaluateLifecycleTransition(
-  from: TaskStatus,
-  to: TaskStatus,
+  sourceState: TaskStatus,
+  targetState: TaskStatus,
   context: LifecycleTransitionContext = {},
 ): LifecycleTransitionDecision {
-  if (from === TASK_STATUS.COMPLETED) {
+  if (sourceState === TASK_STATUS.COMPLETED) {
     return denied(
       'COMPLETED_TERMINAL',
       'The completed lifecycle state is terminal.',
@@ -47,7 +47,7 @@ export function evaluateLifecycleTransition(
     );
   }
 
-  if (from === TASK_STATUS.BLOCKED) {
+  if (sourceState === TASK_STATUS.BLOCKED) {
     if (
       !context.blockedFromState ||
       context.blockedFromState === TASK_STATUS.BLOCKED ||
@@ -60,28 +60,28 @@ export function evaluateLifecycleTransition(
       );
     }
 
-    if (to !== context.blockedFromState) {
+    if (targetState !== context.blockedFromState) {
       return denied(
         'BLOCKED_RESUME_MISMATCH',
-        `Blocked session recovery must return to ${context.blockedFromState}, not ${to}.`,
+        `Blocked session recovery must return to ${context.blockedFromState}, not ${targetState}.`,
         `Retry the transition to ${context.blockedFromState} with explicit human approval.`,
       );
     }
 
-    return allowed(from, to);
+    return allowed(sourceState, targetState);
   }
 
-  if (to === TASK_STATUS.BLOCKED) {
-    return allowed(from, to);
+  if (targetState === TASK_STATUS.BLOCKED) {
+    return allowed(sourceState, targetState);
   }
 
-  if (isForwardLifecycleTransition(from, to)) {
-    return allowed(from, to);
+  if (isForwardLifecycleTransition(sourceState, targetState)) {
+    return allowed(sourceState, targetState);
   }
 
   return denied(
     'INVALID_TRANSITION',
-    `Lifecycle transition ${from} -> ${to} is not structurally allowed.`,
+    `Lifecycle transition ${sourceState} -> ${targetState} is not structurally allowed.`,
     'Run `threadloop session next --json` and satisfy the reported guard before retrying.',
   );
 }
@@ -90,8 +90,8 @@ export function isActiveTaskStatus(status: TaskStatus) {
   return status !== TASK_STATUS.COMPLETED;
 }
 
-export function isForwardLifecycleTransition(from: TaskStatus, to: TaskStatus) {
-  return FORWARD_TRANSITIONS[from].includes(to);
+export function isForwardLifecycleTransition(sourceState: TaskStatus, targetState: TaskStatus) {
+  return FORWARD_TRANSITIONS[sourceState].includes(targetState);
 }
 
 export function getDeterministicForwardTarget(status: TaskStatus): TaskStatus | null {
@@ -99,11 +99,11 @@ export function getDeterministicForwardTarget(status: TaskStatus): TaskStatus | 
   return targets.length === 1 ? (targets[0] ?? null) : null;
 }
 
-function allowed(from: TaskStatus, to: TaskStatus): LifecycleTransitionDecision {
+function allowed(sourceState: TaskStatus, targetState: TaskStatus): LifecycleTransitionDecision {
   return {
     allowed: true,
     code: 'TRANSITION_ALLOWED',
-    message: `Lifecycle transition ${from} -> ${to} is structurally allowed.`,
+    message: `Lifecycle transition ${sourceState} -> ${targetState} is structurally allowed.`,
     recovery: null,
   };
 }

@@ -297,8 +297,8 @@ export async function transitionSession(input: TransitionSessionInput) {
         ...canonicalRequest,
         ...(boundProofPlan ? { boundProofPlan } : {}),
       },
-      (from, to, transitionInput, blockedFromState) =>
-        evaluateTransitionGuards(from, to, transitionInput, blockedFromState, proofGuardContext),
+      (sourceState, targetState, transitionInput, blockedFromState) =>
+        evaluateTransitionGuards(sourceState, targetState, transitionInput, blockedFromState, proofGuardContext),
     );
   } catch (error) {
     if (error instanceof ProofValidationError) {

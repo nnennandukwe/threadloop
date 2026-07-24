@@ -88,13 +88,13 @@ export function canonicalizeTransitionRequest(
 }
 
 export function evaluateTransitionGuards(
-  from: TaskStatus,
-  to: TaskStatus,
+  sourceState: TaskStatus,
+  targetState: TaskStatus,
   input: Record<string, unknown>,
   blockedFromState: TaskStatus | null,
   proof: ProofGuardContext = {},
 ): TransitionGuardDecision {
-  if (from === TASK_STATUS.BLOCKED && blockedFromState === null) {
+  if (sourceState === TASK_STATUS.BLOCKED && blockedFromState === null) {
     return deniedGuards(
       {
         code: 'BLOCKED_PRIOR_STATE_REQUIRED',
@@ -107,46 +107,60 @@ export function evaluateTransitionGuards(
     );
   }
 
-  const evidence = validateTransitionEvidence(from, to, input);
+  const evidence = validateTransitionEvidence(sourceState, targetState, input);
   if (!evidence.allowed) {
     return evidence;
   }
 
-  const requirement = getTransitionGuardRequirement(from, to);
+  const requirement = getTransitionGuardRequirement(sourceState, targetState);
   if (requirement === 'none') {
     return allowedGuards();
   }
   if (requirement === 'proof_plan') {
-    return proof.boundPlan ? allowedGuards() : evaluateProofOwnedGuards(from, to, proof);
+    return proof.boundPlan ? allowedGuards() : evaluateProofOwnedGuards(sourceState, targetState, proof);
   }
   if (requirement === 'proof') {
-    return evaluateProofOwnedGuards(from, to, proof);
+    return evaluateProofOwnedGuards(sourceState, targetState, proof);
   }
-  return deferredReviewGuards(to);
+  return deferredReviewGuards(targetState);
 }
 
-export function getTransitionGuardRequirement(from: TaskStatus, to: TaskStatus): TransitionGuardRequirement {
+export function getTransitionGuardRequirement(
+  sourceState: TaskStatus,
+  targetState: TaskStatus,
+): TransitionGuardRequirement {
   if (
-    to === TASK_STATUS.BLOCKED ||
-    from === TASK_STATUS.BLOCKED ||
-    (from === TASK_STATUS.QUEUED && to === TASK_STATUS.FRAMED)
+    targetState === TASK_STATUS.BLOCKED ||
+    sourceState === TASK_STATUS.BLOCKED ||
+    (sourceState === TASK_STATUS.QUEUED && targetState === TASK_STATUS.FRAMED)
   ) {
     return 'none';
   }
-  if (from === TASK_STATUS.FRAMED && to === TASK_STATUS.PROOF_READY) {
+  if (sourceState === TASK_STATUS.FRAMED && targetState === TASK_STATUS.PROOF_READY) {
     return 'proof_plan';
   }
-  if (from === TASK_STATUS.REVIEWING || from === TASK_STATUS.READY_FOR_HUMAN || to === TASK_STATUS.COMPLETED) {
+  if (
+    sourceState === TASK_STATUS.REVIEWING ||
+    sourceState === TASK_STATUS.READY_FOR_HUMAN ||
+    targetState === TASK_STATUS.COMPLETED
+  ) {
     return 'review';
   }
   return 'proof';
 }
 
-export function requiresProofGuardContext(from: TaskStatus, to: TaskStatus) {
-  return isForwardLifecycleTransition(from, to) && getTransitionGuardRequirement(from, to) === 'proof';
+export function requiresProofGuardContext(sourceState: TaskStatus, targetState: TaskStatus) {
+  return (
+    isForwardLifecycleTransition(sourceState, targetState) &&
+    getTransitionGuardRequirement(sourceState, targetState) === 'proof'
+  );
 }
 
-function evaluateProofOwnedGuards(from: TaskStatus, to: TaskStatus, proof: ProofGuardContext): TransitionGuardDecision {
+function evaluateProofOwnedGuards(
+  sourceState: TaskStatus,
+  targetState: TaskStatus,
+  proof: ProofGuardContext,
+): TransitionGuardDecision {
   const plan = proof.plan;
   const repository = proof.repository;
   if (!plan || !repository) {
@@ -164,7 +178,7 @@ function evaluateProofOwnedGuards(from: TaskStatus, to: TaskStatus, proof: Proof
     );
   }
 
-  if (from === TASK_STATUS.PROOF_READY && to === TASK_STATUS.IMPLEMENTING) {
+  if (sourceState === TASK_STATUS.PROOF_READY && targetState === TASK_STATUS.IMPLEMENTING) {
     if (repository.clean && repository.branch === plan.baselineBranch && repository.headSha === plan.baselineHeadSha) {
       return allowedGuards();
     }
@@ -182,7 +196,7 @@ function evaluateProofOwnedGuards(from: TaskStatus, to: TaskStatus, proof: Proof
     );
   }
 
-  if (from === TASK_STATUS.IMPLEMENTING && to === TASK_STATUS.VERIFYING) {
+  if (sourceState === TASK_STATUS.IMPLEMENTING && targetState === TASK_STATUS.VERIFYING) {
     if (
       repository.clean &&
       repository.branch === plan.baselineBranch &&
@@ -205,7 +219,7 @@ function evaluateProofOwnedGuards(from: TaskStatus, to: TaskStatus, proof: Proof
     );
   }
 
-  if (from === TASK_STATUS.VERIFYING && to === TASK_STATUS.REVIEWING) {
+  if (sourceState === TASK_STATUS.VERIFYING && targetState === TASK_STATUS.REVIEWING) {
     if (proof.evidence?.status !== 'passed') {
       return deniedGuards(
         {
@@ -237,7 +251,7 @@ function evaluateProofOwnedGuards(from: TaskStatus, to: TaskStatus, proof: Proof
     return allowedGuards();
   }
 
-  if (from === TASK_STATUS.VERIFYING && to === TASK_STATUS.REPAIRING) {
+  if (sourceState === TASK_STATUS.VERIFYING && targetState === TASK_STATUS.REPAIRING) {
     if (proof.evidence?.status === 'failed' && (proof.attemptsUsed ?? 3) < 3) {
       return allowedGuards();
     }
@@ -260,7 +274,7 @@ function evaluateProofOwnedGuards(from: TaskStatus, to: TaskStatus, proof: Proof
     );
   }
 
-  if (from === TASK_STATUS.REPAIRING && to === TASK_STATUS.VERIFYING) {
+  if (sourceState === TASK_STATUS.REPAIRING && targetState === TASK_STATUS.VERIFYING) {
     if (repository.clean && repository.branch === plan.baselineBranch && repository.committedRepairFromFailure) {
       return allowedGuards();
     }
@@ -282,12 +296,12 @@ function evaluateProofOwnedGuards(from: TaskStatus, to: TaskStatus, proof: Proof
 }
 
 export function validateTransitionEvidence(
-  from: TaskStatus,
-  to: TaskStatus,
+  sourceState: TaskStatus,
+  targetState: TaskStatus,
   input: Record<string, unknown>,
 ): TransitionGuardDecision {
   if (
-    to === TASK_STATUS.BLOCKED &&
+    targetState === TASK_STATUS.BLOCKED &&
     !hasRequiredTextFields(input.block, ['reason', 'evidence_ref', 'recovery', 'stop_code'])
   ) {
     return deniedGuards(
@@ -303,7 +317,7 @@ export function validateTransitionEvidence(
   }
 
   if (
-    from === TASK_STATUS.BLOCKED &&
+    sourceState === TASK_STATUS.BLOCKED &&
     !hasRequiredTextFields(input.recovery, ['approved_by', 'evidence_ref', 'reason'])
   ) {
     return deniedGuards(

@@ -41,8 +41,8 @@ describe('governed lifecycle', () => {
       ['ready_for_human', 'completed'],
     ] as const;
 
-    for (const [from, to] of allowed) {
-      expect(evaluateLifecycleTransition(from, to)).toMatchObject({
+    for (const [sourceState, targetState] of allowed) {
+      expect(evaluateLifecycleTransition(sourceState, targetState)).toMatchObject({
         allowed: true,
         code: 'TRANSITION_ALLOWED',
         recovery: null,
@@ -67,18 +67,18 @@ describe('governed lifecycle', () => {
       ),
     ]);
 
-    for (const from of TASK_STATUS_VALUES) {
-      for (const to of TASK_STATUS_VALUES) {
-        expect(evaluateLifecycleTransition(from, to).allowed, `${from} -> ${to}`).toBe(
-          allowedPairs.has(`${from}:${to}`),
+    for (const sourceState of TASK_STATUS_VALUES) {
+      for (const targetState of TASK_STATUS_VALUES) {
+        expect(evaluateLifecycleTransition(sourceState, targetState).allowed, `${sourceState} -> ${targetState}`).toBe(
+          allowedPairs.has(`${sourceState}:${targetState}`),
         );
       }
     }
   });
 
   it('allows every nonterminal workflow state to block', () => {
-    for (const from of TASK_STATUS_VALUES.filter((state) => !['blocked', 'completed'].includes(state))) {
-      expect(evaluateLifecycleTransition(from, 'blocked')).toMatchObject({
+    for (const sourceState of TASK_STATUS_VALUES.filter((state) => !['blocked', 'completed'].includes(state))) {
+      expect(evaluateLifecycleTransition(sourceState, 'blocked')).toMatchObject({
         allowed: true,
         code: 'TRANSITION_ALLOWED',
       });

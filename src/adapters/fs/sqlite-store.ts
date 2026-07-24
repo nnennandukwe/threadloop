@@ -210,8 +210,8 @@ export interface AppendGateReceiptInput {
 export class ReceiptAppendConflictError extends Error {}
 
 export type TransitionGuardEvaluator = (
-  from: TaskStatus,
-  to: TaskStatus,
+  sourceState: TaskStatus,
+  targetState: TaskStatus,
   input: Record<string, unknown>,
   blockedFromState: TaskStatus | null,
 ) => TransitionGuardDecision;
