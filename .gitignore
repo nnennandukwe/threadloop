@@ -6,12 +6,7 @@ coverage/
 .bg-shell/
 .DS_Store
 
-# ── GSD baseline (auto-generated) ──
-.gsd/activity/
-.gsd/runtime/
-.gsd/auto.lock
-.gsd/metrics.json
-.gsd/STATE.md
+.gsd/
 Thumbs.db
 *.swp
 *.swo
