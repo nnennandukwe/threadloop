@@ -29,7 +29,8 @@
     "check:static": "npm run format:check && npm run lint && npm run lint:markdown && npm run typecheck && npm run dead-code && npm run check:community",
     "check": "npm run check:static && npm test && npm run build && npm run smoke:pack",
     "security:dependencies": "npm audit --audit-level=high",
-    "sensor:ci-gate": "tsx scripts/run-ci-gate-sensor.ts"
+    "sensor:ci-gate:run": "tsx scripts/run-ci-gate-sensor.ts",
+    "sensor:ci-gate:sign": "tsx scripts/sign-ci-gate-receipt.ts"
   },
   "keywords": [
     "cli",

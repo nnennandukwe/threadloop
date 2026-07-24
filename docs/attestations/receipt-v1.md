@@ -61,10 +61,23 @@ jobs:
       gate_json: '{"command":["npm","run","check"],"id":"check","timeout_ms":900000,"working_directory":"."}'
 ```
 
-The caller must run from a branch ref. The reusable workflow checks out both the caller HEAD and its own source, runs
-the exact argv without a shell, observes Git before and after execution, signs through GitHub OIDC, and uploads one
-self-contained package. It uses no keys or repository secrets. The package is uploaded even when the gate fails, while
-the called job preserves the failing status.
+The caller must run from a branch ref. The reusable workflow uses two fresh GitHub-hosted jobs:
+
+1. `execute_gate` checks out the caller HEAD and the pinned sensor, runs the exact argv without a shell, and observes
+   Git before and after execution. This job has only `contents: read`; it cannot request an OIDC token and never sees
+   the signed-package output path.
+2. `sign_receipt` runs only after `execute_gate` has ended. It receives `id-token: write`, checks out only the pinned
+   sensor, downloads the captured report as untrusted data, binds it to the caller inputs and
+   `needs.execute_gate.result`, and signs through GitHub OIDC.
+
+The gate subprocess also receives a filtered environment without ThreadLoop control paths, GitHub step-control files, or
+GitHub's OIDC request variables. The fresh-runner job boundary is the security boundary: report tampering can never give
+the gate process the signing token or final package path. A failed or cancelled execution job is always signed as
+nonpassing even if its report claims `passed`.
+
+The workflow uses no keys or repository secrets. A self-contained diagnostic package is uploaded when a captured gate
+fails, while the called workflow preserves the failing status. If the report is absent, malformed, oversized, or
+context-mismatched, signing fails closed and no package is uploaded.
 
 ## Package and statement
 

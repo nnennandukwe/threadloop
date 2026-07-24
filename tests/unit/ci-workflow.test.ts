@@ -17,28 +17,65 @@ describe('signed gate reusable workflow', () => {
     const workflow = object(parse(source) as unknown);
     const workflowCall = object(object(workflow.on).workflow_call);
     const inputs = object(workflowCall.inputs);
-    const job = object(object(workflow.jobs)['signed-gate']);
-    const steps = job.steps as Array<Record<string, unknown>>;
+    const jobs = object(workflow.jobs);
+    const executionJob = object(jobs.execute_gate);
+    const signingJob = object(jobs.sign_receipt);
+    const executionSteps = executionJob.steps as Array<Record<string, unknown>>;
+    const signingSteps = signingJob.steps as Array<Record<string, unknown>>;
 
     expect(Object.keys(inputs)).toEqual(['session_id', 'plan_sha256', 'gate_id', 'gate_json']);
     expect(workflow.permissions).toEqual({ contents: 'read' });
-    expect(job.permissions).toEqual({ contents: 'read', 'id-token': 'write' });
-    expect(job['runs-on']).toBe('ubuntu-latest');
+    expect(Object.keys(jobs)).toEqual(['execute_gate', 'sign_receipt']);
+    expect(executionJob.permissions).toEqual({ contents: 'read' });
+    expect(signingJob.permissions).toEqual({ contents: 'read', 'id-token': 'write' });
+    expect(executionJob['runs-on']).toBe('ubuntu-latest');
+    expect(signingJob['runs-on']).toBe('ubuntu-latest');
+    expect(signingJob.needs).toBe('execute_gate');
+    expect(signingJob.if).toBe('${{ always() }}');
     expect(source).not.toContain('secrets:');
     expect(source).not.toContain('pull_request_target');
-    expect(steps.map((step) => step.uses).filter(Boolean)).toEqual([
+    expect(executionSteps.map((step) => step.uses).filter(Boolean)).toEqual([
       'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
       'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
       'actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38',
       'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
     ]);
-    expect(steps.find((step) => step.name === 'Execute and sign declared gate')).toMatchObject({
-      run: 'npm run sensor:ci-gate',
+    expect(signingSteps.map((step) => step.uses).filter(Boolean)).toEqual([
+      'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+      'actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38',
+      'actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131',
+      'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
+    ]);
+    expect(executionSteps.find((step) => step.name === 'Execute declared gate')).toMatchObject({
+      id: 'execute_gate',
+      run: 'npm run sensor:ci-gate:run',
       'working-directory': 'threadloop-sensor',
     });
-    expect(steps.find((step) => step.name === 'Upload signed receipt')).toMatchObject({
+    expect(executionSteps.find((step) => step.name === 'Upload captured gate report')).toMatchObject({
+      if: '${{ always() }}',
+    });
+    const signingStep = signingSteps.find((step) => step.name === 'Sign captured gate receipt');
+    expect(signingStep).toMatchObject({
+      run: 'npm run sensor:ci-gate:sign',
+      'working-directory': 'threadloop-sensor',
+    });
+    expect(object(signingStep?.env)).toMatchObject({
+      THREADLOOP_GATE_JOB_RESULT: '${{ needs.execute_gate.result }}',
+    });
+    expect(signingSteps.find((step) => step.name === 'Upload signed receipt')).toMatchObject({
       if: "${{ always() && hashFiles('receipt-output/signed-receipt.json') != '' }}",
     });
+  });
+
+  it('keeps signing authority out of the caller-controlled gate process', async () => {
+    const executionSource = await readFile(path.join(process.cwd(), 'scripts/run-ci-gate-sensor.ts'), 'utf8');
+    const signingSource = await readFile(path.join(process.cwd(), 'scripts/sign-ci-gate-receipt.ts'), 'utf8');
+
+    expect(executionSource).not.toContain('signSigstoreStatement');
+    expect(executionSource).not.toContain('THREADLOOP_OUTPUT_PATH');
+    expect(executionSource).toContain('env: gateEnvironment()');
+    expect(signingSource).not.toContain('runGateProcess');
+    expect(signingSource).not.toContain('THREADLOOP_SOURCE_ROOT');
   });
 
   it('scopes actionlint runtime-context suppressions to the reusable sensor', async () => {

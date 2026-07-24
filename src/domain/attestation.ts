@@ -94,6 +94,23 @@ export interface CanonicalSignedGateReceiptArtifact {
   sha256: string;
 }
 
+export type GitHubGateJobResult = 'success' | 'failure' | 'cancelled';
+
+export interface GateReportSigningContext {
+  receiptId: string;
+  sessionId: string;
+  planSha256: string;
+  gate: ProofGate;
+  sourceRepository: string;
+  sourceRef: string;
+  sourceHeadSha: string;
+  runInvocationUri: string;
+  runnerOs: string;
+  runnerArch: string;
+  nodeVersion: string;
+  jobResult: GitHubGateJobResult;
+}
+
 export interface SignedReceiptEnvelope extends CanonicalSignedGateReceiptArtifact {
   artifactJson: string;
   artifactSha256: string;
@@ -159,6 +176,57 @@ export function canonicalizeSignedGateReceiptArtifact(
   const artifact = validateSignedGateReceiptArtifact(value);
   const json = canonicalJson(artifact);
   return { artifact, json, sha256: digest(json) };
+}
+
+export function authorizeGateReportForSigning(
+  value: unknown,
+  context: GateReportSigningContext,
+): SignedGateReceiptArtifact {
+  const report = validateSignedGateReceiptArtifact(value);
+  const expected = {
+    session_id: context.sessionId,
+    plan_sha256: context.planSha256,
+    gate: context.gate,
+    source: {
+      repository: context.sourceRepository,
+      ref: context.sourceRef,
+      head_sha: context.sourceHeadSha,
+      run_invocation_uri: context.runInvocationUri,
+    },
+  };
+  for (const [field, actual, wanted] of [
+    ['package.artifact.session_id', report.session_id, expected.session_id],
+    ['package.artifact.plan_sha256', report.plan_sha256, expected.plan_sha256],
+    ['package.artifact.gate', canonicalJson(report.gate), canonicalJson(expected.gate)],
+    ['package.artifact.source.repository', report.source.repository, expected.source.repository],
+    ['package.artifact.source.ref', report.source.ref, expected.source.ref],
+    ['package.artifact.source.head_sha', report.source.head_sha, expected.source.head_sha],
+    [
+      'package.artifact.source.run_invocation_uri',
+      report.source.run_invocation_uri,
+      expected.source.run_invocation_uri,
+    ],
+  ] as const) {
+    if (actual !== wanted) {
+      throw invalid(field, 'does not match the trusted signing context');
+    }
+  }
+
+  const result = authoritativeGateResult(report, context.jobResult);
+  return {
+    ...report,
+    receipt_id: requireIdentifier(context.receiptId, 'signing.receipt_id', 160),
+    result,
+    exit_status:
+      result === 'passed' ? 0 : report.exit_status === 0 || report.exit_status === null ? 1 : report.exit_status,
+    signal: result === 'passed' ? null : report.signal,
+    environment: {
+      runner_environment: 'github-hosted',
+      runner_os: requireText(context.runnerOs, 'signing.runner_os', 128),
+      runner_arch: requireText(context.runnerArch, 'signing.runner_arch', 128),
+      node_version: requireText(context.nodeVersion, 'signing.node_version', 128),
+    },
+  };
 }
 
 export function buildInTotoReceiptStatement(
@@ -503,6 +571,27 @@ function validateSignedGateReceiptArtifact(value: unknown): SignedGateReceiptArt
       contract_version: 1,
     },
   };
+}
+
+function authoritativeGateResult(report: SignedGateReceiptArtifact, jobResult: GitHubGateJobResult): GateReceiptResult {
+  if (jobResult === 'cancelled') {
+    return 'aborted';
+  }
+  if (jobResult === 'failure') {
+    return report.result === 'passed' ? 'failed' : report.result;
+  }
+  if (
+    report.result !== 'passed' ||
+    report.exit_status !== 0 ||
+    report.signal !== null ||
+    !report.clean_before ||
+    !report.clean_after ||
+    report.head_before !== report.source.head_sha ||
+    report.head_after !== report.source.head_sha
+  ) {
+    throw invalid('package.artifact.result', 'cannot be passed because the captured gate report is not a clean pass');
+  }
+  return 'passed';
 }
 
 function validateInTotoReceiptStatement(

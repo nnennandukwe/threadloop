@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import {
   AttestationValidationError,
+  authorizeGateReportForSigning,
   buildInTotoReceiptStatement,
   canonicalizeSignedGateReceiptArtifact,
   evaluateCiProofEvidence,
@@ -93,6 +94,98 @@ function captureAttestationError(action: () => unknown) {
 }
 
 describe('signed receipt attestation domain', () => {
+  it('authorizes a clean gate report only when the GitHub execution job succeeded', () => {
+    const authorized = authorizeGateReportForSigning(artifact(), {
+      receiptId: 'receipt_signer_generated',
+      sessionId: 'session_123',
+      planSha256: planSha,
+      gate: artifact().gate,
+      sourceRepository: artifact().source.repository,
+      sourceRef: artifact().source.ref,
+      sourceHeadSha: headSha,
+      runInvocationUri: artifact().source.run_invocation_uri,
+      runnerOs: 'Linux',
+      runnerArch: 'X64',
+      nodeVersion: 'v22.13.0',
+      jobResult: 'success',
+    });
+
+    expect(authorized).toMatchObject({
+      receipt_id: 'receipt_signer_generated',
+      result: 'passed',
+      exit_status: 0,
+      signal: null,
+    });
+  });
+
+  it('cannot sign an attacker-supplied pass when GitHub observed the execution job fail', () => {
+    const authorized = authorizeGateReportForSigning(artifact(), {
+      receiptId: 'receipt_signer_generated',
+      sessionId: 'session_123',
+      planSha256: planSha,
+      gate: artifact().gate,
+      sourceRepository: artifact().source.repository,
+      sourceRef: artifact().source.ref,
+      sourceHeadSha: headSha,
+      runInvocationUri: artifact().source.run_invocation_uri,
+      runnerOs: 'Linux',
+      runnerArch: 'X64',
+      nodeVersion: 'v22.13.0',
+      jobResult: 'failure',
+    });
+
+    expect(authorized).toMatchObject({
+      receipt_id: 'receipt_signer_generated',
+      result: 'failed',
+      exit_status: 1,
+    });
+  });
+
+  it('rejects a non-passing report when GitHub observed the execution job succeed', () => {
+    expect(
+      captureAttestationError(() =>
+        authorizeGateReportForSigning(
+          { ...artifact(), result: 'failed', exit_status: 1 },
+          {
+            receiptId: 'receipt_signer_generated',
+            sessionId: 'session_123',
+            planSha256: planSha,
+            gate: artifact().gate,
+            sourceRepository: artifact().source.repository,
+            sourceRef: artifact().source.ref,
+            sourceHeadSha: headSha,
+            runInvocationUri: artifact().source.run_invocation_uri,
+            runnerOs: 'Linux',
+            runnerArch: 'X64',
+            nodeVersion: 'v22.13.0',
+            jobResult: 'success',
+          },
+        ),
+      ).field,
+    ).toBe('package.artifact.result');
+  });
+
+  it('rejects gate reports that do not match the trusted signing context', () => {
+    expect(
+      captureAttestationError(() =>
+        authorizeGateReportForSigning(artifact(), {
+          receiptId: 'receipt_signer_generated',
+          sessionId: 'session_other',
+          planSha256: planSha,
+          gate: artifact().gate,
+          sourceRepository: artifact().source.repository,
+          sourceRef: artifact().source.ref,
+          sourceHeadSha: headSha,
+          runInvocationUri: artifact().source.run_invocation_uri,
+          runnerOs: 'Linux',
+          runnerArch: 'X64',
+          nodeVersion: 'v22.13.0',
+          jobResult: 'success',
+        }),
+      ).field,
+    ).toBe('package.artifact.session_id');
+  });
+
   it('keeps legacy proof plans readable but reports missing immutable CI policy', () => {
     const evidence = evaluateCiProofEvidence({
       sessionId: 'session_123',

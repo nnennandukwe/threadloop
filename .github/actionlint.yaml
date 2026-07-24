@@ -1,5 +1,8 @@
 paths:
   .github/workflows/threadloop-gate-sensor.yml:
+    # GitHub documents these runner-populated properties and uses this exact checkout pattern:
+    # https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#example-usage-of-job-context-workflow-identity
+    # actionlint 1.7.12 does not yet model them, so suppress only its two stale schema diagnostics.
     ignore:
       - 'property "workflow_repository" is not defined in object type'
       - 'property "workflow_sha" is not defined in object type'

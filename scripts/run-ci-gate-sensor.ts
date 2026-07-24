@@ -2,16 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { sha256 } from '../src/adapters/crypto/sha256.js';
-import { signSigstoreStatement } from '../src/adapters/crypto/sigstore.js';
 import { observeProofRepository } from '../src/adapters/git/client.js';
 import { runGateProcess } from '../src/adapters/process/gate-runner.js';
-import {
-  buildInTotoReceiptStatement,
-  canonicalizeSignedGateReceiptArtifact,
-  IN_TOTO_PAYLOAD_TYPE,
-  SIGNED_RECEIPT_MEDIA_TYPE,
-  type SignedGateReceiptArtifact,
-} from '../src/domain/attestation.js';
+import { canonicalizeSignedGateReceiptArtifact, type SignedGateReceiptArtifact } from '../src/domain/attestation.js';
 import { canonicalJson } from '../src/domain/canonical-json.js';
 import { canonicalizeProofPlan, type GateReceiptResult } from '../src/domain/proof.js';
 
@@ -20,7 +13,7 @@ const planSha256 = requiredEnvironment('THREADLOOP_PLAN_SHA256');
 const gateId = requiredEnvironment('THREADLOOP_GATE_ID');
 const gateJson = requiredEnvironment('THREADLOOP_GATE_JSON');
 const sourceRoot = path.resolve(requiredEnvironment('THREADLOOP_SOURCE_ROOT'));
-const outputPath = path.resolve(requiredEnvironment('THREADLOOP_OUTPUT_PATH'));
+const reportPath = path.resolve(requiredEnvironment('THREADLOOP_REPORT_PATH'));
 const sourceRepository = `${requiredEnvironment('GITHUB_SERVER_URL')}/${requiredEnvironment('GITHUB_REPOSITORY')}`;
 const sourceRef = requiredEnvironment('GITHUB_REF');
 const sourceHead = requiredEnvironment('GITHUB_SHA');
@@ -71,16 +64,17 @@ if (
   throw new Error('The declared gate working directory resolves outside the caller repository.');
 }
 
-const outputDirectory = path.dirname(outputPath);
-await mkdir(outputDirectory, { recursive: true });
-const stdoutPath = path.join(outputDirectory, 'gate.stdout');
-const stderrPath = path.join(outputDirectory, 'gate.stderr');
+const reportDirectory = path.dirname(reportPath);
+await mkdir(reportDirectory, { recursive: true });
+const stdoutPath = path.join(reportDirectory, 'gate.stdout');
+const stderrPath = path.join(reportDirectory, 'gate.stderr');
 const processResult = await runGateProcess({
   command: gate.command,
   cwd: gateWorkingDirectory,
   timeoutMs: gate.timeout_ms,
   stdoutPath,
   stderrPath,
+  env: gateEnvironment(),
 });
 
 let after: Awaited<ReturnType<typeof observeProofRepository>>;
@@ -97,7 +91,7 @@ if (!before.clean || !after.clean || before.headSha !== after.headSha || before.
 
 const artifact: SignedGateReceiptArtifact = {
   schema_version: 1,
-  receipt_id: `receipt_${randomUUID()}`,
+  receipt_id: `report_${randomUUID()}`,
   session_id: sessionId,
   plan_sha256: planSha256,
   gate,
@@ -133,20 +127,24 @@ const artifact: SignedGateReceiptArtifact = {
   },
 };
 const canonicalArtifact = canonicalizeSignedGateReceiptArtifact(artifact, sha256);
-const statement = buildInTotoReceiptStatement(canonicalArtifact.artifact, canonicalArtifact.sha256);
-const bundle = await signSigstoreStatement(Buffer.from(canonicalJson(statement)), IN_TOTO_PAYLOAD_TYPE);
-await writeFile(
-  outputPath,
-  canonicalJson({
-    media_type: SIGNED_RECEIPT_MEDIA_TYPE,
-    artifact: canonicalArtifact.artifact,
-    bundle,
-  }),
-  { encoding: 'utf8', flag: 'wx' },
-);
+await writeFile(reportPath, canonicalArtifact.json, { encoding: 'utf8', flag: 'wx' });
 
 if (result !== 'passed') {
   process.exitCode = processResult.exitStatus && processResult.exitStatus > 0 ? processResult.exitStatus : 1;
+}
+
+function gateEnvironment() {
+  const environment = { ...process.env };
+  for (const name of Object.keys(environment)) {
+    if (
+      name.startsWith('THREADLOOP_') ||
+      name.startsWith('ACTIONS_') ||
+      ['GITHUB_ENV', 'GITHUB_OUTPUT', 'GITHUB_PATH', 'GITHUB_STEP_SUMMARY', 'GITHUB_TOKEN', 'GH_TOKEN'].includes(name)
+    ) {
+      delete environment[name];
+    }
+  }
+  return environment;
 }
 
 function requiredEnvironment(name: string) {
