@@ -85,6 +85,8 @@ import type {
 import { renderArtifact } from '../renderers/markdown/artifacts.js';
 import type { SignedReceiptFileSystem } from './signed-receipt-files.js';
 
+const MAX_SIGNED_RECEIPT_PACKAGE_BYTES = 10 * 1024 * 1024;
+
 export interface StartTaskInput {
   cwd: string;
   title: string;
@@ -646,7 +648,7 @@ export async function importSessionGateReceipt(input: ImportSessionGateReceiptIn
       details: { package_path: input.packagePath },
     });
   }
-  if (packageBytes.length > 10 * 1024 * 1024) {
+  if (packageBytes.length > MAX_SIGNED_RECEIPT_PACKAGE_BYTES) {
     throw new ThreadloopError('SIGNED_RECEIPT_INVALID', 'The signed receipt package exceeds the 10 MiB limit.', {
       details: { package_path: input.packagePath, size_bytes: packageBytes.length },
     });
@@ -800,7 +802,10 @@ export async function importSessionGateReceipt(input: ImportSessionGateReceiptIn
           if (!isErrorCode(error, 'EEXIST')) {
             throw error;
           }
-          const existingDigest = input.receiptFileSystem.sha256OrNull(finalPackagePath);
+          const existingDigest = input.receiptFileSystem.sha256WithinLimitOrNull(
+            finalPackagePath,
+            MAX_SIGNED_RECEIPT_PACKAGE_BYTES,
+          );
           if (existingDigest !== receipt.packageSha256) {
             throw error;
           }

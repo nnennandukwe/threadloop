@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, truncate, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -428,6 +428,33 @@ describe('signed gate receipt import', { timeout: 20_000 }, () => {
     ).rejects.toMatchObject({ code: 'SIGNED_RECEIPT_CONFLICT' });
 
     expect(await readFile(finalPackagePath)).toEqual(unindexedBytes);
+    const db = new DatabaseSync(path.join(fixture.repoDir, '.threadloop/state/state.db'), { readOnly: true });
+    try {
+      expect(db.prepare(`SELECT COUNT(*) AS count FROM signed_gate_receipts`).get()).toEqual({ count: 0 });
+    } finally {
+      db.close();
+    }
+  });
+
+  it('rejects an oversized unindexed package before hashing it', async () => {
+    const fixture = await makeVerifyingSession();
+    const packagePath = await writePackage(fixture, signedArtifact(fixture));
+    const finalPackagePath = controlledPackagePath(fixture);
+    const oversizedPackageBytes = 10 * 1024 * 1024 + 1;
+    await mkdir(path.dirname(finalPackagePath), { recursive: true });
+    await writeFile(finalPackagePath, '');
+    await truncate(finalPackagePath, oversizedPackageBytes);
+
+    await expect(
+      importSessionGateReceipt({
+        cwd: fixture.repoDir,
+        sessionId: fixture.sessionId,
+        packagePath,
+        verifyReceipt: verifier(fixture),
+      }),
+    ).rejects.toMatchObject({ code: 'SIGNED_RECEIPT_CONFLICT' });
+
+    expect((await stat(finalPackagePath)).size).toBe(oversizedPackageBytes);
     const db = new DatabaseSync(path.join(fixture.repoDir, '.threadloop/state/state.db'), { readOnly: true });
     try {
       expect(db.prepare(`SELECT COUNT(*) AS count FROM signed_gate_receipts`).get()).toEqual({ count: 0 });
