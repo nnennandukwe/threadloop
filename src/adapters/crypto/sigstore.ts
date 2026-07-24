@@ -1,10 +1,6 @@
-import {
-  attest as sigstoreAttest,
-  verify as sigstoreVerify,
-  type Bundle,
-  type SignOptions,
-  type VerifyOptions,
-} from 'sigstore';
+import { bundleToJSON } from '@sigstore/bundle';
+import { CIContextProvider, DSSEBundleBuilder, FulcioSigner, RekorWitness } from '@sigstore/sign';
+import { verify as sigstoreVerify, type Bundle, type SignOptions, type VerifyOptions } from 'sigstore';
 import type { CiTrustPolicy } from '../../domain/proof.js';
 import type { SignedReceiptEnvelope } from '../../domain/attestation.js';
 
@@ -53,19 +49,12 @@ export class SigstoreReceiptVerificationError extends Error {
 export async function signSigstoreStatement(
   payload: Buffer,
   payloadType: string,
-  attest: SigstoreAttestFunction = sigstoreAttest,
+  attest: SigstoreAttestFunction = attestWithRekorConflictRecovery,
 ): Promise<Bundle> {
-  const options = { retry: { retries: 2 } } satisfies SignOptions;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      return await attest(payload, payloadType, options);
-    } catch (error) {
-      if (!isRekorEntryConflict(error) || attempt === 2) {
-        throw error;
-      }
-    }
-  }
-  throw new Error('Sigstore signing exhausted its bounded retry policy.');
+  return attest(payload, payloadType, {
+    retry: { retries: 2 },
+    timeout: 5_000,
+  });
 }
 
 export async function verifySigstoreReceipt(
@@ -179,15 +168,27 @@ function classifySigstoreError(error: unknown) {
   );
 }
 
-function isRekorEntryConflict(error: unknown) {
-  const candidate = toObject(error);
-  const cause = toObject(candidate?.cause);
-  return (
-    candidate?.code === 'TLOG_CREATE_ENTRY_ERROR' &&
-    cause?.statusCode === 409 &&
-    typeof cause.location === 'string' &&
-    cause.location.startsWith('/api/v1/log/entries/')
-  );
+async function attestWithRekorConflictRecovery(payload: Buffer, payloadType: string): Promise<Bundle> {
+  const retry = { retries: 2 };
+  const timeout = 5_000;
+  const signer = new FulcioSigner({
+    identityProvider: new CIContextProvider('sigstore'),
+    retry,
+    timeout,
+  });
+  const witnesses = [
+    new RekorWitness({
+      entryType: 'dsse',
+      fetchOnConflict: true,
+      retry,
+      timeout,
+    }),
+  ];
+  const builder = new DSSEBundleBuilder({
+    signer,
+    witnesses,
+  });
+  return bundleToJSON(await builder.create({ data: payload, type: payloadType }));
 }
 
 function decodeDerUtf8String(value: Uint8Array) {

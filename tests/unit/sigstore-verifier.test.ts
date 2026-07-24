@@ -142,30 +142,21 @@ function trustedSigner() {
 }
 
 describe('Sigstore receipt verifier', () => {
-  it('keeps bounded network retries and re-signs after an exact Rekor entry conflict', async () => {
-    const conflict = Object.assign(new Error('equivalent entry exists'), {
-      code: 'TLOG_CREATE_ENTRY_ERROR',
-      cause: {
-        statusCode: 409,
-        location: `/api/v1/log/entries/${'a'.repeat(128)}`,
-      },
-    });
+  it('keeps bounded network retries within one signing operation', async () => {
     const bundle = { mediaType: 'application/vnd.dev.sigstore.bundle.v0.3+json' } as Awaited<
       ReturnType<SigstoreAttestFunction>
     >;
-    const attest = vi.fn<SigstoreAttestFunction>().mockRejectedValueOnce(conflict).mockResolvedValueOnce(bundle);
+    const attest = vi.fn<SigstoreAttestFunction>().mockResolvedValueOnce(bundle);
 
     await expect(signSigstoreStatement(Buffer.from('statement'), IN_TOTO_PAYLOAD_TYPE, attest)).resolves.toBe(bundle);
-    expect(attest).toHaveBeenCalledTimes(2);
-    expect(attest).toHaveBeenNthCalledWith(1, Buffer.from('statement'), IN_TOTO_PAYLOAD_TYPE, {
+    expect(attest).toHaveBeenCalledOnce();
+    expect(attest).toHaveBeenCalledWith(Buffer.from('statement'), IN_TOTO_PAYLOAD_TYPE, {
       retry: { retries: 2 },
-    });
-    expect(attest).toHaveBeenNthCalledWith(2, Buffer.from('statement'), IN_TOTO_PAYLOAD_TYPE, {
-      retry: { retries: 2 },
+      timeout: 5_000,
     });
   });
 
-  it('bounds repeated Rekor entry-conflict recovery', async () => {
+  it('does not repeat the whole signing operation after a Rekor conflict', async () => {
     const conflict = Object.assign(new Error('equivalent entry exists'), {
       code: 'TLOG_CREATE_ENTRY_ERROR',
       cause: {
@@ -176,7 +167,7 @@ describe('Sigstore receipt verifier', () => {
     const attest = vi.fn<SigstoreAttestFunction>().mockRejectedValue(conflict);
 
     await expect(signSigstoreStatement(Buffer.from('statement'), IN_TOTO_PAYLOAD_TYPE, attest)).rejects.toBe(conflict);
-    expect(attest).toHaveBeenCalledTimes(3);
+    expect(attest).toHaveBeenCalledOnce();
   });
 
   it('does not retry signing failures that are not exact Rekor entry conflicts', async () => {
