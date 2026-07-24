@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { linkSync, unlinkSync } from 'node:fs';
+import { linkSync, readFileSync, unlinkSync } from 'node:fs';
 import { mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { sha256, sha256File } from '../adapters/crypto/sha256.js';
 import { ensureThreadloopStateIgnored } from '../adapters/fs/gitignore.js';
@@ -800,9 +800,26 @@ export async function importSessionGateReceipt(input: ImportSessionGateReceiptIn
       stateVersion: context.stateVersion,
       verifiedAt,
       promotePackage: () => {
-        linkSync(stagedPackagePath, finalPackagePath);
-        promoted = true;
-        unlinkSync(stagedPackagePath);
+        try {
+          linkSync(stagedPackagePath, finalPackagePath);
+          promoted = true;
+          unlinkSync(stagedPackagePath);
+        } catch (error) {
+          if (!isErrorCode(error, 'EEXIST')) {
+            throw error;
+          }
+          let existingDigest: string | null = null;
+          try {
+            existingDigest = sha256(readFileSync(finalPackagePath));
+          } catch {
+            existingDigest = null;
+          }
+          if (existingDigest !== receipt.packageSha256) {
+            throw error;
+          }
+          // The matching final file is a promotion that survived a prior crash.
+          unlinkSync(stagedPackagePath);
+        }
       },
     });
     if (appended.alreadyImported) {
@@ -811,6 +828,23 @@ export async function importSessionGateReceipt(input: ImportSessionGateReceiptIn
         storedDigest = sha256(await readFile(finalPackagePath));
       } catch {
         storedDigest = null;
+      }
+      if (storedDigest === null) {
+        try {
+          linkSync(stagedPackagePath, finalPackagePath);
+          promoted = true;
+          unlinkSync(stagedPackagePath);
+          storedDigest = receipt.packageSha256;
+        } catch (error) {
+          if (!isErrorCode(error, 'EEXIST')) {
+            throw error;
+          }
+          try {
+            storedDigest = sha256(readFileSync(finalPackagePath));
+          } catch {
+            storedDigest = null;
+          }
+        }
       }
       if (storedDigest !== receipt.packageSha256) {
         throw new ThreadloopError(
