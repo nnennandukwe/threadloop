@@ -1,19 +1,21 @@
 import path from 'node:path';
-import { mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { sha256, sha256File } from '../adapters/crypto/sha256.js';
 import { ensureThreadloopStateIgnored } from '../adapters/fs/gitignore.js';
 import {
   appendEntryToSession,
   appendGateReceipt,
-  appendSignedGateReceipt,
   applySessionTransition,
   createId,
   ensureStateDatabase,
   ensureThreadloopLayout,
   hasSessionTransitionIdempotencyReadOnly,
+  inspectAuditLedgerReadOnly,
   insertTaskSession,
   readConfig,
   readSessionGateContext,
+  readSessionAuditReadOnly,
+  readSessionTransitionHistoryReadOnly,
   readSessionProofEvidenceReadOnly,
   readSessionLifecycleReadOnly,
   readRepoSnapshot,
@@ -24,9 +26,12 @@ import {
   writeArtifactFile,
   writeConfig,
   ReceiptAppendConflictError,
-  SignedReceiptAppendConflictError,
+  AuditChainCorruptedError,
+  AuditLedgerUnavailableError,
 } from '../adapters/fs/sqlite-store.js';
+import { AuditExportConflictError, writeAuditExportExclusive } from '../adapters/fs/audit-export.js';
 import { isThreadloopInitialized } from '../adapters/fs/repo.js';
+import { nodeSignedReceiptFileSystem } from '../adapters/fs/signed-receipt-files.js';
 import {
   isFullCommitSha,
   observeProofRepository,
@@ -38,35 +43,36 @@ import {
 } from '../adapters/git/client.js';
 import { runGateProcess } from '../adapters/process/gate-runner.js';
 import { ThreadloopError } from '../contracts/errors.js';
-import { SigstoreReceiptVerificationError, verifySigstoreReceipt } from '../adapters/crypto/sigstore.js';
 import {
   canonicalizeTransitionRequest,
   evaluateTransitionGuards,
+  getTransitionGuardRequirement,
   planNextTransition,
   requiresProofGuardContext,
 } from '../domain/session-transition.js';
-import type { ProofGuardContext, TransitionRequest } from '../domain/session-transition.js';
+import type { ProofGuardContext, TransitionGuardDecision, TransitionRequest } from '../domain/session-transition.js';
 import {
   canonicalizeProofPlan,
   evaluateProofEvidence,
-  hasCiTrustPolicy,
+  hasReviewTrustPolicy,
   ProofValidationError,
   type BoundProofPlan,
   type ProofEvidence,
   type StoredGateReceipt,
 } from '../domain/proof.js';
 import type { GateReceiptPayload } from '../domain/proof.js';
+import { evaluateCiProofEvidence, type CiProofEvidence, type StoredSignedGateReceipt } from '../domain/attestation.js';
 import {
-  AttestationValidationError,
-  evaluateCiProofEvidence,
-  parseSignedReceiptEnvelope,
-  parseSignedReceiptPackage,
-  validateSignedReceiptStatement,
-  type CiProofEvidence,
-  type CiProofGateEvidence,
-  type StoredSignedGateReceipt,
-} from '../domain/attestation.js';
+  evaluateReviewEvidence,
+  hasBlockingReview,
+  hasCurrentHumanApproval,
+  reviewEvidenceFromArtifact,
+  type ReviewEvidence,
+  type StoredSignedReviewReceipt,
+} from '../domain/review.js';
 import { canonicalJson } from '../domain/canonical-json.js';
+import { verifyAuditChain } from '../domain/audit.js';
+import { isRepairEntryTransition } from '../domain/lifecycle.js';
 import { DEFAULT_BASE_REF, TASK_STATUS } from '../domain/types.js';
 import type {
   ActiveState,
@@ -83,9 +89,13 @@ import type {
   Task,
 } from '../domain/types.js';
 import { renderArtifact } from '../renderers/markdown/artifacts.js';
-import type { SignedReceiptFileSystem } from './signed-receipt-files.js';
-
-const MAX_SIGNED_RECEIPT_PACKAGE_BYTES = 10 * 1024 * 1024;
+import {
+  importSignedGateReceiptPackage,
+  importSignedReviewReceiptPackage,
+  type SignedReceiptImportInput,
+} from './signed-receipt-import.js';
+import { mapAuditChainCorruption } from './audit-service-errors.js';
+import { readControlledSignedReceiptPackageContents } from './signed-receipt-files.js';
 
 export interface StartTaskInput {
   cwd: string;
@@ -134,13 +144,8 @@ export interface RunSessionGateInput {
   gateId: string;
 }
 
-export interface ImportSessionGateReceiptInput {
-  cwd: string;
-  sessionId: string;
-  packagePath: string;
-  verifyReceipt?: typeof verifySigstoreReceipt;
-  receiptFileSystem: SignedReceiptFileSystem;
-}
+export type ImportSessionGateReceiptInput = SignedReceiptImportInput;
+export type ImportSessionReviewReceiptInput = SignedReceiptImportInput;
 
 interface StateContext {
   repoRoot: string;
@@ -299,13 +304,41 @@ export async function transitionSession(input: TransitionSessionInput) {
     }
     let boundProofPlan: BoundProofPlan | undefined;
     let proofGuardContext: ProofGuardContext = {};
+    let preparedProofGuardRejection: TransitionGuardDecision | undefined;
     if (
       lifecycle?.state === TASK_STATUS.FRAMED &&
       lifecycle.stateVersion === input.expectedStateVersion &&
       input.targetState === TASK_STATUS.PROOF_READY
     ) {
-      boundProofPlan = await prepareBoundProofPlan(repoRoot, input.input.proof_plan);
-      proofGuardContext = { boundPlan: boundProofPlan };
+      try {
+        boundProofPlan = await prepareBoundProofPlan(repoRoot, input.input.proof_plan);
+        proofGuardContext = { boundPlan: boundProofPlan };
+      } catch (error) {
+        const rejection = proofBaselineGuardRejection(error);
+        if (!rejection) {
+          throw error;
+        }
+        preparedProofGuardRejection = rejection;
+      }
+    } else if (
+      lifecycle &&
+      lifecycle.schemaVersion >= 4 &&
+      getTransitionGuardRequirement(lifecycle.state, input.targetState) === 'review'
+    ) {
+      const preliminary = await evaluateSessionProof(repoRoot, input.sessionId, null);
+      if (!preliminary.plan) {
+        proofGuardContext = {
+          plan: null,
+          evidence: preliminary.evidence,
+          ciEvidence: preliminary.ciEvidence,
+          reviewEvidence: preliminary.reviewEvidence,
+          attemptsUsed: preliminary.attemptsUsed,
+        };
+      } else {
+        const repository = await observeProofRepository(repoRoot);
+        const proofState = await evaluateSessionProof(repoRoot, input.sessionId, repository.headSha);
+        proofGuardContext = await buildProofGuardContext(repoRoot, input.sessionId, proofState, repository);
+      }
     } else if (
       lifecycle &&
       lifecycle.schemaVersion >= 4 &&
@@ -313,7 +346,7 @@ export async function transitionSession(input: TransitionSessionInput) {
     ) {
       const repository = await observeProofRepository(repoRoot);
       const proofState = await evaluateSessionProof(repoRoot, input.sessionId, repository.headSha);
-      proofGuardContext = await buildProofGuardContext(repoRoot, proofState, repository);
+      proofGuardContext = await buildProofGuardContext(repoRoot, input.sessionId, proofState, repository);
     }
     return await applySessionTransition(
       repoRoot,
@@ -323,6 +356,7 @@ export async function transitionSession(input: TransitionSessionInput) {
         ...(boundProofPlan ? { boundProofPlan } : {}),
       },
       (sourceState, targetState, transitionInput, blockedFromState) =>
+        preparedProofGuardRejection ??
         evaluateTransitionGuards(sourceState, targetState, transitionInput, blockedFromState, proofGuardContext),
     );
   } catch (error) {
@@ -334,6 +368,9 @@ export async function transitionSession(input: TransitionSessionInput) {
           hint: 'Provide a valid proof_plan with acceptance_criteria and exact declared gates.',
         },
       });
+    }
+    if (error instanceof AuditChainCorruptedError) {
+      throw mapAuditChainCorruption(input.sessionId, error);
     }
     if (isSchemaStateError(error)) {
       throw new ThreadloopError('STATE_CORRUPTED', error instanceof Error ? error.message : String(error), {
@@ -364,8 +401,47 @@ export async function transitionSession(input: TransitionSessionInput) {
   }
 }
 
+function proofBaselineGuardRejection(error: unknown): TransitionGuardDecision | null {
+  if (
+    !(error instanceof ThreadloopError) ||
+    error.code !== 'TRANSITION_GUARD_FAILED' ||
+    !Array.isArray(error.details?.guard_failures) ||
+    !Array.isArray(error.details.required_work)
+  ) {
+    return null;
+  }
+  const guardFailures = error.details.guard_failures;
+  const requiredWork = error.details.required_work;
+  if (
+    !guardFailures.every(
+      (failure) =>
+        typeof failure === 'object' &&
+        failure !== null &&
+        typeof (failure as Record<string, unknown>).code === 'string' &&
+        typeof (failure as Record<string, unknown>).message === 'string',
+    ) ||
+    !requiredWork.every(
+      (work) =>
+        typeof work === 'object' &&
+        work !== null &&
+        typeof (work as Record<string, unknown>).code === 'string' &&
+        typeof (work as Record<string, unknown>).description === 'string',
+    )
+  ) {
+    return null;
+  }
+  return {
+    allowed: false,
+    guardFailures: guardFailures as TransitionGuardDecision['guardFailures'],
+    requiredWork: requiredWork as TransitionGuardDecision['requiredWork'],
+  };
+}
+
 async function prepareBoundProofPlan(repoRoot: string, value: unknown): Promise<BoundProofPlan> {
-  const canonical = canonicalizeProofPlan(value, sha256, { requireCiPolicy: true });
+  const canonical = canonicalizeProofPlan(value, sha256, {
+    requireCiPolicy: true,
+    requireReviewPolicy: true,
+  });
   const [repository, liveRepository] = await Promise.all([
     observeProofRepository(repoRoot),
     observeRepository(repoRoot),
@@ -396,8 +472,11 @@ async function prepareBoundProofPlan(repoRoot: string, value: unknown): Promise<
       },
     );
   }
-  if (!hasCiTrustPolicy(canonical.plan)) {
-    throw new ProofValidationError('proof_plan.ci', 'proof_plan.ci must define an immutable CI trust policy.');
+  if (!hasReviewTrustPolicy(canonical.plan)) {
+    throw new ProofValidationError(
+      'proof_plan.review',
+      'proof_plan.review must define an immutable signed-review trust policy.',
+    );
   }
   const expectedSourceRepository =
     liveRepository.identity.source === 'origin' &&
@@ -405,17 +484,22 @@ async function prepareBoundProofPlan(repoRoot: string, value: unknown): Promise<
     liveRepository.identity.owner
       ? `https://github.com/${liveRepository.identity.owner}/${liveRepository.identity.name}`
       : null;
-  if (!expectedSourceRepository || canonical.plan.ci.source_repository !== expectedSourceRepository) {
-    throw new ProofValidationError(
-      'proof_plan.ci.source_repository',
-      'proof_plan.ci.source_repository must match the GitHub origin repository.',
-    );
-  }
-  if (!canonical.plan.ci.certificate_identity.endsWith(`@refs/heads/${repository.branch}`)) {
-    throw new ProofValidationError(
-      'proof_plan.ci.certificate_identity',
-      'proof_plan.ci.certificate_identity must bind the current proof-plan branch.',
-    );
+  for (const [field, policy] of [
+    ['ci', canonical.plan.ci],
+    ['review', canonical.plan.review],
+  ] as const) {
+    if (!expectedSourceRepository || policy.source_repository !== expectedSourceRepository) {
+      throw new ProofValidationError(
+        `proof_plan.${field}.source_repository`,
+        `proof_plan.${field}.source_repository must match the GitHub origin repository.`,
+      );
+    }
+    if (!policy.certificate_identity.endsWith(`@refs/heads/${repository.branch}`)) {
+      throw new ProofValidationError(
+        `proof_plan.${field}.certificate_identity`,
+        `proof_plan.${field}.certificate_identity must bind the current proof-plan branch.`,
+      );
+    }
   }
 
   for (const gate of canonical.plan.gates) {
@@ -434,13 +518,14 @@ export async function runSessionGate(input: RunSessionGateInput) {
   const repoRoot = await resolveRepositoryRoot(input.cwd);
   await assertInitialized(repoRoot);
   await ensureStateDatabase(repoRoot);
-  await ensureThreadloopStateIgnored(repoRoot);
   const context = await readSessionGateContext(repoRoot, input.sessionId);
   if (!context) {
     throw new ThreadloopError('SESSION_NOT_FOUND', `Could not find session: ${input.sessionId}`, {
       details: { session_id: input.sessionId },
     });
   }
+  assertSessionAuditVerified(repoRoot, input.sessionId);
+  await ensureThreadloopStateIgnored(repoRoot);
   if (context.state !== TASK_STATUS.VERIFYING) {
     throw new ThreadloopError('GATE_NOT_RUNNABLE', 'Local gates can run only while a session is verifying.', {
       details: {
@@ -612,6 +697,9 @@ export async function runSessionGate(input: RunSessionGateInput) {
       stateVersion: context.stateVersion,
     });
   } catch (error) {
+    if (error instanceof AuditChainCorruptedError) {
+      throw mapAuditChainCorruption(input.sessionId, error);
+    }
     if (error instanceof ReceiptAppendConflictError) {
       throw new ThreadloopError('RECEIPT_NOT_RECORDED', error.message, {
         cause: error,
@@ -636,374 +724,86 @@ export async function runSessionGate(input: RunSessionGateInput) {
 }
 
 export async function importSessionGateReceipt(input: ImportSessionGateReceiptInput) {
-  const repoRoot = await resolveRepositoryRoot(input.cwd);
-  await assertInitializedReadOnly(repoRoot);
-
-  let packageRead: Awaited<ReturnType<SignedReceiptFileSystem['readWithinLimit']>>;
-  try {
-    packageRead = await input.receiptFileSystem.readWithinLimit(
-      path.resolve(input.cwd, input.packagePath),
-      MAX_SIGNED_RECEIPT_PACKAGE_BYTES,
-    );
-  } catch (error) {
-    throw new ThreadloopError('SIGNED_RECEIPT_INVALID', 'The signed receipt package could not be read.', {
-      cause: error,
-      details: { package_path: input.packagePath },
-    });
-  }
-  if (packageRead.status === 'too_large') {
-    throw new ThreadloopError('SIGNED_RECEIPT_INVALID', 'The signed receipt package exceeds the 10 MiB limit.', {
-      details: { package_path: input.packagePath, size_bytes: packageRead.sizeBytes },
-    });
-  }
-  const packageBytes = packageRead.bytes;
-
-  let envelope: ReturnType<typeof parseSignedReceiptEnvelope>;
-  try {
-    envelope = parseSignedReceiptEnvelope(JSON.parse(packageBytes.toString('utf8')) as unknown, sha256);
-  } catch (error) {
-    throw mapSignedReceiptParseError(error);
-  }
-
-  const lifecycle = readSessionLifecycleReadOnly(repoRoot, input.sessionId);
-  if (!lifecycle) {
-    throw new ThreadloopError('SESSION_NOT_FOUND', `Could not find session: ${input.sessionId}`, {
-      details: { session_id: input.sessionId },
-    });
-  }
-  if (lifecycle.schemaVersion < 4) {
-    throw new ThreadloopError(
-      'SIGNED_RECEIPT_IDENTITY_MISMATCH',
-      'This session predates immutable proof plans and cannot accept signed CI receipts.',
-    );
-  }
-  const storedProof = readSessionProofEvidenceReadOnly(repoRoot, input.sessionId);
-  const context = {
-    state: lifecycle.state,
-    stateVersion: lifecycle.stateVersion,
-    plan: storedProof.plan,
+  const imported = await importSignedGateReceiptPackage(input);
+  const artifact = imported.receipt.artifact;
+  const proof = await evaluateSessionProof(imported.repoRoot, input.sessionId, artifact.source.head_sha);
+  return {
+    contract_version: 1 as const,
+    receipt: {
+      id: artifact.receipt_id,
+      sequence: imported.sequence,
+      gate_id: artifact.gate.id,
+      result: artifact.result,
+      subject_head_sha: artifact.source.head_sha,
+      artifact: { sha256: imported.receipt.artifactSha256 },
+      statement: { sha256: imported.receipt.statementSha256 },
+      package: { path: imported.packagePath, sha256: imported.receipt.packageSha256 },
+      signer: imported.signer,
+      verified_at: imported.verifiedAt,
+    },
+    already_imported: imported.alreadyImported,
+    ci_proof: {
+      status: proof.ciEvidence.status,
+      policy: proof.ciEvidence.policy ?? {},
+      gates: proof.ciEvidence.gates,
+    },
+    lifecycle: {
+      state: imported.lifecycle.state,
+      state_version: imported.lifecycle.stateVersion,
+    },
   };
-  if (context.state !== 'verifying') {
-    throw new ThreadloopError('SIGNED_RECEIPT_CONFLICT', 'Signed gate receipts can be imported only while verifying.', {
-      details: { session_id: input.sessionId, lifecycle_state: context.state },
-    });
-  }
-  if (!context.plan) {
-    throw new ThreadloopError('PROOF_PLAN_MISSING', 'The session has no immutable proof plan.', {
-      details: { session_id: input.sessionId },
-    });
-  }
+}
 
-  let canonicalPlan: ReturnType<typeof canonicalizeProofPlan>;
+export async function importSessionReviewReceipt(input: ImportSessionReviewReceiptInput) {
+  const imported = await importSignedReviewReceiptPackage(input);
+  const artifact = imported.receipt.artifact;
+  const evidence = reviewEvidenceFromArtifact(artifact, artifact.pull_request.head_sha);
+  return {
+    contract_version: 1 as const,
+    receipt: {
+      id: artifact.receipt_id,
+      sequence: imported.sequence,
+      pull_request_number: artifact.pull_request.number,
+      subject_head_sha: artifact.pull_request.head_sha,
+      artifact: { sha256: imported.receipt.artifactSha256 },
+      statement: { sha256: imported.receipt.statementSha256 },
+      package: { path: imported.packagePath, sha256: imported.receipt.packageSha256 },
+      signer: imported.signer,
+      verified_at: imported.verifiedAt,
+    },
+    already_imported: imported.alreadyImported,
+    review: {
+      status: evidence.status,
+      snapshot_id: evidence.snapshotId,
+      decision: evidence.reviewDecision,
+      blocking_findings: evidence.blockingFindings,
+      approvals: evidence.approvals,
+      merged: evidence.merged,
+      merged_at: evidence.mergedAt,
+    },
+    lifecycle: {
+      state: imported.lifecycle.state,
+      state_version: imported.lifecycle.stateVersion,
+    },
+  };
+}
+
+function assertSessionAuditVerified(repoRoot: string, sessionId: string) {
   try {
-    canonicalPlan = canonicalizeProofPlan(JSON.parse(context.plan.json) as unknown, sha256);
-  } catch (error) {
-    throw new ThreadloopError('PROOF_PLAN_CORRUPTED', 'The stored proof plan is invalid.', { cause: error });
-  }
-  if (canonicalPlan.json !== context.plan.json || canonicalPlan.sha256 !== context.plan.sha256) {
-    throw new ThreadloopError('PROOF_PLAN_CORRUPTED', 'The stored proof plan digest does not match its contents.');
-  }
-  if (!hasCiTrustPolicy(canonicalPlan.plan)) {
-    throw new ThreadloopError(
-      'SIGNED_RECEIPT_IDENTITY_MISMATCH',
-      'This session has no immutable signed-CI trust policy. Start a new session with a v2 proof plan.',
-    );
-  }
-
-  const artifact = envelope.artifact;
-  const gate = canonicalPlan.plan.gates.find((candidate) => candidate.id === artifact.gate.id);
-  const repository = await observeRepository(repoRoot);
-  const proofRepository = await observeProofRepository(repoRoot);
-  const expectedRepository =
-    repository.identity.source === 'origin' && repository.identity.host === 'github.com' && repository.identity.owner
-      ? `https://github.com/${repository.identity.owner}/${repository.identity.name}`
-      : null;
-
-  const verifier = input.verifyReceipt ?? verifySigstoreReceipt;
-  let signer: Awaited<ReturnType<typeof verifySigstoreReceipt>>;
-  try {
-    signer = await verifier(envelope, canonicalPlan.plan.ci);
-  } catch (error) {
-    throw mapSigstoreReceiptError(error);
-  }
-  let receipt: ReturnType<typeof parseSignedReceiptPackage>;
-  try {
-    receipt = validateSignedReceiptStatement(envelope);
-  } catch (error) {
-    throw mapSignedReceiptParseError(error);
-  }
-  if (
-    signer.issuer !== canonicalPlan.plan.ci.issuer ||
-    signer.certificateIdentity !== canonicalPlan.plan.ci.certificate_identity ||
-    signer.buildSignerUri !== canonicalPlan.plan.ci.build_signer_uri ||
-    signer.buildSignerSha !== canonicalPlan.plan.ci.build_signer_sha ||
-    signer.sourceRepository !== artifact.source.repository ||
-    signer.sourceHeadSha !== artifact.source.head_sha ||
-    signer.sourceRef !== artifact.source.ref ||
-    signer.runnerEnvironment !== 'github-hosted' ||
-    signer.runInvocationUri !== artifact.source.run_invocation_uri
-  ) {
-    throw new ThreadloopError(
-      'SIGNED_RECEIPT_IDENTITY_MISMATCH',
-      'The verified signer projection does not match the signed receipt and immutable CI policy.',
-    );
-  }
-  assertSignedReceiptContext({
-    requestedSessionId: input.sessionId,
-    contextPlanSha256: context.plan.sha256,
-    expectedRepository,
-    currentBranch: proofRepository.branch,
-    currentHead: proofRepository.headSha,
-    receipt,
-    gate,
-    policy: canonicalPlan.plan.ci,
-  });
-  if (
-    artifact.result !== 'passed' ||
-    artifact.exit_status !== 0 ||
-    artifact.signal !== null ||
-    artifact.head_before !== artifact.head_after ||
-    !artifact.clean_before ||
-    !artifact.clean_after
-  ) {
-    throw new ThreadloopError(
-      'SIGNED_RECEIPT_RESULT_REJECTED',
-      'Only a clean, unchanged, passing CI gate receipt is authoritative proof.',
-      { details: { receipt_id: artifact.receipt_id, result: artifact.result } },
-    );
-  }
-  const proofBeforeAppend = await evaluateSessionProof(repoRoot, input.sessionId, proofRepository.headSha);
-
-  const relativePackagePath = [
-    '.threadloop',
-    'artifacts',
-    'receipts',
-    artifact.session_id,
-    artifact.receipt_id,
-    'signed-receipt.json',
-  ].join('/');
-  const finalPackagePath = path.join(repoRoot, ...relativePackagePath.split('/'));
-  const receiptDirectory = path.dirname(finalPackagePath);
-  const stagedPackagePath = path.join(receiptDirectory, `.signed-receipt.${createId('stage')}.tmp`);
-  await mkdir(receiptDirectory, { recursive: true });
-  await writeFile(stagedPackagePath, receipt.packageJson, { encoding: 'utf8', flag: 'wx' });
-
-  const verifiedAt = new Date().toISOString();
-  let promoted = false;
-  let completed = false;
-  try {
-    const appended = await appendSignedGateReceipt(repoRoot, {
-      receipt,
-      signer,
-      packagePath: relativePackagePath,
-      stateVersion: context.stateVersion,
-      verifiedAt,
-      promotePackage: () => {
-        try {
-          input.receiptFileSystem.linkExclusive(stagedPackagePath, finalPackagePath);
-          promoted = true;
-        } catch (error) {
-          if (!isErrorCode(error, 'EEXIST')) {
-            throw error;
-          }
-          const existingDigest = input.receiptFileSystem.sha256WithinLimitOrNull(
-            finalPackagePath,
-            MAX_SIGNED_RECEIPT_PACKAGE_BYTES,
-          );
-          if (existingDigest !== receipt.packageSha256) {
-            throw error;
-          }
-          // The matching final file is a promotion that survived a prior crash.
-        }
-        input.receiptFileSystem.unlink(stagedPackagePath);
-      },
-    });
-    if (appended.alreadyImported) {
-      let storedDigest: string | null = null;
-      try {
-        storedDigest = sha256(await readFile(finalPackagePath));
-      } catch {
-        storedDigest = null;
-      }
-      if (storedDigest !== receipt.packageSha256) {
-        throw new ThreadloopError(
-          'SIGNED_RECEIPT_CONFLICT',
-          'The previously imported signed receipt package is missing or corrupt.',
-          { details: { receipt_id: artifact.receipt_id } },
-        );
-      }
-    }
-    const ciProof = appended.alreadyImported
-      ? proofBeforeAppend.ciEvidence
-      : projectCiProofAfterImport(
-          proofBeforeAppend.ciEvidence,
-          artifact.gate.id,
-          artifact.receipt_id,
-          appended.sequence,
-          artifact.source.head_sha,
-          receipt.packageSha256,
-          appended.verifiedAt,
-        );
-    const result = {
-      contract_version: 1 as const,
-      receipt: {
-        id: artifact.receipt_id,
-        sequence: appended.sequence,
-        gate_id: artifact.gate.id,
-        result: artifact.result,
-        subject_head_sha: artifact.source.head_sha,
-        artifact: { sha256: receipt.artifactSha256 },
-        statement: { sha256: receipt.statementSha256 },
-        package: { path: relativePackagePath, sha256: receipt.packageSha256 },
-        signer,
-        verified_at: appended.verifiedAt,
-      },
-      already_imported: appended.alreadyImported,
-      ci_proof: {
-        status: ciProof.status,
-        policy: ciProof.policy ?? {},
-        gates: ciProof.gates,
-      },
-      lifecycle: { state: context.state, state_version: context.stateVersion },
-    };
-    completed = true;
-    return result;
-  } catch (error) {
-    if (error instanceof SignedReceiptAppendConflictError) {
-      throw new ThreadloopError('SIGNED_RECEIPT_CONFLICT', error.message, { cause: error });
-    }
-    if (isErrorCode(error, 'EEXIST')) {
-      throw new ThreadloopError(
-        'SIGNED_RECEIPT_CONFLICT',
-        `Signed receipt ${artifact.receipt_id} already has an unindexed package at its controlled path.`,
-        { cause: error },
+    const verification = verifyAuditChain(readRequiredSessionAudit(repoRoot, sessionId), sha256);
+    if (!verification.valid && verification.error) {
+      throw new AuditChainCorruptedError(
+        verification.error.code,
+        `Session ${sessionId} audit chain is corrupt at sequence ${verification.error.sequence ?? 'root'}.`,
+        verification.error.sequence,
       );
     }
-    throw error;
-  } finally {
-    await rm(stagedPackagePath, { force: true });
-    if (promoted && !completed) {
-      await rm(finalPackagePath, { force: true });
+  } catch (error) {
+    if (error instanceof AuditChainCorruptedError) {
+      throw mapAuditChainCorruption(sessionId, error);
     }
+    throw error;
   }
-}
-
-function isErrorCode(error: unknown, code: string) {
-  return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
-}
-
-function projectCiProofAfterImport(
-  before: CiProofEvidence,
-  gateId: string,
-  receiptId: string,
-  sequence: number,
-  subjectHeadSha: string,
-  packageSha256: string,
-  verifiedAt: string,
-): CiProofEvidence {
-  const gates = before.gates.map((gate): CiProofGateEvidence =>
-    gate.gate_id === gateId
-      ? {
-          gate_id: gateId,
-          status: 'passed',
-          receipt_id: receiptId,
-          sequence,
-          subject_head_sha: subjectHeadSha,
-          package_sha256: packageSha256,
-          verified_at: verifiedAt,
-        }
-      : gate,
-  );
-  const status = gates.every((gate) => gate.status === 'passed')
-    ? ('passed' as const)
-    : gates.some((gate) => gate.status === 'corrupt')
-      ? ('corrupt' as const)
-      : gates.some((gate) => gate.status === 'stale')
-        ? ('stale' as const)
-        : ('missing' as const);
-  return { status, policy: before.policy, gates };
-}
-
-function assertSignedReceiptContext(input: {
-  requestedSessionId: string;
-  contextPlanSha256: string;
-  expectedRepository: string | null;
-  currentBranch: string | null;
-  currentHead: string;
-  receipt: ReturnType<typeof parseSignedReceiptPackage>;
-  gate: BoundProofPlan['plan']['gates'][number] | undefined;
-  policy: Extract<BoundProofPlan['plan'], { contract_version: 2 }>['ci'];
-}) {
-  const artifact = input.receipt.artifact;
-  if (artifact.session_id !== input.requestedSessionId || artifact.plan_sha256 !== input.contextPlanSha256) {
-    throw new ThreadloopError(
-      'SIGNED_RECEIPT_INVALID',
-      'The signed receipt does not match the selected session and plan.',
-    );
-  }
-  if (!input.gate || canonicalJson(input.gate) !== canonicalJson(artifact.gate)) {
-    throw new ThreadloopError('SIGNED_RECEIPT_INVALID', 'The signed receipt gate does not match a declared gate.');
-  }
-  if (
-    !input.expectedRepository ||
-    input.expectedRepository !== input.policy.source_repository ||
-    artifact.source.repository !== input.policy.source_repository
-  ) {
-    throw new ThreadloopError(
-      'SIGNED_RECEIPT_IDENTITY_MISMATCH',
-      'The signed receipt source repository is not trusted.',
-    );
-  }
-  if (!input.currentBranch || artifact.source.ref !== `refs/heads/${input.currentBranch}`) {
-    throw new ThreadloopError(
-      'SIGNED_RECEIPT_IDENTITY_MISMATCH',
-      'The signed receipt source ref is not the current branch.',
-    );
-  }
-  if (
-    artifact.source.head_sha !== input.currentHead ||
-    artifact.head_before !== input.currentHead ||
-    artifact.head_after !== input.currentHead
-  ) {
-    throw new ThreadloopError(
-      'SIGNED_RECEIPT_HEAD_MISMATCH',
-      'The signed receipt does not prove the current repository HEAD.',
-    );
-  }
-}
-
-function mapSignedReceiptParseError(error: unknown) {
-  if (error instanceof AttestationValidationError) {
-    const artifactMismatch =
-      error.field.startsWith('statement.subject') || error.field.startsWith('statement.predicate.artifact');
-    return new ThreadloopError(
-      artifactMismatch ? 'SIGNED_RECEIPT_ARTIFACT_MISMATCH' : 'SIGNED_RECEIPT_INVALID',
-      error.message,
-      { cause: error, details: { field: error.field } },
-    );
-  }
-  return new ThreadloopError('SIGNED_RECEIPT_INVALID', 'The signed receipt package is not valid JSON.', {
-    cause: error,
-  });
-}
-
-function mapSigstoreReceiptError(error: unknown) {
-  if (!(error instanceof SigstoreReceiptVerificationError)) {
-    return new ThreadloopError('SIGNED_RECEIPT_SIGNATURE_INVALID', 'The signed receipt could not be verified.', {
-      cause: error,
-    });
-  }
-  const code = {
-    transparency_missing: 'SIGNED_RECEIPT_TRANSPARENCY_MISSING',
-    identity_mismatch: 'SIGNED_RECEIPT_IDENTITY_MISMATCH',
-    signature_invalid: 'SIGNED_RECEIPT_SIGNATURE_INVALID',
-    verification_unavailable: 'SIGNED_RECEIPT_VERIFICATION_UNAVAILABLE',
-  }[error.reason] as
-    | 'SIGNED_RECEIPT_TRANSPARENCY_MISSING'
-    | 'SIGNED_RECEIPT_IDENTITY_MISMATCH'
-    | 'SIGNED_RECEIPT_SIGNATURE_INVALID'
-    | 'SIGNED_RECEIPT_VERIFICATION_UNAVAILABLE';
-  return new ThreadloopError(code, error.message, { cause: error });
 }
 
 async function resolveProofWorkingDirectory(repoRoot: string, gateId: string, workingDirectory: string) {
@@ -1029,6 +829,184 @@ async function resolveProofWorkingDirectory(repoRoot: string, gateId: string, wo
 
 function relativeArtifactPath(repoRoot: string, artifactPath: string) {
   return path.relative(repoRoot, artifactPath).split(path.sep).join('/');
+}
+
+export interface SessionAuditInput {
+  cwd: string;
+  sessionId: string;
+}
+
+export interface VerifySessionAuditInput extends SessionAuditInput {
+  expectedRoot?: string;
+}
+
+export interface ExportSessionAuditInput extends SessionAuditInput {
+  outputPath: string;
+}
+
+export async function showSessionAudit(input: SessionAuditInput) {
+  const audit = await loadSessionAudit(input);
+  return {
+    contract_version: audit.contract_version,
+    session_id: audit.session_id,
+    count: audit.count,
+    root: audit.root,
+    coverage: audit.coverage,
+    verification: audit.verification,
+    events: audit.storedEvents.map((event) => ({
+      event: event.value,
+      event_sha256: event.sha256,
+    })),
+  };
+}
+
+export async function verifySessionAudit(input: VerifySessionAuditInput) {
+  if (input.expectedRoot !== undefined && !/^[a-f0-9]{64}$/.test(input.expectedRoot)) {
+    throw new ThreadloopError('INVALID_ARGUMENT', 'Audit root must be 64 lowercase hexadecimal characters.', {
+      details: { field: 'root' },
+    });
+  }
+  const audit = await loadSessionAudit(input, input.expectedRoot);
+  if (!audit.verification.valid) {
+    throw auditVerificationFailure(input.sessionId, audit);
+  }
+  return {
+    contract_version: audit.contract_version,
+    session_id: audit.session_id,
+    count: audit.count,
+    root: audit.root,
+    expected_root: input.expectedRoot ?? null,
+    valid: true as const,
+    error: null,
+  };
+}
+
+export async function exportSessionAudit(input: ExportSessionAuditInput) {
+  const audit = await loadSessionAudit(input);
+  if (!audit.verification.valid) {
+    throw auditVerificationFailure(input.sessionId, audit);
+  }
+  const outputPath = path.resolve(input.cwd, input.outputPath);
+  const content = `${audit.storedEvents
+    .map((event) => canonicalJson({ event: event.value, event_sha256: event.sha256 }))
+    .join('\n')}\n`;
+  try {
+    await writeAuditExportExclusive(outputPath, content);
+  } catch (error) {
+    if (error instanceof AuditExportConflictError) {
+      throw new ThreadloopError('AUDIT_EXPORT_CONFLICT', error.message, {
+        cause: error,
+        details: {
+          output: outputPath,
+          hint: 'Choose a new output path; ThreadLoop never overwrites an audit export.',
+        },
+      });
+    }
+    throw new ThreadloopError('AUDIT_EXPORT_FAILED', 'ThreadLoop could not publish the verified audit export.', {
+      cause: error,
+      details: {
+        output: outputPath,
+        hint: 'Choose a writable output path whose parent is a directory, then retry the export.',
+      },
+    });
+  }
+  return {
+    contract_version: 1 as const,
+    session_id: input.sessionId,
+    count: audit.count,
+    root: audit.root,
+    coverage: audit.coverage,
+    output: outputPath,
+  };
+}
+
+async function loadSessionAudit(input: SessionAuditInput, expectedRoot?: string) {
+  const repoRoot = await resolveRepositoryRoot(input.cwd);
+  await assertInitializedReadOnly(repoRoot);
+  const availability = inspectAuditLedgerReadOnly(repoRoot);
+  if (!availability.available && availability.schemaVersion !== null && availability.schemaVersion >= 6) {
+    throw auditUnavailableFailure(
+      input.sessionId,
+      new AuditLedgerUnavailableError('table_missing', availability.schemaVersion),
+    );
+  }
+  await ensureStateDatabase(repoRoot);
+  const lifecycle = readSessionLifecycleReadOnly(repoRoot, input.sessionId);
+  if (!lifecycle) {
+    throw new ThreadloopError('SESSION_NOT_FOUND', `Could not find session: ${input.sessionId}`, {
+      details: { session_id: input.sessionId },
+    });
+  }
+  const storedEvents = readRequiredSessionAudit(repoRoot, input.sessionId);
+  const verification = verifyAuditChain(storedEvents, sha256, expectedRoot);
+  const first = storedEvents[0]?.value;
+  const coverage =
+    first?.event_type === 'session_started'
+      ? ('full' as const)
+      : first?.event_type === 'audit_activated' && first.payload.coverage === 'schema_v6_forward'
+        ? ('schema_v6_forward' as const)
+        : ('unknown' as const);
+  return {
+    contract_version: 1 as const,
+    session_id: input.sessionId,
+    count: storedEvents.length,
+    root: verification.root,
+    coverage,
+    verification,
+    events: storedEvents.map((event) => event.value),
+    storedEvents,
+  };
+}
+
+function readRequiredSessionAudit(repoRoot: string, sessionId: string) {
+  let storedEvents: ReturnType<typeof readSessionAuditReadOnly>;
+  try {
+    storedEvents = readSessionAuditReadOnly(repoRoot, sessionId);
+  } catch (error) {
+    if (error instanceof AuditLedgerUnavailableError) {
+      throw auditUnavailableFailure(sessionId, error);
+    }
+    if (error instanceof AuditChainCorruptedError) {
+      throw mapAuditChainCorruption(sessionId, error, 'Restore the ledger from trusted storage.');
+    }
+    throw error;
+  }
+  if (storedEvents.length === 0) {
+    throw new ThreadloopError('AUDIT_EMPTY', `Session ${sessionId} has no audit events.`, {
+      details: {
+        session_id: sessionId,
+        hint: 'Restore the ledger from trusted storage; an authoritative session audit must have a genesis event.',
+      },
+    });
+  }
+  return storedEvents;
+}
+
+function auditUnavailableFailure(sessionId: string, error: AuditLedgerUnavailableError) {
+  return new ThreadloopError('AUDIT_UNAVAILABLE', 'The session audit ledger is unavailable.', {
+    cause: error,
+    details: {
+      session_id: sessionId,
+      schema_version: error.schemaVersion,
+      reason: error.reason,
+      hint:
+        error.reason === 'schema_version'
+          ? 'Run a state-migrating ThreadLoop command before retrying the audit operation.'
+          : 'Restore the schema-v6 audit ledger from trusted storage before retrying.',
+    },
+  });
+}
+
+function auditVerificationFailure(sessionId: string, audit: Awaited<ReturnType<typeof loadSessionAudit>>) {
+  return new ThreadloopError('AUDIT_VERIFICATION_FAILED', 'The session audit ledger failed verification.', {
+    details: {
+      session_id: sessionId,
+      count: audit.count,
+      root: audit.root,
+      audit_error: audit.verification.error,
+      hint: 'Restore the ledger from trusted storage or compare it with a previously retained audit root.',
+    },
+  });
 }
 
 export async function getNextSessionAction(input: NextSessionInput) {
@@ -1075,7 +1053,12 @@ export async function getNextSessionAction(input: NextSessionInput) {
       ? await evaluateSessionProof(repoRoot, lifecycle.sessionId, proofRepository?.headSha ?? repository.headSha)
       : null;
   const proofGuardContext =
-    proofState && proofRepository ? await buildProofGuardContext(repoRoot, proofState, proofRepository) : undefined;
+    proofState && proofRepository
+      ? await buildProofGuardContext(repoRoot, input.sessionId, proofState, proofRepository)
+      : undefined;
+  const lifecycleHistory =
+    lifecycle.schemaVersion >= 3 ? readSessionTransitionHistoryReadOnly(repoRoot, input.sessionId) : [];
+  const audit = projectSessionAuditReadOnly(repoRoot, input.sessionId, lifecycle.schemaVersion);
   const planned = planNextTransition({
     state: lifecycle.state,
     stateVersion: lifecycle.stateVersion,
@@ -1106,13 +1089,14 @@ export async function getNextSessionAction(input: NextSessionInput) {
         exhausted: null,
       };
   return {
-    contract_version: 2 as const,
+    contract_version: 3 as const,
     session_id: lifecycle.sessionId,
     task_id: lifecycle.taskId,
     lifecycle: {
       state: lifecycle.state,
       state_version: lifecycle.stateVersion,
       blocked_from_state: lifecycle.blockedFromState,
+      history: lifecycleHistory,
     },
     candidate: planned.candidate,
     guard_failures: planned.guardFailures,
@@ -1152,6 +1136,29 @@ export async function getNextSessionAction(input: NextSessionInput) {
           policy: {},
           gates: [],
         },
+    review: proofState
+      ? {
+          status: proofState.reviewEvidence.status,
+          snapshot_id: proofState.reviewEvidence.snapshotId,
+          head_sha: proofState.reviewEvidence.headSha,
+          decision: proofState.reviewEvidence.reviewDecision,
+          blocking_findings: proofState.reviewEvidence.blockingFindings,
+          approvals: proofState.reviewEvidence.approvals,
+          human_approval_current: hasCurrentHumanApproval(proofState.reviewEvidence),
+          merged: proofState.reviewEvidence.merged,
+          merged_at: proofState.reviewEvidence.mergedAt,
+        }
+      : {
+          status: 'policy_missing' as const,
+          snapshot_id: null,
+          head_sha: null,
+          decision: null,
+          blocking_findings: [],
+          approvals: [],
+          human_approval_current: false,
+          merged: false,
+          merged_at: null,
+        },
     staleness: proofState
       ? {
           status:
@@ -1171,8 +1178,71 @@ export async function getNextSessionAction(input: NextSessionInput) {
           stale_receipt_ids: [],
         },
     repair_budget: repairBudget,
+    audit,
+    next_human_action: nextHumanAction(lifecycle.state, planned),
     terminal_reason: planned.terminalReason,
   };
+}
+
+function projectSessionAuditReadOnly(repoRoot: string, sessionId: string, schemaVersion: number) {
+  if (schemaVersion < 6) {
+    return {
+      status: 'migration_required' as const,
+      event_count: null,
+      root: null,
+      coverage: 'unavailable' as const,
+      error: null,
+    };
+  }
+  try {
+    const events = readSessionAuditReadOnly(repoRoot, sessionId);
+    const verification = verifyAuditChain(events, sha256);
+    const first = events[0]?.value;
+    return {
+      status: verification.valid ? ('valid' as const) : ('corrupt' as const),
+      event_count: events.length,
+      root: verification.root,
+      coverage:
+        first?.event_type === 'session_started'
+          ? ('full' as const)
+          : first?.event_type === 'audit_activated' && first.payload.coverage === 'schema_v6_forward'
+            ? ('schema_v6_forward' as const)
+            : ('unknown' as const),
+      error: verification.error,
+    };
+  } catch (error) {
+    return {
+      status: 'corrupt' as const,
+      event_count: null,
+      root: null,
+      coverage: 'unknown' as const,
+      error: {
+        code: 'AUDIT_READ_FAILED',
+        message: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
+}
+
+function nextHumanAction(state: Task['status'], planned: ReturnType<typeof planNextTransition>) {
+  const required = planned.requiredWork[0];
+  if (required) {
+    return {
+      code: required.code,
+      description: required.description,
+    };
+  }
+  if (
+    state === TASK_STATUS.REVIEWING &&
+    planned.candidate?.target_state === TASK_STATUS.READY_FOR_HUMAN &&
+    planned.candidate.executable
+  ) {
+    return {
+      code: 'ADVANCE_TO_HUMAN_AUTHORITY',
+      description: 'Apply the ready_for_human transition, then obtain human approval and merge authority.',
+    };
+  }
+  return null;
 }
 
 async function evaluateSessionProof(
@@ -1182,10 +1252,12 @@ async function evaluateSessionProof(
 ): Promise<{
   evidence: ProofEvidence;
   ciEvidence: CiProofEvidence;
+  reviewEvidence: ReviewEvidence;
   attemptsUsed: number;
   plan: BoundProofPlan | null;
   receipts: StoredGateReceipt[];
   signedReceipts: StoredSignedGateReceipt[];
+  signedReviewReceipts: StoredSignedReviewReceipt[];
 }> {
   const stored = readSessionProofEvidenceReadOnly(repoRoot, sessionId);
   if (!stored.plan) {
@@ -1198,10 +1270,12 @@ async function evaluateSessionProof(
         corruptReceiptIds: [],
       },
       ciEvidence: { status: 'policy_missing', policy: null, gates: [] },
+      reviewEvidence: emptySessionReviewEvidence('policy_missing'),
       attemptsUsed: stored.attemptsUsed,
       plan: null,
       receipts: stored.receipts,
       signedReceipts: stored.signedReceipts,
+      signedReviewReceipts: stored.signedReviewReceipts,
     };
   }
 
@@ -1218,10 +1292,12 @@ async function evaluateSessionProof(
         corruptReceiptIds: [],
       },
       ciEvidence: { status: 'corrupt', policy: null, gates: [] },
+      reviewEvidence: emptySessionReviewEvidence('corrupt'),
       attemptsUsed: stored.attemptsUsed,
       plan: null,
       receipts: stored.receipts,
       signedReceipts: stored.signedReceipts,
+      signedReviewReceipts: stored.signedReviewReceipts,
     };
   }
   if (canonical.json !== stored.plan.json || canonical.sha256 !== stored.plan.sha256) {
@@ -1234,10 +1310,12 @@ async function evaluateSessionProof(
         corruptReceiptIds: [],
       },
       ciEvidence: { status: 'corrupt', policy: null, gates: [] },
+      reviewEvidence: emptySessionReviewEvidence('corrupt'),
       attemptsUsed: stored.attemptsUsed,
       plan: null,
       receipts: stored.receipts,
       signedReceipts: stored.signedReceipts,
+      signedReviewReceipts: stored.signedReviewReceipts,
     };
   }
   const plan: BoundProofPlan = {
@@ -1246,9 +1324,20 @@ async function evaluateSessionProof(
     baselineHeadSha: stored.plan.baselineHeadSha,
     createdAt: stored.plan.createdAt,
   };
-  const [artifactDigests, packageContents] = await Promise.all([
+  const [artifactDigests, packageContents, reviewPackageContents] = await Promise.all([
     readReceiptArtifactDigests(repoRoot, sessionId, stored.receipts),
-    readSignedReceiptPackageContents(repoRoot, sessionId, stored.signedReceipts),
+    readControlledSignedReceiptPackageContents({
+      repoRoot,
+      sessionId,
+      receipts: stored.signedReceipts,
+      fileSystem: nodeSignedReceiptFileSystem,
+    }),
+    readControlledSignedReceiptPackageContents({
+      repoRoot,
+      sessionId,
+      receipts: stored.signedReviewReceipts,
+      fileSystem: nodeSignedReceiptFileSystem,
+    }),
   ]);
   return {
     evidence: evaluateProofEvidence({
@@ -1267,15 +1356,38 @@ async function evaluateSessionProof(
       packageContents,
       digest: sha256,
     }),
+    reviewEvidence: evaluateReviewEvidence({
+      sessionId,
+      plan,
+      receipts: stored.signedReviewReceipts,
+      currentHead,
+      packageContents: reviewPackageContents,
+      digest: sha256,
+    }),
     attemptsUsed: stored.attemptsUsed,
     plan,
     receipts: stored.receipts,
     signedReceipts: stored.signedReceipts,
+    signedReviewReceipts: stored.signedReviewReceipts,
+  };
+}
+
+function emptySessionReviewEvidence(status: ReviewEvidence['status']): ReviewEvidence {
+  return {
+    status,
+    snapshotId: null,
+    headSha: null,
+    reviewDecision: null,
+    blockingFindings: [],
+    approvals: [],
+    merged: false,
+    mergedAt: null,
   };
 }
 
 async function buildProofGuardContext(
   repoRoot: string,
+  sessionId: string,
   proofState: Awaited<ReturnType<typeof evaluateSessionProof>>,
   repository: Awaited<ReturnType<typeof observeProofRepository>>,
 ): Promise<ProofGuardContext> {
@@ -1286,14 +1398,28 @@ async function buildProofGuardContext(
   const latestFailure = [...proofState.receipts]
     .sort((left, right) => right.sequence - left.sequence)
     .find((receipt) => receipt.result !== 'passed');
+  const currentRepairEntry = readSessionTransitionHistoryReadOnly(repoRoot, sessionId)
+    .reverse()
+    .find((entry) => isRepairEntryTransition(entry.from_state, entry.to_state));
+  const repairBasis =
+    currentRepairEntry?.to_state !== TASK_STATUS.REPAIRING
+      ? undefined
+      : currentRepairEntry.from_state === TASK_STATUS.VERIFYING
+        ? latestFailure?.headAfter
+        : (currentRepairEntry.from_state === TASK_STATUS.REVIEWING ||
+              currentRepairEntry.from_state === TASK_STATUS.READY_FOR_HUMAN) &&
+            hasBlockingReview(proofState.reviewEvidence)
+          ? (proofState.reviewEvidence.headSha ?? undefined)
+          : undefined;
   let committedRepairFromFailure = false;
-  if (latestFailure && isFullCommitSha(latestFailure.headAfter) && latestFailure.headAfter !== repository.headSha) {
-    committedRepairFromFailure = await hasCommittedDiff(repoRoot, latestFailure.headAfter, repository.headSha);
+  if (repairBasis && isFullCommitSha(repairBasis) && repairBasis !== repository.headSha) {
+    committedRepairFromFailure = await hasCommittedDiff(repoRoot, repairBasis, repository.headSha);
   }
   return {
     plan,
     evidence: proofState.evidence,
     ciEvidence: proofState.ciEvidence,
+    reviewEvidence: proofState.reviewEvidence,
     attemptsUsed: proofState.attemptsUsed,
     repository: {
       branch: repository.branch,
@@ -1303,44 +1429,6 @@ async function buildProofGuardContext(
       committedRepairFromFailure,
     },
   };
-}
-
-async function readSignedReceiptPackageContents(
-  repoRoot: string,
-  sessionId: string,
-  receipts: StoredSignedGateReceipt[],
-) {
-  const contents = new Map<string, string | null>();
-  const expectedRoot = path.resolve(repoRoot, '.threadloop', 'artifacts', 'receipts', sessionId);
-  for (const receipt of receipts) {
-    const packagePath = path.resolve(repoRoot, receipt.packagePath);
-    const relative = path.relative(expectedRoot, packagePath);
-    if (
-      path.isAbsolute(receipt.packagePath) ||
-      relative === '..' ||
-      relative.startsWith(`..${path.sep}`) ||
-      path.isAbsolute(relative)
-    ) {
-      contents.set(receipt.id, null);
-      continue;
-    }
-    try {
-      const [canonicalRoot, canonicalPackage] = await Promise.all([realpath(expectedRoot), realpath(packagePath)]);
-      const canonicalRelative = path.relative(canonicalRoot, canonicalPackage);
-      if (
-        canonicalRelative === '..' ||
-        canonicalRelative.startsWith(`..${path.sep}`) ||
-        path.isAbsolute(canonicalRelative)
-      ) {
-        contents.set(receipt.id, null);
-        continue;
-      }
-      contents.set(receipt.id, await readFile(canonicalPackage, 'utf8'));
-    } catch {
-      contents.set(receipt.id, null);
-    }
-  }
-  return contents;
 }
 
 async function readReceiptArtifactDigests(repoRoot: string, sessionId: string, receipts: StoredGateReceipt[]) {
@@ -1525,7 +1613,7 @@ export async function generateArtifact(
   selector: SessionSelector = { allowLegacySingleActive: true },
 ) {
   const { repoRoot, state } = await loadStateContext(cwd);
-  const resolved = resolveSessionFromState(state, selector);
+  const resolved = resolveArtifactSessionFromState(state, selector);
   const entries = state.entries.filter((entry) => entry.sessionId === resolved.session.id);
   const storedSnapshot = await readRepoSnapshot(repoRoot, resolved.session.id);
   let snapshot: RepoSnapshot;
@@ -1549,6 +1637,10 @@ export async function generateArtifact(
   }
   const generatedAt = new Date().toISOString();
   const filename = `${slugify(resolved.task.title)}.${artifactKind}.md`;
+  const governance =
+    artifactKind === 'handoff'
+      ? await getNextSessionAction({ cwd: repoRoot, sessionId: resolved.session.id })
+      : undefined;
   const content = renderArtifact({
     task: resolved.task,
     session: resolved.session,
@@ -1556,6 +1648,7 @@ export async function generateArtifact(
     repoSnapshot: snapshot,
     generatedAt,
     artifactKind,
+    ...(governance ? { governance } : {}),
   });
 
   const fullPath = await writeArtifactFile(repoRoot, filename, content);
@@ -1564,13 +1657,20 @@ export async function generateArtifact(
     sessionId: resolved.session.id,
     kind: artifactKind,
     path: path.relative(repoRoot, fullPath),
-    templateVersion: 'v1',
+    templateVersion: artifactKind === 'handoff' ? 'v2' : 'v1',
     generatedAt,
     snapshotSource,
   };
 
   await recordArtifact(repoRoot, artifact);
   return { repoRoot, task: resolved.task, session: resolved.session, artifact, fullPath };
+}
+
+function resolveArtifactSessionFromState(state: StateData, selector: SessionSelector): SessionRecord {
+  if (!selector.sessionId) {
+    return resolveSessionFromState(state, selector);
+  }
+  return resolveSessionRecord(state, selector.sessionId);
 }
 
 async function loadStateContext(cwd: string): Promise<StateContext> {

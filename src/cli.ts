@@ -14,9 +14,11 @@ import { sessionTransitionCommand } from './commands/session-transition.js';
 import { sessionNextCommand } from './commands/session-next.js';
 import { sessionGateRunCommand } from './commands/session-gate-run.js';
 import { sessionGateImportCommand } from './commands/session-gate-import.js';
+import { sessionReviewImportCommand } from './commands/session-review-import.js';
 import { sessionReconcileCommand } from './commands/session-reconcile.js';
 import { daemonRunCommand } from './commands/daemon.js';
 import { protocolPrintCommand } from './commands/protocol.js';
+import { auditExportCommand, auditShowCommand, auditVerifyCommand } from './commands/audit.js';
 import { createInvalidArgumentError, toThreadloopError } from './contracts/errors.js';
 import { renderCommandFailure } from './contracts/output.js';
 import { createCommandContext } from './commands/runtime.js';
@@ -37,7 +39,11 @@ const program = createThreadloopProgram({
   sessionNext: commandAction('session next', sessionNextCommand),
   sessionGateRun: commandAction('session gate run', sessionGateRunCommand),
   sessionGateImport: commandAction('session gate import', sessionGateImportCommand),
+  sessionReviewImport: commandAction('session review import', sessionReviewImportCommand),
   sessionReconcile: commandAction('session reconcile', sessionReconcileCommand),
+  auditShow: commandAction('audit show', auditShowCommand),
+  auditVerify: commandAction('audit verify', auditVerifyCommand),
+  auditExport: commandAction('audit export', auditExportCommand),
   daemonRun: commandAction('daemon run', daemonRunCommand),
   protocol: commandAction('protocol', protocolPrintCommand),
 });
@@ -98,6 +104,12 @@ function detectInvokedCommand(argv: string[]) {
   const tokens = argv.filter((token) => token !== '--json');
   if (tokens[0] === 'session' && tokens[1] === 'gate' && ['run', 'import'].includes(tokens[2] ?? '')) {
     return `session gate ${tokens[2]}`;
+  }
+  if (tokens[0] === 'session' && tokens[1] === 'review' && tokens[2] === 'import') {
+    return 'session review import';
+  }
+  if (tokens[0] === 'audit' && ['show', 'verify', 'export'].includes(tokens[1] ?? '')) {
+    return `audit ${tokens[1]}`;
   }
   if (tokens[0] === 'session' && tokens[1]) {
     return `session ${tokens[1]}`;

@@ -10,12 +10,13 @@ as authoritative passing proof.
 
 ## Immutable trust policy
 
-New sessions record proof-plan contract v2. The `ci` object binds the GitHub OIDC issuer, exact caller workflow
-identity, source repository, and the commit-pinned ThreadLoop reusable workflow:
+New sessions record proof-plan contract v3. The `ci` object binds the GitHub OIDC issuer, exact caller workflow
+identity, source repository, and the commit-pinned ThreadLoop gate workflow. The required sibling `review` policy uses
+the same shape and pins `threadloop-review-sensor.yml` independently:
 
 ```json
 {
-  "contract_version": 2,
+  "contract_version": 3,
   "acceptance_criteria": ["All repository checks pass locally and in CI"],
   "ci": {
     "provider": "github-actions",
@@ -23,6 +24,14 @@ identity, source repository, and the commit-pinned ThreadLoop reusable workflow:
     "certificate_identity": "https://github.com/OWNER/REPO/.github/workflows/CALLER.yml@refs/heads/BRANCH",
     "source_repository": "https://github.com/OWNER/REPO",
     "build_signer_uri": "https://github.com/nnennandukwe/threadloop/.github/workflows/threadloop-gate-sensor.yml@FULL_SHA",
+    "build_signer_sha": "FULL_SHA"
+  },
+  "review": {
+    "provider": "github-actions",
+    "issuer": "https://token.actions.githubusercontent.com",
+    "certificate_identity": "https://github.com/OWNER/REPO/.github/workflows/CALLER.yml@refs/heads/BRANCH",
+    "source_repository": "https://github.com/OWNER/REPO",
+    "build_signer_uri": "https://github.com/nnennandukwe/threadloop/.github/workflows/threadloop-review-sensor.yml@FULL_SHA",
     "build_signer_sha": "FULL_SHA"
   },
   "gates": [
@@ -37,8 +46,8 @@ identity, source repository, and the commit-pinned ThreadLoop reusable workflow:
 ```
 
 The source repository must match the checkout's GitHub `origin`, and the caller workflow identity must bind the current
-named branch. Stored legacy plans remain readable and their local gates remain runnable, but `session next --json`
-reports `ci_proof.status: "policy_missing"`. Immutable legacy plans are never upgraded in place.
+named branch. Stored v1/v2 plans remain readable and their local gates remain runnable, but they cannot authorize review
+transitions. Immutable legacy plans are never upgraded in place.
 
 ## Reusable workflow
 
@@ -114,7 +123,7 @@ Before appending evidence, ThreadLoop verifies:
 - a clean, unchanged, passing result for the checkout's current HEAD.
 
 Accepted packages are canonicalized under
-`.threadloop/artifacts/receipts/<session-id>/<receipt-id>/signed-receipt.json`. SQLite schema v5 stores an append-only
+`.threadloop/artifacts/receipts/<session-id>/<receipt-id>/signed-receipt.json`. SQLite schema v6 stores an append-only
 verified projection. Identical imports return the existing sequence; a receipt id reused for different content is a
 conflict. Import never changes lifecycle state or `state_version`.
 

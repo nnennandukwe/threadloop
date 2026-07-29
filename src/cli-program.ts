@@ -27,7 +27,11 @@ export interface ThreadloopCliHandlers {
   sessionNext: CliAction;
   sessionGateRun: CliAction;
   sessionGateImport: CliAction;
+  sessionReviewImport: CliAction;
   sessionReconcile: CliAction;
+  auditShow: CliAction;
+  auditVerify: CliAction;
+  auditExport: CliAction;
   daemonRun: CliAction;
   protocol: CliAction;
 }
@@ -47,7 +51,11 @@ const PROTOCOL_COMMAND_RULES: Record<string, ProtocolCommandRule> = {
   'session next': { requiredOptions: ['session'] },
   'session gate run': { requiredOptions: ['session'] },
   'session gate import': { requiredOptions: ['session'] },
+  'session review import': { requiredOptions: ['session'] },
   'session reconcile': { usageOverride: '(--session <id> | --all) [--json]' },
+  'audit show': { requiredOptions: ['session'] },
+  'audit verify': { requiredOptions: ['session'] },
+  'audit export': { requiredOptions: ['session', 'output'] },
 };
 
 const noopAction: CliAction = () => undefined;
@@ -68,7 +76,11 @@ export function createNoopCliHandlers(): ThreadloopCliHandlers {
     sessionNext: noopAction,
     sessionGateRun: noopAction,
     sessionGateImport: noopAction,
+    sessionReviewImport: noopAction,
     sessionReconcile: noopAction,
+    auditShow: noopAction,
+    auditVerify: noopAction,
+    auditExport: noopAction,
     daemonRun: noopAction,
     protocol: noopAction,
   };
@@ -220,6 +232,15 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
       .requiredOption('--session <id>', 'session id to target', parseRequiredText),
   ).action(handlers.sessionGateImport);
 
+  const sessionReview = session.command('review').description('Import authoritative review evidence');
+  withJsonOption(
+    sessionReview
+      .command('import')
+      .description('Verify and append one signed GitHub review snapshot')
+      .argument('<package-path>', 'path to a signed review package')
+      .requiredOption('--session <id>', 'session id to target', parseRequiredText),
+  ).action(handlers.sessionReviewImport);
+
   withJsonOption(
     session
       .command('reconcile')
@@ -236,6 +257,28 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
       .description('Run daemon to periodically reconcile active sessions')
       .option('-i, --interval <seconds>', 'reconciliation interval in seconds', parseIntervalSeconds, 60),
   ).action(handlers.daemonRun);
+
+  const audit = program.command('audit').description('Inspect and export the authoritative audit ledger');
+  withJsonOption(
+    audit
+      .command('show')
+      .description('Show hash-linked audit events for a session')
+      .requiredOption('--session <id>', 'session id to inspect', parseRequiredText),
+  ).action(handlers.auditShow);
+  withJsonOption(
+    audit
+      .command('verify')
+      .description('Verify a session audit chain and optional retained root')
+      .requiredOption('--session <id>', 'session id to verify', parseRequiredText)
+      .option('--root <sha256>', 'previously retained audit root', parseSha256),
+  ).action(handlers.auditVerify);
+  withJsonOption(
+    audit
+      .command('export')
+      .description('Verify and atomically create a JSONL audit export')
+      .requiredOption('--session <id>', 'session id to export', parseRequiredText)
+      .requiredOption('--output <path>', 'new output path; existing files are never overwritten', parseOutputPath),
+  ).action(handlers.auditExport);
 
   withJsonOption(
     program.command('protocol').description('Print the agent integration protocol').action(handlers.protocol),
@@ -279,10 +322,25 @@ function parseTaskStatus(value: string) {
   return value;
 }
 
+function parseSha256(value: string) {
+  if (!/^[a-f0-9]{64}$/.test(value)) {
+    throw new InvalidArgumentError('Audit root must be 64 lowercase hexadecimal characters');
+  }
+  return value;
+}
+
 function parseRequiredText(value: string) {
   const normalized = value.trim();
   if (!normalized) {
     throw new InvalidArgumentError('Session id must be non-empty.');
+  }
+  return normalized;
+}
+
+function parseOutputPath(value: string) {
+  const normalized = value.trim();
+  if (!normalized) {
+    throw new InvalidArgumentError('Output path must be non-empty.');
   }
   return normalized;
 }

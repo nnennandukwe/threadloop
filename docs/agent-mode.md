@@ -13,19 +13,24 @@ parsing.
 - The orchestrator starts a session and keeps the returned `session_id`.
 - Agents and tools write semantic notes with `threadloop session capture`.
 - ThreadLoop records mechanical repo state with `session heartbeat` and `session reconcile`.
-- Orchestrators inspect `session next`, run declared local gates, import trusted signed CI receipts, and submit guarded
-  mutations through `session transition`.
+- Orchestrators inspect `session next`, run declared local gates, import trusted signed CI and review receipts, and
+  submit guarded mutations through `session transition`.
 - Review artifacts are generated from the stored task, entry, and Git snapshot state.
 
 Semantic vs mechanical operations:
 
 - Semantic: `session start`, `session capture`, `artifact generate`, `session transition`
-- Mechanical evidence: `session gate run`, `session gate import`
+- Mechanical evidence: `session gate run`, `session gate import`, `session review import`
 - Mechanical refresh: `session heartbeat`, `session reconcile`, `daemon run`
-- Read-only control: `session next`
+- Lifecycle read-only: `session next`
+- Audit inspection: `audit show`, `audit verify`
 
 `session reconcile` and the daemon do not create semantic notes. They only refresh branch, head SHA, changed file scope,
 diff stats, and commit range.
+
+On a schema-v6 repository, `audit show` and `audit verify` are storage-read-only and never apply a lifecycle transition.
+On an older repository, their first call may perform the one-time schema-v6 migration and append the honest
+`audit_activated` event that begins forward-only coverage. Run migration-aware audit inspection in a writable checkout.
 
 ## Recommended orchestrator flow
 
@@ -43,7 +48,10 @@ The current operator model is one autonomous task per checkout or worktree.
 10. Run every local gate and import the matching signed CI receipt produced by the commit-pinned reusable workflow.
 11. Use `session next` to rerun missing/stale/corrupt gates, enter bounded repair after local failures, or proceed only
     when local and CI proof pass.
-12. Stop at review-owned states; never fabricate #42 review, approval, or merge evidence.
+12. Run the commit-pinned review sensor for the PR, import its signed package, and let `session next` select repair or
+    human readiness from the revalidated current-HEAD snapshot.
+13. Complete only after a later current-HEAD receipt observes both a human `User` approval and the merged PR.
+14. Verify and export the audit ledger for durable handoff or non-authoritative telemetry ingestion.
 
 Example:
 
@@ -75,6 +83,9 @@ threadloop session reconcile --session "$SESSION_ID" --json
 threadloop session next --session "$SESSION_ID" --json
 threadloop session gate run repository-check --session "$SESSION_ID" --json
 threadloop session gate import ./signed-receipt.json --session "$SESSION_ID" --json
+threadloop session review import ./signed-review-receipt.json --session "$SESSION_ID" --json
+threadloop audit verify --session "$SESSION_ID" --json
+threadloop audit export --session "$SESSION_ID" --output ./threadloop-audit.jsonl --json
 threadloop artifact generate pr-summary --session "$SESSION_ID" --json
 ```
 
@@ -84,6 +95,7 @@ Use `threadloop protocol --json` to discover the current command contract instea
 
 The protocol currently publishes:
 
+- explicit protocol v3 component contract versions
 - command usages derived from the actual CLI tree
 - supported entry kinds and artifact kinds
 - structured workflow guidance for `main` sync, branch naming, rebase, and PR summary generation
@@ -170,5 +182,7 @@ namespace because it avoids ambiguity.
 - ThreadLoop requires a Git repository.
 - `.threadloop/state/` and `.threadloop/artifacts/receipts/` are ignored via `.git/info/exclude` by default.
 - Local receipts drive repair; verified signed CI receipts independently authorize review.
+- Verified signed review receipts drive review repair, human readiness, and completion guards.
+- Audit JSONL and handoffs are projections; neither can authorize lifecycle mutation.
 - `.threadloop` internal paths are excluded from artifact Git scope.
 - Legacy `.threadloop/state/state.json` data migrates to SQLite on first access and is kept as a backup file.

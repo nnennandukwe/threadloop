@@ -16,6 +16,18 @@ function ciPolicy() {
   };
 }
 
+function reviewPolicy() {
+  return {
+    provider: 'github-actions',
+    issuer: 'https://token.actions.githubusercontent.com',
+    certificate_identity:
+      'https://github.com/example/project/.github/workflows/threadloop-review.yml@refs/heads/issue-42/review-audit-handoff',
+    source_repository: 'https://github.com/example/project',
+    build_signer_uri: `https://github.com/nnennandukwe/threadloop/.github/workflows/threadloop-review-sensor.yml@${workflowSha}`,
+    build_signer_sha: workflowSha,
+  };
+}
+
 function captureProofValidationError(action: () => unknown) {
   try {
     action();
@@ -93,6 +105,48 @@ describe('proof plan domain', () => {
     expect(result.json).toBe(
       `{"acceptance_criteria":["All checks pass"],"ci":{"build_signer_sha":"${workflowSha}","build_signer_uri":"https://github.com/nnennandukwe/threadloop/.github/workflows/threadloop-gate-sensor.yml@${workflowSha}","certificate_identity":"https://github.com/example/project/.github/workflows/threadloop.yml@refs/heads/issue-41/signed-ci-receipts","issuer":"https://token.actions.githubusercontent.com","provider":"github-actions","source_repository":"https://github.com/example/project"},"contract_version":2,"gates":[{"command":["npm","run","check"],"id":"repository-check","timeout_ms":5000,"working_directory":"."}]}`,
     );
+  });
+
+  it('canonicalizes an exact v3 plan with independent gate and review trust policies', () => {
+    const result = canonicalizeProofPlan(
+      {
+        contract_version: 3,
+        acceptance_criteria: ['All checks pass and review is resolved'],
+        ci: ciPolicy(),
+        review: reviewPolicy(),
+        gates: [
+          {
+            id: 'repository-check',
+            command: ['npm', 'run', 'check'],
+            working_directory: '.',
+            timeout_ms: 5_000,
+          },
+        ],
+      },
+      sha256,
+      { requireReviewPolicy: true },
+    );
+
+    expect(result.plan).toMatchObject({ contract_version: 3 });
+    expect('ci' in result.plan && result.plan.ci.build_signer_uri).toContain('threadloop-gate-sensor.yml');
+    expect('review' in result.plan && result.plan.review.build_signer_uri).toContain('threadloop-review-sensor.yml');
+  });
+
+  it('rejects v2 when a newly recorded plan requires review trust', () => {
+    expect(
+      captureProofValidationError(() =>
+        canonicalizeProofPlan(
+          {
+            contract_version: 2,
+            acceptance_criteria: ['All checks pass'],
+            ci: ciPolicy(),
+            gates: [{ id: 'check', command: ['node'], working_directory: '.', timeout_ms: 1 }],
+          },
+          sha256,
+          { requireReviewPolicy: true },
+        ),
+      ).field,
+    ).toBe('proof_plan.contract_version');
   });
 
   it('rejects a newly recorded legacy plan while preserving legacy read compatibility', () => {

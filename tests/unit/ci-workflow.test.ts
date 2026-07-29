@@ -90,6 +90,56 @@ describe('signed gate reusable workflow', () => {
           'property "workflow_sha" is not defined in object type',
         ],
       },
+      '.github/workflows/threadloop-review-sensor.yml': {
+        ignore: [
+          'property "workflow_repository" is not defined in object type',
+          'property "workflow_sha" is not defined in object type',
+        ],
+      },
     });
+  });
+});
+
+describe('signed review reusable workflow', () => {
+  it('separates read-only review collection from keyless signing authority', async () => {
+    const workflowPath = path.join(process.cwd(), '.github/workflows/threadloop-review-sensor.yml');
+    const source = await readFile(workflowPath, 'utf8');
+    const workflow = object(parse(source) as unknown);
+    const workflowCall = object(object(workflow.on).workflow_call);
+    const inputs = object(workflowCall.inputs);
+    const jobs = object(workflow.jobs);
+    const collectionJob = object(jobs.collect_review);
+    const signingJob = object(jobs.sign_receipt);
+    const collectionSteps = collectionJob.steps as Array<Record<string, unknown>>;
+    const signingSteps = signingJob.steps as Array<Record<string, unknown>>;
+
+    expect(Object.keys(inputs)).toEqual(['session_id', 'plan_sha256', 'pull_request_number']);
+    expect(workflow.permissions).toEqual({ contents: 'read' });
+    expect(Object.keys(jobs)).toEqual(['collect_review', 'sign_receipt']);
+    expect(collectionJob.permissions).toEqual({ contents: 'read', 'pull-requests': 'read' });
+    expect(signingJob.permissions).toEqual({ contents: 'read', 'id-token': 'write' });
+    expect(signingJob.needs).toBe('collect_review');
+    expect(source).not.toContain('pull_request_target');
+    expect(source).not.toContain('secrets:');
+    expect(collectionSteps.find((step) => step.name === 'Collect review snapshot')).toMatchObject({
+      run: 'npm run sensor:github-review:collect',
+      'working-directory': 'threadloop-sensor',
+    });
+    expect(signingSteps.find((step) => step.name === 'Sign review snapshot')).toMatchObject({
+      run: 'npm run sensor:github-review:sign',
+      'working-directory': 'threadloop-sensor',
+    });
+    expect(signingSteps.find((step) => step.name === 'Sign review snapshot')?.env).not.toHaveProperty('GITHUB_TOKEN');
+    expect(collectionSteps.map((step) => step.uses).filter(Boolean)).toEqual([
+      'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+      'actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38',
+      'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
+    ]);
+    expect(signingSteps.map((step) => step.uses).filter(Boolean)).toEqual([
+      'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+      'actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38',
+      'actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131',
+      'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
+    ]);
   });
 });
