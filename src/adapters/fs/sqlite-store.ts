@@ -12,7 +12,11 @@ import {
   verifyAuditChain,
   ZERO_AUDIT_HASH,
 } from '../../domain/audit.js';
-import { evaluateLifecycleTransition, type LifecycleTransitionDecision } from '../../domain/lifecycle.js';
+import {
+  evaluateLifecycleTransition,
+  REPAIR_ENTRY_STATES,
+  type LifecycleTransitionDecision,
+} from '../../domain/lifecycle.js';
 import {
   type CanonicalTransitionRequest,
   type TransitionGuardDecision,
@@ -314,6 +318,21 @@ export interface AppendSignedReviewReceiptInput {
 export class ReceiptAppendConflictError extends Error {}
 export class SignedReceiptAppendConflictError extends Error {}
 export class SignedReviewReceiptAppendConflictError extends Error {}
+export class AuditLedgerUnavailableError extends Error {
+  readonly reason: 'schema_version' | 'table_missing';
+  readonly schemaVersion: number;
+
+  constructor(reason: 'schema_version' | 'table_missing', schemaVersion: number) {
+    const message =
+      reason === 'schema_version'
+        ? `Audit storage requires schema v6; found schema v${schemaVersion}.`
+        : `Audit storage is unavailable for schema v${schemaVersion}.`;
+    super(message);
+    this.name = 'AuditLedgerUnavailableError';
+    this.reason = reason;
+    this.schemaVersion = schemaVersion;
+  }
+}
 export class AuditChainCorruptedError extends Error {
   readonly code: AuditVerificationErrorCode;
   readonly sequence?: number;
@@ -559,11 +578,14 @@ export function readSessionProofEvidenceReadOnly(repoRoot: string, sessionId: st
       `
         SELECT COUNT(*) AS count
         FROM session_transitions
-        WHERE session_id = ? AND to_state = ?
+        WHERE session_id = ?
+          AND to_state = ?
+          AND from_state IN (?, ?, ?)
       `,
       'count',
       sessionId,
       TASK_STATUS.REPAIRING,
+      ...REPAIR_ENTRY_STATES,
     );
     return {
       plan: plan
@@ -589,10 +611,27 @@ export function readSessionProofEvidenceReadOnly(repoRoot: string, sessionId: st
 export function readSessionAuditReadOnly(repoRoot: string, sessionId: string): StoredAuditEvent[] {
   const db = openReadDatabase(repoRoot);
   try {
+    const schemaVersion = readDatabaseSchemaVersion(db);
+    if (schemaVersion < 6) {
+      throw new AuditLedgerUnavailableError('schema_version', schemaVersion);
+    }
     if (!tableExists(db, 'audit_events')) {
-      return [];
+      throw new AuditLedgerUnavailableError('table_missing', schemaVersion);
     }
     return readAuditEvents(db, sessionId);
+  } finally {
+    db.close();
+  }
+}
+
+export function inspectAuditLedgerReadOnly(repoRoot: string) {
+  const db = openReadDatabase(repoRoot);
+  try {
+    const schemaVersion = readDatabaseSchemaVersion(db);
+    return {
+      available: schemaVersion >= 6 && tableExists(db, 'audit_events'),
+      schemaVersion,
+    };
   } finally {
     db.close();
   }
@@ -2141,18 +2180,23 @@ function readActiveProjectionMismatchCount(db: DatabaseSync) {
 }
 
 function assertSupportedSchemaVersion(db: DatabaseSync) {
-  const rawVersion = readTextValue(db, `SELECT value FROM metadata WHERE key = 'schema_version'`, 'value');
-
-  if (!rawVersion) {
-    throw new Error('Missing ThreadLoop schema version metadata.');
-  }
-
-  const version = parseSchemaVersion(rawVersion);
+  const version = readDatabaseSchemaVersion(db);
   if (version < 1 || version > CURRENT_SCHEMA_VERSION) {
-    throw new Error(`Unsupported ThreadLoop schema version: ${rawVersion}`);
+    throw new Error(`Unsupported ThreadLoop schema version: ${version}`);
   }
 
   return version;
+}
+
+function readDatabaseSchemaVersion(db: DatabaseSync) {
+  if (!tableExists(db, 'metadata')) {
+    throw new Error('Missing ThreadLoop schema version metadata.');
+  }
+  const rawVersion = readTextValue(db, `SELECT value FROM metadata WHERE key = 'schema_version'`, 'value');
+  if (!rawVersion) {
+    throw new Error('Missing ThreadLoop schema version metadata.');
+  }
+  return parseSchemaVersion(rawVersion);
 }
 
 function assertSchemaVersion(db: DatabaseSync) {

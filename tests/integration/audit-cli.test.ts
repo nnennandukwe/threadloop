@@ -202,6 +202,71 @@ describe('audit CLI', { timeout: 20_000 }, () => {
     expect((serviceFailure as Error).cause).toBeInstanceOf(Error);
   });
 
+  it.each([
+    {
+      name: 'unavailable',
+      expectedCode: 'AUDIT_UNAVAILABLE',
+      mutate: (db: DatabaseSync) => {
+        db.prepare(`DROP TABLE audit_events`).run();
+      },
+    },
+    {
+      name: 'empty',
+      expectedCode: 'AUDIT_EMPTY',
+      mutate: (db: DatabaseSync) => {
+        db.prepare(`DROP TRIGGER audit_events_no_delete`).run();
+        db.prepare(`DELETE FROM audit_events`).run();
+        db.exec(`
+          CREATE TRIGGER audit_events_no_delete
+          BEFORE DELETE ON audit_events
+          BEGIN
+            SELECT RAISE(ABORT, 'audit events are immutable');
+          END
+        `);
+      },
+    },
+  ])('fails closed when the audit ledger is $name', async ({ expectedCode, mutate }) => {
+    const fixture = await makeSession();
+    await resetSqliteConnections(fixture.repoDir);
+    const db = new DatabaseSync(path.join(fixture.repoDir, '.threadloop/state/state.db'));
+    try {
+      mutate(db);
+    } finally {
+      db.close();
+    }
+
+    for (const command of [
+      ['audit', 'verify', '--session', fixture.sessionId, '--json'],
+      [
+        'audit',
+        'export',
+        '--session',
+        fixture.sessionId,
+        '--output',
+        path.join(fixture.repoDir, `${expectedCode}.jsonl`),
+        '--json',
+      ],
+    ]) {
+      const failure = await runCliFailure(fixture.repoDir, command);
+      const response = parseJson<{ error: { code: string; details: { session_id: string; hint: string } } }>(
+        failure.stderr,
+      );
+      expect(response).toMatchObject({
+        error: {
+          code: expectedCode,
+          details: {
+            session_id: fixture.sessionId,
+          },
+        },
+      });
+      expect(response.error.details.hint.length).toBeGreaterThan(0);
+    }
+
+    await expect(readFile(path.join(fixture.repoDir, `${expectedCode}.jsonl`), 'utf8')).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+  });
+
   it('reports corruption and blocks later controller mutations without changing lifecycle state', async () => {
     const fixture = await makeSession();
     await resetSqliteConnections(fixture.repoDir);

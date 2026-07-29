@@ -10,6 +10,7 @@ import {
   ensureStateDatabase,
   ensureThreadloopLayout,
   hasSessionTransitionIdempotencyReadOnly,
+  inspectAuditLedgerReadOnly,
   insertTaskSession,
   readConfig,
   readSessionGateContext,
@@ -26,6 +27,7 @@ import {
   writeConfig,
   ReceiptAppendConflictError,
   AuditChainCorruptedError,
+  AuditLedgerUnavailableError,
 } from '../adapters/fs/sqlite-store.js';
 import { AuditExportConflictError, writeAuditExportExclusive } from '../adapters/fs/audit-export.js';
 import { isThreadloopInitialized } from '../adapters/fs/repo.js';
@@ -70,6 +72,7 @@ import {
 } from '../domain/review.js';
 import { canonicalJson } from '../domain/canonical-json.js';
 import { verifyAuditChain } from '../domain/audit.js';
+import { isRepairEntryTransition } from '../domain/lifecycle.js';
 import { DEFAULT_BASE_REF, TASK_STATUS } from '../domain/types.js';
 import type {
   ActiveState,
@@ -787,7 +790,7 @@ export async function importSessionReviewReceipt(input: ImportSessionReviewRecei
 
 function assertSessionAuditVerified(repoRoot: string, sessionId: string) {
   try {
-    const verification = verifyAuditChain(readSessionAuditReadOnly(repoRoot, sessionId), sha256);
+    const verification = verifyAuditChain(readRequiredSessionAudit(repoRoot, sessionId), sha256);
     if (!verification.valid && verification.error) {
       throw new AuditChainCorruptedError(
         verification.error.code,
@@ -919,7 +922,14 @@ export async function exportSessionAudit(input: ExportSessionAuditInput) {
 
 async function loadSessionAudit(input: SessionAuditInput, expectedRoot?: string) {
   const repoRoot = await resolveRepositoryRoot(input.cwd);
-  await assertInitialized(repoRoot);
+  await assertInitializedReadOnly(repoRoot);
+  const availability = inspectAuditLedgerReadOnly(repoRoot);
+  if (!availability.available && availability.schemaVersion >= 6) {
+    throw auditUnavailableFailure(
+      input.sessionId,
+      new AuditLedgerUnavailableError('table_missing', availability.schemaVersion),
+    );
+  }
   await ensureStateDatabase(repoRoot);
   const lifecycle = readSessionLifecycleReadOnly(repoRoot, input.sessionId);
   if (!lifecycle) {
@@ -927,15 +937,7 @@ async function loadSessionAudit(input: SessionAuditInput, expectedRoot?: string)
       details: { session_id: input.sessionId },
     });
   }
-  let storedEvents: ReturnType<typeof readSessionAuditReadOnly>;
-  try {
-    storedEvents = readSessionAuditReadOnly(repoRoot, input.sessionId);
-  } catch (error) {
-    if (error instanceof AuditChainCorruptedError) {
-      throw mapAuditChainCorruption(input.sessionId, error, 'Restore the ledger from trusted storage.');
-    }
-    throw error;
-  }
+  const storedEvents = readRequiredSessionAudit(repoRoot, input.sessionId);
   const verification = verifyAuditChain(storedEvents, sha256, expectedRoot);
   const first = storedEvents[0]?.value;
   const coverage =
@@ -954,6 +956,45 @@ async function loadSessionAudit(input: SessionAuditInput, expectedRoot?: string)
     events: storedEvents.map((event) => event.value),
     storedEvents,
   };
+}
+
+function readRequiredSessionAudit(repoRoot: string, sessionId: string) {
+  let storedEvents: ReturnType<typeof readSessionAuditReadOnly>;
+  try {
+    storedEvents = readSessionAuditReadOnly(repoRoot, sessionId);
+  } catch (error) {
+    if (error instanceof AuditLedgerUnavailableError) {
+      throw auditUnavailableFailure(sessionId, error);
+    }
+    if (error instanceof AuditChainCorruptedError) {
+      throw mapAuditChainCorruption(sessionId, error, 'Restore the ledger from trusted storage.');
+    }
+    throw error;
+  }
+  if (storedEvents.length === 0) {
+    throw new ThreadloopError('AUDIT_EMPTY', `Session ${sessionId} has no audit events.`, {
+      details: {
+        session_id: sessionId,
+        hint: 'Restore the ledger from trusted storage; an authoritative session audit must have a genesis event.',
+      },
+    });
+  }
+  return storedEvents;
+}
+
+function auditUnavailableFailure(sessionId: string, error: AuditLedgerUnavailableError) {
+  return new ThreadloopError('AUDIT_UNAVAILABLE', 'The session audit ledger is unavailable.', {
+    cause: error,
+    details: {
+      session_id: sessionId,
+      schema_version: error.schemaVersion,
+      reason: error.reason,
+      hint:
+        error.reason === 'schema_version'
+          ? 'Run a state-migrating ThreadLoop command before retrying the audit operation.'
+          : 'Restore the schema-v6 audit ledger from trusted storage before retrying.',
+    },
+  });
 }
 
 function auditVerificationFailure(sessionId: string, audit: Awaited<ReturnType<typeof loadSessionAudit>>) {
@@ -1357,7 +1398,9 @@ async function buildProofGuardContext(
   const latestFailure = [...proofState.receipts]
     .sort((left, right) => right.sequence - left.sequence)
     .find((receipt) => receipt.result !== 'passed');
-  const currentRepairEntry = readSessionTransitionHistoryReadOnly(repoRoot, sessionId).at(-1);
+  const currentRepairEntry = readSessionTransitionHistoryReadOnly(repoRoot, sessionId)
+    .reverse()
+    .find((entry) => isRepairEntryTransition(entry.from_state, entry.to_state));
   const repairBasis =
     currentRepairEntry?.to_state !== TASK_STATUS.REPAIRING
       ? undefined
