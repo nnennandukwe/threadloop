@@ -37,12 +37,12 @@ describe('signed gate reusable workflow', () => {
     expect(executionSteps.map((step) => step.uses).filter(Boolean)).toEqual([
       'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
       'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
-      'actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38',
+      'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
       'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
     ]);
     expect(signingSteps.map((step) => step.uses).filter(Boolean)).toEqual([
       'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
-      'actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38',
+      'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
       'actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131',
       'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
     ]);
@@ -132,12 +132,12 @@ describe('signed review reusable workflow', () => {
     expect(signingSteps.find((step) => step.name === 'Sign review snapshot')?.env).not.toHaveProperty('GITHUB_TOKEN');
     expect(collectionSteps.map((step) => step.uses).filter(Boolean)).toEqual([
       'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
-      'actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38',
+      'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
       'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
     ]);
     expect(signingSteps.map((step) => step.uses).filter(Boolean)).toEqual([
       'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
-      'actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38',
+      'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
       'actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131',
       'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
     ]);
