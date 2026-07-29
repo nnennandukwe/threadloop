@@ -90,9 +90,10 @@ Reads one deterministic transition candidate, current lifecycle state/version, g
 sanitized repository identity, branch, HEAD, and worktree cleanliness. This command does not heartbeat, reconcile,
 refresh snapshots, migrate the database, repair projections, or mutate lifecycle state.
 
-JSON contract v2 preserves local `proof`, then adds `ci_proof` with `policy_missing`, `missing`, `passed`, `stale`, or
-`corrupt` status and one signed-receipt projection per gate. Completed and blocked sessions return terminal reasons.
-Schema-v2/v3 reads report `migration_required` without mutating the database.
+JSON contract v3 preserves the existing lifecycle, candidate, repository, local `proof`, `ci_proof`, staleness, and
+repair fields. It adds lifecycle history, verified review evidence and findings, combined gate/review repair usage,
+audit validity/root/coverage, and one `next_human_action`. Completed and blocked sessions return terminal reasons. Older
+schemas report `migration_required` without mutating the database.
 
 ### `threadloop session transition <target-state> [options]`
 
@@ -107,23 +108,31 @@ Required options:
 - `--input <json-object>`: structured transition input; `framed -> proof_ready` requires `proof_plan`
 
 The same key and canonical request replays the original result without adding records. Reusing a key for different
-content fails with `IDEMPOTENCY_CONFLICT`. Stale state versions fail without lifecycle mutation. Issue #40-owned
-transitions use the immutable plan, clean Git observations, current receipts, and derived repair budget. Review,
-approval, and merge evidence owned by issue #42 remains fail-closed.
+content fails with `IDEMPOTENCY_CONFLICT`. Stale state versions fail without lifecycle mutation. Guards use the
+immutable plan, clean Git observations, revalidated local/CI/review receipts, approval and merge observations, and the
+combined repair budget.
 
 Proof-plan input:
 
 ```json
 {
   "proof_plan": {
-    "contract_version": 2,
-    "acceptance_criteria": ["All repository checks pass locally and in CI"],
+    "contract_version": 3,
+    "acceptance_criteria": ["All repository checks pass locally, in CI, and in review"],
     "ci": {
       "provider": "github-actions",
       "issuer": "https://token.actions.githubusercontent.com",
       "certificate_identity": "https://github.com/OWNER/REPO/.github/workflows/threadloop.yml@refs/heads/BRANCH",
       "source_repository": "https://github.com/OWNER/REPO",
       "build_signer_uri": "https://github.com/nnennandukwe/threadloop/.github/workflows/threadloop-gate-sensor.yml@FULL_SHA",
+      "build_signer_sha": "FULL_SHA"
+    },
+    "review": {
+      "provider": "github-actions",
+      "issuer": "https://token.actions.githubusercontent.com",
+      "certificate_identity": "https://github.com/OWNER/REPO/.github/workflows/threadloop.yml@refs/heads/BRANCH",
+      "source_repository": "https://github.com/OWNER/REPO",
+      "build_signer_uri": "https://github.com/nnennandukwe/threadloop/.github/workflows/threadloop-review-sensor.yml@FULL_SHA",
       "build_signer_sha": "FULL_SHA"
     },
     "gates": [
@@ -140,7 +149,8 @@ Proof-plan input:
 
 All gates are required. Gate ids must be unique, commands are exact argv arrays, working directories must exist and
 resolve inside the repository, and timeouts must be positive integers no greater than one day. New proof plans require
-the v2 immutable CI policy and must match the checkout's GitHub origin and named branch.
+contract v3 with independent immutable CI and review policies. Both policies must match the checkout's GitHub origin and
+named branch. Stored v1/v2 plans remain readable but cannot authorize review transitions.
 
 ### `threadloop session gate run <gate-id> --session <id> [--json]`
 
@@ -159,6 +169,36 @@ proof only and does not change lifecycle state or `state_version`.
 
 See [Signed gate receipt v1](attestations/receipt-v1.md) for the package, Sigstore verification, reusable workflow, and
 failure contracts.
+
+### `threadloop session review import <package-path> --session <id> [--json]`
+
+Verifies and appends one signed, provider-neutral GitHub review snapshot. The input is limited to 10 MiB and accepts no
+trust-policy override. ThreadLoop verifies the session, plan, repository, current PR HEAD, canonical artifact, in-toto
+subject, package hashes, Sigstore identity, workflow invocation, and transparency evidence before promotion.
+
+The latest valid imported snapshot is authoritative for blockers, same-HEAD human approval, and observed merge state.
+Import never changes lifecycle state. Identical packages are idempotent; a receipt id reused for different content is a
+conflict. See [Signed review receipt v1](attestations/review-v1.md).
+
+### Audit commands
+
+```text
+threadloop audit show --session <id> [--json]
+threadloop audit verify --session <id> [--root <sha256>] [--json]
+threadloop audit export --session <id> --output <path> [--json]
+```
+
+`show` returns stored events, coverage, root, and verification status. `verify` checks event sequence, hash links,
+canonical JSON, event hashes, and an optional retained root. `export` verifies first and atomically publishes canonical
+JSONL without overwriting an existing path. The export records are shaped as `{"event":{...},"event_sha256":"..."}`.
+
+On schema v6, `show` and `verify` do not write storage or apply lifecycle transitions. On an older repository, their
+first call may perform the one-time schema-v6 migration and append `audit_activated` to mark honest forward-only
+coverage.
+
+Local verification detects mutation; an externally retained `--root`, prior handoff, or prior export root is required to
+detect tail truncation. See [Audit export and OpenTelemetry](observability.md) for the supported JSONL `filelog` recipe
+and its non-authoritative telemetry boundary.
 
 ### `threadloop daemon run [--json]`
 
@@ -216,6 +256,7 @@ Prints the agent integration contract derived from the current CLI configuration
 
 The JSON payload includes:
 
+- protocol v3 contract versions for proof plan, session next, review receipt, audit event, and handoff
 - supported environment variables used by the CLI contract
 - command usages derived from the registered command tree
 - capture kinds and artifact kinds sourced from runtime constants
@@ -237,10 +278,11 @@ ThreadLoop stores state locally in the repo:
 If an older repo still has `.threadloop/state/state.json`, ThreadLoop migrates that data into SQLite on first access and
 intentionally leaves the JSON file in place as a safety backup. After migration, ThreadLoop reads from SQLite.
 
-SQLite schema v5 stores transition/idempotency records, one immutable proof plan per session, append-only local gate
-receipts, and append-only verified signed gate receipts. Migration is atomic, and schema metadata accepts canonical
-unsigned decimal text only. Update, delete, and replace attempts against plans and receipts are rejected by persistent
-triggers.
+SQLite schema v6 stores transition/idempotency records, one immutable proof plan per session, append-only local gate,
+signed gate, and signed review receipts, plus a hash-linked append-only audit ledger. New sessions begin with
+`session_started`; migrated sessions begin honest forward-only coverage with `audit_activated`. Migration is atomic,
+schema metadata accepts canonical unsigned decimal text only, and persistent triggers reject update, delete, or
+replacement of immutable evidence.
 
 Recommended default:
 

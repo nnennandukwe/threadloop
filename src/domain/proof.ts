@@ -25,7 +25,7 @@ export interface LegacyProofPlan {
   gates: ProofGate[];
 }
 
-export interface CiTrustPolicy {
+export interface GitHubActionsTrustPolicy {
   provider: 'github-actions';
   issuer: 'https://token.actions.githubusercontent.com';
   certificate_identity: string;
@@ -37,11 +37,19 @@ export interface CiTrustPolicy {
 export interface CiProofPlan {
   contract_version: 2;
   acceptance_criteria: string[];
-  ci: CiTrustPolicy;
+  ci: GitHubActionsTrustPolicy;
   gates: ProofGate[];
 }
 
-export type ProofPlan = LegacyProofPlan | CiProofPlan;
+export interface ReviewProofPlan {
+  contract_version: 3;
+  acceptance_criteria: string[];
+  ci: GitHubActionsTrustPolicy;
+  review: GitHubActionsTrustPolicy;
+  gates: ProofGate[];
+}
+
+export type ProofPlan = LegacyProofPlan | CiProofPlan | ReviewProofPlan;
 
 export interface CanonicalProofPlan {
   plan: ProofPlan;
@@ -134,23 +142,34 @@ export class ProofValidationError extends Error {
 export function canonicalizeProofPlan(
   value: unknown,
   digest: ProofDigest,
-  options: { requireCiPolicy?: boolean } = {},
+  options: { requireCiPolicy?: boolean; requireReviewPolicy?: boolean } = {},
 ): CanonicalProofPlan {
   const plan = validateProofPlan(value, options);
   const json = canonicalJson(plan);
   return { plan, json, sha256: digest(json) };
 }
 
-export function validateProofPlan(value: unknown, options: { requireCiPolicy?: boolean } = {}): ProofPlan {
+export function validateProofPlan(
+  value: unknown,
+  options: { requireCiPolicy?: boolean; requireReviewPolicy?: boolean } = {},
+): ProofPlan {
   const candidate = requireObject(value, 'proof_plan');
   const isVersionTwo = candidate.contract_version === 2;
-  if (!isVersionTwo && options.requireCiPolicy) {
-    throw invalid('proof_plan.contract_version', 'must be 2 for newly recorded proof plans');
+  const isVersionThree = candidate.contract_version === 3;
+  if (!isVersionTwo && !isVersionThree && options.requireCiPolicy) {
+    throw invalid('proof_plan.contract_version', 'must be 2 or 3 for newly recorded proof plans');
+  }
+  if (!isVersionThree && options.requireReviewPolicy) {
+    throw invalid('proof_plan.contract_version', 'must be 3 for newly recorded proof plans');
   }
   const plan = requireExactObject(
     candidate,
     'proof_plan',
-    isVersionTwo ? ['contract_version', 'acceptance_criteria', 'ci', 'gates'] : ['acceptance_criteria', 'gates'],
+    isVersionThree
+      ? ['contract_version', 'acceptance_criteria', 'ci', 'review', 'gates']
+      : isVersionTwo
+        ? ['contract_version', 'acceptance_criteria', 'ci', 'gates']
+        : ['acceptance_criteria', 'gates'],
   );
   const acceptanceCriteria = plan.acceptance_criteria;
   if (!Array.isArray(acceptanceCriteria) || acceptanceCriteria.length === 0) {
@@ -214,20 +233,34 @@ export function validateProofPlan(value: unknown, options: { requireCiPolicy?: b
     };
   });
 
-  if (!isVersionTwo) {
+  if (!isVersionTwo && !isVersionThree) {
     return { acceptance_criteria: normalizedCriteria, gates };
+  }
+
+  if (isVersionThree) {
+    return {
+      contract_version: 3,
+      acceptance_criteria: normalizedCriteria,
+      ci: validateTrustPolicy(plan.ci, 'proof_plan.ci', 'threadloop-gate-sensor.yml'),
+      review: validateTrustPolicy(plan.review, 'proof_plan.review', 'threadloop-review-sensor.yml'),
+      gates,
+    };
   }
 
   return {
     contract_version: 2,
     acceptance_criteria: normalizedCriteria,
-    ci: validateCiTrustPolicy(plan.ci),
+    ci: validateTrustPolicy(plan.ci, 'proof_plan.ci', 'threadloop-gate-sensor.yml'),
     gates,
   };
 }
 
-export function hasCiTrustPolicy(plan: ProofPlan): plan is CiProofPlan {
-  return 'contract_version' in plan && plan.contract_version === 2;
+export function hasCiTrustPolicy(plan: ProofPlan): plan is CiProofPlan | ReviewProofPlan {
+  return 'contract_version' in plan && (plan.contract_version === 2 || plan.contract_version === 3);
+}
+
+export function hasReviewTrustPolicy(plan: ProofPlan): plan is ReviewProofPlan {
+  return 'contract_version' in plan && plan.contract_version === 3;
 }
 
 export function evaluateProofEvidence(input: {
@@ -407,8 +440,7 @@ function requireNonEmptyText(value: unknown, field: string, maximumLength: numbe
   return value;
 }
 
-function validateCiTrustPolicy(value: unknown): CiTrustPolicy {
-  const field = 'proof_plan.ci';
+function validateTrustPolicy(value: unknown, field: string, sensorWorkflow: string): GitHubActionsTrustPolicy {
   const policy = requireExactObject(value, field, [
     'provider',
     'issuer',
@@ -447,7 +479,7 @@ function validateCiTrustPolicy(value: unknown): CiTrustPolicy {
     throw invalid(`${field}.build_signer_sha`, 'must be a full lowercase Git commit SHA');
   }
   const buildSignerUri = requireNonEmptyText(policy.build_signer_uri, `${field}.build_signer_uri`, 1_024);
-  const expectedSignerUri = `https://github.com/nnennandukwe/threadloop/.github/workflows/threadloop-gate-sensor.yml@${buildSignerSha}`;
+  const expectedSignerUri = `https://github.com/nnennandukwe/threadloop/.github/workflows/${sensorWorkflow}@${buildSignerSha}`;
   if (buildSignerUri !== expectedSignerUri) {
     throw invalid(`${field}.build_signer_uri`, `must equal ${expectedSignerUri}`);
   }

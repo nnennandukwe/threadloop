@@ -3,7 +3,7 @@ import {
   GATE_RECEIPT_RESULTS,
   hasCiTrustPolicy,
   type BoundProofPlan,
-  type CiTrustPolicy,
+  type GitHubActionsTrustPolicy,
   type GateReceiptResult,
   type ProofDigest,
   type ProofGate,
@@ -165,7 +165,7 @@ export interface CiProofGateEvidence {
 
 export interface CiProofEvidence {
   status: CiProofStatus;
-  policy: CiTrustPolicy | null;
+  policy: GitHubActionsTrustPolicy | null;
   gates: CiProofGateEvidence[];
 }
 

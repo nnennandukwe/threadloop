@@ -1,8 +1,19 @@
 import { bundleToJSON } from '@sigstore/bundle';
 import { CIContextProvider, DSSEBundleBuilder, FulcioSigner, RekorWitness } from '@sigstore/sign';
 import { verify as sigstoreVerify, type Bundle, type SignOptions, type VerifyOptions } from 'sigstore';
-import type { CiTrustPolicy } from '../../domain/proof.js';
-import type { SignedReceiptEnvelope } from '../../domain/attestation.js';
+import type { GitHubActionsTrustPolicy } from '../../domain/proof.js';
+
+export interface SigstoreVerifiableReceipt {
+  bundle: Record<string, unknown>;
+  artifact: {
+    source: {
+      repository: string;
+      ref: string;
+      head_sha: string;
+      run_invocation_uri: string;
+    };
+  };
+}
 
 export interface VerifiedSigstoreSigner {
   issuer: string;
@@ -58,8 +69,8 @@ export async function signSigstoreStatement(
 }
 
 export async function verifySigstoreReceipt(
-  receipt: SignedReceiptEnvelope,
-  policy: CiTrustPolicy,
+  receipt: SigstoreVerifiableReceipt,
+  policy: GitHubActionsTrustPolicy,
   verify: SigstoreVerifyFunction = sigstoreVerify,
 ): Promise<VerifiedSigstoreSigner> {
   if (!hasTransparencyInclusionProof(receipt.bundle)) {
@@ -108,7 +119,7 @@ export async function verifySigstoreReceipt(
   if (!identityMatches) {
     throw new SigstoreReceiptVerificationError(
       'identity_mismatch',
-      'The verified signing certificate does not match the immutable CI trust policy.',
+      'The verified signing certificate does not match the immutable trust policy.',
     );
   }
 
@@ -150,7 +161,7 @@ function classifySigstoreError(error: unknown) {
   if (name === 'PolicyError') {
     return new SigstoreReceiptVerificationError(
       'identity_mismatch',
-      'The Sigstore certificate identity does not match the immutable CI trust policy.',
+      'The Sigstore certificate identity does not match the immutable trust policy.',
       { cause: error },
     );
   }

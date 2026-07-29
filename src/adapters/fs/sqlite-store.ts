@@ -3,7 +3,21 @@ import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { stateDataSchema, threadloopConfigSchema } from '../../schemas/state.js';
-import { evaluateLifecycleTransition, type LifecycleTransitionDecision } from '../../domain/lifecycle.js';
+import { sha256 } from '../crypto/sha256.js';
+import {
+  createAuditEvent,
+  type AuditEventType,
+  type AuditVerificationErrorCode,
+  type StoredAuditEvent,
+  verifyAuditChain,
+  verifyAuditEventIntegrity,
+  ZERO_AUDIT_HASH,
+} from '../../domain/audit.js';
+import {
+  evaluateLifecycleTransition,
+  REPAIR_ENTRY_STATES,
+  type LifecycleTransitionDecision,
+} from '../../domain/lifecycle.js';
 import {
   type CanonicalTransitionRequest,
   type TransitionGuardDecision,
@@ -13,6 +27,7 @@ import {
 import type { BoundProofPlan, GateReceiptPayload, GateReceiptResult, StoredGateReceipt } from '../../domain/proof.js';
 import type { ParsedSignedReceiptPackage, StoredSignedGateReceipt } from '../../domain/attestation.js';
 import type { VerifiedSigstoreSigner } from '../crypto/sigstore.js';
+import type { ParsedSignedReviewReceiptPackage, StoredSignedReviewReceipt } from '../../domain/review.js';
 import type {
   ActiveState,
   Artifact,
@@ -29,7 +44,7 @@ import type { ThreadloopErrorCode } from '../../contracts/errors.js';
 import { threadloopPaths } from './repo.js';
 import { DatabaseSync } from './sqlite-driver.js';
 
-const CURRENT_SCHEMA_VERSION = 5;
+const CURRENT_SCHEMA_VERSION = 6;
 const INVALID_CONFIG_ERROR = 'Invalid .threadloop/config.json';
 const INVALID_STATE_JSON_ERROR = 'Invalid .threadloop/state/state.json';
 const INVALID_STATE_DB_ERROR = 'Invalid .threadloop/state/state.db';
@@ -47,6 +62,16 @@ const SIGNED_RECEIPT_SCHEMA_TRIGGERS = [
   'signed_gate_receipts_no_delete',
   'signed_gate_receipts_no_replace',
 ] as const;
+const REVIEW_AUDIT_SCHEMA_TRIGGERS = [
+  'signed_review_receipts_no_update',
+  'signed_review_receipts_no_delete',
+  'signed_review_receipts_no_replace',
+  'audit_events_no_update',
+  'audit_events_no_delete',
+  'audit_events_no_replace',
+] as const;
+type AuditVerificationCacheEntry = { dataVersion: number; count: number; root: string };
+const auditVerificationCache = new WeakMap<DatabaseSync, Map<string, AuditVerificationCacheEntry>>();
 
 class InvalidJsonError extends Error {}
 
@@ -185,6 +210,42 @@ type SignedGateReceiptRow = {
   verified_at: string;
 };
 
+type SignedReviewReceiptRow = {
+  sequence: number;
+  id: string;
+  session_id: string;
+  plan_sha256: string;
+  pull_request_number: number;
+  subject_head_sha: string;
+  package_path: string;
+  package_sha256: string;
+  artifact_json: string;
+  artifact_sha256: string;
+  statement_json: string;
+  statement_sha256: string;
+  issuer: string;
+  certificate_identity: string;
+  build_signer_uri: string;
+  build_signer_sha: string;
+  source_repository: string;
+  source_ref: string;
+  run_invocation_uri: string;
+  state_version: number;
+  verified_at: string;
+};
+
+type AuditEventRow = {
+  id: string;
+  session_id: string;
+  sequence: number;
+  event_type: AuditEventType;
+  state_version: number;
+  previous_sha256: string;
+  event_json: string;
+  event_sha256: string;
+  recorded_at: string;
+};
+
 type StoredTransitionError = {
   code: ThreadloopErrorCode;
   message: string;
@@ -248,8 +309,46 @@ export interface AppendSignedGateReceiptInput {
   promotePackage: () => void;
 }
 
+export interface AppendSignedReviewReceiptInput {
+  receipt: ParsedSignedReviewReceiptPackage;
+  signer: VerifiedSigstoreSigner;
+  packagePath: string;
+  stateVersion: number;
+  verifiedAt: string;
+  promotePackage: () => void;
+}
+
 export class ReceiptAppendConflictError extends Error {}
 export class SignedReceiptAppendConflictError extends Error {}
+export class SignedReviewReceiptAppendConflictError extends Error {}
+export class AuditLedgerUnavailableError extends Error {
+  readonly reason: 'schema_version' | 'table_missing';
+  readonly schemaVersion: number;
+
+  constructor(reason: 'schema_version' | 'table_missing', schemaVersion: number) {
+    const message =
+      reason === 'schema_version'
+        ? `Audit storage requires schema v6; found schema v${schemaVersion}.`
+        : `Audit storage is unavailable for schema v${schemaVersion}.`;
+    super(message);
+    this.name = 'AuditLedgerUnavailableError';
+    this.reason = reason;
+    this.schemaVersion = schemaVersion;
+  }
+}
+export class AuditChainCorruptedError extends Error {
+  readonly code: AuditVerificationErrorCode;
+  readonly sequence?: number;
+
+  constructor(code: AuditVerificationErrorCode, message: string, sequence?: number) {
+    super(message);
+    this.name = 'AuditChainCorruptedError';
+    this.code = code;
+    if (sequence !== undefined) {
+      this.sequence = sequence;
+    }
+  }
+}
 
 export type TransitionGuardEvaluator = (
   sourceState: TaskStatus,
@@ -438,17 +537,58 @@ export function readSessionProofEvidenceReadOnly(repoRoot: string, sessionId: st
       stateVersion: row.state_version,
       verifiedAt: row.verified_at,
     }));
+    const signedReviewRows = tableExists(db, 'signed_review_receipts')
+      ? (db
+          .prepare(
+            `
+              SELECT
+                sequence, id, session_id, plan_sha256, pull_request_number, subject_head_sha,
+                package_path, package_sha256, artifact_json, artifact_sha256, statement_json,
+                statement_sha256, issuer, certificate_identity, build_signer_uri, build_signer_sha,
+                source_repository, source_ref, run_invocation_uri, state_version, verified_at
+              FROM signed_review_receipts
+              WHERE session_id = ?
+              ORDER BY sequence
+            `,
+          )
+          .all(sessionId) as SignedReviewReceiptRow[])
+      : [];
+    const signedReviewReceipts: StoredSignedReviewReceipt[] = signedReviewRows.map((row) => ({
+      sequence: row.sequence,
+      id: row.id,
+      sessionId: row.session_id,
+      planSha256: row.plan_sha256,
+      pullRequestNumber: row.pull_request_number,
+      subjectHeadSha: row.subject_head_sha,
+      packagePath: row.package_path,
+      packageSha256: row.package_sha256,
+      artifactJson: row.artifact_json,
+      artifactSha256: row.artifact_sha256,
+      statementJson: row.statement_json,
+      statementSha256: row.statement_sha256,
+      issuer: row.issuer,
+      certificateIdentity: row.certificate_identity,
+      buildSignerUri: row.build_signer_uri,
+      buildSignerSha: row.build_signer_sha,
+      sourceRepository: row.source_repository,
+      sourceRef: row.source_ref,
+      runInvocationUri: row.run_invocation_uri,
+      stateVersion: row.state_version,
+      verifiedAt: row.verified_at,
+    }));
     const attemptsUsed = readNumericValue(
       db,
       `
         SELECT COUNT(*) AS count
         FROM session_transitions
-        WHERE session_id = ? AND from_state = ? AND to_state = ?
+        WHERE session_id = ?
+          AND to_state = ?
+          AND from_state IN (?, ?, ?)
       `,
       'count',
       sessionId,
-      TASK_STATUS.VERIFYING,
       TASK_STATUS.REPAIRING,
+      ...REPAIR_ENTRY_STATES,
     );
     return {
       plan: plan
@@ -463,8 +603,87 @@ export function readSessionProofEvidenceReadOnly(repoRoot: string, sessionId: st
         : null,
       receipts,
       signedReceipts,
+      signedReviewReceipts,
       attemptsUsed,
     };
+  } finally {
+    db.close();
+  }
+}
+
+export function readSessionAuditReadOnly(repoRoot: string, sessionId: string): StoredAuditEvent[] {
+  const db = openReadDatabase(repoRoot);
+  try {
+    const schemaVersion = readDatabaseSchemaVersion(db);
+    if (schemaVersion < 6) {
+      throw new AuditLedgerUnavailableError('schema_version', schemaVersion);
+    }
+    if (!tableExists(db, 'audit_events')) {
+      throw new AuditLedgerUnavailableError('table_missing', schemaVersion);
+    }
+    return readAuditEvents(db, sessionId);
+  } finally {
+    db.close();
+  }
+}
+
+export function inspectAuditLedgerReadOnly(repoRoot: string) {
+  const { stateDbPath } = threadloopPaths(repoRoot);
+  if (!existsSync(stateDbPath)) {
+    return {
+      available: false,
+      schemaVersion: null,
+    };
+  }
+  const db = openReadDatabase(repoRoot);
+  try {
+    const schemaVersion = readDatabaseSchemaVersion(db);
+    return {
+      available: schemaVersion >= 6 && tableExists(db, 'audit_events'),
+      schemaVersion,
+    };
+  } finally {
+    db.close();
+  }
+}
+
+export function readSessionTransitionHistoryReadOnly(repoRoot: string, sessionId: string) {
+  const db = openReadDatabase(repoRoot);
+  try {
+    if (!tableExists(db, 'session_transitions')) {
+      return [];
+    }
+    const rows = db
+      .prepare(
+        `
+          SELECT
+            id, from_state, to_state, from_state_version, to_state_version,
+            actor, input_json, created_at
+          FROM session_transitions
+          WHERE session_id = ?
+          ORDER BY to_state_version, rowid
+        `,
+      )
+      .all(sessionId) as Array<{
+      id: string;
+      from_state: TaskStatus;
+      to_state: TaskStatus;
+      from_state_version: number;
+      to_state_version: number;
+      actor: Entry['source'];
+      input_json: string;
+      created_at: string;
+    }>;
+    return rows.map((row) => ({
+      id: row.id,
+      from_state: row.from_state,
+      to_state: row.to_state,
+      from_state_version: row.from_state_version,
+      to_state_version: row.to_state_version,
+      actor: row.actor,
+      input: parseJsonText<Record<string, unknown>>(row.input_json, INVALID_STATE_DB_ERROR),
+      created_at: row.created_at,
+    }));
   } finally {
     db.close();
   }
@@ -525,6 +744,9 @@ export function readSessionLifecycleReadOnly(repoRoot: string, sessionId: string
     }
     if (version >= 5) {
       assertSignedReceiptSchemaShape(db);
+    }
+    if (version >= 6) {
+      assertReviewAuditSchemaShape(db);
     }
 
     const blockedFromSelect = version >= 3 ? 'tasks.blocked_from_state' : 'NULL AS blocked_from_state';
@@ -593,6 +815,18 @@ export async function insertTaskSession(
     if (payload.initialSnapshot) {
       writeRepoSnapshot(db, payload.initialSnapshot);
     }
+    appendAuditEvent(db, {
+      sessionId: session.id,
+      eventType: 'session_started',
+      stateVersion: task.stateVersion,
+      recordedAt: session.startedAt,
+      payload: {
+        task_id: task.id,
+        lifecycle_state: task.status,
+        branch: session.branch,
+        head_sha: session.headSha,
+      },
+    });
     insertActiveSession(db, { taskId: task.id, sessionId: session.id });
     syncActiveStateCompat(db);
   });
@@ -607,15 +841,30 @@ export async function applySessionTransition(
     const existing = readTransitionIdempotency(db, input.sessionId, input.idempotencyKey);
     if (existing) {
       if (existing.request_sha256 !== input.requestSha256 || existing.request_json !== input.requestJson) {
-        return failedTransition(
-          'IDEMPOTENCY_CONFLICT',
-          `Idempotency key ${input.idempotencyKey} is already associated with a different request.`,
-          {
-            session_id: input.sessionId,
-            idempotency_key: input.idempotencyKey,
-            request_sha256: input.requestSha256,
-            existing_request_sha256: existing.request_sha256,
-          },
+        assertAuditChainVerifiedForWrite(db, input.sessionId);
+        const priorConflict = readTransitionIdempotencyConflict(
+          db,
+          input.sessionId,
+          input.idempotencyKey,
+          input.requestSha256,
+          input.requestJson,
+        );
+        if (priorConflict) {
+          return parseJsonText<SessionTransitionResult>(priorConflict.result_json, INVALID_STATE_DB_ERROR);
+        }
+        return persistIdempotencyConflict(
+          db,
+          input,
+          failedTransition(
+            'IDEMPOTENCY_CONFLICT',
+            `Idempotency key ${input.idempotencyKey} is already associated with a different request.`,
+            {
+              session_id: input.sessionId,
+              idempotency_key: input.idempotencyKey,
+              request_sha256: input.requestSha256,
+              existing_request_sha256: existing.request_sha256,
+            },
+          ),
         );
       }
       return parseJsonText<SessionTransitionResult>(existing.result_json, INVALID_STATE_DB_ERROR);
@@ -635,6 +884,7 @@ export async function applySessionTransition(
         task_id: current.task_id,
       });
     }
+    assertAuditChainVerifiedForWrite(db, input.sessionId);
 
     if (input.expectedStateVersion !== current.state_version) {
       return persistRejectedTransition(
@@ -787,6 +1037,34 @@ export async function applySessionTransition(
       },
     };
     persistTransitionIdempotency(db, input, 'applied', transitionId, result, createdAt);
+    appendAuditEvent(db, {
+      sessionId: input.sessionId,
+      eventType: 'guard_decision',
+      stateVersion: current.state_version,
+      recordedAt: createdAt,
+      payload: {
+        idempotency_key: input.idempotencyKey,
+        request_sha256: input.requestSha256,
+        from_state: current.status,
+        target_state: input.targetState,
+        allowed: true,
+        guard_failures: [],
+      },
+    });
+    appendAuditEvent(db, {
+      sessionId: input.sessionId,
+      eventType: 'transition_applied',
+      stateVersion: nextVersion,
+      recordedAt: createdAt,
+      payload: {
+        transition_id: transitionId,
+        request_sha256: input.requestSha256,
+        from_state: current.status,
+        to_state: input.targetState,
+        from_state_version: current.state_version,
+        to_state_version: nextVersion,
+      },
+    });
     return result;
   });
 }
@@ -810,6 +1088,7 @@ export async function appendGateReceipt(repoRoot: string, input: AppendGateRecei
         `Session ${input.receipt.session_id} proof plan changed while gate ${input.receipt.gate_id} was running.`,
       );
     }
+    assertAuditChainVerifiedForWrite(db, input.receipt.session_id);
 
     const inserted = db
       .prepare(
@@ -839,6 +1118,19 @@ export async function appendGateReceipt(repoRoot: string, input: AppendGateRecei
     if (!Number.isSafeInteger(sequence) || sequence < 1) {
       throw new Error('ThreadLoop did not assign a valid gate receipt sequence.');
     }
+    appendAuditEvent(db, {
+      sessionId: input.receipt.session_id,
+      eventType: 'proof_receipt_recorded',
+      stateVersion: input.stateVersion,
+      recordedAt: input.receipt.ended_at,
+      payload: {
+        receipt_id: input.receipt.id,
+        gate_id: input.receipt.gate_id,
+        receipt_sha256: input.receiptSha256,
+        result: input.receipt.result,
+        head_sha: input.receipt.head_after,
+      },
+    });
     return sequence;
   });
 }
@@ -887,6 +1179,7 @@ export async function appendSignedGateReceipt(repoRoot: string, input: AppendSig
         `Session ${artifact.session_id} proof plan changed while signed gate ${artifact.gate.id} was being imported.`,
       );
     }
+    assertAuditChainVerifiedForWrite(db, artifact.session_id);
 
     const inserted = db
       .prepare(
@@ -926,6 +1219,122 @@ export async function appendSignedGateReceipt(repoRoot: string, input: AppendSig
     if (!Number.isSafeInteger(sequence) || sequence < 1) {
       throw new Error('ThreadLoop did not assign a valid signed gate receipt sequence.');
     }
+    appendAuditEvent(db, {
+      sessionId: artifact.session_id,
+      eventType: 'signed_proof_receipt_imported',
+      stateVersion: input.stateVersion,
+      recordedAt: input.verifiedAt,
+      payload: {
+        receipt_id: artifact.receipt_id,
+        gate_id: artifact.gate.id,
+        package_sha256: input.receipt.packageSha256,
+        subject_head_sha: artifact.source.head_sha,
+      },
+    });
+    input.promotePackage();
+    return { sequence, alreadyImported: false, verifiedAt: input.verifiedAt };
+  });
+}
+
+export async function appendSignedReviewReceipt(repoRoot: string, input: AppendSignedReviewReceiptInput) {
+  return withWriteTransaction(repoRoot, (db) => {
+    const artifact = input.receipt.artifact;
+    const existing = db
+      .prepare(
+        `
+          SELECT sequence, id, session_id, package_sha256, verified_at
+          FROM signed_review_receipts
+          WHERE id = ? OR (session_id = ? AND package_sha256 = ?)
+          ORDER BY sequence
+          LIMIT 1
+        `,
+      )
+      .get(artifact.receipt_id, artifact.session_id, input.receipt.packageSha256) as
+      Pick<SignedReviewReceiptRow, 'sequence' | 'id' | 'session_id' | 'package_sha256' | 'verified_at'> | undefined;
+    if (existing) {
+      if (
+        existing.id === artifact.receipt_id &&
+        existing.session_id === artifact.session_id &&
+        existing.package_sha256 === input.receipt.packageSha256
+      ) {
+        return { sequence: existing.sequence, alreadyImported: true, verifiedAt: existing.verified_at };
+      }
+      throw new SignedReviewReceiptAppendConflictError(
+        `Signed review receipt ${artifact.receipt_id} conflicts with previously imported content.`,
+      );
+    }
+
+    const current = readTransitionSession(db, artifact.session_id);
+    if (!current) {
+      throw new SignedReviewReceiptAppendConflictError(`Could not find session: ${artifact.session_id}`);
+    }
+    if (
+      (current.status !== TASK_STATUS.REVIEWING && current.status !== TASK_STATUS.READY_FOR_HUMAN) ||
+      current.state_version !== input.stateVersion
+    ) {
+      throw new SignedReviewReceiptAppendConflictError(
+        `Session ${artifact.session_id} changed while review evidence was being imported.`,
+      );
+    }
+    const plan = db.prepare(`SELECT plan_sha256 FROM proof_plans WHERE session_id = ?`).get(artifact.session_id) as
+      { plan_sha256: string } | undefined;
+    if (!plan || plan.plan_sha256 !== artifact.plan_sha256) {
+      throw new SignedReviewReceiptAppendConflictError(
+        `Session ${artifact.session_id} proof plan changed while review evidence was being imported.`,
+      );
+    }
+    assertAuditChainVerifiedForWrite(db, artifact.session_id);
+
+    const inserted = db
+      .prepare(
+        `
+          INSERT INTO signed_review_receipts (
+            id, session_id, plan_sha256, pull_request_number, subject_head_sha,
+            package_path, package_sha256, artifact_json, artifact_sha256, statement_json,
+            statement_sha256, issuer, certificate_identity, build_signer_uri, build_signer_sha,
+            source_repository, source_ref, run_invocation_uri, state_version, verified_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+      )
+      .run(
+        artifact.receipt_id,
+        artifact.session_id,
+        artifact.plan_sha256,
+        artifact.pull_request.number,
+        artifact.pull_request.head_sha,
+        input.packagePath,
+        input.receipt.packageSha256,
+        input.receipt.artifactJson,
+        input.receipt.artifactSha256,
+        input.receipt.statementJson,
+        input.receipt.statementSha256,
+        input.signer.issuer,
+        input.signer.certificateIdentity,
+        input.signer.buildSignerUri,
+        input.signer.buildSignerSha,
+        input.signer.sourceRepository,
+        input.signer.sourceRef,
+        input.signer.runInvocationUri,
+        input.stateVersion,
+        input.verifiedAt,
+      );
+    const sequence = Number(inserted.lastInsertRowid);
+    if (!Number.isSafeInteger(sequence) || sequence < 1) {
+      throw new Error('ThreadLoop did not assign a valid signed review receipt sequence.');
+    }
+    appendAuditEvent(db, {
+      sessionId: artifact.session_id,
+      eventType: 'signed_review_receipt_imported',
+      stateVersion: input.stateVersion,
+      recordedAt: input.verifiedAt,
+      payload: {
+        receipt_id: artifact.receipt_id,
+        package_sha256: input.receipt.packageSha256,
+        pull_request_number: artifact.pull_request.number,
+        subject_head_sha: artifact.pull_request.head_sha,
+        merged: artifact.pull_request.merged,
+      },
+    });
     input.promotePackage();
     return { sequence, alreadyImported: false, verifiedAt: input.verifiedAt };
   });
@@ -1156,6 +1565,7 @@ function ensureDatabaseReady(db: DatabaseSync, state: RepoConnectionState, repoR
       assertTransitionSchemaShape(db);
       assertProofSchemaShape(db);
       assertSignedReceiptSchemaShape(db);
+      assertReviewAuditSchemaShape(db);
       writeSchemaVersion(db);
     });
     assertSchemaVersion(db);
@@ -1206,9 +1616,12 @@ function databaseNeedsSetup(db: DatabaseSync, repoRoot: string) {
     'repo_snapshots',
     'session_transitions',
     'transition_idempotency',
+    'transition_idempotency_conflicts',
     'proof_plans',
     'gate_receipts',
     'signed_gate_receipts',
+    'signed_review_receipts',
+    'audit_events',
   ];
 
   if (requiredTables.some((table) => !tableExists(db, table))) {
@@ -1218,6 +1631,9 @@ function databaseNeedsSetup(db: DatabaseSync, repoRoot: string) {
     return true;
   }
   if (SIGNED_RECEIPT_SCHEMA_TRIGGERS.some((trigger) => !triggerExists(db, trigger))) {
+    return true;
+  }
+  if (REVIEW_AUDIT_SCHEMA_TRIGGERS.some((trigger) => !triggerExists(db, trigger))) {
     return true;
   }
 
@@ -1368,6 +1784,20 @@ function bootstrapDatabase(db: DatabaseSync) {
       PRIMARY KEY(session_id, idempotency_key)
     );
 
+    CREATE TABLE IF NOT EXISTS transition_idempotency_conflicts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL REFERENCES sessions(id),
+      idempotency_key TEXT NOT NULL,
+      request_json TEXT NOT NULL,
+      request_sha256 TEXT NOT NULL,
+      result_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(session_id, idempotency_key, request_sha256, request_json)
+    );
+
+    CREATE INDEX IF NOT EXISTS transition_idempotency_conflicts_lookup_idx
+      ON transition_idempotency_conflicts(session_id, idempotency_key, request_sha256);
+
     CREATE TABLE IF NOT EXISTS proof_plans (
       session_id TEXT PRIMARY KEY REFERENCES sessions(id),
       plan_json TEXT NOT NULL,
@@ -1430,6 +1860,51 @@ function bootstrapDatabase(db: DatabaseSync) {
 
     CREATE INDEX IF NOT EXISTS signed_gate_receipts_session_gate_sequence_idx
       ON signed_gate_receipts(session_id, gate_id, sequence DESC);
+
+    CREATE TABLE IF NOT EXISTS signed_review_receipts (
+      sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+      id TEXT NOT NULL UNIQUE,
+      session_id TEXT NOT NULL REFERENCES sessions(id),
+      plan_sha256 TEXT NOT NULL CHECK(length(plan_sha256) = 64),
+      pull_request_number INTEGER NOT NULL CHECK(pull_request_number > 0),
+      subject_head_sha TEXT NOT NULL CHECK(length(subject_head_sha) = 40),
+      package_path TEXT NOT NULL,
+      package_sha256 TEXT NOT NULL CHECK(length(package_sha256) = 64),
+      artifact_json TEXT NOT NULL,
+      artifact_sha256 TEXT NOT NULL CHECK(length(artifact_sha256) = 64),
+      statement_json TEXT NOT NULL,
+      statement_sha256 TEXT NOT NULL CHECK(length(statement_sha256) = 64),
+      issuer TEXT NOT NULL,
+      certificate_identity TEXT NOT NULL,
+      build_signer_uri TEXT NOT NULL,
+      build_signer_sha TEXT NOT NULL CHECK(length(build_signer_sha) = 40),
+      source_repository TEXT NOT NULL,
+      source_ref TEXT NOT NULL,
+      run_invocation_uri TEXT NOT NULL,
+      state_version INTEGER NOT NULL CHECK(state_version >= 0),
+      verified_at TEXT NOT NULL,
+      UNIQUE(session_id, package_sha256)
+    );
+
+    CREATE INDEX IF NOT EXISTS signed_review_receipts_session_sequence_idx
+      ON signed_review_receipts(session_id, sequence DESC);
+
+    CREATE TABLE IF NOT EXISTS audit_events (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id),
+      sequence INTEGER NOT NULL CHECK(sequence > 0),
+      event_type TEXT NOT NULL,
+      state_version INTEGER NOT NULL CHECK(state_version >= 0),
+      previous_sha256 TEXT NOT NULL CHECK(length(previous_sha256) = 64),
+      event_json TEXT NOT NULL,
+      event_sha256 TEXT NOT NULL CHECK(length(event_sha256) = 64),
+      recorded_at TEXT NOT NULL,
+      UNIQUE(session_id, sequence),
+      UNIQUE(session_id, event_sha256)
+    );
+
+    CREATE INDEX IF NOT EXISTS audit_events_session_sequence_idx
+      ON audit_events(session_id, sequence);
 
     CREATE TRIGGER IF NOT EXISTS proof_plans_no_update
     BEFORE UPDATE ON proof_plans
@@ -1496,6 +1971,56 @@ function bootstrapDatabase(db: DatabaseSync) {
     BEGIN
       SELECT RAISE(ABORT, 'signed gate receipts are immutable');
     END;
+
+    CREATE TRIGGER IF NOT EXISTS signed_review_receipts_no_update
+    BEFORE UPDATE ON signed_review_receipts
+    BEGIN
+      SELECT RAISE(ABORT, 'signed review receipts are immutable');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS signed_review_receipts_no_delete
+    BEFORE DELETE ON signed_review_receipts
+    BEGIN
+      SELECT RAISE(ABORT, 'signed review receipts are immutable');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS signed_review_receipts_no_replace
+    BEFORE INSERT ON signed_review_receipts
+    WHEN EXISTS (
+      SELECT 1 FROM signed_review_receipts
+      WHERE
+        id = NEW.id
+        OR sequence = NEW.sequence
+        OR (session_id = NEW.session_id AND package_sha256 = NEW.package_sha256)
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'signed review receipts are immutable');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS audit_events_no_update
+    BEFORE UPDATE ON audit_events
+    BEGIN
+      SELECT RAISE(ABORT, 'audit events are immutable');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS audit_events_no_delete
+    BEFORE DELETE ON audit_events
+    BEGIN
+      SELECT RAISE(ABORT, 'audit events are immutable');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS audit_events_no_replace
+    BEFORE INSERT ON audit_events
+    WHEN EXISTS (
+      SELECT 1 FROM audit_events
+      WHERE
+        id = NEW.id
+        OR (session_id = NEW.session_id AND sequence = NEW.sequence)
+        OR (session_id = NEW.session_id AND event_sha256 = NEW.event_sha256)
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'audit events are immutable');
+    END;
   `);
 
   db.prepare(
@@ -1553,6 +2078,37 @@ function runPendingMigrations(db: DatabaseSync, repoRoot: string) {
   reconcileActiveSessionProjection(db);
   syncActiveStateCompat(db);
   assertActiveSessionProjection(db);
+  activateAuditLedger(db);
+}
+
+function activateAuditLedger(db: DatabaseSync) {
+  const sessions = db
+    .prepare(
+      `
+        SELECT sessions.id AS session_id, tasks.status, tasks.state_version
+        FROM sessions
+        INNER JOIN tasks ON tasks.id = sessions.task_id
+        WHERE NOT EXISTS (
+          SELECT 1 FROM audit_events WHERE audit_events.session_id = sessions.id
+        )
+        ORDER BY sessions.rowid
+      `,
+    )
+    .all() as Array<{ session_id: string; status: TaskStatus; state_version: number }>;
+  const recordedAt = new Date().toISOString();
+  for (const session of sessions) {
+    appendAuditEvent(db, {
+      sessionId: session.session_id,
+      eventType: 'audit_activated',
+      stateVersion: session.state_version,
+      recordedAt,
+      payload: {
+        coverage: 'schema_v6_forward',
+        lifecycle_state_at_activation: session.status,
+        note: 'Historical decisions before schema v6 are not reconstructed.',
+      },
+    });
+  }
 }
 
 function migrateActiveStateRegistry(db: DatabaseSync) {
@@ -1639,18 +2195,23 @@ function readActiveProjectionMismatchCount(db: DatabaseSync) {
 }
 
 function assertSupportedSchemaVersion(db: DatabaseSync) {
-  const rawVersion = readTextValue(db, `SELECT value FROM metadata WHERE key = 'schema_version'`, 'value');
-
-  if (!rawVersion) {
-    throw new Error('Missing ThreadLoop schema version metadata.');
-  }
-
-  const version = parseSchemaVersion(rawVersion);
+  const version = readDatabaseSchemaVersion(db);
   if (version < 1 || version > CURRENT_SCHEMA_VERSION) {
-    throw new Error(`Unsupported ThreadLoop schema version: ${rawVersion}`);
+    throw new Error(`Unsupported ThreadLoop schema version: ${version}`);
   }
 
   return version;
+}
+
+function readDatabaseSchemaVersion(db: DatabaseSync) {
+  if (!tableExists(db, 'metadata')) {
+    throw new Error('Missing ThreadLoop schema version metadata.');
+  }
+  const rawVersion = readTextValue(db, `SELECT value FROM metadata WHERE key = 'schema_version'`, 'value');
+  if (!rawVersion) {
+    throw new Error('Missing ThreadLoop schema version metadata.');
+  }
+  return parseSchemaVersion(rawVersion);
 }
 
 function assertSchemaVersion(db: DatabaseSync) {
@@ -1757,6 +2318,57 @@ function assertSignedReceiptSchemaShape(db: DatabaseSync) {
     'verified_at',
   ]);
   for (const trigger of SIGNED_RECEIPT_SCHEMA_TRIGGERS) {
+    if (!triggerExists(db, trigger)) {
+      throw new Error(`Invalid schema trigger: ${trigger}`);
+    }
+  }
+}
+
+function assertReviewAuditSchemaShape(db: DatabaseSync) {
+  assertTableColumns(db, 'transition_idempotency_conflicts', [
+    'id',
+    'session_id',
+    'idempotency_key',
+    'request_json',
+    'request_sha256',
+    'result_json',
+    'created_at',
+  ]);
+  assertTableColumns(db, 'signed_review_receipts', [
+    'sequence',
+    'id',
+    'session_id',
+    'plan_sha256',
+    'pull_request_number',
+    'subject_head_sha',
+    'package_path',
+    'package_sha256',
+    'artifact_json',
+    'artifact_sha256',
+    'statement_json',
+    'statement_sha256',
+    'issuer',
+    'certificate_identity',
+    'build_signer_uri',
+    'build_signer_sha',
+    'source_repository',
+    'source_ref',
+    'run_invocation_uri',
+    'state_version',
+    'verified_at',
+  ]);
+  assertTableColumns(db, 'audit_events', [
+    'id',
+    'session_id',
+    'sequence',
+    'event_type',
+    'state_version',
+    'previous_sha256',
+    'event_json',
+    'event_sha256',
+    'recorded_at',
+  ]);
+  for (const trigger of REVIEW_AUDIT_SCHEMA_TRIGGERS) {
     if (!triggerExists(db, trigger)) {
       throw new Error(`Invalid schema trigger: ${trigger}`);
     }
@@ -2012,6 +2624,200 @@ function readTransitionIdempotency(db: DatabaseSync, sessionId: string, idempote
     .get(sessionId, idempotencyKey) as TransitionIdempotencyRow | undefined;
 }
 
+function readTransitionIdempotencyConflict(
+  db: DatabaseSync,
+  sessionId: string,
+  idempotencyKey: string,
+  requestSha256: string,
+  requestJson: string,
+) {
+  return db
+    .prepare(
+      `
+        SELECT result_json
+        FROM transition_idempotency_conflicts
+        WHERE
+          session_id = ?
+          AND idempotency_key = ?
+          AND request_sha256 = ?
+          AND request_json = ?
+      `,
+    )
+    .get(sessionId, idempotencyKey, requestSha256, requestJson) as { result_json: string } | undefined;
+}
+
+function appendAuditEvent(
+  db: DatabaseSync,
+  input: {
+    sessionId: string;
+    eventType: AuditEventType;
+    stateVersion: number;
+    recordedAt: string;
+    payload: Record<string, unknown>;
+  },
+) {
+  const previous = readAuditTail(db, input.sessionId);
+  const integrity = previous ? verifyAuditEventIntegrity(previous, sha256) : null;
+  if (integrity && !integrity.valid) {
+    throw new AuditChainCorruptedError(
+      integrity.error?.code ?? 'AUDIT_HASH_MISMATCH',
+      `Session ${input.sessionId} audit tail is corrupt at sequence ${previous?.value.sequence ?? 'root'}.`,
+      previous?.value.sequence,
+    );
+  }
+  const event = createAuditEvent(
+    {
+      id: createId('audit'),
+      sessionId: input.sessionId,
+      sequence: (previous?.value.sequence ?? 0) + 1,
+      eventType: input.eventType,
+      recordedAt: input.recordedAt,
+      stateVersion: input.stateVersion,
+      previousSha256: previous?.sha256 ?? ZERO_AUDIT_HASH,
+      payload: input.payload,
+    },
+    sha256,
+  );
+  db.prepare(
+    `
+      INSERT INTO audit_events (
+        id, session_id, sequence, event_type, state_version, previous_sha256,
+        event_json, event_sha256, recorded_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    event.value.id,
+    event.value.session_id,
+    event.value.sequence,
+    event.value.event_type,
+    event.value.state_version,
+    event.value.previous_sha256,
+    event.json,
+    event.sha256,
+    event.value.recorded_at,
+  );
+  cacheVerifiedAuditRoot(db, input.sessionId, event);
+  return event;
+}
+
+function assertAuditChainVerifiedForWrite(db: DatabaseSync, sessionId: string) {
+  const dataVersion = readDatabaseDataVersion(db);
+  const cache = auditVerificationCache.get(db)?.get(sessionId);
+  if (cache?.dataVersion === dataVersion) {
+    const tail = readAuditTail(db, sessionId);
+    const integrity = tail ? verifyAuditEventIntegrity(tail, sha256) : null;
+    if (tail && integrity?.valid && tail.value.sequence === cache.count && tail.sha256 === cache.root) {
+      return;
+    }
+  }
+
+  const events = readAuditEvents(db, sessionId);
+  if (events.length === 0) {
+    throw new AuditChainCorruptedError(
+      'AUDIT_SEQUENCE_MISMATCH',
+      `Session ${sessionId} audit chain has no genesis event.`,
+      1,
+    );
+  }
+  const verification = verifyAuditChain(events, sha256);
+  if (!verification.valid) {
+    throw new AuditChainCorruptedError(
+      verification.error?.code ?? 'AUDIT_HASH_MISMATCH',
+      `Session ${sessionId} audit chain is corrupt at sequence ${verification.error?.sequence ?? 'root'}.`,
+      verification.error?.sequence,
+    );
+  }
+  setAuditVerificationCache(db, sessionId, {
+    dataVersion,
+    count: verification.count,
+    root: verification.root,
+  });
+}
+
+function cacheVerifiedAuditRoot(db: DatabaseSync, sessionId: string, event: StoredAuditEvent) {
+  setAuditVerificationCache(db, sessionId, {
+    dataVersion: readDatabaseDataVersion(db),
+    count: event.value.sequence,
+    root: event.sha256,
+  });
+}
+
+function setAuditVerificationCache(db: DatabaseSync, sessionId: string, entry: AuditVerificationCacheEntry) {
+  const cacheBySession = auditVerificationCache.get(db) ?? new Map<string, AuditVerificationCacheEntry>();
+  cacheBySession.set(sessionId, entry);
+  auditVerificationCache.set(db, cacheBySession);
+}
+
+function readDatabaseDataVersion(db: DatabaseSync) {
+  const row = db.prepare(`PRAGMA data_version`).get() as { data_version?: unknown };
+  if (!Number.isSafeInteger(row.data_version)) {
+    throw new Error('ThreadLoop could not read the SQLite data version.');
+  }
+  return row.data_version as number;
+}
+
+function readAuditTail(db: DatabaseSync, sessionId: string) {
+  const row = db
+    .prepare(
+      `
+        SELECT
+          id, session_id, sequence, event_type, state_version, previous_sha256,
+          event_json, event_sha256, recorded_at
+        FROM audit_events
+        WHERE session_id = ?
+        ORDER BY sequence DESC
+        LIMIT 1
+      `,
+    )
+    .get(sessionId) as AuditEventRow | undefined;
+  return row ? storedAuditEventFromRow(row, sessionId) : null;
+}
+
+function readAuditEvents(db: DatabaseSync, sessionId: string): StoredAuditEvent[] {
+  const rows = db
+    .prepare(
+      `
+        SELECT
+          id, session_id, sequence, event_type, state_version, previous_sha256,
+          event_json, event_sha256, recorded_at
+        FROM audit_events
+        WHERE session_id = ?
+        ORDER BY sequence
+      `,
+    )
+    .all(sessionId) as AuditEventRow[];
+  return rows.map((row) => storedAuditEventFromRow(row, sessionId));
+}
+
+function storedAuditEventFromRow(row: AuditEventRow, sessionId: string): StoredAuditEvent {
+  let value: StoredAuditEvent['value'];
+  try {
+    value = parseJsonText<StoredAuditEvent['value']>(row.event_json, INVALID_STATE_DB_ERROR);
+  } catch {
+    throw new AuditChainCorruptedError(
+      'AUDIT_CANONICALIZATION_MISMATCH',
+      `Session ${sessionId} audit row ${row.sequence} does not contain a valid canonical event.`,
+      row.sequence,
+    );
+  }
+  if (
+    value.id !== row.id ||
+    value.session_id !== row.session_id ||
+    value.sequence !== row.sequence ||
+    value.event_type !== row.event_type ||
+    value.state_version !== row.state_version ||
+    value.previous_sha256 !== row.previous_sha256 ||
+    value.recorded_at !== row.recorded_at
+  ) {
+    throw new AuditChainCorruptedError(
+      'AUDIT_CANONICALIZATION_MISMATCH',
+      `Session ${sessionId} audit row ${row.sequence} does not match its canonical event.`,
+      row.sequence,
+    );
+  }
+  return { value, json: row.event_json, sha256: row.event_sha256 };
+}
+
 function detectTransitionStateCorruption(db: DatabaseSync, current: TransitionSessionRow) {
   if (!isTaskStatus(current.status)) {
     return `Session ${current.session_id} has an invalid lifecycle state.`;
@@ -2060,7 +2866,65 @@ function persistRejectedTransition(
   input: PersistSessionTransitionInput,
   result: SessionTransitionResult & { ok: false },
 ) {
-  persistTransitionIdempotency(db, input, 'rejected', null, result, new Date().toISOString());
+  const createdAt = new Date().toISOString();
+  persistTransitionIdempotency(db, input, 'rejected', null, result, createdAt);
+  const current = readTransitionSession(db, input.sessionId);
+  if (current) {
+    appendAuditEvent(db, {
+      sessionId: input.sessionId,
+      eventType: 'guard_decision',
+      stateVersion: current.state_version,
+      recordedAt: createdAt,
+      payload: {
+        idempotency_key: input.idempotencyKey,
+        request_sha256: input.requestSha256,
+        from_state: current.status,
+        target_state: input.targetState,
+        allowed: false,
+        error: result.error,
+      },
+    });
+  }
+  return result;
+}
+
+function persistIdempotencyConflict(
+  db: DatabaseSync,
+  input: PersistSessionTransitionInput,
+  result: SessionTransitionResult & { ok: false },
+) {
+  const createdAt = new Date().toISOString();
+  db.prepare(
+    `
+      INSERT INTO transition_idempotency_conflicts (
+        session_id, idempotency_key, request_json, request_sha256, result_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    input.sessionId,
+    input.idempotencyKey,
+    input.requestJson,
+    input.requestSha256,
+    JSON.stringify(result),
+    createdAt,
+  );
+  const current = readTransitionSession(db, input.sessionId);
+  if (current) {
+    appendAuditEvent(db, {
+      sessionId: input.sessionId,
+      eventType: 'guard_decision',
+      stateVersion: current.state_version,
+      recordedAt: createdAt,
+      payload: {
+        idempotency_key: input.idempotencyKey,
+        request_sha256: input.requestSha256,
+        from_state: current.status,
+        target_state: input.targetState,
+        allowed: false,
+        error: result.error,
+      },
+    });
+  }
   return result;
 }
 

@@ -12,7 +12,13 @@ export function protocolPrintCommand(context: CommandContext, options: ProtocolP
     return;
   }
 
-  const lines = ['# ThreadLoop Agent Protocol', '', '## Environment Variables', ''];
+  const lines = ['# ThreadLoop Agent Protocol', '', '## Contract Versions', ''];
+
+  for (const [name, version] of Object.entries(protocol.contractVersions)) {
+    lines.push(`- \`${name}\`: v${version}`);
+  }
+
+  lines.push('', '## Environment Variables', '');
 
   if (Object.keys(protocol.envVars).length === 0) {
     lines.push('No environment variables are part of the current contract.', '');

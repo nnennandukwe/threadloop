@@ -7,6 +7,7 @@ import { runGateProcess } from '../src/adapters/process/gate-runner.js';
 import { canonicalizeSignedGateReceiptArtifact, type SignedGateReceiptArtifact } from '../src/domain/attestation.js';
 import { canonicalJson } from '../src/domain/canonical-json.js';
 import { canonicalizeProofPlan, type GateReceiptResult } from '../src/domain/proof.js';
+import { requiredEnvironment } from './sensor-environment.js';
 
 const sessionId = requiredEnvironment('THREADLOOP_SESSION_ID');
 const planSha256 = requiredEnvironment('THREADLOOP_PLAN_SHA256');
@@ -25,7 +26,9 @@ if (!/^session_[A-Za-z0-9_-]+$/.test(sessionId)) {
   throw new Error('THREADLOOP_SESSION_ID must be a ThreadLoop session id.');
 }
 if (!/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(sourceRepository)) {
-  throw new Error('The reusable sensor accepts only repositories hosted on public GitHub.');
+  throw new Error(
+    'The reusable sensor requires a canonical https://github.com/<owner>/<repo> URL accessible to the workflow.',
+  );
 }
 if (!/^[a-f0-9]{64}$/.test(planSha256)) {
   throw new Error('THREADLOOP_PLAN_SHA256 must be 64 lowercase hexadecimal characters.');
@@ -145,12 +148,4 @@ function gateEnvironment() {
     }
   }
   return environment;
-}
-
-function requiredEnvironment(name: string) {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`${name} is required.`);
-  }
-  return value;
 }

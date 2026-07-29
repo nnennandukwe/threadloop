@@ -6,3 +6,8 @@ paths:
     ignore:
       - 'property "workflow_repository" is not defined in object type'
       - 'property "workflow_sha" is not defined in object type'
+  .github/workflows/threadloop-review-sensor.yml:
+    # Same reusable-workflow runtime properties as the gate sensor above.
+    ignore:
+      - 'property "workflow_repository" is not defined in object type'
+      - 'property "workflow_sha" is not defined in object type'

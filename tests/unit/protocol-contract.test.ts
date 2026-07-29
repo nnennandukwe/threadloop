@@ -9,6 +9,14 @@ describe('protocol contract', () => {
     const leafCommands = collectLeafCommands(program);
 
     expect(Object.keys(contract.commands)).toEqual(leafCommands.map((command) => getCommandPath(command)));
+    expect(contract.contractVersions).toEqual({
+      protocol: 3,
+      proofPlan: 3,
+      sessionNext: 3,
+      signedReviewReceipt: 1,
+      auditEvent: 1,
+      handoff: 2,
+    });
 
     for (const command of leafCommands) {
       const path = getCommandPath(command);
@@ -41,6 +49,12 @@ describe('protocol contract', () => {
     });
     expect(contract.commands['session gate import']).toBe(
       'threadloop session gate import <package-path> --session <id> [--json] - Verify and append one signed GitHub Actions gate receipt',
+    );
+    expect(contract.commands['session review import']).toBe(
+      'threadloop session review import <package-path> --session <id> [--json] - Verify and append one signed GitHub review snapshot',
+    );
+    expect(contract.commands['audit export']).toContain(
+      'threadloop audit export --session <id> --output <path> [--json]',
     );
   });
 });

@@ -16,7 +16,7 @@ import {
   type SignedGateReceiptArtifact,
 } from '../../src/domain/attestation.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
-import type { CiTrustPolicy } from '../../src/domain/proof.js';
+import type { GitHubActionsTrustPolicy } from '../../src/domain/proof.js';
 
 const sourceHead = 'a'.repeat(40);
 const buildSignerSha = 'b'.repeat(40);
@@ -26,7 +26,7 @@ const certificateIdentity = `${sourceRepository}/.github/workflows/threadloop.ym
 const buildSignerUri = `https://github.com/nnennandukwe/threadloop/.github/workflows/threadloop-gate-sensor.yml@${buildSignerSha}`;
 const runInvocationUri = `${sourceRepository}/actions/runs/123/attempts/1`;
 
-const policy: CiTrustPolicy = {
+const policy: GitHubActionsTrustPolicy = {
   provider: 'github-actions',
   issuer: 'https://token.actions.githubusercontent.com',
   certificate_identity: certificateIdentity,
