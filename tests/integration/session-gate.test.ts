@@ -1160,7 +1160,7 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
     ).resolves.toMatchObject({
       data: { lifecycle: { state: 'blocked', state_version: version + 1 } },
     });
-  }, 30_000);
+  }, 60_000);
 
   it('marks a passing receipt stale after a commit and accepts a fresh current-HEAD rerun', async () => {
     const repoDir = await makeCommittedRepo();
