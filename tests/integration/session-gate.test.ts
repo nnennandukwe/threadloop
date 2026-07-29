@@ -198,6 +198,36 @@ async function transition(
   );
 }
 
+async function recoverBlockedRepairSession(repoDir: string, sessionId: string) {
+  await recordProofPlan(
+    repoDir,
+    sessionId,
+    proofPlan(['node', '-e', 'process.stderr.write("repair required\\n"); process.exit(1)']),
+  );
+  await transition(repoDir, sessionId, 'implementing', 2, 'blocked-repair:implement');
+  await writeFile(path.join(repoDir, 'feature.txt'), 'initial implementation\n', 'utf8');
+  await execFileAsync('git', ['add', 'feature.txt'], { cwd: repoDir });
+  await execFileAsync('git', ['commit', '-m', 'initial implementation'], { cwd: repoDir });
+  await transition(repoDir, sessionId, 'verifying', 3, 'blocked-repair:verify');
+  await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json']);
+  await transition(repoDir, sessionId, 'repairing', 4, 'blocked-repair:open');
+  await transition(repoDir, sessionId, 'blocked', 5, 'blocked-repair:block', {
+    block: {
+      reason: 'Repair is waiting on external access',
+      evidence_ref: 'incident:repair-access',
+      recovery: 'Restore access and resume the existing repair',
+      stop_code: 'ACCESS_DENIED',
+    },
+  });
+  await transition(repoDir, sessionId, 'repairing', 6, 'blocked-repair:recover', {
+    recovery: {
+      reason: 'Repair access restored',
+      evidence_ref: 'incident:repair-access:resolved',
+      approved_by: 'Test User',
+    },
+  });
+}
+
 afterEach(async () => {
   await resetSqliteConnections();
   await Promise.all(temporaryRepos.splice(0).map((repoDir) => rm(repoDir, { recursive: true, force: true })));
@@ -1161,6 +1191,37 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
       data: { lifecycle: { state: 'blocked', state_version: version + 1 } },
     });
   }, 60_000);
+
+  it('does not consume another repair attempt when a blocked repair is recovered', async () => {
+    const repoDir = await makeCommittedRepo();
+    const sessionId = await startFramedSession(repoDir);
+    await recoverBlockedRepairSession(repoDir, sessionId);
+
+    const next = parseJson<{
+      data: {
+        candidate: { target_state: string };
+        repair_budget: { attempts_used: number; remaining: number; exhausted: boolean };
+      };
+    }>((await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout);
+
+    expect(next.data).toMatchObject({
+      candidate: { target_state: 'verifying' },
+      repair_budget: { attempts_used: 1, remaining: 2, exhausted: false },
+    });
+  });
+
+  it('preserves the original failure basis when a blocked repair is recovered', async () => {
+    const repoDir = await makeCommittedRepo();
+    const sessionId = await startFramedSession(repoDir);
+    await recoverBlockedRepairSession(repoDir, sessionId);
+    await writeFile(path.join(repoDir, 'feature.txt'), 'repaired after recovery\n', { flag: 'a' });
+    await execFileAsync('git', ['add', 'feature.txt'], { cwd: repoDir });
+    await execFileAsync('git', ['commit', '-m', 'repair after blocked recovery'], { cwd: repoDir });
+
+    await expect(transition(repoDir, sessionId, 'verifying', 7, 'blocked-repair:reverify')).resolves.toMatchObject({
+      data: { lifecycle: { state: 'verifying', state_version: 8 } },
+    });
+  });
 
   it('marks a passing receipt stale after a commit and accepts a fresh current-HEAD rerun', async () => {
     const repoDir = await makeCommittedRepo();

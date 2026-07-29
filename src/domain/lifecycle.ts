@@ -21,6 +21,12 @@ export interface LifecycleTransitionDecision {
   recovery: string | null;
 }
 
+export const REPAIR_ENTRY_STATES = [
+  TASK_STATUS.VERIFYING,
+  TASK_STATUS.REVIEWING,
+  TASK_STATUS.READY_FOR_HUMAN,
+] as const satisfies readonly TaskStatus[];
+
 const FORWARD_TRANSITIONS: Readonly<Record<TaskStatus, readonly TaskStatus[]>> = {
   [TASK_STATUS.QUEUED]: [TASK_STATUS.FRAMED],
   [TASK_STATUS.FRAMED]: [TASK_STATUS.PROOF_READY],
@@ -92,6 +98,13 @@ export function isActiveTaskStatus(status: TaskStatus) {
 
 export function isForwardLifecycleTransition(sourceState: TaskStatus, targetState: TaskStatus) {
   return FORWARD_TRANSITIONS[sourceState].includes(targetState);
+}
+
+export function isRepairEntryTransition(sourceState: TaskStatus, targetState: TaskStatus) {
+  return (
+    targetState === TASK_STATUS.REPAIRING &&
+    REPAIR_ENTRY_STATES.some((repairEntryState) => repairEntryState === sourceState)
+  );
 }
 
 export function getDeterministicForwardTarget(status: TaskStatus): TaskStatus | null {
