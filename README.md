@@ -28,6 +28,7 @@ flowchart LR
     X -- "committed repair" --> V
     R -. "review blocker" .-> X
     R -. "review clear" .-> H["ready_for_human"]
+    H -. "new signed current-HEAD blocker; human/controller reopens" .-> X
     H -. "approval and merge" .-> C["completed"]
     A["recorded active state"] -. "complete block evidence" .-> B["blocked"]
     B -. "human-approved recovery to recorded prior state" .-> A
@@ -44,10 +45,18 @@ flowchart LR
   E -. "potential evidence adapter" .-> V
 ```
 
-The solid lifecycle edges are executable in the current `main` implementation when their guards pass. The dashed
-review-owned edges are structurally valid but remain fail-closed until ThreadLoop has authoritative review, approval,
-and merge evidence. The repair loop is limited to three cycles. Entering `blocked` requires complete block evidence, and
-recovery requires explicit human approval to return to the recorded prior state.
+The lifecycle edges inside the ThreadLoop subgraph are executable when their guards pass, including the dashed review
+paths. Review-to-repair edges require signed current-HEAD blocker evidence and remaining repair budget. A human or
+external controller may reopen `ready_for_human` when a later blocker appears; the canonical runner hard-stops in
+`ready_for_human` and does not take that edge. Completion requires same-HEAD human approval and observed merge state.
+The repair loop is limited to three cycles. The blocking path requires complete block evidence, and recovery requires
+explicit human approval to return to the recorded prior state.
+
+The canonical one-action-per-wake operating contract is checked into this repository as the repo-local
+[ThreadLoop runner skill](.agents/skills/threadloop-runner/SKILL.md). The current npm package contains the CLI
+distribution only; it does not install this skill. The scheduled runner pilot has not been run. The implemented
+transition guards and local tests prove only the ThreadLoop contract; they do not prove that the skill has operated in
+another repository.
 
 [Governed Agent Autonomy Patterns](https://github.com/nnennandukwe/governed-agent-autonomy-patterns) defines the
 complementary controls around an agent run: planning, permission, tool trust, independent verification, and runtime

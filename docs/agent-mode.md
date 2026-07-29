@@ -39,21 +39,83 @@ The current operator model is one autonomous task per checkout or worktree.
 1. Prepare a dedicated Git checkout or `git worktree` for the task.
 2. Fetch `origin`, fast-forward local `main` to `origin/main`, and create a fresh task branch from updated `main`.
 3. Start an explicit session and persist the returned `session_id`.
-4. Pass the `session_id` to every subsequent ThreadLoop command.
-5. Capture intent, decisions, risks, validation, and reviewer guidance as the task evolves.
-6. Reconcile before artifact generation when Git-derived scope needs a refresh.
-7. Rebase the task branch onto the latest `origin/main` before PR open.
-8. Generate the artifact you need and inspect `session next --json`.
-9. Record a proof plan at `framed -> proof_ready`, then execute only its declared gates while verifying.
-10. Run every local gate and import the matching signed CI receipt produced by the commit-pinned reusable workflow.
-11. Use `session next` to rerun missing/stale/corrupt gates, enter bounded repair after local failures, or proceed only
+4. On first initialization, add and commit the visible `.threadloop/config.json`; ThreadLoop keeps state and receipt
+   artifacts locally ignored, but the configuration file is intentionally visible.
+5. Require an empty `git status --porcelain=v1 --untracked-files=all --ignore-submodules=none` before scheduling the
+   first runner wake.
+6. Pass the `session_id` to every subsequent ThreadLoop command.
+7. Capture intent, decisions, risks, validation, and reviewer guidance as the task evolves.
+8. Reconcile before artifact generation when Git-derived scope needs a refresh.
+9. Rebase the task branch onto the latest `origin/main` before PR open.
+10. Generate the artifact you need and inspect `session next --json`.
+11. Record a proof plan at `framed -> proof_ready`, then execute only its declared gates while verifying.
+12. Run every local gate. The external controller runs the commit-pinned sensor and imports its matching signed CI
+    receipt outside the runner wake.
+13. Use `session next` to rerun missing/stale/corrupt gates, enter bounded repair after local failures, or proceed only
     when local and CI proof pass.
-12. Run the commit-pinned review sensor for the PR, import its signed package, and let `session next` select repair or
-    human readiness from the revalidated current-HEAD snapshot.
-13. Complete only after a later current-HEAD receipt observes both a human `User` approval and the merged PR.
-14. Verify and export the audit ledger for durable handoff or non-authoritative telemetry ingestion.
+14. Have the external controller run the commit-pinned review sensor and import its signed package, then let a fresh
+    runner wake use `session next` to select repair or human readiness from the revalidated current-HEAD snapshot.
+15. Complete only after a later current-HEAD receipt observes both a human `User` approval and the merged PR.
+16. Verify and export the audit ledger for durable handoff or non-authoritative telemetry ingestion.
 
-Example:
+## Canonical runner wake
+
+The repo-local [ThreadLoop runner skill](../.agents/skills/threadloop-runner/SKILL.md) defines the canonical wake
+contract for an external scheduler. The npm package installs the CLI only, not the skill. ThreadLoop does not provide
+that scheduler. A scheduler using this contract must assign each session one dedicated Git worktree and serialize wakes
+so that only one wake mutates that worktree at a time.
+
+Every wake must provide these explicit inputs:
+
+- `repo_root`: the dedicated worktree root
+- `session_id`: the ThreadLoop session to inspect
+- `wake_id`: the stable delivery identifier, reused for a duplicate delivery
+- `mode`: `normal` or `replay`
+
+Any other `mode` is invalid, and the runner must fail closed without running a ThreadLoop command. `replay` does not
+locate a fixture or evidence source; the external controller prepares the scenario outside the wake. It does not change
+transition authority, budgets, or stop rules.
+
+For each valid wake:
+
+1. Inspect the named session from `repo_root`.
+2. Before considering a candidate, stop without mutation when the lifecycle is `ready_for_human`, `blocked`, or
+   `completed`, or when the repair budget is exhausted.
+3. Otherwise, apply at most one executable transition or perform at most one runner-authorized `required_work` action,
+   then stop. Unknown required work fails closed without substitution or inference.
+
+Review repair starts only through an executable `reviewing -> repairing` candidate.
+`BLOCKING_REVIEW_FINDINGS -> ENTER_REVIEW_REPAIR` is recognized but does not authorize repository work.
+
+Signed-evidence codes are also recognized stop boundaries. Because the four wake inputs and `session next` do not carry
+a package path or commit-pinned sensor invocation, the runner starts no action and hands the exact code to
+`external_controller`. The controller may collect or import evidence outside the wake; a later wake rereads public
+state. No descriptor may be hidden in the scheduler record as an undeclared fifth input.
+
+For a transition, derive the stable idempotency key `runner:v1:<wake_id>:<expected_state_version>` from the wake and
+candidate. If the response is ambiguous, retry the exact same transition request with the same target, expected state
+version, input, and idempotency key. Before retrying, require the fresh canonical repository root, named branch, HEAD,
+and clean status to equal the original retained wake snapshot. Git snapshot drift invalidates the original authorization
+even when the lifecycle state version is unchanged. Stop without invoking the transition and do not derive a new key.
+
+Before starting an action, the scheduler must retain the selected action and exact transition request under
+`(repo_root, session_id, wake_id)`. That scheduler-owned record is not new ThreadLoop state. A duplicate with no
+complete record stops instead of reconstructing a request from current lifecycle state.
+
+Resolve a complete retained transition before applying fresh-wake stop policy. An exact retry may retrieve its cached
+result after the original request reached `ready_for_human`; a new wake at `ready_for_human` still stops.
+
+Idempotency applies only to `session transition`. Local gate execution is not idempotent, and the scheduler must not
+claim exactly-once agent execution. An uncertain local-gate or agent-work outcome requires inspection before another
+wake; it is not authorization to replay the action automatically.
+
+## Multi-wake operator and controller sequence
+
+The commands below span controller setup, semantic capture, separate serialized runner wakes, and external-controller
+evidence work. They are not one canonical runner wake and must not be run as one batch. Each runner wake rereads the
+public projection, performs at most one authorized transition, repository action, or local gate, and then stops.
+
+Controller setup:
 
 ```bash
 threadloop session start "Add retry backoff to worker queue" \
@@ -64,7 +126,7 @@ threadloop session start "Add retry backoff to worker queue" \
   --json
 ```
 
-Save the returned `session_id`, then use it consistently:
+Save the returned `session_id`, then use it consistently for semantic capture outside the scheduled runner wake:
 
 ```bash
 threadloop session capture decision \
@@ -78,12 +140,38 @@ threadloop session capture validation \
   "Ran focused tests for retry backoff and cancellation" \
   --session "$SESSION_ID" \
   --json
+```
 
+After controller-owned proof-plan setup and separate transition wakes reach `verifying`, the controller may refresh
+mechanical state before scheduling the next wake:
+
+```bash
 threadloop session reconcile --session "$SESSION_ID" --json
+```
+
+The runner wake rereads the projection and, only when `required_work` selects the gate, runs that one local gate:
+
+```bash
 threadloop session next --session "$SESSION_ID" --json
 threadloop session gate run repository-check --session "$SESSION_ID" --json
+```
+
+That runner wake stops after the gate. The external controller imports the exact signed CI package outside the wake:
+
+```bash
 threadloop session gate import ./signed-receipt.json --session "$SESSION_ID" --json
+```
+
+After later runner wakes advance the session to `reviewing`, the controller imports the exact signed review package:
+
+```bash
 threadloop session review import ./signed-review-receipt.json --session "$SESSION_ID" --json
+```
+
+After later wakes reach the intended handoff state, the operator or controller can inspect and export the audit ledger
+and generate the review artifact:
+
+```bash
 threadloop audit verify --session "$SESSION_ID" --json
 threadloop audit export --session "$SESSION_ID" --output ./threadloop-audit.jsonl --json
 threadloop artifact generate pr-summary --session "$SESSION_ID" --json
