@@ -13,6 +13,7 @@ import {
 } from '../src/domain/attestation.js';
 import { canonicalJson } from '../src/domain/canonical-json.js';
 import { canonicalizeProofPlan } from '../src/domain/proof.js';
+import { requiredEnvironment } from './sensor-environment.js';
 
 const MAXIMUM_REPORT_BYTES = 1_048_576;
 
@@ -34,7 +35,9 @@ if (!/^session_[A-Za-z0-9_-]+$/.test(sessionId)) {
   throw new Error('THREADLOOP_SESSION_ID must be a ThreadLoop session id.');
 }
 if (!/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(sourceRepository)) {
-  throw new Error('The reusable sensor accepts only repositories hosted on public GitHub.');
+  throw new Error(
+    'The reusable sensor requires a canonical https://github.com/<owner>/<repo> URL accessible to the workflow.',
+  );
 }
 if (!/^[a-f0-9]{64}$/.test(planSha256)) {
   throw new Error('THREADLOOP_PLAN_SHA256 must be 64 lowercase hexadecimal characters.');
@@ -110,12 +113,4 @@ function parseJobResult(value: string): GitHubGateJobResult {
     return value;
   }
   throw new Error('THREADLOOP_GATE_JOB_RESULT must be success, failure, or cancelled.');
-}
-
-function requiredEnvironment(name: string) {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`${name} is required.`);
-  }
-  return value;
 }

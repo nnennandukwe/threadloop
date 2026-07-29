@@ -490,7 +490,7 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     try {
       const schemaVersion = migrated.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get() as
         { value: string } | undefined;
-      expect(schemaVersion?.value).toBe('5');
+      expect(schemaVersion?.value).toBe('6');
       expect(migrated.prepare(`SELECT id, status, state_version FROM tasks ORDER BY id`).all()).toEqual([
         { id: 'task_active', status: 'queued', state_version: 0 },
         { id: 'task_completed', status: 'completed', state_version: 0 },
@@ -641,14 +641,14 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
           value TEXT NOT NULL
         );
       `);
-      db.prepare(`INSERT INTO metadata (key, value) VALUES ('schema_version', '6')`).run();
+      db.prepare(`INSERT INTO metadata (key, value) VALUES ('schema_version', '7')`).run();
       const journalMode = db.prepare(`PRAGMA journal_mode`).get() as { journal_mode: string };
       expect(journalMode.journal_mode).toBe('delete');
     } finally {
       db.close();
     }
 
-    await expect(runCli(repoDir, ['status'])).rejects.toThrow('Unsupported ThreadLoop schema version: 6');
+    await expect(runCli(repoDir, ['status'])).rejects.toThrow('Unsupported ThreadLoop schema version: 7');
 
     const unchanged = new DatabaseSync(dbPath, { readOnly: true });
     try {
@@ -782,6 +782,14 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     expect(prSummary).toContain('# PR Summary: Add retry logic');
     expect(prSummary).toContain('Reviewer should inspect retry cancellation path');
     expect(handoff).toContain('# Handoff: Add retry logic');
+    expect(handoff).toContain('contract_version: 2');
+    expect(handoff).toContain('## Lifecycle history');
+    expect(handoff).toContain('## Proof and freshness');
+    expect(handoff).toContain('## Review findings');
+    expect(handoff).toContain('## Repair budget');
+    expect(handoff).toContain('## Human approval and merge');
+    expect(handoff).toContain('## Audit evidence');
+    expect(handoff).toContain('## Next human action');
   });
 
   it('renders branch, base ref, issue ref, and closing reference in pr-summary artifacts', async () => {
@@ -1255,6 +1263,13 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
       'threadloop [SESSION_REQUIRED]: A session id is required for this command.',
     );
     expect(captureFailure.stderr).toContain('Hint: Pass --session <id>.');
+  });
+
+  it('names the output path when audit export receives an empty output value', async () => {
+    const failure = await runCliFailure(repoDir, ['audit', 'export', '--session', 'session_123', '--output', '']);
+
+    expect(failure.stderr).toContain('Output path must be non-empty.');
+    expect(failure.stderr).not.toContain('Session id must be non-empty.');
   });
 
   it('renders current session commands in help output', async () => {

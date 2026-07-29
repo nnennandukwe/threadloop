@@ -31,6 +31,10 @@ Canonical session contract:
 - `threadloop session transition <target-state> --session <id> --expected-state-version <version> --idempotency-key <key> --actor <cli|agent> --input <json-object> [--json]`
 - `threadloop session gate run <gate-id> --session <id> [--json]`
 - `threadloop session gate import <package-path> --session <id> [--json]`
+- `threadloop session review import <package-path> --session <id> [--json]`
+- `threadloop audit show --session <id> [--json]`
+- `threadloop audit verify --session <id> [--root <sha256>] [--json]`
+- `threadloop audit export --session <id> --output <path> [--json]`
 
 Compatibility surface:
 
@@ -145,8 +149,11 @@ What is implemented now:
 - immutable proof plans bound to a clean branch and baseline commit
 - shell-free execution of declared local gates with digest-bound, append-only receipts
 - current-HEAD staleness, artifact-integrity checks, and a transition-history-derived three-repair budget
-- a read-only next-action contract with authoritative local proof and live sanitized repository observations
-- protocol print / published agent-mode contract
+- signed current-HEAD review evidence for blockers, same-HEAD human approval, and merge observation
+- a shared three-cycle gate/review repair budget
+- a hash-linked, append-only controller audit ledger with verified no-overwrite JSONL export
+- a read-only next-action v3 contract with lifecycle, proof, review, audit, and next-human-action projections
+- protocol v3 and governed handoff v2
 
 What is not implemented yet in this slice:
 
@@ -184,7 +191,8 @@ Recommended loop:
 10. call `session gate run <gate-id>` for each declared gate while verifying
 11. import each matching receipt from the commit-pinned reusable GitHub workflow
 12. call `session next --json` to inspect independent local/CI proof and the repair budget
-13. leave review-owned transitions and completion blocked until #42 supplies review, approval, and merge evidence
+13. import a current signed review snapshot and follow its blocker/approval/merge-derived next action
+14. verify and export the audit ledger for handoff or telemetry
 
 Use `threadloop protocol --json` as the machine-facing contract for current commands, entry kinds, artifact kinds,
 supported environment variables, and the published branch/rebase/PR workflow guidance.
@@ -192,10 +200,11 @@ supported environment variables, and the published branch/rebase/PR workflow gui
 The optional daemon only performs mechanical refresh work. It does not create semantic notes or replace explicit
 capture.
 
-The governed task lifecycle and schema-v5 proof contract are documented in [`docs/lifecycle.md`](docs/lifecycle.md). The
+The governed task lifecycle and schema-v6 audit contract are documented in [`docs/lifecycle.md`](docs/lifecycle.md). The
 signed package and reusable workflow are specified in
-[`docs/attestations/receipt-v1.md`](docs/attestations/receipt-v1.md). `session transition` uses local proof for repair,
-signed CI proof for review authorization, and remains fail-closed where #42 owns review, approval, and merge evidence.
+[`docs/attestations/receipt-v1.md`](docs/attestations/receipt-v1.md) and
+[`docs/attestations/review-v1.md`](docs/attestations/review-v1.md). `session transition` revalidates local, CI, and
+review evidence and records every unique guard decision in the audit ledger.
 
 ## Longer notes with `$EDITOR`
 
@@ -256,4 +265,6 @@ installation. See the [contribution guide](CONTRIBUTING.md) for hook behavior an
 
 - [CLI reference](docs/cli.md)
 - [Autonomous agent mode](docs/agent-mode.md)
+- [Governed lifecycle](docs/lifecycle.md)
+- [Audit export and OpenTelemetry](docs/observability.md)
 - [Contribution guide](CONTRIBUTING.md)

@@ -9,6 +9,7 @@ import {
   type ProofGuardContext,
   validateTransitionEvidence,
 } from '../../src/domain/session-transition.js';
+import type { ReviewEvidence } from '../../src/domain/review.js';
 
 function passedProofContext(repository: Partial<NonNullable<ProofGuardContext['repository']>> = {}): ProofGuardContext {
   const headSha = 'a'.repeat(40);
@@ -45,6 +46,27 @@ function passedProofContext(repository: Partial<NonNullable<ProofGuardContext['r
       committedRepairFromFailure: false,
       ...repository,
     },
+  };
+}
+
+function currentReviewContext(overrides: Partial<ReviewEvidence> = {}): ReviewEvidence {
+  return {
+    status: 'current',
+    snapshotId: 'review_123',
+    headSha: 'a'.repeat(40),
+    reviewDecision: 'APPROVED',
+    blockingFindings: [],
+    approvals: [
+      {
+        actorId: 'MDQ6VXNlcjE=',
+        actorType: 'User',
+        state: 'APPROVED',
+        commitSha: 'a'.repeat(40),
+      },
+    ],
+    merged: false,
+    mergedAt: null,
+    ...overrides,
   };
 }
 
@@ -145,7 +167,7 @@ describe('session transition domain', () => {
     });
     expect(evaluateTransitionGuards('ready_for_human', 'completed', {}, null)).toMatchObject({
       allowed: false,
-      guardFailures: [{ code: 'APPROVAL_AND_MERGE_EVIDENCE_DEFERRED', owner_issue: 42 }],
+      guardFailures: [{ code: 'SIGNED_REVIEW_PROOF_REQUIRED', owner_issue: 42 }],
     });
   });
 
@@ -228,13 +250,124 @@ describe('session transition domain', () => {
     });
   });
 
+  it('advances a clean current review to human authority and routes blocking findings to repair', () => {
+    const clean = { ...passedProofContext(), reviewEvidence: currentReviewContext() };
+    const blocked = {
+      ...passedProofContext(),
+      reviewEvidence: currentReviewContext({
+        reviewDecision: 'CHANGES_REQUESTED',
+        blockingFindings: [
+          {
+            id: 'thread_1',
+            url: 'https://github.com/example/project/pull/42#discussion_r1',
+            author: 'reviewer',
+            body: 'Repair this finding',
+            path: 'src/index.ts',
+            line: 1,
+            resolved: false,
+            outdated: false,
+          },
+        ],
+      }),
+    };
+
+    expect(evaluateTransitionGuards('reviewing', 'ready_for_human', {}, null, clean)).toMatchObject({
+      allowed: true,
+    });
+    expect(evaluateTransitionGuards('reviewing', 'repairing', {}, null, blocked)).toMatchObject({
+      allowed: true,
+    });
+  });
+
+  it('completes only with a current same-HEAD human approval and observed merge', () => {
+    const approvedAndMerged = {
+      ...passedProofContext(),
+      reviewEvidence: currentReviewContext({ merged: true, mergedAt: '2026-07-26T12:00:00.000Z' }),
+    };
+    const mergedWithoutApproval = {
+      ...passedProofContext(),
+      reviewEvidence: currentReviewContext({
+        approvals: [],
+        merged: true,
+        mergedAt: '2026-07-26T12:00:00.000Z',
+      }),
+    };
+    const approvedWithoutMerge = {
+      ...passedProofContext(),
+      reviewEvidence: currentReviewContext({ merged: false, mergedAt: null }),
+    };
+    const mergedWithWrongHeadApproval = {
+      ...passedProofContext(),
+      reviewEvidence: currentReviewContext({
+        approvals: [
+          {
+            actorId: 'MDQ6VXNlcjE=',
+            actorType: 'User',
+            state: 'APPROVED',
+            commitSha: 'c'.repeat(40),
+          },
+        ],
+        merged: true,
+        mergedAt: '2026-07-26T12:00:00.000Z',
+      }),
+    };
+
+    expect(evaluateTransitionGuards('ready_for_human', 'completed', {}, null, approvedAndMerged)).toMatchObject({
+      allowed: true,
+    });
+    expect(evaluateTransitionGuards('ready_for_human', 'completed', {}, null, mergedWithoutApproval)).toMatchObject({
+      allowed: false,
+      guardFailures: [{ code: 'CURRENT_HUMAN_APPROVAL_REQUIRED' }],
+    });
+    expect(evaluateTransitionGuards('ready_for_human', 'completed', {}, null, approvedWithoutMerge)).toMatchObject({
+      allowed: false,
+      guardFailures: [{ code: 'OBSERVED_MERGE_REQUIRED' }],
+    });
+    expect(
+      evaluateTransitionGuards('ready_for_human', 'completed', {}, null, mergedWithWrongHeadApproval),
+    ).toMatchObject({
+      allowed: false,
+      guardFailures: [{ code: 'CURRENT_HUMAN_APPROVAL_REQUIRED' }],
+    });
+  });
+
+  it('shares the three-cycle budget across gate and review repairs and rejects a fourth review repair', () => {
+    const blockingReviewAfterThreeMixedRepairs = {
+      ...passedProofContext(),
+      attemptsUsed: 3,
+      reviewEvidence: currentReviewContext({
+        reviewDecision: 'CHANGES_REQUESTED',
+        blockingFindings: [
+          {
+            id: 'thread-budget',
+            url: 'https://github.com/example/project/pull/42#discussion_budget',
+            author: 'reviewer',
+            body: 'A fourth repair is not authorized',
+            path: 'src/index.ts',
+            line: 42,
+            resolved: false,
+            outdated: false,
+          },
+        ],
+      }),
+    };
+
+    expect(
+      evaluateTransitionGuards('reviewing', 'repairing', {}, null, blockingReviewAfterThreeMixedRepairs),
+    ).toMatchObject({
+      allowed: false,
+      guardFailures: [{ code: 'REPAIR_BUDGET_EXHAUSTED' }],
+      requiredWork: [{ code: 'TRANSITION_TO_BLOCKED' }],
+    });
+  });
+
   it.each([
     ['queued', 'framed', true, null],
     ['framed', 'proof_ready', false, null],
     ['proof_ready', 'implementing', false, null],
     ['implementing', 'verifying', false, null],
     ['verifying', null, false, null],
-    ['reviewing', null, false, null],
+    ['reviewing', 'ready_for_human', false, null],
     ['repairing', 'verifying', false, null],
     ['ready_for_human', 'completed', false, null],
     ['blocked', 'implementing', false, 'BLOCKED_REQUIRES_HUMAN_RECOVERY'],
@@ -257,6 +390,50 @@ describe('session transition domain', () => {
               executable,
             },
       terminalReason,
+    });
+  });
+
+  it('plans review repair for blockers and completion only after approval plus merge', () => {
+    const blocking = {
+      ...passedProofContext(),
+      reviewEvidence: currentReviewContext({
+        reviewDecision: 'CHANGES_REQUESTED',
+        blockingFindings: [
+          {
+            id: 'thread-1',
+            url: 'https://github.com/example/project/pull/42#discussion_r1',
+            author: 'reviewer',
+            body: 'Fix this',
+            path: 'src/index.ts',
+            line: 12,
+            resolved: false,
+            outdated: false,
+          },
+        ],
+      }),
+    };
+    expect(
+      planNextTransition({
+        state: 'reviewing',
+        stateVersion: 7,
+        blockedFromState: null,
+        proofGuardContext: blocking,
+      }),
+    ).toMatchObject({
+      candidate: { target_state: 'repairing', executable: true },
+    });
+    expect(
+      planNextTransition({
+        state: 'ready_for_human',
+        stateVersion: 8,
+        blockedFromState: null,
+        proofGuardContext: {
+          ...passedProofContext(),
+          reviewEvidence: currentReviewContext({ merged: true, mergedAt: '2026-07-26T12:00:00.000Z' }),
+        },
+      }),
+    ).toMatchObject({
+      candidate: { target_state: 'completed', executable: true },
     });
   });
 });

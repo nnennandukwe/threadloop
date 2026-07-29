@@ -1,6 +1,61 @@
 import matter from 'gray-matter';
 import type { ArtifactKind, Entry, RepoSnapshot, Session, Task } from '../../domain/types.js';
 
+export interface HandoffGovernance {
+  lifecycle: {
+    state: string;
+    state_version: number;
+    history: Array<{
+      id: string;
+      from_state: string;
+      to_state: string;
+      from_state_version: number;
+      to_state_version: number;
+      actor: string;
+      created_at: string;
+    }>;
+  };
+  proof: {
+    status: string;
+    plan_sha256: string | null;
+    baseline_head_sha: string | null;
+  };
+  ci_proof: { status: string };
+  staleness: { status: string };
+  review: {
+    status: string;
+    decision: string | null;
+    blocking_findings: Array<{
+      id: string;
+      url: string;
+      body: string;
+      path: string | null;
+      line: number | null;
+    }>;
+    approvals: Array<{
+      actorLogin?: string;
+      actorType: string;
+      commitSha: string;
+    }>;
+    human_approval_current: boolean;
+    merged: boolean;
+    merged_at: string | null;
+  };
+  repair_budget: {
+    status: string;
+    attempts_used: number | null;
+    limit: number;
+    remaining: number | null;
+  };
+  audit: {
+    status: string;
+    event_count: number | null;
+    root: string | null;
+    coverage: string;
+  };
+  next_human_action: { code: string; description: string } | null;
+}
+
 export interface ArtifactRenderInput {
   task: Task;
   session: Session;
@@ -8,6 +63,7 @@ export interface ArtifactRenderInput {
   repoSnapshot: RepoSnapshot;
   generatedAt: string;
   artifactKind: ArtifactKind;
+  governance?: HandoffGovernance;
 }
 
 function section(title: string, lines: string[]) {
@@ -29,6 +85,7 @@ function frontmatterFor(input: ArtifactRenderInput) {
   const { task, session, repoSnapshot, generatedAt, artifactKind } = input;
   return {
     kind: artifactKind,
+    ...(artifactKind === 'handoff' ? { contract_version: 2 } : {}),
     task_id: task.id,
     session_id: session.id,
     issue_ref: task.issueRef,
@@ -37,6 +94,7 @@ function frontmatterFor(input: ArtifactRenderInput) {
     base_ref: repoSnapshot.baseRef,
     head_sha: repoSnapshot.headSha,
     changed_files: repoSnapshot.changedFiles,
+    ...(artifactKind === 'handoff' ? { audit_root: input.governance?.audit.root ?? null } : {}),
   };
 }
 
@@ -152,6 +210,10 @@ function renderPrSummary(input: ArtifactRenderInput) {
 
 function renderHandoff(input: ArtifactRenderInput) {
   const { task, session, entries, repoSnapshot } = input;
+  const governance = input.governance;
+  if (!governance) {
+    throw new Error('Handoff rendering requires the governed session projection.');
+  }
 
   return [
     `# Handoff: ${task.title}`,
@@ -161,6 +223,63 @@ function renderHandoff(input: ArtifactRenderInput) {
       `- Branch: ${repoSnapshot.branch || session.branch || '(detached)'}`,
       `- Base ref: ${session.baseRef ?? 'Not set'}`,
       `- Changed files: ${repoSnapshot.changedFiles.length}`,
+      `- Lifecycle: ${governance.lifecycle.state} @ ${governance.lifecycle.state_version}`,
+    ]),
+    section(
+      'Lifecycle history',
+      governance.lifecycle.history.length > 0
+        ? governance.lifecycle.history.map(
+            (transition) =>
+              `- ${transition.from_state} -> ${transition.to_state} ` +
+              `(${transition.from_state_version} -> ${transition.to_state_version}) by ${transition.actor} ` +
+              `at ${transition.created_at}`,
+          )
+        : ['No lifecycle transitions recorded.'],
+    ),
+    section('Proof and freshness', [
+      `- Local proof: ${governance.proof.status}`,
+      `- Signed CI proof: ${governance.ci_proof.status}`,
+      `- Freshness: ${governance.staleness.status}`,
+      `- Proof plan SHA-256: ${governance.proof.plan_sha256 ?? 'Not available'}`,
+      `- Baseline HEAD: ${governance.proof.baseline_head_sha ?? 'Not available'}`,
+    ]),
+    section(
+      'Review findings',
+      governance.review.blocking_findings.length > 0
+        ? governance.review.blocking_findings.map(
+            (finding) =>
+              `- [${finding.id}] ${finding.path ?? '(general)'}${finding.line ? `:${finding.line}` : ''}: ` +
+              `${oneLine(finding.body)} (${finding.url})`,
+          )
+        : ['No unresolved current review findings.'],
+    ),
+    section('Repair budget', [
+      `- Status: ${governance.repair_budget.status}`,
+      `- Attempts used: ${governance.repair_budget.attempts_used ?? 'Unavailable'}`,
+      `- Limit: ${governance.repair_budget.limit}`,
+      `- Remaining: ${governance.repair_budget.remaining ?? 'Unavailable'}`,
+    ]),
+    section('Human approval and merge', [
+      `- Review evidence: ${governance.review.status}`,
+      `- Review decision: ${governance.review.decision ?? 'Not observed'}`,
+      `- Current human approval: ${governance.review.human_approval_current ? 'yes' : 'no'}`,
+      `- Merge observed: ${governance.review.merged ? 'yes' : 'no'}`,
+      `- Merged at: ${governance.review.merged_at ?? 'Not observed'}`,
+      `- Approvals: ${governance.review.approvals.length}`,
+      ...governance.review.approvals.map(
+        (approval) => `  - ${approval.actorLogin ?? '(unknown)'} (${approval.actorType}) @ ${approval.commitSha}`,
+      ),
+    ]),
+    section('Audit evidence', [
+      `- Status: ${governance.audit.status}`,
+      `- Events: ${governance.audit.event_count ?? 'Unavailable'}`,
+      `- Root SHA-256: ${governance.audit.root ?? 'Unavailable'}`,
+      `- Coverage: ${governance.audit.coverage}`,
+    ]),
+    section('Next human action', [
+      governance.next_human_action
+        ? `- ${governance.next_human_action.code}: ${governance.next_human_action.description}`
+        : 'No human action is currently required.',
     ]),
     section(
       'Open risks',
@@ -192,6 +311,10 @@ function renderHandoff(input: ArtifactRenderInput) {
     ),
     gitAppendix(repoSnapshot),
   ].join('\n');
+}
+
+function oneLine(value: string) {
+  return value.replace(/\s+/g, ' ').trim();
 }
 
 export function renderArtifact(input: ArtifactRenderInput) {

@@ -94,7 +94,7 @@ function proofPlan(
   workingDirectory = '.',
 ) {
   return {
-    contract_version: 2,
+    contract_version: 3,
     acceptance_criteria: ['All repository checks pass'],
     ci: {
       provider: 'github-actions',
@@ -102,6 +102,14 @@ function proofPlan(
       certificate_identity: `${fixtureRepository}/.github/workflows/threadloop.yml@refs/heads/${fixtureBranch}`,
       source_repository: fixtureRepository,
       build_signer_uri: `https://github.com/nnennandukwe/threadloop/.github/workflows/threadloop-gate-sensor.yml@${sensorSha}`,
+      build_signer_sha: sensorSha,
+    },
+    review: {
+      provider: 'github-actions',
+      issuer: 'https://token.actions.githubusercontent.com',
+      certificate_identity: `${fixtureRepository}/.github/workflows/threadloop.yml@refs/heads/${fixtureBranch}`,
+      source_repository: fixtureRepository,
+      build_signer_uri: `https://github.com/nnennandukwe/threadloop/.github/workflows/threadloop-review-sensor.yml@${sensorSha}`,
       build_signer_sha: sensorSha,
     },
     gates: [
@@ -216,7 +224,7 @@ describe('proof plan persistence', { timeout: 20_000 }, () => {
     await resetSqliteConnections(repoDir);
     const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
     try {
-      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '5' });
+      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '6' });
       expect(
         db
           .prepare(
@@ -228,7 +236,7 @@ describe('proof plan persistence', { timeout: 20_000 }, () => {
           .get(),
       ).toMatchObject({
         session_id: sessionId,
-        plan_json: `{"acceptance_criteria":["All repository checks pass"],"ci":{"build_signer_sha":"${sensorSha}","build_signer_uri":"https://github.com/nnennandukwe/threadloop/.github/workflows/threadloop-gate-sensor.yml@${sensorSha}","certificate_identity":"${fixtureRepository}/.github/workflows/threadloop.yml@refs/heads/${fixtureBranch}","issuer":"https://token.actions.githubusercontent.com","provider":"github-actions","source_repository":"${fixtureRepository}"},"contract_version":2,"gates":[{"command":["node","-e","process.stdout.write(\\"ok\\\\n\\")"],"id":"repository-check","timeout_ms":5000,"working_directory":"."}]}`,
+        plan_json: `{"acceptance_criteria":["All repository checks pass"],"ci":{"build_signer_sha":"${sensorSha}","build_signer_uri":"https://github.com/nnennandukwe/threadloop/.github/workflows/threadloop-gate-sensor.yml@${sensorSha}","certificate_identity":"${fixtureRepository}/.github/workflows/threadloop.yml@refs/heads/${fixtureBranch}","issuer":"https://token.actions.githubusercontent.com","provider":"github-actions","source_repository":"${fixtureRepository}"},"contract_version":3,"gates":[{"command":["node","-e","process.stdout.write(\\"ok\\\\n\\")"],"id":"repository-check","timeout_ms":5000,"working_directory":"."}],"review":{"build_signer_sha":"${sensorSha}","build_signer_uri":"https://github.com/nnennandukwe/threadloop/.github/workflows/threadloop-review-sensor.yml@${sensorSha}","certificate_identity":"${fixtureRepository}/.github/workflows/threadloop.yml@refs/heads/${fixtureBranch}","issuer":"https://token.actions.githubusercontent.com","provider":"github-actions","source_repository":"${fixtureRepository}"}}`,
         plan_sha256: result.data.proof_plan.sha256,
         baseline_branch: branch,
         baseline_head_sha: head,
@@ -274,6 +282,141 @@ describe('proof plan persistence', { timeout: 20_000 }, () => {
         state_version: 1,
       });
       expect(db.prepare(`SELECT COUNT(*) AS count FROM proof_plans`).get()).toEqual({ count: 0 });
+    } finally {
+      db.close();
+    }
+  });
+
+  it.each([
+    {
+      name: 'dirty worktree',
+      expectedGuard: 'PROOF_BASELINE_DIRTY',
+      prepare: async (repoDir: string) => {
+        await writeFile(path.join(repoDir, 'dirty.txt'), 'dirty\n', 'utf8');
+      },
+      recover: async (repoDir: string) => {
+        await rm(path.join(repoDir, 'dirty.txt'));
+      },
+    },
+    {
+      name: 'detached HEAD',
+      expectedGuard: 'PROOF_BASELINE_BRANCH_REQUIRED',
+      prepare: async (repoDir: string) => {
+        await execFileAsync('git', ['checkout', '--detach', 'HEAD'], { cwd: repoDir });
+      },
+      recover: async (repoDir: string) => {
+        await execFileAsync('git', ['checkout', fixtureBranch], { cwd: repoDir });
+      },
+    },
+  ])(
+    'durably rejects a $name proof baseline so the same request cannot later succeed',
+    async ({ expectedGuard, prepare, recover }) => {
+      const repoDir = await makeCommittedRepo();
+      const sessionId = await startFramedSession(repoDir);
+      const idempotencyKey = `proof-plan:rejected:${expectedGuard}`;
+      const args = [
+        'session',
+        'transition',
+        'proof_ready',
+        '--session',
+        sessionId,
+        '--expected-state-version',
+        '1',
+        '--idempotency-key',
+        idempotencyKey,
+        '--actor',
+        'agent',
+        '--input',
+        JSON.stringify({ proof_plan: proofPlan() }),
+        '--json',
+      ];
+
+      await prepare(repoDir);
+      const first = await runCliFailure(repoDir, args);
+      const firstBody = parseJson<{
+        error: { code: string; details: { guard_failures: Array<{ code: string }> } };
+      }>(first.stderr);
+      expect(firstBody.error).toMatchObject({
+        code: 'TRANSITION_GUARD_FAILED',
+        details: { guard_failures: [{ code: expectedGuard }] },
+      });
+
+      await recover(repoDir);
+      const replay = await runCliFailure(repoDir, args);
+      expect(replay.stderr).toBe(first.stderr);
+
+      const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
+      try {
+        expect(db.prepare(`SELECT status, state_version FROM tasks`).get()).toEqual({
+          status: 'framed',
+          state_version: 1,
+        });
+        expect(
+          db
+            .prepare(`SELECT outcome, COUNT(*) AS count FROM transition_idempotency WHERE idempotency_key = ?`)
+            .get(idempotencyKey),
+        ).toEqual({ outcome: 'rejected', count: 1 });
+        expect(
+          db
+            .prepare(
+              `
+                SELECT COUNT(*) AS count
+                FROM audit_events
+                WHERE session_id = ? AND event_type = 'guard_decision'
+                  AND json_extract(event_json, '$.payload.idempotency_key') = ?
+              `,
+            )
+            .get(sessionId, idempotencyKey),
+        ).toEqual({ count: 1 });
+        expect(db.prepare(`SELECT COUNT(*) AS count FROM proof_plans`).get()).toEqual({ count: 0 });
+      } finally {
+        db.close();
+      }
+    },
+  );
+
+  it('does not cache a structurally invalid proof plan as an evaluated guard decision', async () => {
+    const repoDir = await makeCommittedRepo();
+    const sessionId = await startFramedSession(repoDir);
+    const idempotencyKey = 'proof-plan:structurally-invalid';
+    const invalidPlan = { ...proofPlan(), contract_version: 99 };
+    const failure = await runCliFailure(repoDir, [
+      'session',
+      'transition',
+      'proof_ready',
+      '--session',
+      sessionId,
+      '--expected-state-version',
+      '1',
+      '--idempotency-key',
+      idempotencyKey,
+      '--actor',
+      'agent',
+      '--input',
+      JSON.stringify({ proof_plan: invalidPlan }),
+      '--json',
+    ]);
+    expect(parseJson<{ error: { code: string } }>(failure.stderr).error.code).toBe('INVALID_ARGUMENT');
+
+    const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
+    try {
+      expect(
+        db
+          .prepare(`SELECT COUNT(*) AS count FROM transition_idempotency WHERE idempotency_key = ?`)
+          .get(idempotencyKey),
+      ).toEqual({ count: 0 });
+      expect(
+        db
+          .prepare(
+            `
+              SELECT COUNT(*) AS count
+              FROM audit_events
+              WHERE session_id = ? AND event_type = 'guard_decision'
+                AND json_extract(event_json, '$.payload.idempotency_key') = ?
+            `,
+          )
+          .get(sessionId, idempotencyKey),
+      ).toEqual({ count: 0 });
     } finally {
       db.close();
     }
@@ -432,6 +575,57 @@ describe('session gate run', { timeout: 20_000 }, () => {
       expect(db.prepare(`SELECT COUNT(*) AS count FROM gate_receipts`).get()).toEqual({ count: 0 });
     } finally {
       db.close();
+    }
+  });
+
+  it('rejects a corrupt audit chain before starting the gate process or creating proof artifacts', async () => {
+    const repoDir = await makeCommittedRepo();
+    const sessionId = await startFramedSession(repoDir);
+    const markerPath = path.join(repoDir, 'gate-started.txt');
+    await recordProofPlan(
+      repoDir,
+      sessionId,
+      proofPlan(['node', '-e', `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "started")`]),
+    );
+    await forceVerifying(repoDir);
+
+    await resetSqliteConnections(repoDir);
+    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
+    const corrupt = new DatabaseSync(dbPath);
+    try {
+      corrupt.prepare(`DROP TRIGGER audit_events_no_update`).run();
+      corrupt.prepare(`UPDATE audit_events SET event_sha256 = ? WHERE sequence = 2`).run('0'.repeat(64));
+    } finally {
+      corrupt.close();
+    }
+
+    const failure = await runCliFailure(repoDir, [
+      'session',
+      'gate',
+      'run',
+      'repository-check',
+      '--session',
+      sessionId,
+      '--json',
+    ]);
+    expect(
+      parseJson<{
+        error: { code: string; details: { audit_error: { code: string; sequence: number } } };
+      }>(failure.stderr),
+    ).toMatchObject({
+      error: {
+        code: 'AUDIT_VERIFICATION_FAILED',
+        details: { audit_error: { code: 'AUDIT_HASH_MISMATCH', sequence: 2 } },
+      },
+    });
+    expect(existsSync(markerPath)).toBe(false);
+    expect(existsSync(path.join(repoDir, '.threadloop', 'artifacts', 'receipts', sessionId))).toBe(false);
+
+    const state = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      expect(state.prepare(`SELECT COUNT(*) AS count FROM gate_receipts`).get()).toEqual({ count: 0 });
+    } finally {
+      state.close();
     }
   });
 
@@ -716,7 +910,7 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
     }>((await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout);
 
     expect(next.data).toMatchObject({
-      contract_version: 2,
+      contract_version: 3,
       candidate: {
         from_state: 'verifying',
         target_state: 'reviewing',

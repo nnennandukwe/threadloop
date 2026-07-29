@@ -1,0 +1,120 @@
+name: ThreadLoop signed review sensor
+
+on:
+  workflow_call:
+    inputs:
+      session_id:
+        description: ThreadLoop session id
+        required: true
+        type: string
+      plan_sha256:
+        description: Canonical v3 proof-plan digest
+        required: true
+        type: string
+      pull_request_number:
+        description: Pull request to observe
+        required: true
+        type: number
+
+permissions:
+  contents: read
+
+jobs:
+  collect_review:
+    name: Collect review / PR ${{ inputs.pull_request_number }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Check out pinned ThreadLoop sensor
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: threadloop-sensor
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22.13.0
+          cache: npm
+          cache-dependency-path: threadloop-sensor/package-lock.json
+
+      - name: Install pinned sensor dependencies
+        run: npm ci --ignore-scripts
+        working-directory: threadloop-sensor
+
+      - name: Collect review snapshot
+        run: npm run sensor:github-review:collect
+        working-directory: threadloop-sensor
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          THREADLOOP_SESSION_ID: ${{ inputs.session_id }}
+          THREADLOOP_PLAN_SHA256: ${{ inputs.plan_sha256 }}
+          THREADLOOP_PULL_REQUEST_NUMBER: ${{ inputs.pull_request_number }}
+          THREADLOOP_REPORT_PATH: ${{ github.workspace }}/review-observation/review-report.json
+
+      - name: Upload captured review snapshot
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: threadloop-review-report-${{ inputs.pull_request_number }}-${{ github.run_attempt }}
+          path: review-observation/review-report.json
+          if-no-files-found: error
+          retention-days: 1
+
+  sign_receipt:
+    name: Sign review / PR ${{ inputs.pull_request_number }}
+    needs: collect_review
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check out pinned ThreadLoop sensor
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: threadloop-sensor
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22.13.0
+          cache: npm
+          cache-dependency-path: threadloop-sensor/package-lock.json
+
+      - name: Install pinned sensor dependencies
+        run: npm ci --ignore-scripts
+        working-directory: threadloop-sensor
+
+      - name: Download captured review snapshot
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: threadloop-review-report-${{ inputs.pull_request_number }}-${{ github.run_attempt }}
+          path: review-observation
+
+      - name: Sign review snapshot
+        run: npm run sensor:github-review:sign
+        working-directory: threadloop-sensor
+        env:
+          THREADLOOP_SESSION_ID: ${{ inputs.session_id }}
+          THREADLOOP_PLAN_SHA256: ${{ inputs.plan_sha256 }}
+          THREADLOOP_PULL_REQUEST_NUMBER: ${{ inputs.pull_request_number }}
+          THREADLOOP_REPORT_PATH: ${{ github.workspace }}/review-observation/review-report.json
+          THREADLOOP_OUTPUT_PATH: ${{ github.workspace }}/receipt-output/signed-review-receipt.json
+
+      - name: Upload signed review receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: threadloop-signed-review-${{ inputs.pull_request_number }}-${{ github.run_attempt }}
+          path: receipt-output/signed-review-receipt.json
+          if-no-files-found: error
+          retention-days: 30

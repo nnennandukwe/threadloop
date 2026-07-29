@@ -4,6 +4,7 @@ import { canonicalizeJsonValue, isPlainObject } from './canonical-json.js';
 import type { BoundProofPlan } from './proof.js';
 import type { ProofEvidence, ProofEvidenceStatus } from './proof.js';
 import type { CiProofEvidence } from './attestation.js';
+import { hasBlockingReview, hasCurrentHumanApproval, type ReviewEvidence } from './review.js';
 
 export interface TransitionRequest {
   sessionId: string;
@@ -46,6 +47,7 @@ export interface ProofGuardContext {
   plan?: BoundProofPlan | null;
   evidence?: ProofEvidence;
   ciEvidence?: CiProofEvidence;
+  reviewEvidence?: ReviewEvidence;
   repository?: {
     branch: string | null;
     headSha: string;
@@ -124,7 +126,141 @@ export function evaluateTransitionGuards(
   if (requirement === 'proof') {
     return evaluateProofOwnedGuards(sourceState, targetState, proof);
   }
-  return deferredReviewGuards(targetState);
+  return evaluateReviewOwnedGuards(sourceState, targetState, proof);
+}
+
+function evaluateReviewOwnedGuards(
+  sourceState: TaskStatus,
+  targetState: TaskStatus,
+  proof: ProofGuardContext,
+): TransitionGuardDecision {
+  const review = proof.reviewEvidence;
+  if (!review || review.status !== 'current' || !review.headSha || review.headSha !== proof.repository?.headSha) {
+    const status = review?.status ?? 'missing';
+    const details = {
+      policy_missing: {
+        code: 'REVIEW_PROOF_POLICY_REQUIRED',
+        message: 'Review requires an immutable v3 signed-review trust policy.',
+        work: 'START_SESSION_WITH_REVIEW_POLICY',
+        description: 'Start a new session with a v3 proof plan that binds the review sensor.',
+      },
+      missing: {
+        code: 'SIGNED_REVIEW_PROOF_REQUIRED',
+        message: 'Review requires a verified signed review snapshot for the current pull request HEAD.',
+        work: 'IMPORT_SIGNED_REVIEW_PROOF',
+        description: 'Run the trusted review sensor and import its signed snapshot.',
+      },
+      stale: {
+        code: 'CURRENT_REVIEW_PROOF_REQUIRED',
+        message: 'The latest signed review snapshot belongs to another HEAD.',
+        work: 'REFRESH_SIGNED_REVIEW_PROOF',
+        description: 'Run the review sensor again for the current pull request HEAD.',
+      },
+      corrupt: {
+        code: 'UNCORRUPTED_REVIEW_PROOF_REQUIRED',
+        message: 'Stored signed review evidence failed its integrity checks.',
+        work: 'RESTORE_SIGNED_REVIEW_PROOF',
+        description: 'Restore the accepted package from trusted storage or rerun the review sensor.',
+      },
+      current: {
+        code: 'CURRENT_REVIEW_PROOF_REQUIRED',
+        message: 'Signed review evidence does not match the live repository HEAD.',
+        work: 'REFRESH_SIGNED_REVIEW_PROOF',
+        description: 'Run the review sensor again for the current repository HEAD.',
+      },
+    }[status];
+    return deniedGuards(
+      { code: details.code, message: details.message, owner_issue: 42 },
+      { code: details.work, description: details.description, owner_issue: 42 },
+    );
+  }
+
+  const blocking = hasBlockingReview(review);
+  if (targetState === TASK_STATUS.REPAIRING) {
+    if (blocking && (proof.attemptsUsed ?? 3) < 3) {
+      return allowedGuards();
+    }
+    const exhausted = (proof.attemptsUsed ?? 3) >= 3;
+    return deniedGuards(
+      {
+        code: exhausted ? 'REPAIR_BUDGET_EXHAUSTED' : 'BLOCKING_REVIEW_FINDING_REQUIRED',
+        message: exhausted
+          ? 'No fourth repair cycle is permitted.'
+          : 'Review repair requires a current blocking review finding.',
+        owner_issue: 42,
+      },
+      {
+        code: exhausted ? 'TRANSITION_TO_BLOCKED' : 'REFRESH_SIGNED_REVIEW_PROOF',
+        description: exhausted
+          ? 'Provide complete block evidence and explicitly transition the session to blocked.'
+          : 'Import the latest signed review snapshot before selecting repair.',
+        owner_issue: 42,
+      },
+    );
+  }
+
+  if (blocking) {
+    return deniedGuards(
+      {
+        code: 'BLOCKING_REVIEW_FINDINGS',
+        message: 'Current unresolved review findings require a bounded repair cycle.',
+        owner_issue: 42,
+      },
+      {
+        code: 'ENTER_REVIEW_REPAIR',
+        description: 'Transition to repairing while budget remains and address the current findings.',
+        owner_issue: 42,
+      },
+    );
+  }
+
+  if (proof.evidence?.status !== 'passed' || proof.ciEvidence?.status !== 'passed') {
+    return deniedGuards(
+      {
+        code: 'CURRENT_REVIEW_PROOF_SET_REQUIRED',
+        message: 'Review progression requires current local, signed CI, and signed review proof.',
+        owner_issue: 42,
+      },
+      {
+        code: 'REFRESH_REVIEW_PROOF_SET',
+        description: 'Refresh every stale or missing proof source for the current HEAD.',
+        owner_issue: 42,
+      },
+    );
+  }
+
+  if (sourceState === TASK_STATUS.READY_FOR_HUMAN && targetState === TASK_STATUS.COMPLETED) {
+    if (!hasCurrentHumanApproval(review)) {
+      return deniedGuards(
+        {
+          code: 'CURRENT_HUMAN_APPROVAL_REQUIRED',
+          message: 'Completion requires a non-bot human approval bound to the pull request HEAD.',
+          owner_issue: 42,
+        },
+        {
+          code: 'OBTAIN_CURRENT_HUMAN_APPROVAL',
+          description: 'Obtain a human approval on the current pull request HEAD.',
+          owner_issue: 42,
+        },
+      );
+    }
+    if (!review.merged) {
+      return deniedGuards(
+        {
+          code: 'OBSERVED_MERGE_REQUIRED',
+          message: 'Completion requires the signed review sensor to observe the pull request as merged.',
+          owner_issue: 42,
+        },
+        {
+          code: 'MERGE_AND_REFRESH_REVIEW_PROOF',
+          description: 'Merge through human authority, then import a post-merge signed review snapshot.',
+          owner_issue: 42,
+        },
+      );
+    }
+  }
+
+  return allowedGuards();
 }
 
 export function getTransitionGuardRequirement(
@@ -304,9 +440,9 @@ function signedCiProofGuard(status: CiProofEvidence['status']): TransitionGuardD
   const details = {
     policy_missing: {
       failure: 'CI_PROOF_POLICY_REQUIRED',
-      message: 'Review requires an immutable v2 signed-CI trust policy.',
+      message: 'Review requires an immutable v2 or v3 signed-CI trust policy.',
       work: 'START_SESSION_WITH_CI_POLICY',
-      description: 'Start a new session with a v2 proof plan; immutable legacy plans cannot be rewritten.',
+      description: 'Start a new session with a v3 proof plan; immutable legacy plans cannot be rewritten.',
     },
     missing: {
       failure: 'SIGNED_CI_PROOF_REQUIRED',
@@ -429,10 +565,31 @@ export function planNextTransition(input: {
     return planVerifyingTransition(input.stateVersion, input.proof, input.proofGuardContext);
   }
 
+  if (input.state === TASK_STATUS.REVIEWING || input.state === TASK_STATUS.READY_FOR_HUMAN) {
+    const review = input.proofGuardContext?.reviewEvidence;
+    const target =
+      review?.status === 'current' && hasBlockingReview(review)
+        ? TASK_STATUS.REPAIRING
+        : input.state === TASK_STATUS.REVIEWING
+          ? TASK_STATUS.READY_FOR_HUMAN
+          : TASK_STATUS.COMPLETED;
+    const guards = evaluateTransitionGuards(input.state, target, {}, input.blockedFromState, input.proofGuardContext);
+    return {
+      candidate: {
+        from_state: input.state,
+        target_state: target,
+        expected_state_version: input.stateVersion,
+        executable: guards.allowed,
+      },
+      guardFailures: guards.guardFailures,
+      requiredWork: guards.requiredWork,
+      terminalReason: null,
+    };
+  }
+
   const target = getDeterministicForwardTarget(input.state);
   if (!target) {
-    const owner = input.state === TASK_STATUS.REVIEWING ? 42 : 40;
-    const guards = owner === 42 ? deferredReviewGuards(null) : deferredProofGuards();
+    const guards = deferredProofGuards();
     return {
       candidate: null,
       guardFailures: guards.guardFailures,
@@ -552,24 +709,6 @@ function deferredProofGuards(): TransitionGuardDecision {
       code: 'IMPLEMENT_ISSUE_40',
       description: 'Provide authoritative proof-plan, gate, staleness, and repair-budget evidence.',
       owner_issue: 40,
-    },
-  );
-}
-
-function deferredReviewGuards(target: TaskStatus | null): TransitionGuardDecision {
-  const completing = target === TASK_STATUS.COMPLETED;
-  return deniedGuards(
-    {
-      code: completing ? 'APPROVAL_AND_MERGE_EVIDENCE_DEFERRED' : 'REVIEW_EVIDENCE_DEFERRED',
-      message: completing
-        ? 'Human approval and merge evidence is not available in M002-2.'
-        : 'Authoritative review evidence is not available in M002-2.',
-      owner_issue: 42,
-    },
-    {
-      code: 'IMPLEMENT_ISSUE_42',
-      description: 'Provide review sensing, human approval, merge evidence, and governed audit history.',
-      owner_issue: 42,
     },
   );
 }

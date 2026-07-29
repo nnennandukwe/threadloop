@@ -155,7 +155,7 @@ afterEach(async () => {
   temporaryRepos.length = 0;
 });
 
-describe('schema v5 signed-proof persistence', () => {
+describe('schema v6 review and audit persistence', () => {
   it('migrates a canonical schema-v2 database without changing lifecycle state', async () => {
     const repoDir = await makeRepo();
     const dbPath = createSchemaV2(repoDir);
@@ -165,23 +165,36 @@ describe('schema v5 signed-proof persistence', () => {
 
     const db = new DatabaseSync(dbPath, { readOnly: true });
     try {
-      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '5' });
+      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '6' });
       expect(
         (db.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>).map((column) => column.name),
       ).toContain('blocked_from_state');
       expect(
         db
           .prepare(
-            `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('session_transitions', 'transition_idempotency', 'proof_plans', 'gate_receipts', 'signed_gate_receipts') ORDER BY name`,
+            `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('session_transitions', 'transition_idempotency', 'transition_idempotency_conflicts', 'proof_plans', 'gate_receipts', 'signed_gate_receipts', 'signed_review_receipts', 'audit_events') ORDER BY name`,
           )
           .all(),
       ).toEqual([
+        { name: 'audit_events' },
         { name: 'gate_receipts' },
         { name: 'proof_plans' },
         { name: 'session_transitions' },
         { name: 'signed_gate_receipts' },
+        { name: 'signed_review_receipts' },
         { name: 'transition_idempotency' },
+        { name: 'transition_idempotency_conflicts' },
       ]);
+      expect(
+        db
+          .prepare(`SELECT sequence, event_type, state_version, previous_sha256 FROM audit_events WHERE session_id = ?`)
+          .get('session_queued'),
+      ).toMatchObject({
+        sequence: 1,
+        event_type: 'audit_activated',
+        state_version: 0,
+        previous_sha256: '0'.repeat(64),
+      });
       expect(db.prepare(`SELECT status, state_version, blocked_from_state FROM tasks`).get()).toEqual({
         status: 'queued',
         state_version: 0,
@@ -303,7 +316,7 @@ describe('schema v5 signed-proof persistence', () => {
     }
   });
 
-  it('rolls back every schema-v5 change when migration validation fails', async () => {
+  it('rolls back every schema-v6 change when migration validation fails', async () => {
     const repoDir = await makeRepo();
     const dbPath = createSchemaV2(repoDir);
     const incompatible = new DatabaseSync(dbPath);
@@ -476,6 +489,53 @@ describe('session transition command', { timeout: 20_000 }, () => {
         { outcome: 'applied', count: 1 },
         { outcome: 'rejected', count: 2 },
       ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('audits each distinct conflicting request once while replaying an exact conflict idempotently', async () => {
+    const repoDir = await makeRepo();
+    const { session_id: sessionId } = await startQueuedSession(repoDir);
+    const key = `wake:${sessionId}:conflict`;
+    await runCli(repoDir, transitionArgs(sessionId, 'framed', '0', key));
+
+    const firstConflictArgs = transitionArgs(sessionId, 'blocked', '0', key, '{"block":{"reason":"first"}}');
+    const [firstConflict, firstReplay] = await Promise.all([
+      runCliFailure(repoDir, firstConflictArgs),
+      runCliFailure(repoDir, firstConflictArgs),
+    ]);
+    expect(firstReplay.stderr).toBe(firstConflict.stderr);
+
+    const secondConflict = await runCliFailure(
+      repoDir,
+      transitionArgs(sessionId, 'proof_ready', '0', key, '{"proof_plan":{"marker":"second"}}'),
+    );
+    expect(parseJson<{ error: { code: string } }>(firstConflict.stderr).error.code).toBe('IDEMPOTENCY_CONFLICT');
+    expect(parseJson<{ error: { code: string } }>(secondConflict.stderr).error.code).toBe('IDEMPOTENCY_CONFLICT');
+
+    const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
+    try {
+      expect(db.prepare(`SELECT status, state_version FROM tasks`).get()).toEqual({
+        status: 'framed',
+        state_version: 1,
+      });
+      expect(db.prepare(`SELECT COUNT(*) AS count FROM transition_idempotency_conflicts`).get()).toEqual({
+        count: 2,
+      });
+      const conflicts = db
+        .prepare(
+          `
+            SELECT event_json
+            FROM audit_events
+            WHERE session_id = ? AND event_type = 'guard_decision'
+            ORDER BY sequence
+          `,
+        )
+        .all(sessionId)
+        .map((row) => parseJson<{ payload: { error?: { code?: string } } }>(String(row.event_json)))
+        .filter((event) => event.payload.error?.code === 'IDEMPOTENCY_CONFLICT');
+      expect(conflicts).toHaveLength(2);
     } finally {
       db.close();
     }
@@ -828,7 +888,7 @@ describe('session next command', { timeout: 15_000 }, () => {
       ok: true;
       command: string;
       data: {
-        lifecycle: { state: string; state_version: number };
+        lifecycle: { state: string; state_version: number; history: unknown[] };
         candidate: { target_state: string; executable: boolean };
         repository: {
           identity: { source: string; host: string | null; owner: string | null; name: string };
@@ -838,6 +898,7 @@ describe('session next command', { timeout: 15_000 }, () => {
         };
         staleness: Record<string, unknown>;
         repair_budget: Record<string, unknown>;
+        audit: { root: string };
         terminal_reason: string | null;
       };
     }>((await runCli(repoDir, ['session', 'next', '--session', started.data.session_id, '--json'])).stdout);
@@ -846,9 +907,9 @@ describe('session next command', { timeout: 15_000 }, () => {
       ok: true,
       command: 'session next',
       data: {
-        contract_version: 2,
+        contract_version: 3,
         session_id: started.data.session_id,
-        lifecycle: { state: 'queued', state_version: 0, blocked_from_state: null },
+        lifecycle: { state: 'queued', state_version: 0, blocked_from_state: null, history: [] },
         candidate: { from_state: 'queued', target_state: 'framed', expected_state_version: 0, executable: true },
         guard_failures: [],
         required_work: [],
@@ -871,9 +932,23 @@ describe('session next command', { timeout: 15_000 }, () => {
           remaining: 3,
           exhausted: false,
         },
+        review: {
+          status: 'policy_missing',
+          snapshot_id: null,
+          blocking_findings: [],
+          human_approval_current: false,
+          merged: false,
+        },
+        audit: {
+          status: 'valid',
+          event_count: 1,
+          coverage: 'full',
+        },
+        next_human_action: null,
         terminal_reason: null,
       },
     });
+    expect(next.data.audit.root).toMatch(/^[a-f0-9]{64}$/);
     expect(JSON.stringify(next)).not.toContain('token');
     expect(JSON.stringify(next)).not.toContain(repoDir);
     expect(await readFile(dbPath)).toEqual(beforeBytes);

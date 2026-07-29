@@ -20,6 +20,7 @@ import {
 } from '../../src/domain/attestation.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
 import {
+  getNextSessionAction,
   importSessionGateReceipt as importSessionGateReceiptWithDependencies,
   type ImportSessionGateReceiptInput,
 } from '../../src/services/session-service.js';
@@ -44,6 +45,15 @@ function importSessionGateReceipt(input: Omit<ImportSessionGateReceiptInput, 're
 
 async function runCli(cwd: string, args: string[]) {
   return execFileAsync('node', [tsxCli, cliEntry, ...args], { cwd });
+}
+
+async function runCliFailure(cwd: string, args: string[]) {
+  try {
+    await runCli(cwd, args);
+    throw new Error(`Expected CLI command to fail: ${args.join(' ')}`);
+  } catch (error) {
+    return error as Error & { stderr?: string };
+  }
 }
 
 function parseJson<T>(value: string | undefined) {
@@ -96,7 +106,7 @@ async function makeVerifyingSession() {
     '--json',
   ]);
   const proofPlan = {
-    contract_version: 2,
+    contract_version: 3,
     acceptance_criteria: ['All checks pass locally and in CI'],
     ci: {
       provider: 'github-actions',
@@ -104,6 +114,14 @@ async function makeVerifyingSession() {
       certificate_identity: certificateIdentity,
       source_repository: sourceRepository,
       build_signer_uri: buildSignerUri,
+      build_signer_sha: buildSignerSha,
+    },
+    review: {
+      provider: 'github-actions',
+      issuer: 'https://token.actions.githubusercontent.com',
+      certificate_identity: certificateIdentity,
+      source_repository: sourceRepository,
+      build_signer_uri: `https://github.com/nnennandukwe/threadloop/.github/workflows/threadloop-review-sensor.yml@${buildSignerSha}`,
       build_signer_sha: buildSignerSha,
     },
     gates: [
@@ -313,6 +331,34 @@ describe('signed gate receipt import', { timeout: 20_000 }, () => {
     }
   });
 
+  it('identifies an unreadable package path and tells the operator to provide a readable regular file', async () => {
+    const fixture = await makeVerifyingSession();
+    const missingPath = path.join(fixture.inputDir, 'missing-signed-receipt.json');
+    const failure = await runCliFailure(fixture.repoDir, [
+      'session',
+      'gate',
+      'import',
+      missingPath,
+      '--session',
+      fixture.sessionId,
+      '--json',
+    ]);
+    expect(
+      parseJson<{
+        error: { code: string; details: { package_path: string; hint: string } };
+      }>(failure.stderr),
+    ).toMatchObject({
+      error: {
+        code: 'SIGNED_RECEIPT_INVALID',
+        details: {
+          package_path: missingPath,
+          hint: 'Provide a readable regular file containing the signed receipt package.',
+        },
+      },
+    });
+    expect(failure.stderr).toContain(missingPath);
+  });
+
   it('imports one verified package idempotently without advancing lifecycle state', async () => {
     const fixture = await makeVerifyingSession();
     const packagePath = await writePackage(fixture, signedArtifact(fixture));
@@ -362,7 +408,7 @@ describe('signed gate receipt import', { timeout: 20_000 }, () => {
       };
     }>((await runCli(fixture.repoDir, ['session', 'next', '--session', fixture.sessionId, '--json'])).stdout);
     expect(next.data).toMatchObject({
-      contract_version: 2,
+      contract_version: 3,
       candidate: { target_state: 'reviewing', executable: true },
       proof: { status: 'passed' },
       ci_proof: {
@@ -374,7 +420,7 @@ describe('signed gate receipt import', { timeout: 20_000 }, () => {
     await resetSqliteConnections(fixture.repoDir);
     const db = new DatabaseSync(path.join(fixture.repoDir, '.threadloop/state/state.db'), { readOnly: true });
     try {
-      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '5' });
+      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '6' });
       expect(db.prepare(`SELECT COUNT(*) AS count FROM signed_gate_receipts`).get()).toEqual({ count: 1 });
       expect(db.prepare(`SELECT status, state_version FROM tasks`).get()).toEqual({
         status: 'verifying',
@@ -778,5 +824,34 @@ describe('signed gate receipt import', { timeout: 20_000 }, () => {
       (await runCli(staleFixture.repoDir, ['session', 'next', '--session', staleFixture.sessionId, '--json'])).stdout,
     );
     expect(staleNext.data.ci_proof).toMatchObject({ status: 'stale', gates: [{ status: 'stale' }] });
+  });
+
+  it('revalidates a controlled package through the 10 MiB bounded reader', async () => {
+    const fixture = await makeVerifyingSession();
+    const packagePath = await writePackage(fixture, signedArtifact(fixture));
+    const imported = await importSessionGateReceipt({
+      cwd: fixture.repoDir,
+      sessionId: fixture.sessionId,
+      packagePath,
+      verifyReceipt: verifier(fixture),
+    });
+    const controlledPath = path.join(fixture.repoDir, imported.receipt.package.path);
+    await truncate(controlledPath, 10 * 1024 * 1024 + 1);
+
+    const originalReadWithinLimit = nodeSignedReceiptFileSystem.readWithinLimit.bind(nodeSignedReceiptFileSystem);
+    let boundedControlledRead = false;
+    nodeSignedReceiptFileSystem.readWithinLimit = async (requestedPath, maxBytes) => {
+      boundedControlledRead = true;
+      expect(path.basename(requestedPath)).toBe('signed-receipt.json');
+      expect(maxBytes).toBe(10 * 1024 * 1024);
+      return originalReadWithinLimit(requestedPath, maxBytes);
+    };
+    try {
+      const next = await getNextSessionAction({ cwd: fixture.repoDir, sessionId: fixture.sessionId });
+      expect(next.ci_proof).toMatchObject({ status: 'corrupt', gates: [{ status: 'corrupt' }] });
+    } finally {
+      nodeSignedReceiptFileSystem.readWithinLimit = originalReadWithinLimit;
+    }
+    expect(boundedControlledRead).toBe(true);
   });
 });

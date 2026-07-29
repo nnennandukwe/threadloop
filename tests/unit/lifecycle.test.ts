@@ -38,6 +38,7 @@ describe('governed lifecycle', () => {
       ['reviewing', 'repairing'],
       ['reviewing', 'ready_for_human'],
       ['repairing', 'verifying'],
+      ['ready_for_human', 'repairing'],
       ['ready_for_human', 'completed'],
     ] as const;
 
@@ -61,6 +62,7 @@ describe('governed lifecycle', () => {
       'reviewing:repairing',
       'reviewing:ready_for_human',
       'repairing:verifying',
+      'ready_for_human:repairing',
       'ready_for_human:completed',
       ...TASK_STATUS_VALUES.filter((state) => !['blocked', 'completed'].includes(state)).map(
         (state) => `${state}:blocked`,
