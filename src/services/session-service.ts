@@ -924,7 +924,7 @@ async function loadSessionAudit(input: SessionAuditInput, expectedRoot?: string)
   const repoRoot = await resolveRepositoryRoot(input.cwd);
   await assertInitializedReadOnly(repoRoot);
   const availability = inspectAuditLedgerReadOnly(repoRoot);
-  if (!availability.available && availability.schemaVersion >= 6) {
+  if (!availability.available && availability.schemaVersion !== null && availability.schemaVersion >= 6) {
     throw auditUnavailableFailure(
       input.sessionId,
       new AuditLedgerUnavailableError('table_missing', availability.schemaVersion),

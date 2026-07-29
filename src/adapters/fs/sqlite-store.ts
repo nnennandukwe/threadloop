@@ -628,6 +628,13 @@ export function readSessionAuditReadOnly(repoRoot: string, sessionId: string): S
 }
 
 export function inspectAuditLedgerReadOnly(repoRoot: string) {
+  const { stateDbPath } = threadloopPaths(repoRoot);
+  if (!existsSync(stateDbPath)) {
+    return {
+      available: false,
+      schemaVersion: null,
+    };
+  }
   const db = openReadDatabase(repoRoot);
   try {
     const schemaVersion = readDatabaseSchemaVersion(db);

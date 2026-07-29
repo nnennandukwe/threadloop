@@ -267,6 +267,19 @@ describe('audit CLI', { timeout: 20_000 }, () => {
     });
   });
 
+  it('reports a structured session error when the state database does not exist yet', async () => {
+    const fixture = await makeSession();
+    await rm(path.join(fixture.repoDir, '.threadloop/state/state.db'));
+
+    const failure = await runCliFailure(fixture.repoDir, ['audit', 'verify', '--session', fixture.sessionId, '--json']);
+    expect(parseJson<{ error: { code: string; details: { session_id: string } } }>(failure.stderr)).toMatchObject({
+      error: {
+        code: 'SESSION_NOT_FOUND',
+        details: { session_id: fixture.sessionId },
+      },
+    });
+  });
+
   it('reports corruption and blocks later controller mutations without changing lifecycle state', async () => {
     const fixture = await makeSession();
     await resetSqliteConnections(fixture.repoDir);
