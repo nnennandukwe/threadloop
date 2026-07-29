@@ -1,21 +1,69 @@
 # ThreadLoop
 
-ThreadLoop is a local-first CLI companion for AI-assisted coding work. It captures the small set of task intent,
-decisions, risks, validation notes, and reviewer guidance that matter, then renders that context into a review-ready
-artifact.
+ThreadLoop is a local-first CLI that models an AI-assisted software-delivery task as a governed lifecycle graph. It
+stores lifecycle state in repo-local SQLite, returns a deterministic next-action candidate, validates explicit
+transition requests against current policy and evidence, and renders review artifacts under `.threadloop/artifacts/`.
+
+Agents can execute work, but policy and evidence determine which lifecycle transition is allowed next. A caller must
+request each transition; ThreadLoop applies it idempotently only when its structural, repository, proof, repair-budget,
+and recovery requirements are satisfied.
+
+ThreadLoop is for repository maintainers and developer-tooling teams that run AI-assisted coding work and need lifecycle
+advancement to remain explicit, inspectable, and evidence-bound.
 
 For the orchestrated v2 workflow, see [docs/agent-mode.md](docs/agent-mode.md).
 
-## Positioning
+## Graph and loop engineering
 
-ThreadLoop is deliberately not a passive provenance recorder and not a generic PR template generator.
+ThreadLoop applies graph engineering by encoding lifecycle states as nodes, permitted transitions as edges, and
+repository and proof requirements as transition guards. It applies loop engineering by making verification, bounded
+repair, re-entry, blocking, and recovery explicit parts of the lifecycle.
 
-It is:
+```mermaid
+flowchart LR
+  subgraph TL["ThreadLoop: governed software-delivery graph"]
+    Q["queued"] --> F["framed"] --> P["proof_ready"] --> I["implementing"] --> V["verifying"]
+    V -- "proof passes" --> R["reviewing"]
+    V -- "proof fails" --> X["repairing"]
+    X -- "committed repair" --> V
+    R -. "review blocker" .-> X
+    R -. "review clear" .-> H["ready_for_human"]
+    H -. "approval and merge" .-> C["completed"]
+    A["recorded active state"] -. "complete block evidence" .-> B["blocked"]
+    B -. "human-approved recovery to recorded prior state" .-> A
+  end
 
-- task-first
-- repo-local
-- Markdown-first
-- optimized for review preparation through lightweight session memory
+  subgraph GAA["Governed Agent Autonomy Patterns: inner agent loop"]
+    G1["plan"] --> G2["permission"] --> G3["tool trust"] --> W["agent executes work"]
+    W --> G4["independent verification"] --> E["content-addressed evidence"]
+    W -. "observed by" .-> G5["runtime accountability"]
+    G4 -. "reported through" .-> G5
+  end
+
+  I -. "bounded execution" .-> G1
+  E -. "potential evidence adapter" .-> V
+```
+
+The solid lifecycle edges are executable in the current `main` implementation when their guards pass. The dashed
+review-owned edges are structurally valid but remain fail-closed until ThreadLoop has authoritative review, approval,
+and merge evidence. The repair loop is limited to three cycles. Entering `blocked` requires complete block evidence, and
+recovery requires explicit human approval to return to the recorded prior state.
+
+[Governed Agent Autonomy Patterns](https://github.com/nnennandukwe/governed-agent-autonomy-patterns) defines the
+complementary controls around an agent run: planning, permission, tool trust, independent verification, and runtime
+accountability. Those inner-loop controls can produce work and evidence; ThreadLoop governs whether a software-delivery
+task may traverse its next outer lifecycle edge. This is an architectural relationship, not a runtime dependency:
+ThreadLoop does not currently ingest BoundaryBench receipts.
+
+### Primary interfaces and outputs
+
+| Interface                                          | Output or state change                                              |
+| -------------------------------------------------- | ------------------------------------------------------------------- |
+| `threadloop session next --session <id> --json`    | A read-only transition candidate, guard failures, and required work |
+| `threadloop session transition <target-state> ...` | An idempotent transition or a structured guard rejection            |
+| `threadloop session gate run <gate-id> ...`        | A current-HEAD gate receipt and digest-bound output artifact        |
+| `threadloop artifact generate <kind> ...`          | A Markdown change brief, PR summary, or handoff artifact            |
+| `.threadloop/state/state.db`                       | Canonical repo-local lifecycle, transition, plan, and receipt state |
 
 ## Current command surfaces
 
