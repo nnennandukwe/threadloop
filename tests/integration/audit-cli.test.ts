@@ -8,7 +8,7 @@ import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
 import { resetSqliteConnections } from '../../src/adapters/fs/sqlite-store.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
-import { exportSessionAudit } from '../../src/services/session-service.js';
+import { exportSessionAudit, transitionSession } from '../../src/services/session-service.js';
 
 const execFileAsync = promisify(execFile);
 const temporaryDirectories: string[] = [];
@@ -347,6 +347,75 @@ describe('audit CLI', { timeout: 20_000 }, () => {
           .prepare(`SELECT COUNT(*) AS count FROM transition_idempotency WHERE idempotency_key = ?`)
           .get('audit:block-after-corruption'),
       ).toEqual({ count: 0 });
+    } finally {
+      state.close();
+    }
+  });
+
+  it('invalidates a cached audit root after another connection changes the ledger', async () => {
+    const fixture = await makeSession();
+    await expect(
+      transitionSession({
+        cwd: fixture.repoDir,
+        sessionId: fixture.sessionId,
+        targetState: 'blocked',
+        expectedStateVersion: 1,
+        idempotencyKey: 'audit:cache-root',
+        actor: 'agent',
+        input: {
+          block: {
+            reason: 'exercise cached audit verification',
+            evidence_ref: 'audit:cache',
+            recovery: 'restore the session',
+            stop_code: 'AUDIT_CACHE_TEST',
+          },
+        },
+      }),
+    ).resolves.toMatchObject({ data: { lifecycle: { state: 'blocked', state_version: 2 } } });
+
+    const dbPath = path.join(fixture.repoDir, '.threadloop/state/state.db');
+    const db = new DatabaseSync(dbPath);
+    try {
+      db.prepare(`DROP TRIGGER audit_events_no_update`).run();
+      db.prepare(`UPDATE audit_events SET event_sha256 = ? WHERE sequence = 1`).run('0'.repeat(64));
+      db.exec(`
+        CREATE TRIGGER audit_events_no_update
+        BEFORE UPDATE ON audit_events
+        BEGIN
+          SELECT RAISE(ABORT, 'audit events are immutable');
+        END
+      `);
+    } finally {
+      db.close();
+    }
+
+    await expect(
+      transitionSession({
+        cwd: fixture.repoDir,
+        sessionId: fixture.sessionId,
+        targetState: 'framed',
+        expectedStateVersion: 2,
+        idempotencyKey: 'audit:cache-root:invalidated',
+        actor: 'agent',
+        input: {
+          recovery: {
+            reason: 'resume after cache test',
+            evidence_ref: 'audit:cache:resolved',
+            approved_by: 'Test User',
+          },
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: 'AUDIT_VERIFICATION_FAILED',
+      details: { audit_error: { code: 'AUDIT_HASH_MISMATCH', sequence: 1 } },
+    });
+
+    const state = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      expect(state.prepare(`SELECT status, state_version FROM tasks`).get()).toEqual({
+        status: 'blocked',
+        state_version: 2,
+      });
     } finally {
       state.close();
     }

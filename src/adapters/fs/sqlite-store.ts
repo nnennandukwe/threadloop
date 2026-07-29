@@ -10,6 +10,7 @@ import {
   type AuditVerificationErrorCode,
   type StoredAuditEvent,
   verifyAuditChain,
+  verifyAuditEventIntegrity,
   ZERO_AUDIT_HASH,
 } from '../../domain/audit.js';
 import {
@@ -69,6 +70,8 @@ const REVIEW_AUDIT_SCHEMA_TRIGGERS = [
   'audit_events_no_delete',
   'audit_events_no_replace',
 ] as const;
+type AuditVerificationCacheEntry = { dataVersion: number; count: number; root: string };
+const auditVerificationCache = new WeakMap<DatabaseSync, Map<string, AuditVerificationCacheEntry>>();
 
 class InvalidJsonError extends Error {}
 
@@ -831,6 +834,7 @@ export async function applySessionTransition(
     const existing = readTransitionIdempotency(db, input.sessionId, input.idempotencyKey);
     if (existing) {
       if (existing.request_sha256 !== input.requestSha256 || existing.request_json !== input.requestJson) {
+        assertAuditChainVerifiedForWrite(db, input.sessionId);
         const priorConflict = readTransitionIdempotencyConflict(
           db,
           input.sessionId,
@@ -873,6 +877,7 @@ export async function applySessionTransition(
         task_id: current.task_id,
       });
     }
+    assertAuditChainVerifiedForWrite(db, input.sessionId);
 
     if (input.expectedStateVersion !== current.state_version) {
       return persistRejectedTransition(
@@ -1076,6 +1081,7 @@ export async function appendGateReceipt(repoRoot: string, input: AppendGateRecei
         `Session ${input.receipt.session_id} proof plan changed while gate ${input.receipt.gate_id} was running.`,
       );
     }
+    assertAuditChainVerifiedForWrite(db, input.receipt.session_id);
 
     const inserted = db
       .prepare(
@@ -1166,6 +1172,7 @@ export async function appendSignedGateReceipt(repoRoot: string, input: AppendSig
         `Session ${artifact.session_id} proof plan changed while signed gate ${artifact.gate.id} was being imported.`,
       );
     }
+    assertAuditChainVerifiedForWrite(db, artifact.session_id);
 
     const inserted = db
       .prepare(
@@ -1269,6 +1276,7 @@ export async function appendSignedReviewReceipt(repoRoot: string, input: AppendS
         `Session ${artifact.session_id} proof plan changed while review evidence was being imported.`,
       );
     }
+    assertAuditChainVerifiedForWrite(db, artifact.session_id);
 
     const inserted = db
       .prepare(
@@ -2641,16 +2649,15 @@ function appendAuditEvent(
     payload: Record<string, unknown>;
   },
 ) {
-  const existing = readAuditEvents(db, input.sessionId);
-  const verification = verifyAuditChain(existing, sha256);
-  if (!verification.valid) {
+  const previous = readAuditTail(db, input.sessionId);
+  const integrity = previous ? verifyAuditEventIntegrity(previous, sha256) : null;
+  if (integrity && !integrity.valid) {
     throw new AuditChainCorruptedError(
-      verification.error?.code ?? 'AUDIT_HASH_MISMATCH',
-      `Session ${input.sessionId} audit chain is corrupt at sequence ${verification.error?.sequence ?? 'root'}.`,
-      verification.error?.sequence,
+      integrity.error?.code ?? 'AUDIT_HASH_MISMATCH',
+      `Session ${input.sessionId} audit tail is corrupt at sequence ${previous?.value.sequence ?? 'root'}.`,
+      previous?.value.sequence,
     );
   }
-  const previous = existing.at(-1);
   const event = createAuditEvent(
     {
       id: createId('audit'),
@@ -2682,7 +2689,81 @@ function appendAuditEvent(
     event.sha256,
     event.value.recorded_at,
   );
+  cacheVerifiedAuditRoot(db, input.sessionId, event);
   return event;
+}
+
+function assertAuditChainVerifiedForWrite(db: DatabaseSync, sessionId: string) {
+  const dataVersion = readDatabaseDataVersion(db);
+  const cache = auditVerificationCache.get(db)?.get(sessionId);
+  if (cache?.dataVersion === dataVersion) {
+    const tail = readAuditTail(db, sessionId);
+    const integrity = tail ? verifyAuditEventIntegrity(tail, sha256) : null;
+    if (tail && integrity?.valid && tail.value.sequence === cache.count && tail.sha256 === cache.root) {
+      return;
+    }
+  }
+
+  const events = readAuditEvents(db, sessionId);
+  if (events.length === 0) {
+    throw new AuditChainCorruptedError(
+      'AUDIT_SEQUENCE_MISMATCH',
+      `Session ${sessionId} audit chain has no genesis event.`,
+      1,
+    );
+  }
+  const verification = verifyAuditChain(events, sha256);
+  if (!verification.valid) {
+    throw new AuditChainCorruptedError(
+      verification.error?.code ?? 'AUDIT_HASH_MISMATCH',
+      `Session ${sessionId} audit chain is corrupt at sequence ${verification.error?.sequence ?? 'root'}.`,
+      verification.error?.sequence,
+    );
+  }
+  setAuditVerificationCache(db, sessionId, {
+    dataVersion,
+    count: verification.count,
+    root: verification.root,
+  });
+}
+
+function cacheVerifiedAuditRoot(db: DatabaseSync, sessionId: string, event: StoredAuditEvent) {
+  setAuditVerificationCache(db, sessionId, {
+    dataVersion: readDatabaseDataVersion(db),
+    count: event.value.sequence,
+    root: event.sha256,
+  });
+}
+
+function setAuditVerificationCache(db: DatabaseSync, sessionId: string, entry: AuditVerificationCacheEntry) {
+  const cacheBySession = auditVerificationCache.get(db) ?? new Map<string, AuditVerificationCacheEntry>();
+  cacheBySession.set(sessionId, entry);
+  auditVerificationCache.set(db, cacheBySession);
+}
+
+function readDatabaseDataVersion(db: DatabaseSync) {
+  const row = db.prepare(`PRAGMA data_version`).get() as { data_version?: unknown };
+  if (!Number.isSafeInteger(row.data_version)) {
+    throw new Error('ThreadLoop could not read the SQLite data version.');
+  }
+  return row.data_version as number;
+}
+
+function readAuditTail(db: DatabaseSync, sessionId: string) {
+  const row = db
+    .prepare(
+      `
+        SELECT
+          id, session_id, sequence, event_type, state_version, previous_sha256,
+          event_json, event_sha256, recorded_at
+        FROM audit_events
+        WHERE session_id = ?
+        ORDER BY sequence DESC
+        LIMIT 1
+      `,
+    )
+    .get(sessionId) as AuditEventRow | undefined;
+  return row ? storedAuditEventFromRow(row, sessionId) : null;
 }
 
 function readAuditEvents(db: DatabaseSync, sessionId: string): StoredAuditEvent[] {
@@ -2698,34 +2779,36 @@ function readAuditEvents(db: DatabaseSync, sessionId: string): StoredAuditEvent[
       `,
     )
     .all(sessionId) as AuditEventRow[];
-  return rows.map((row) => {
-    let value: StoredAuditEvent['value'];
-    try {
-      value = parseJsonText<StoredAuditEvent['value']>(row.event_json, INVALID_STATE_DB_ERROR);
-    } catch {
-      throw new AuditChainCorruptedError(
-        'AUDIT_CANONICALIZATION_MISMATCH',
-        `Session ${sessionId} audit row ${row.sequence} does not contain a valid canonical event.`,
-        row.sequence,
-      );
-    }
-    if (
-      value.id !== row.id ||
-      value.session_id !== row.session_id ||
-      value.sequence !== row.sequence ||
-      value.event_type !== row.event_type ||
-      value.state_version !== row.state_version ||
-      value.previous_sha256 !== row.previous_sha256 ||
-      value.recorded_at !== row.recorded_at
-    ) {
-      throw new AuditChainCorruptedError(
-        'AUDIT_CANONICALIZATION_MISMATCH',
-        `Session ${sessionId} audit row ${row.sequence} does not match its canonical event.`,
-        row.sequence,
-      );
-    }
-    return { value, json: row.event_json, sha256: row.event_sha256 };
-  });
+  return rows.map((row) => storedAuditEventFromRow(row, sessionId));
+}
+
+function storedAuditEventFromRow(row: AuditEventRow, sessionId: string): StoredAuditEvent {
+  let value: StoredAuditEvent['value'];
+  try {
+    value = parseJsonText<StoredAuditEvent['value']>(row.event_json, INVALID_STATE_DB_ERROR);
+  } catch {
+    throw new AuditChainCorruptedError(
+      'AUDIT_CANONICALIZATION_MISMATCH',
+      `Session ${sessionId} audit row ${row.sequence} does not contain a valid canonical event.`,
+      row.sequence,
+    );
+  }
+  if (
+    value.id !== row.id ||
+    value.session_id !== row.session_id ||
+    value.sequence !== row.sequence ||
+    value.event_type !== row.event_type ||
+    value.state_version !== row.state_version ||
+    value.previous_sha256 !== row.previous_sha256 ||
+    value.recorded_at !== row.recorded_at
+  ) {
+    throw new AuditChainCorruptedError(
+      'AUDIT_CANONICALIZATION_MISMATCH',
+      `Session ${sessionId} audit row ${row.sequence} does not match its canonical event.`,
+      row.sequence,
+    );
+  }
+  return { value, json: row.event_json, sha256: row.event_sha256 };
 }
 
 function detectTransitionStateCorruption(db: DatabaseSync, current: TransitionSessionRow) {

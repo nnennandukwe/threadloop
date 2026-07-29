@@ -58,6 +58,13 @@ export interface AuditVerification {
   error: { code: AuditVerificationErrorCode; sequence?: number } | null;
 }
 
+export interface AuditEventIntegrityVerification {
+  valid: boolean;
+  error: {
+    code: Extract<AuditVerificationErrorCode, 'AUDIT_CANONICALIZATION_MISMATCH' | 'AUDIT_HASH_MISMATCH'>;
+  } | null;
+}
+
 export function createAuditEvent(input: CreateAuditEventInput, digest: ProofDigest): StoredAuditEvent {
   if (!Number.isSafeInteger(input.sequence) || input.sequence < 1) {
     throw new Error('Audit event sequence must be a positive safe integer.');
@@ -95,12 +102,9 @@ export function verifyAuditChain(
     if (event.value.previous_sha256 !== previous) {
       return invalid(events, previous, 'AUDIT_LINK_MISMATCH', sequence);
     }
-    const canonical = canonicalJson(event.value);
-    if (event.json !== canonical) {
-      return invalid(events, previous, 'AUDIT_CANONICALIZATION_MISMATCH', sequence);
-    }
-    if (event.sha256 !== digest(event.json)) {
-      return invalid(events, previous, 'AUDIT_HASH_MISMATCH', sequence);
+    const integrity = verifyAuditEventIntegrity(event, digest);
+    if (!integrity.valid && integrity.error) {
+      return invalid(events, previous, integrity.error.code, sequence);
     }
     previous = event.sha256;
   }
@@ -113,6 +117,19 @@ export function verifyAuditChain(
     };
   }
   return { valid: true, count: events.length, root: previous, error: null };
+}
+
+export function verifyAuditEventIntegrity(
+  event: StoredAuditEvent,
+  digest: ProofDigest,
+): AuditEventIntegrityVerification {
+  if (event.json !== canonicalJson(event.value)) {
+    return { valid: false, error: { code: 'AUDIT_CANONICALIZATION_MISMATCH' } };
+  }
+  if (event.sha256 !== digest(event.json)) {
+    return { valid: false, error: { code: 'AUDIT_HASH_MISMATCH' } };
+  }
+  return { valid: true, error: null };
 }
 
 function invalid(

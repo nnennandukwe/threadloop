@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
-import { createAuditEvent, verifyAuditChain, ZERO_AUDIT_HASH } from '../../src/domain/audit.js';
+import {
+  createAuditEvent,
+  verifyAuditChain,
+  verifyAuditEventIntegrity,
+  ZERO_AUDIT_HASH,
+} from '../../src/domain/audit.js';
 
 describe('audit hash chain', () => {
   it('hash-links canonical events and reports the final root', () => {
@@ -116,6 +121,32 @@ describe('audit hash chain', () => {
     expect(verifyAuditChain([first, { ...second, sha256: 'f'.repeat(64) }], sha256)).toMatchObject({
       valid: false,
       error: { code: 'AUDIT_HASH_MISMATCH', sequence: 2 },
+    });
+  });
+
+  it('validates one audit tail without requiring its full prefix', () => {
+    const tail = createAuditEvent(
+      {
+        id: 'audit_42',
+        sessionId: 'session_1',
+        sequence: 42,
+        eventType: 'guard_decision',
+        recordedAt: '2026-07-26T12:01:00.000Z',
+        stateVersion: 14,
+        previousSha256: 'a'.repeat(64),
+        payload: { allowed: true },
+      },
+      sha256,
+    );
+
+    expect(verifyAuditEventIntegrity(tail, sha256)).toEqual({ valid: true, error: null });
+    expect(verifyAuditEventIntegrity({ ...tail, json: `${tail.json} ` }, sha256)).toEqual({
+      valid: false,
+      error: { code: 'AUDIT_CANONICALIZATION_MISMATCH' },
+    });
+    expect(verifyAuditEventIntegrity({ ...tail, sha256: 'f'.repeat(64) }, sha256)).toEqual({
+      valid: false,
+      error: { code: 'AUDIT_HASH_MISMATCH' },
     });
   });
 });
