@@ -29,8 +29,9 @@ Semantic vs mechanical operations:
 diff stats, and commit range.
 
 On a schema-v7 repository, `audit show` and `audit verify` are storage-read-only and never apply a lifecycle transition.
-On an older repository, their first migration-aware call may append the honest `audit_activated` event that begins
-forward-only coverage. Run migration-aware audit inspection in a writable checkout.
+On a repository older than schema v6, their first migration-aware call may append the honest `audit_activated` event
+that begins forward-only coverage. A schema-v6 repository instead stops with `SESSION_SCHEMA_MIGRATION_REQUIRED`; run
+`threadloop init` explicitly in a writable checkout before retrying audit inspection.
 
 ## Recommended orchestrator flow
 

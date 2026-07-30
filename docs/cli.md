@@ -198,7 +198,9 @@ canonical JSON, event hashes, and an optional retained root. `export` verifies f
 JSONL without overwriting an existing path. The export records are shaped as `{"event":{...},"event_sha256":"..."}`.
 
 On schema v6 or v7, `show` and `verify` do not apply lifecycle transitions. Run `threadloop init` explicitly to migrate
-schema v6 to v7; migrated sessions retain their existing forward-only audit coverage and repair counts.
+schema v6 to v7; migrated sessions retain their existing forward-only audit coverage and repair counts. The migration is
+one-way: pre-v7 binaries reject schema v7, and ThreadLoop has no downgrade command. Before migration, stop other
+ThreadLoop processes and retain a backup of `.threadloop/state/` if binary rollback may be required.
 
 Local verification detects mutation; an externally retained `--root`, prior handoff, or prior export root is required to
 detect tail truncation. See [Audit export and OpenTelemetry](observability.md) for the supported JSONL `filelog` recipe
@@ -286,7 +288,7 @@ SQLite schema v7 stores transition/idempotency records, one immutable proof plan
 signed gate, and signed review receipts, plus a hash-linked append-only audit ledger. New sessions begin with
 `session_started`; migrated sessions begin honest forward-only coverage with `audit_activated`. Migration is atomic,
 schema metadata accepts canonical unsigned decimal text only, and persistent triggers reject update, delete, or
-replacement of immutable evidence.
+replacement of immutable evidence. Schema v6 to v7 migration is one-way; pre-v7 binaries reject the resulting database.
 
 Recommended default:
 

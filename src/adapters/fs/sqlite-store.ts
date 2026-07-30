@@ -47,7 +47,8 @@ import type { ThreadloopErrorCode } from '../../contracts/errors.js';
 import { threadloopPaths } from './repo.js';
 import { DatabaseSync } from './sqlite-driver.js';
 
-const CURRENT_SCHEMA_VERSION = 7;
+export const CURRENT_SCHEMA_VERSION = 7;
+export const EXPLICIT_INIT_MIGRATION_MIN_SCHEMA_VERSION = 6;
 const INVALID_CONFIG_ERROR = 'Invalid .threadloop/config.json';
 const INVALID_STATE_JSON_ERROR = 'Invalid .threadloop/state/state.json';
 const INVALID_STATE_DB_ERROR = 'Invalid .threadloop/state/state.db';
@@ -56,6 +57,12 @@ const TRANSITION_SCHEMA_TRIGGERS = [
   'session_transitions_no_update',
   'session_transitions_no_delete',
   'session_transitions_no_replace',
+  'transition_idempotency_no_update',
+  'transition_idempotency_no_delete',
+  'transition_idempotency_no_replace',
+  'transition_idempotency_conflicts_no_update',
+  'transition_idempotency_conflicts_no_delete',
+  'transition_idempotency_conflicts_no_replace',
 ] as const;
 const PROOF_SCHEMA_TRIGGERS = [
   'proof_plans_no_update',
@@ -163,6 +170,31 @@ type TransitionIdempotencyRow = {
   request_json: string;
   request_sha256: string;
   result_json: string;
+};
+
+type SessionTransitionHistoryEntry = {
+  id: string;
+  from_state: TaskStatus;
+  to_state: TaskStatus;
+  from_state_version: number;
+  to_state_version: number;
+  actor: Entry['source'];
+  input: Record<string, unknown>;
+  created_at: string;
+};
+
+type SessionTransitionAuthorityRow = {
+  id: string;
+  session_id: string;
+  task_id: string;
+  from_state: string;
+  to_state: string;
+  from_state_version: number;
+  to_state_version: number;
+  actor: Entry['source'];
+  input_json: string;
+  request_sha256: string;
+  created_at: string;
 };
 
 type ProofPlanRow = {
@@ -656,6 +688,12 @@ export function inspectAuditLedgerReadOnly(repoRoot: string) {
   }
   const db = openReadDatabase(repoRoot);
   try {
+    if (!tableExists(db, 'metadata')) {
+      return {
+        available: false,
+        schemaVersion: null,
+      };
+    }
     const schemaVersion = readDatabaseSchemaVersion(db);
     return {
       available: schemaVersion >= 6 && tableExists(db, 'audit_events'),
@@ -671,7 +709,7 @@ export function readSessionTransitionHistoryReadOnly(repoRoot: string, sessionId
   try {
     if (readDatabaseSchemaVersion(db) >= 7) {
       assertTransitionSchemaShape(db, true);
-      assertSessionTransitionHistoryAuthority(db, sessionId);
+      return assertSessionTransitionHistoryAuthority(db, sessionId).history;
     }
     return readSessionTransitionHistory(db, sessionId);
   } finally {
@@ -679,41 +717,35 @@ export function readSessionTransitionHistoryReadOnly(repoRoot: string, sessionId
   }
 }
 
-function readSessionTransitionHistory(db: DatabaseSync, sessionId: string) {
+function readSessionTransitionHistory(db: DatabaseSync, sessionId: string): SessionTransitionHistoryEntry[] {
   if (!tableExists(db, 'session_transitions')) {
     return [];
   }
-  const rows = db
-    .prepare(
-      `
-        SELECT
-          id, from_state, to_state, from_state_version, to_state_version,
-          actor, input_json, created_at
-        FROM session_transitions
-        WHERE session_id = ?
-        ORDER BY to_state_version, rowid
-      `,
-    )
-    .all(sessionId) as Array<{
-    id: string;
-    from_state: TaskStatus;
-    to_state: TaskStatus;
-    from_state_version: number;
-    to_state_version: number;
-    actor: Entry['source'];
-    input_json: string;
-    created_at: string;
-  }>;
-  return rows.map((row) => ({
+  return readSessionTransitionAuthorityRows(db, sessionId).map((row) => ({
     id: row.id,
-    from_state: row.from_state,
-    to_state: row.to_state,
+    from_state: row.from_state as TaskStatus,
+    to_state: row.to_state as TaskStatus,
     from_state_version: row.from_state_version,
     to_state_version: row.to_state_version,
     actor: row.actor,
     input: parseJsonText<Record<string, unknown>>(row.input_json, INVALID_STATE_DB_ERROR),
     created_at: row.created_at,
   }));
+}
+
+function readSessionTransitionAuthorityRows(db: DatabaseSync, sessionId: string) {
+  return db
+    .prepare(
+      `
+        SELECT
+          id, session_id, task_id, from_state, to_state, from_state_version, to_state_version,
+          actor, input_json, request_sha256, created_at
+        FROM session_transitions
+        WHERE session_id = ?
+        ORDER BY to_state_version, rowid
+      `,
+    )
+    .all(sessionId) as SessionTransitionAuthorityRow[];
 }
 
 function assertAllSessionTransitionHistoryAuthority(db: DatabaseSync) {
@@ -725,32 +757,13 @@ function assertAllSessionTransitionHistoryAuthority(db: DatabaseSync) {
 
 function assertSessionTransitionHistoryAuthority(db: DatabaseSync, sessionId: string) {
   if (!tableExists(db, 'audit_events')) {
-    return;
+    return {
+      history: readSessionTransitionHistory(db, sessionId),
+      genesisState: null,
+    };
   }
-  const rows = db
-    .prepare(
-      `
-        SELECT
-          id, session_id, task_id, from_state, to_state, from_state_version, to_state_version,
-          actor, input_json, request_sha256, created_at
-        FROM session_transitions
-        WHERE session_id = ?
-        ORDER BY to_state_version, rowid
-      `,
-    )
-    .all(sessionId) as Array<{
-    id: string;
-    session_id: string;
-    task_id: string;
-    from_state: string;
-    to_state: string;
-    from_state_version: number;
-    to_state_version: number;
-    actor: Entry['source'];
-    input_json: string;
-    request_sha256: string;
-    created_at: string;
-  }>;
+  const rows = readSessionTransitionAuthorityRows(db, sessionId);
+  const history: SessionTransitionHistoryEntry[] = [];
 
   let previous: (typeof rows)[number] | null = null;
   for (const row of rows) {
@@ -780,6 +793,16 @@ function assertSessionTransitionHistoryAuthority(db: DatabaseSync, sessionId: st
     if (request.requestSha256 !== row.request_sha256 || JSON.stringify(request.canonicalInput) !== row.input_json) {
       throw invalidTransitionHistory(sessionId, `transition ${row.id} request binding is invalid`);
     }
+    history.push({
+      id: row.id,
+      from_state: row.from_state,
+      to_state: row.to_state,
+      from_state_version: row.from_state_version,
+      to_state_version: row.to_state_version,
+      actor: row.actor,
+      input: request.canonicalInput,
+      created_at: row.created_at,
+    });
     previous = row;
   }
 
@@ -841,6 +864,7 @@ function assertSessionTransitionHistoryAuthority(db: DatabaseSync, sessionId: st
   ) {
     throw invalidTransitionHistory(sessionId, 'legacy transition history does not match the audit activation state');
   }
+  return { history, genesisState };
 }
 
 function readSessionAuditGenesis(db: DatabaseSync, sessionId: string) {
@@ -969,7 +993,10 @@ export function readSessionLifecycleReadOnly(repoRoot: string, sessionId: string
     if (corruption) {
       throw new Error(corruption);
     }
-    const auditGenesisState = version >= 6 ? readSessionAuditGenesis(db, sessionId).genesisState : null;
+    const authority = version >= 7 ? assertSessionTransitionHistoryAuthority(db, sessionId) : null;
+    const transitionHistory = authority?.history ?? (version >= 3 ? readSessionTransitionHistory(db, sessionId) : []);
+    const auditGenesisState =
+      authority?.genesisState ?? (version >= 6 ? readSessionAuditGenesis(db, sessionId).genesisState : null);
 
     return {
       taskId: current.task_id,
@@ -980,6 +1007,7 @@ export function readSessionLifecycleReadOnly(repoRoot: string, sessionId: string
       endedAt: current.ended_at,
       schemaVersion: version,
       auditGenesisState,
+      transitionHistory,
     };
   } finally {
     db.close();
@@ -1037,8 +1065,8 @@ export async function applySessionTransition(
   return withWriteTransaction(repoRoot, (db) => {
     const existing = readTransitionIdempotency(db, input.sessionId, input.idempotencyKey);
     if (existing) {
+      assertSessionTransitionHistoryAuthority(db, input.sessionId);
       if (existing.request_sha256 !== input.requestSha256 || existing.request_json !== input.requestJson) {
-        assertSessionTransitionHistoryAuthority(db, input.sessionId);
         const priorConflict = readTransitionIdempotencyConflict(
           db,
           input.sessionId,
@@ -1081,11 +1109,8 @@ export async function applySessionTransition(
         task_id: current.task_id,
       });
     }
-    assertSessionTransitionHistoryAuthority(db, input.sessionId);
-    const phase = deriveLifecyclePhase(
-      readSessionTransitionHistory(db, input.sessionId),
-      readSessionAuditGenesis(db, input.sessionId).genesisState,
-    );
+    const authority = assertSessionTransitionHistoryAuthority(db, input.sessionId);
+    const phase = deriveLifecyclePhase(authority.history, authority.genesisState);
 
     if (input.expectedStateVersion !== current.state_version) {
       return persistRejectedTransition(
@@ -2145,6 +2170,57 @@ function bootstrapDatabase(db: DatabaseSync) {
     )
     BEGIN
       SELECT RAISE(ABORT, 'session transitions are immutable');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS transition_idempotency_no_update
+    BEFORE UPDATE ON transition_idempotency
+    BEGIN
+      SELECT RAISE(ABORT, 'transition idempotency records are immutable');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS transition_idempotency_no_delete
+    BEFORE DELETE ON transition_idempotency
+    BEGIN
+      SELECT RAISE(ABORT, 'transition idempotency records are immutable');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS transition_idempotency_no_replace
+    BEFORE INSERT ON transition_idempotency
+    WHEN EXISTS (
+      SELECT 1 FROM transition_idempotency
+      WHERE session_id = NEW.session_id AND idempotency_key = NEW.idempotency_key
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'transition idempotency records are immutable');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS transition_idempotency_conflicts_no_update
+    BEFORE UPDATE ON transition_idempotency_conflicts
+    BEGIN
+      SELECT RAISE(ABORT, 'transition idempotency conflict records are immutable');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS transition_idempotency_conflicts_no_delete
+    BEFORE DELETE ON transition_idempotency_conflicts
+    BEGIN
+      SELECT RAISE(ABORT, 'transition idempotency conflict records are immutable');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS transition_idempotency_conflicts_no_replace
+    BEFORE INSERT ON transition_idempotency_conflicts
+    WHEN EXISTS (
+      SELECT 1 FROM transition_idempotency_conflicts
+      WHERE
+        id = NEW.id
+        OR (
+          session_id = NEW.session_id
+          AND idempotency_key = NEW.idempotency_key
+          AND request_sha256 = NEW.request_sha256
+          AND request_json = NEW.request_json
+        )
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'transition idempotency conflict records are immutable');
     END;
 
     CREATE TRIGGER IF NOT EXISTS proof_plans_no_update

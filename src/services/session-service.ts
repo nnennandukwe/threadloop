@@ -6,9 +6,11 @@ import {
   appendEntryToSession,
   appendGateReceipt,
   applySessionTransition,
+  CURRENT_SCHEMA_VERSION,
   createId,
   ensureStateDatabase,
   ensureThreadloopLayout,
+  EXPLICIT_INIT_MIGRATION_MIN_SCHEMA_VERSION,
   hasSessionTransitionIdempotencyReadOnly,
   inspectAuditLedgerReadOnly,
   insertTaskSession,
@@ -331,11 +333,9 @@ export async function transitionSession(input: TransitionSessionInput) {
     let boundProofPlan: BoundProofPlan | undefined;
     let proofGuardContext: ProofGuardContext = {};
     let preparedProofGuardRejection: TransitionGuardDecision | undefined;
+    const transitionHistory = lifecycle?.transitionHistory ?? [];
     const phase = lifecycle
-      ? deriveLifecyclePhase(
-          readSessionTransitionHistoryReadOnly(repoRoot, input.sessionId),
-          lifecycle.auditGenesisState,
-        )
+      ? deriveLifecyclePhase(transitionHistory, lifecycle.auditGenesisState)
       : LIFECYCLE_PHASE.PRE_PR;
     if (
       lifecycle?.state === TASK_STATUS.FRAMED &&
@@ -370,7 +370,7 @@ export async function transitionSession(input: TransitionSessionInput) {
       } else {
         const repository = await observeProofRepository(repoRoot);
         const proofState = await evaluateSessionProof(repoRoot, input.sessionId, repository.headSha);
-        proofGuardContext = await buildProofGuardContext(repoRoot, input.sessionId, proofState, repository, phase);
+        proofGuardContext = await buildProofGuardContext(repoRoot, proofState, repository, phase, transitionHistory);
       }
     } else if (
       lifecycle &&
@@ -379,7 +379,7 @@ export async function transitionSession(input: TransitionSessionInput) {
     ) {
       const repository = await observeProofRepository(repoRoot);
       const proofState = await evaluateSessionProof(repoRoot, input.sessionId, repository.headSha);
-      proofGuardContext = await buildProofGuardContext(repoRoot, input.sessionId, proofState, repository, phase);
+      proofGuardContext = await buildProofGuardContext(repoRoot, proofState, repository, phase, transitionHistory);
     }
     return await applySessionTransition(
       repoRoot,
@@ -1137,31 +1137,16 @@ export async function getNextSessionAction(input: NextSessionInput) {
     });
   }
 
-  let lifecycleHistory: ReturnType<typeof readSessionTransitionHistoryReadOnly>;
-  try {
-    lifecycleHistory =
-      lifecycle.schemaVersion >= 3 ? readSessionTransitionHistoryReadOnly(repoRoot, input.sessionId) : [];
-  } catch (error) {
-    if (error instanceof AuditChainCorruptedError) {
-      throw mapAuditChainCorruption(input.sessionId, error);
-    }
-    throw new ThreadloopError('STATE_CORRUPTED', error instanceof Error ? error.message : String(error), {
-      cause: error,
-      details: {
-        session_id: input.sessionId,
-        hint: 'Restore transition history from trusted storage before retrying session next.',
-      },
-    });
-  }
+  const lifecycleHistory = lifecycle.transitionHistory;
   const phase = deriveLifecyclePhase(lifecycleHistory, lifecycle.auditGenesisState);
-  const lifecycleMigrationRequired = lifecycle.schemaVersion < 7;
+  const lifecycleMigrationRequired = lifecycle.schemaVersion < CURRENT_SCHEMA_VERSION;
   const proofState =
     !lifecycleMigrationRequired && lifecycle.schemaVersion >= 4
       ? await evaluateSessionProof(repoRoot, lifecycle.sessionId, proofRepository?.headSha ?? repository.headSha)
       : null;
   const proofGuardContext =
     proofState && proofRepository
-      ? await buildProofGuardContext(repoRoot, input.sessionId, proofState, proofRepository, phase)
+      ? await buildProofGuardContext(repoRoot, proofState, proofRepository, phase, lifecycleHistory)
       : undefined;
   const audit = projectSessionAuditReadOnly(repoRoot, input.sessionId, lifecycle.schemaVersion);
   const planned = lifecycleMigrationRequired
@@ -1340,7 +1325,7 @@ function projectPrePrReview(
       transition.to_state === TASK_STATUS.IMPLEMENTING &&
       (transition.from_state === TASK_STATUS.VERIFYING || transition.from_state === TASK_STATUS.PRE_PR_REVIEWING),
   ).length;
-  if (schemaVersion < 7) {
+  if (schemaVersion < CURRENT_SCHEMA_VERSION) {
     return {
       status: 'migration_required' as const,
       head_sha: null,
@@ -1588,13 +1573,12 @@ function emptySessionReviewEvidence(status: ReviewEvidence['status']): ReviewEvi
 
 async function buildProofGuardContext(
   repoRoot: string,
-  sessionId: string,
   proofState: Awaited<ReturnType<typeof evaluateSessionProof>>,
   repository: Awaited<ReturnType<typeof observeProofRepository>>,
   phase: LifecyclePhase,
+  transitionHistory: ReturnType<typeof readSessionTransitionHistoryReadOnly>,
 ): Promise<ProofGuardContext> {
   const plan = proofState.plan;
-  const transitionHistory = readSessionTransitionHistoryReadOnly(repoRoot, sessionId);
   const latestFailure = [...proofState.receipts]
     .sort((left, right) => right.sequence - left.sequence)
     .find((receipt) => receipt.result !== 'passed');
@@ -1957,10 +1941,14 @@ async function assertInitialized(repoRoot: string) {
 
 function assertSchemaDoesNotRequireExplicitMigration(repoRoot: string) {
   const { schemaVersion } = inspectAuditLedgerReadOnly(repoRoot);
-  if (schemaVersion === 6) {
+  if (
+    schemaVersion !== null &&
+    schemaVersion >= EXPLICIT_INIT_MIGRATION_MIN_SCHEMA_VERSION &&
+    schemaVersion < CURRENT_SCHEMA_VERSION
+  ) {
     throw new ThreadloopError(
       'SESSION_SCHEMA_MIGRATION_REQUIRED',
-      'ThreadLoop schema v6 requires explicit migration before this command can run.',
+      `ThreadLoop schema v${schemaVersion} requires explicit migration before this command can run.`,
       {
         details: {
           storage_schema_version: schemaVersion,
@@ -1969,7 +1957,7 @@ function assertSchemaDoesNotRequireExplicitMigration(repoRoot: string) {
       },
     );
   }
-  if (schemaVersion !== null && schemaVersion > 7) {
+  if (schemaVersion !== null && schemaVersion > CURRENT_SCHEMA_VERSION) {
     throw new ThreadloopError('STATE_CORRUPTED', `Unsupported ThreadLoop schema version: ${schemaVersion}`, {
       details: {
         storage_schema_version: schemaVersion,

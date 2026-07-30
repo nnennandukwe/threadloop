@@ -248,13 +248,30 @@ describe('schema v7 lifecycle and audit persistence', { timeout: 20_000 }, () =>
       expect(
         db
           .prepare(
-            `SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'session_transitions_no_%' ORDER BY name`,
+            `
+              SELECT name
+              FROM sqlite_master
+              WHERE
+                type = 'trigger'
+                AND (
+                  name LIKE 'session_transitions_no_%'
+                  OR name LIKE 'transition_idempotency_no_%'
+                  OR name LIKE 'transition_idempotency_conflicts_no_%'
+                )
+              ORDER BY name
+            `,
           )
           .all(),
       ).toEqual([
         { name: 'session_transitions_no_delete' },
         { name: 'session_transitions_no_replace' },
         { name: 'session_transitions_no_update' },
+        { name: 'transition_idempotency_conflicts_no_delete' },
+        { name: 'transition_idempotency_conflicts_no_replace' },
+        { name: 'transition_idempotency_conflicts_no_update' },
+        { name: 'transition_idempotency_no_delete' },
+        { name: 'transition_idempotency_no_replace' },
+        { name: 'transition_idempotency_no_update' },
       ]);
       expect(
         db
@@ -277,6 +294,36 @@ describe('schema v7 lifecycle and audit persistence', { timeout: 20_000 }, () =>
       });
     } finally {
       db.close();
+    }
+  });
+
+  it('bootstraps a metadata-less state database before enforcing migration policy', async () => {
+    const repoDir = await makeRepo();
+    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
+    new DatabaseSync(dbPath).close();
+
+    const started = parseJson<{ data: { session_id: string } }>(
+      (
+        await runCli(repoDir, [
+          'session',
+          'start',
+          'Recovered bootstrap',
+          '--goal',
+          'Restore a state database that has no committed schema metadata',
+          '--json',
+        ])
+      ).stdout,
+    );
+    expect(started.data.session_id).toMatch(/^session_/);
+
+    const recovered = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      expect(recovered.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({
+        value: '7',
+      });
+      expect(recovered.prepare(`SELECT COUNT(*) AS count FROM sessions`).get()).toEqual({ count: 1 });
+    } finally {
+      recovered.close();
     }
   });
 
@@ -614,7 +661,7 @@ describe('schema v7 lifecycle and audit persistence', { timeout: 20_000 }, () =>
     }
   });
 
-  it('makes applied transition history immutable in schema v7', async () => {
+  it('makes applied transition and idempotency history immutable in schema v7', async () => {
     const repoDir = await makeRepo();
     const started = parseJson<{ data: { session_id: string } }>(
       (await runCli(repoDir, ['session', 'start', 'Immutable history', '--goal', 'Protect lifecycle phase', '--json']))
@@ -636,6 +683,23 @@ describe('schema v7 lifecycle and audit persistence', { timeout: 20_000 }, () =>
       '{}',
       '--json',
     ]);
+    const conflict = await runCliFailure(repoDir, [
+      'session',
+      'transition',
+      'proof_ready',
+      '--session',
+      started.data.session_id,
+      '--expected-state-version',
+      '1',
+      '--idempotency-key',
+      'immutability:framed',
+      '--actor',
+      'agent',
+      '--input',
+      '{}',
+      '--json',
+    ]);
+    expect(parseJson<{ error: { code: string } }>(conflict.stderr).error.code).toBe('IDEMPOTENCY_CONFLICT');
     await resetSqliteConnections(repoDir);
 
     const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'));
@@ -658,6 +722,42 @@ describe('schema v7 lifecycle and audit persistence', { timeout: 20_000 }, () =>
           )
           .run(started.data.session_id),
       ).toThrow('session transitions are immutable');
+      expect(() =>
+        db
+          .prepare(`UPDATE transition_idempotency SET result_json = '{}' WHERE session_id = ?`)
+          .run(started.data.session_id),
+      ).toThrow('transition idempotency records are immutable');
+      expect(() =>
+        db.prepare(`DELETE FROM transition_idempotency WHERE session_id = ?`).run(started.data.session_id),
+      ).toThrow('transition idempotency records are immutable');
+      expect(() =>
+        db
+          .prepare(
+            `
+              INSERT OR REPLACE INTO transition_idempotency
+              SELECT * FROM transition_idempotency WHERE session_id = ?
+            `,
+          )
+          .run(started.data.session_id),
+      ).toThrow('transition idempotency records are immutable');
+      expect(() =>
+        db
+          .prepare(`UPDATE transition_idempotency_conflicts SET result_json = '{}' WHERE session_id = ?`)
+          .run(started.data.session_id),
+      ).toThrow('transition idempotency conflict records are immutable');
+      expect(() =>
+        db.prepare(`DELETE FROM transition_idempotency_conflicts WHERE session_id = ?`).run(started.data.session_id),
+      ).toThrow('transition idempotency conflict records are immutable');
+      expect(() =>
+        db
+          .prepare(
+            `
+              INSERT OR REPLACE INTO transition_idempotency_conflicts
+              SELECT * FROM transition_idempotency_conflicts WHERE session_id = ?
+            `,
+          )
+          .run(started.data.session_id),
+      ).toThrow('transition idempotency conflict records are immutable');
       expect(
         db.prepare(`SELECT from_state, to_state, from_state_version, to_state_version FROM session_transitions`).all(),
       ).toEqual([
@@ -668,6 +768,8 @@ describe('schema v7 lifecycle and audit persistence', { timeout: 20_000 }, () =>
           to_state_version: 1,
         },
       ]);
+      expect(db.prepare(`SELECT COUNT(*) AS count FROM transition_idempotency`).get()).toEqual({ count: 1 });
+      expect(db.prepare(`SELECT COUNT(*) AS count FROM transition_idempotency_conflicts`).get()).toEqual({ count: 1 });
     } finally {
       db.close();
     }
@@ -738,6 +840,28 @@ describe('schema v7 lifecycle and audit persistence', { timeout: 20_000 }, () =>
     const parsedFailure = parseJson<{ error: { code: string; message: string } }>(failure.stderr);
     expect(parsedFailure.error.code).toBe('STATE_CORRUPTED');
     expect(parsedFailure.error.message).toContain('Invalid session transition history');
+    const replayFailure = parseJson<{ error: { code: string; message: string } }>(
+      (
+        await runCliFailure(repoDir, [
+          'session',
+          'transition',
+          'framed',
+          '--session',
+          started.data.session_id,
+          '--expected-state-version',
+          '0',
+          '--idempotency-key',
+          'corrupt-history:framed',
+          '--actor',
+          'agent',
+          '--input',
+          '{}',
+          '--json',
+        ])
+      ).stderr,
+    );
+    expect(replayFailure.error.code).toBe('STATE_CORRUPTED');
+    expect(replayFailure.error.message).toContain('Invalid session transition history');
 
     const unchanged = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
     try {
