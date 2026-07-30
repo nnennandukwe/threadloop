@@ -1,7 +1,10 @@
 ---
 name: threadloop-runner
 description:
-  Run one fail-closed ThreadLoop v4 action for an explicitly identified scheduled wake in a dedicated Git worktree.
+  Run one fail-closed ThreadLoop v4 action for an explicitly identified scheduled wake in a dedicated Git worktree. Use
+  when a scheduler delivers an explicit repo_root, session_id, wake_id, and mode and exactly one serialized wake must
+  run - to run a scheduler wake, advance or step a ThreadLoop session, apply one ThreadLoop lifecycle transition, run
+  one ThreadLoop gate, or execute one queued ThreadLoop task in its own worktree.
 ---
 
 # ThreadLoop Runner
@@ -36,30 +39,8 @@ select a fixture, package, sensor, or evidence source. Mode does not change life
 ## Scheduler-retained wake record
 
 Before an action starts, the scheduler must retain one record keyed by exact `(repo_root, session_id, wake_id)`. This
-record is external to ThreadLoop and does not add a fifth runner input.
-
-```text
-record_version: 1
-repo_root:
-session_id:
-wake_id:
-mode:
-preflight_validated: true | false
-snapshot_branch:
-snapshot_head_sha:
-snapshot_worktree_clean: true
-snapshot_lifecycle_state:
-snapshot_lifecycle_state_version:
-action_kind: transition | repository_work | local_gate | stop
-action_code_or_target:
-action_started: true | false
-action_outcome: not_started | unknown | succeeded | failed
-action_result:
-candidate_executable:
-candidate_guard_failure_count:
-candidate_required_work_count:
-transition_request:
-```
+record is external to ThreadLoop and does not add a fifth runner input. Retain every field in
+[references/wake-record.md](references/wake-record.md).
 
 For a transition, retain the exact source, target, expected version, actor, input JSON bytes, and idempotency key. Write
 the selected action and request before marking `action_started: true`. Scheduler serialization must prevent two
@@ -374,31 +355,7 @@ All unknown codes fail closed.
 
 ## Handoff
 
-Return:
-
-```text
-repo_root:
-session_id:
-wake_id:
-mode:
-preflight: passed | stopped
-snapshot_branch:
-snapshot_head_sha:
-snapshot_worktree_clean:
-lifecycle_phase:
-lifecycle_state:
-lifecycle_state_version:
-repair_budget:
-decision: transition | repository_work | local_gate | stop
-action_code_or_target:
-action_started: true | false
-action_result:
-idempotency_key:
-retained_transition_request:
-retained_record_version:
-stop_reason:
-next_authority: scheduler | agent | human | external_controller
-```
+Return every field in [references/handoff.md](references/handoff.md).
 
 Never report a draft, attempted action, local check, handoff, approval observation, or planned artifact as completed
 proof, review, merge, deployment, or publication.
