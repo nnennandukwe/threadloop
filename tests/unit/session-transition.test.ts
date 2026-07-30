@@ -171,6 +171,37 @@ describe('session transition domain', () => {
         passedProofContext(),
       ),
     ).toMatchObject({ allowed: true, guardFailures: [], requiredWork: [] });
+    const completeBlock = {
+      block: {
+        reason: 'Review cannot continue',
+        evidence_ref: 'incident:pre-pr-review',
+        recovery: 'Resolve the incident and obtain explicit recovery approval',
+        stop_code: 'REVIEW_BLOCKED',
+      },
+    };
+    for (const prePrReview of [
+      {
+        outcome: 'clean',
+        head_sha: 'a'.repeat(40),
+        evidence_ref: 'review-ledger:blocked',
+        evidence_sha256: 'b'.repeat(64),
+        findings: [],
+      },
+      { outcome: 'clean' },
+    ]) {
+      expect(
+        evaluateTransitionGuards(
+          'pre_pr_reviewing',
+          'blocked',
+          { ...completeBlock, pre_pr_review: prePrReview },
+          null,
+          passedProofContext(),
+        ),
+      ).toMatchObject({
+        allowed: false,
+        guardFailures: [{ code: 'PRE_PR_REVIEW_FINDINGS_INVALID' }],
+      });
+    }
   });
 
   it('fails proof and review transitions closed under their downstream owner', () => {

@@ -1200,6 +1200,85 @@ describe('session transition command', { timeout: 20_000 }, () => {
     }
   });
 
+  it('rejects blocking transitions that carry pre-PR review evidence without applying either record', async () => {
+    const repoDir = await makeRepo();
+    const { session_id: sessionId } = await startQueuedSession(repoDir);
+    for (const [targetState, expectedStateVersion] of [
+      ['framed', 0],
+      ['proof_ready', 1],
+      ['implementing', 2],
+      ['verifying', 3],
+      ['pre_pr_reviewing', 4],
+    ] as const) {
+      await applyFixtureTransition(
+        repoDir,
+        sessionId,
+        targetState,
+        expectedStateVersion,
+        `block-review:${targetState}`,
+      );
+    }
+
+    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
+    const before = new DatabaseSync(dbPath, { readOnly: true });
+    const beforeApplied = before
+      .prepare(`SELECT COUNT(*) AS count FROM audit_events WHERE session_id = ? AND event_type = 'transition_applied'`)
+      .get(sessionId);
+    before.close();
+
+    const failure = await runCliFailure(
+      repoDir,
+      transitionArgs(
+        sessionId,
+        'blocked',
+        '5',
+        'block-review:rejected',
+        JSON.stringify({
+          block: {
+            reason: 'Review cannot continue',
+            evidence_ref: 'incident:pre-pr-review',
+            recovery: 'Resolve the incident and obtain explicit recovery approval',
+            stop_code: 'REVIEW_BLOCKED',
+          },
+          pre_pr_review: {
+            outcome: 'clean',
+            head_sha: 'a'.repeat(40),
+            evidence_ref: 'review-ledger:blocked',
+            evidence_sha256: 'b'.repeat(64),
+            findings: [],
+          },
+        }),
+      ),
+    );
+    expect(
+      parseJson<{ error: { code: string; details: { guard_failures: Array<{ code: string }> } } }>(failure.stderr),
+    ).toMatchObject({
+      error: {
+        code: 'TRANSITION_GUARD_FAILED',
+        details: { guard_failures: [{ code: 'PRE_PR_REVIEW_FINDINGS_INVALID' }] },
+      },
+    });
+
+    const unchanged = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      expect(unchanged.prepare(`SELECT status, state_version, blocked_from_state FROM tasks`).get()).toEqual({
+        status: 'pre_pr_reviewing',
+        state_version: 5,
+        blocked_from_state: null,
+      });
+      expect(unchanged.prepare(`SELECT COUNT(*) AS count FROM session_transitions`).get()).toEqual({ count: 5 });
+      expect(
+        unchanged
+          .prepare(
+            `SELECT COUNT(*) AS count FROM audit_events WHERE session_id = ? AND event_type = 'transition_applied'`,
+          )
+          .get(sessionId),
+      ).toEqual(beforeApplied);
+    } finally {
+      unchanged.close();
+    }
+  });
+
   it('allows one winner across processes racing from the same state version', async () => {
     const repoDir = await makeRepo();
     const { session_id: sessionId } = await startQueuedSession(repoDir);

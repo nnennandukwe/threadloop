@@ -677,10 +677,6 @@ export function validateTransitionEvidence(
       },
     );
   }
-  if (targetState === TASK_STATUS.BLOCKED) {
-    return allowedGuards();
-  }
-
   if (
     sourceState === TASK_STATUS.BLOCKED &&
     !hasRequiredTextFields(input.recovery, ['approved_by', 'evidence_ref', 'reason'])
@@ -700,7 +696,8 @@ export function validateTransitionEvidence(
   const prePrReview = readPrePrReviewEvidence(input);
   const suppliedPrePrReview = Object.hasOwn(input, 'pre_pr_review');
   const requiresPrePrReview =
-    sourceState === TASK_STATUS.PRE_PR_REVIEWING ||
+    (sourceState === TASK_STATUS.PRE_PR_REVIEWING &&
+      (targetState === TASK_STATUS.IMPLEMENTING || targetState === TASK_STATUS.REVIEWING)) ||
     (sourceState === TASK_STATUS.VERIFYING &&
       targetState === TASK_STATUS.IMPLEMENTING &&
       proof.evidence?.status !== 'failed');
@@ -739,6 +736,26 @@ export function validateTransitionEvidence(
   }
 
   if (prePrReview) {
+    const isPrePrReviewTransition =
+      (sourceState === TASK_STATUS.VERIFYING && targetState === TASK_STATUS.IMPLEMENTING) ||
+      (sourceState === TASK_STATUS.PRE_PR_REVIEWING &&
+        (targetState === TASK_STATUS.IMPLEMENTING || targetState === TASK_STATUS.REVIEWING));
+    if (!isPrePrReviewTransition) {
+      return deniedGuards(
+        {
+          code: 'PRE_PR_REVIEW_FINDINGS_INVALID',
+          message: `pre_pr_review evidence is not accepted for ${sourceState} -> ${targetState}.`,
+          owner_issue: 69,
+        },
+        {
+          code: 'RECORD_PRE_PR_REVIEW_OUTCOME',
+          description:
+            'The operator/controller must remove pre_pr_review evidence or select the matching pre-PR transition.',
+          owner_issue: 69,
+        },
+      );
+    }
+
     if (prePrReview.headSha !== proof.repository?.headSha) {
       return deniedGuards(
         {
@@ -771,25 +788,6 @@ export function validateTransitionEvidence(
         {
           code: 'RECORD_PRE_PR_REVIEW_OUTCOME',
           description: `The operator/controller must retry with a ${expectedOutcome} outcome that matches the requested transition.`,
-          owner_issue: 69,
-        },
-      );
-    }
-
-    const isPrePrReviewTransition =
-      (sourceState === TASK_STATUS.VERIFYING && targetState === TASK_STATUS.IMPLEMENTING) ||
-      sourceState === TASK_STATUS.PRE_PR_REVIEWING;
-    if (!isPrePrReviewTransition) {
-      return deniedGuards(
-        {
-          code: 'PRE_PR_REVIEW_FINDINGS_INVALID',
-          message: `pre_pr_review evidence is not accepted for ${sourceState} -> ${targetState}.`,
-          owner_issue: 69,
-        },
-        {
-          code: 'RECORD_PRE_PR_REVIEW_OUTCOME',
-          description:
-            'The operator/controller must remove pre_pr_review evidence or select the matching pre-PR transition.',
           owner_issue: 69,
         },
       );
