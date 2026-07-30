@@ -90,10 +90,10 @@ Reads one deterministic transition candidate, current lifecycle state/version, g
 sanitized repository identity, branch, HEAD, and worktree cleanliness. This command does not heartbeat, reconcile,
 refresh snapshots, migrate the database, repair projections, or mutate lifecycle state.
 
-JSON contract v3 preserves the existing lifecycle, candidate, repository, local `proof`, `ci_proof`, staleness, and
-repair fields. It adds lifecycle history, verified review evidence and findings, combined gate/review repair usage,
-audit validity/root/coverage, and one `next_human_action`. Completed and blocked sessions return terminal reasons. Older
-schemas report `migration_required` without mutating the database.
+JSON contract v4 reports the history-derived lifecycle phase and schema status, candidate, repository, local `proof`,
+`ci_proof`, provider-neutral `pre_pr_review`, exact `implementation_basis`, signed review, staleness, post-PR repair
+usage, audit validity/root/coverage, and one `next_human_action`. Completed and blocked sessions return terminal
+reasons. Schema v6 reports `migration_required` without mutating the database.
 
 ### `threadloop session transition <target-state> [options]`
 
@@ -105,12 +105,17 @@ Required options:
 - `--expected-state-version <version>`: canonical non-negative integer from the latest state read
 - `--idempotency-key <key>`: stable 1-128 character request key
 - `--actor <cli|agent>`: invoking actor
-- `--input <json-object>`: structured transition input; `framed -> proof_ready` requires `proof_plan`
+- `--input <json-object>`: structured transition input; `framed -> proof_ready` requires `proof_plan`, and transitions
+  out of `pre_pr_reviewing` require current-HEAD `pre_pr_review`
 
 The same key and canonical request replays the original result without adding records. Reusing a key for different
 content fails with `IDEMPOTENCY_CONFLICT`. Stale state versions fail without lifecycle mutation. Guards use the
 immutable plan, clean Git observations, revalidated local/CI/review receipts, approval and merge observations, and the
 combined repair budget.
+
+Pre-PR review input has `outcome: "clean"` with an empty `findings` array, or `outcome: "changes_required"` with one or
+more uniquely identified findings. It must include the exact live `head_sha`, a non-empty `evidence_ref`, and a
+lower-case SHA-256 digest. It authorizes only the matching pre-PR transition; it is not a signed-review receipt.
 
 Proof-plan input:
 
@@ -192,9 +197,8 @@ threadloop audit export --session <id> --output <path> [--json]
 canonical JSON, event hashes, and an optional retained root. `export` verifies first and atomically publishes canonical
 JSONL without overwriting an existing path. The export records are shaped as `{"event":{...},"event_sha256":"..."}`.
 
-On schema v6, `show` and `verify` do not write storage or apply lifecycle transitions. On an older repository, their
-first call may perform the one-time schema-v6 migration and append `audit_activated` to mark honest forward-only
-coverage.
+On schema v6 or v7, `show` and `verify` do not apply lifecycle transitions. Run `threadloop init` explicitly to migrate
+schema v6 to v7; migrated sessions retain their existing forward-only audit coverage and repair counts.
 
 Local verification detects mutation; an externally retained `--root`, prior handoff, or prior export root is required to
 detect tail truncation. See [Audit export and OpenTelemetry](observability.md) for the supported JSONL `filelog` recipe
@@ -256,7 +260,7 @@ Prints the agent integration contract derived from the current CLI configuration
 
 The JSON payload includes:
 
-- protocol v3 contract versions for proof plan, session next, review receipt, audit event, and handoff
+- protocol v4 contract versions for proof plan, session next, review receipt, audit event, and handoff
 - supported environment variables used by the CLI contract
 - command usages derived from the registered command tree
 - capture kinds and artifact kinds sourced from runtime constants
@@ -278,7 +282,7 @@ ThreadLoop stores state locally in the repo:
 If an older repo still has `.threadloop/state/state.json`, ThreadLoop migrates that data into SQLite on first access and
 intentionally leaves the JSON file in place as a safety backup. After migration, ThreadLoop reads from SQLite.
 
-SQLite schema v6 stores transition/idempotency records, one immutable proof plan per session, append-only local gate,
+SQLite schema v7 stores transition/idempotency records, one immutable proof plan per session, append-only local gate,
 signed gate, and signed review receipts, plus a hash-linked append-only audit ledger. New sessions begin with
 `session_started`; migrated sessions begin honest forward-only coverage with `audit_activated`. Migration is atomic,
 schema metadata accepts canonical unsigned decimal text only, and persistent triggers reject update, delete, or

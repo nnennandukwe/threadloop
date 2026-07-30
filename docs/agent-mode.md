@@ -28,9 +28,9 @@ Semantic vs mechanical operations:
 `session reconcile` and the daemon do not create semantic notes. They only refresh branch, head SHA, changed file scope,
 diff stats, and commit range.
 
-On a schema-v6 repository, `audit show` and `audit verify` are storage-read-only and never apply a lifecycle transition.
-On an older repository, their first call may perform the one-time schema-v6 migration and append the honest
-`audit_activated` event that begins forward-only coverage. Run migration-aware audit inspection in a writable checkout.
+On a schema-v7 repository, `audit show` and `audit verify` are storage-read-only and never apply a lifecycle transition.
+On an older repository, their first migration-aware call may append the honest `audit_activated` event that begins
+forward-only coverage. Run migration-aware audit inspection in a writable checkout.
 
 ## Recommended orchestrator flow
 
@@ -46,12 +46,16 @@ The current operator model is one autonomous task per checkout or worktree.
 8. Generate the artifact you need and inspect `session next --json`.
 9. Record a proof plan at `framed -> proof_ready`, then execute only its declared gates while verifying.
 10. Run every local gate and import the matching signed CI receipt produced by the commit-pinned reusable workflow.
-11. Use `session next` to rerun missing/stale/corrupt gates, enter bounded repair after local failures, or proceed only
-    when local and CI proof pass.
-12. Run the commit-pinned review sensor for the PR, import its signed package, and let `session next` select repair or
-    human readiness from the revalidated current-HEAD snapshot.
-13. Complete only after a later current-HEAD receipt observes both a human `User` approval and the merged PR.
-14. Verify and export the audit ledger for durable handoff or non-authoritative telemetry ingestion.
+11. Use `session next` to rerun missing/stale/corrupt gates. Before PR creation, a failed gate returns to `implementing`
+    without consuming repair budget.
+12. After current local and signed CI proof pass, enter `pre_pr_reviewing` and have the operator/controller record a
+    current-HEAD clean or changes-required outcome as explicit transition input.
+13. Repeat one-commit implementation, verification, and pre-PR review wakes as often as the task requires.
+14. A clean pre-PR outcome closes the phase at `reviewing`; only then hand off PR creation to the external authority.
+15. Run the commit-pinned review sensor for the PR, import its signed package, and let `session next` select bounded
+    post-PR repair or human readiness from the revalidated current-HEAD snapshot.
+16. Complete only after a later current-HEAD receipt observes both a human `User` approval and the merged PR.
+17. Verify and export the audit ledger for durable handoff or non-authoritative telemetry ingestion.
 
 Example:
 
@@ -95,7 +99,7 @@ Use `threadloop protocol --json` to discover the current command contract instea
 
 The protocol currently publishes:
 
-- explicit protocol v3 component contract versions
+- explicit protocol v4 component contract versions, including session-next v4 and handoff v3
 - command usages derived from the actual CLI tree
 - supported entry kinds and artifact kinds
 - structured workflow guidance for `main` sync, branch naming, rebase, and PR summary generation
@@ -108,6 +112,11 @@ Current environment-variable contract:
 
 ThreadLoop does not currently use environment variables for session targeting or workspace selection. Pass
 `--session <id>` explicitly and run commands from the intended repository root or subdirectory.
+
+The four-input runner contract is documented in
+[`../.agents/skills/threadloop-runner/SKILL.md`](../.agents/skills/threadloop-runner/SKILL.md). Its inputs remain
+exactly `repo_root`, `session_id`, `wake_id`, and `mode`. It stops for schema migration, pre-PR review input, signed
+evidence, PR creation, approval, merge, blocked recovery, and every other controller or human authority.
 
 ThreadLoop also does not perform Git fetch, branch creation, rebase, or PR open for you in this slice. Those remain
 orchestrator responsibilities.
@@ -182,6 +191,8 @@ namespace because it avoids ambiguity.
 - ThreadLoop requires a Git repository.
 - `.threadloop/state/` and `.threadloop/artifacts/receipts/` are ignored via `.git/info/exclude` by default.
 - Local receipts drive repair; verified signed CI receipts independently authorize review.
+- Before PR creation, local failures and provider-neutral review findings drive repeatable `implementing` wakes without
+  consuming repair budget.
 - Verified signed review receipts drive review repair, human readiness, and completion guards.
 - Audit JSONL and handoffs are projections; neither can authorize lifecycle mutation.
 - `.threadloop` internal paths are excluded from artifact Git scope.
