@@ -5,6 +5,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { runCli, runCliFailure } from '../helpers/cli.js';
 import {
   appendEntryToSession,
   closeSqliteConnections,
@@ -15,26 +16,6 @@ import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
 import { buildProtocolContract } from '../../src/contracts/protocol.js';
 
 const execFileAsync = promisify(execFile);
-
-const projectRoot = process.cwd();
-const tsxCli = path.join(projectRoot, 'node_modules/tsx/dist/cli.mjs');
-const cliEntry = path.join(projectRoot, 'src/cli.ts');
-
-async function runCli(cwd: string, args: string[], env?: NodeJS.ProcessEnv) {
-  return execFileAsync('node', [tsxCli, cliEntry, ...args], {
-    cwd,
-    env: env ? { ...process.env, ...env } : process.env,
-  });
-}
-
-async function runCliFailure(cwd: string, args: string[], env?: NodeJS.ProcessEnv) {
-  try {
-    await runCli(cwd, args, env);
-    throw new Error(`Expected CLI command to fail: ${args.join(' ')}`);
-  } catch (error) {
-    return error as Error & { stdout?: string; stderr?: string };
-  }
-}
 
 async function readArtifact(repoDir: string, name: string) {
   return readFile(path.join(repoDir, `.threadloop/artifacts/${name}`), 'utf8');
@@ -490,7 +471,7 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     try {
       const schemaVersion = migrated.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get() as
         { value: string } | undefined;
-      expect(schemaVersion?.value).toBe('6');
+      expect(schemaVersion?.value).toBe('7');
       expect(migrated.prepare(`SELECT id, status, state_version FROM tasks ORDER BY id`).all()).toEqual([
         { id: 'task_active', status: 'queued', state_version: 0 },
         { id: 'task_completed', status: 'completed', state_version: 0 },
@@ -641,14 +622,14 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
           value TEXT NOT NULL
         );
       `);
-      db.prepare(`INSERT INTO metadata (key, value) VALUES ('schema_version', '7')`).run();
+      db.prepare(`INSERT INTO metadata (key, value) VALUES ('schema_version', '8')`).run();
       const journalMode = db.prepare(`PRAGMA journal_mode`).get() as { journal_mode: string };
       expect(journalMode.journal_mode).toBe('delete');
     } finally {
       db.close();
     }
 
-    await expect(runCli(repoDir, ['status'])).rejects.toThrow('Unsupported ThreadLoop schema version: 7');
+    await expect(runCli(repoDir, ['status'])).rejects.toThrow('Unsupported ThreadLoop schema version: 8');
 
     const unchanged = new DatabaseSync(dbPath, { readOnly: true });
     try {
@@ -782,7 +763,7 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     expect(prSummary).toContain('# PR Summary: Add retry logic');
     expect(prSummary).toContain('Reviewer should inspect retry cancellation path');
     expect(handoff).toContain('# Handoff: Add retry logic');
-    expect(handoff).toContain('contract_version: 2');
+    expect(handoff).toContain('contract_version: 3');
     expect(handoff).toContain('## Lifecycle history');
     expect(handoff).toContain('## Proof and freshness');
     expect(handoff).toContain('## Review findings');
@@ -1316,6 +1297,8 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     expect(transitionHelp.stdout).toContain('--idempotency-key <key>');
     expect(transitionHelp.stdout).toContain('--actor <actor>');
     expect(transitionHelp.stdout).toContain('--input <json-object>');
+    expect(transitionHelp.stdout).toContain('structured transition input, including');
+    expect(transitionHelp.stdout).toContain('proof_plan or pre_pr_review when required');
     expect(transitionHelp.stdout).toContain('--json');
 
     const nextHelp = await runCli(repoDir, ['session', 'next', '--help']);
@@ -1464,7 +1447,7 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
         .stdout,
     );
     await runConcurrentMutationBurst(repoDir, started.data.session_id, 'Concurrent flow');
-  }, 15_000);
+  });
 
   it('reopens cached sqlite handles after close/reset hooks and keeps writes working', async () => {
     await runCli(repoDir, ['init']);
@@ -1500,7 +1483,7 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
 
     expect(statusAfterReuse.data.entries.count).toBe(3);
     expect(statusAfterReuse.data.entries.kinds.note).toBe(1);
-  }, 15_000);
+  });
 
   it('keeps SQLite-backed state intact across repeated concurrent mutation bursts in one process', async () => {
     await runCli(repoDir, ['init']);
@@ -1533,7 +1516,7 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     } finally {
       db.close();
     }
-  }, 30_000);
+  });
 
   it('assembles the explicit v2 flow end to end on SQLite state', async () => {
     await runCli(repoDir, ['init']);
@@ -1626,7 +1609,7 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     const renderedArtifact = await readFile(path.join(repoDir, artifact.data.artifact.path), 'utf8');
     expect(renderedArtifact).toContain('feature.ts');
     expect(renderedArtifact).not.toContain('.threadloop/');
-  }, 15_000);
+  });
 
   it('renders reconcile command in help output', async () => {
     const sessionHelp = await runCli(repoDir, ['session', '--help']);

@@ -14,6 +14,8 @@ import {
   readConfig,
   readSessionLifecycleReadOnly,
   readSessionProofEvidenceReadOnly,
+  requiresExplicitInitMigration,
+  SessionTransitionHistoryCorruptedError,
   SignedReceiptAppendConflictError,
   SignedReviewReceiptAppendConflictError,
 } from '../adapters/fs/sqlite-store.js';
@@ -170,6 +172,9 @@ export async function importSignedGateReceiptPackage(
     if (error instanceof AuditChainCorruptedError) {
       throw mapAuditChainCorruption(input.sessionId, error);
     }
+    if (error instanceof SessionTransitionHistoryCorruptedError) {
+      throw mapTransitionHistoryCorruption(error);
+    }
     if (error instanceof SignedReceiptAppendConflictError) {
       throw new ThreadloopError('SIGNED_RECEIPT_CONFLICT', error.message, { cause: error });
     }
@@ -249,6 +254,9 @@ export async function importSignedReviewReceiptPackage(
     if (error instanceof AuditChainCorruptedError) {
       throw mapAuditChainCorruption(input.sessionId, error);
     }
+    if (error instanceof SessionTransitionHistoryCorruptedError) {
+      throw mapTransitionHistoryCorruption(error);
+    }
     if (error instanceof SignedReviewReceiptAppendConflictError) {
       throw new ThreadloopError('SIGNED_RECEIPT_CONFLICT', error.message, { cause: error });
     }
@@ -263,6 +271,16 @@ export async function importSignedReviewReceiptPackage(
   }
 }
 
+function mapTransitionHistoryCorruption(error: SessionTransitionHistoryCorruptedError) {
+  return new ThreadloopError('STATE_CORRUPTED', error.message, {
+    cause: error,
+    details: {
+      session_id: error.sessionId,
+      hint: 'Restore transition history from trusted storage before retrying the receipt import.',
+    },
+  });
+}
+
 async function prepareImport<TEnvelope extends ImportEnvelope>(
   input: SignedReceiptImportInput,
   kind: ImportKind,
@@ -270,6 +288,36 @@ async function prepareImport<TEnvelope extends ImportEnvelope>(
 ): Promise<PreparedImport<TEnvelope>> {
   const repoRoot = await resolveRepositoryRoot(input.cwd);
   await assertInitializedReadOnly(repoRoot);
+  let lifecycle: ReturnType<typeof readSessionLifecycleReadOnly>;
+  try {
+    lifecycle = readSessionLifecycleReadOnly(repoRoot, input.sessionId);
+  } catch (error) {
+    if (error instanceof AuditChainCorruptedError) {
+      throw mapAuditChainCorruption(input.sessionId, error, 'Restore the ledger from trusted storage.');
+    }
+    if (error instanceof SessionTransitionHistoryCorruptedError) {
+      throw mapTransitionHistoryCorruption(error);
+    }
+    throw error;
+  }
+  if (!lifecycle) {
+    throw new ThreadloopError('SESSION_NOT_FOUND', `Could not find session: ${input.sessionId}`, {
+      details: { session_id: input.sessionId },
+    });
+  }
+  if (requiresExplicitInitMigration(lifecycle.schemaVersion)) {
+    throw new ThreadloopError(
+      'SESSION_SCHEMA_MIGRATION_REQUIRED',
+      `ThreadLoop schema v${lifecycle.schemaVersion} requires explicit migration before receipt import.`,
+      {
+        details: {
+          session_id: input.sessionId,
+          storage_schema_version: lifecycle.schemaVersion,
+          hint: 'Run `threadloop init`, then retry the receipt import.',
+        },
+      },
+    );
+  }
   let packageRead: Awaited<ReturnType<SignedReceiptFileSystem['readWithinLimit']>>;
   try {
     packageRead = await input.receiptFileSystem.readWithinLimit(
@@ -307,12 +355,6 @@ async function prepareImport<TEnvelope extends ImportEnvelope>(
     throw mapSignedReceiptParseError(error);
   }
 
-  const lifecycle = readSessionLifecycleReadOnly(repoRoot, input.sessionId);
-  if (!lifecycle) {
-    throw new ThreadloopError('SESSION_NOT_FOUND', `Could not find session: ${input.sessionId}`, {
-      details: { session_id: input.sessionId },
-    });
-  }
   if (lifecycle.schemaVersion < 4) {
     throw new ThreadloopError(
       'SIGNED_RECEIPT_IDENTITY_MISMATCH',

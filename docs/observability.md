@@ -23,9 +23,8 @@ ThreadLoop verifies the complete local chain before export. It writes canonical 
 The command publishes with an exclusive sibling temporary file and refuses to overwrite an existing target. Retain the
 reported audit root outside the local database if you need to detect later tail truncation.
 
-`audit show` and `audit verify` are storage-read-only once schema v6 is active. On an older repository, the first audit
-inspection may perform the one-time schema-v6 migration and append `audit_activated` to establish honest forward-only
-coverage before verification.
+`audit show` and `audit verify` do not apply lifecycle transitions once schema v6 is active. Use `threadloop init` for
+the explicit schema-v7 semantic migration; prior audit events and honest forward-only coverage remain unchanged.
 
 ## Collector recipe
 

@@ -23,8 +23,12 @@ repair, re-entry, blocking, and recovery explicit parts of the lifecycle.
 flowchart LR
   subgraph TL["ThreadLoop: governed software-delivery graph"]
     Q["queued"] --> F["framed"] --> P["proof_ready"] --> I["implementing"] --> V["verifying"]
-    V -- "proof passes" --> R["reviewing"]
-    V -- "proof fails" --> X["repairing"]
+    V -- "pre-PR proof fails" --> I
+    V -- "pre-PR proof passes" --> L["pre_pr_reviewing"]
+    V -- "current pre-PR finding" --> I
+    L -- "changes required" --> I
+    L -- "clean outcome" --> R["reviewing"]
+    V -- "post-PR proof fails" --> X["repairing"]
     X -- "committed repair" --> V
     R -. "review blocker" .-> X
     R -. "review clear" .-> H["ready_for_human"]
@@ -44,10 +48,12 @@ flowchart LR
   E -. "potential evidence adapter" .-> V
 ```
 
-The solid lifecycle edges are executable in the current `main` implementation when their guards pass. The dashed
-review-owned edges are structurally valid but remain fail-closed until ThreadLoop has authoritative review, approval,
-and merge evidence. The repair loop is limited to three cycles. Entering `blocked` requires complete block evidence, and
-recovery requires explicit human approval to return to the recorded prior state.
+The solid lifecycle edges are executable when their guards pass. Pre-PR implementation may repeat for as many
+task-scoped commits as necessary; every commit makes earlier proof and review evidence stale. Those iterations never
+enter `repairing` or consume its budget. Entering `reviewing` closes the pre-PR phase permanently. The dashed post-PR
+review-owned edges remain fail-closed until ThreadLoop has authoritative signed review, approval, and merge evidence.
+The post-PR repair loop is limited to three entries. Entering `blocked` requires complete block evidence, and recovery
+requires explicit human approval to return to the recorded prior state.
 
 [Governed Agent Autonomy Patterns](https://github.com/nnennandukwe/governed-agent-autonomy-patterns) defines the
 complementary controls around an agent run: planning, permission, tool trust, independent verification, and runtime
@@ -199,9 +205,12 @@ What is implemented now:
 - current-HEAD staleness, artifact-integrity checks, and a transition-history-derived three-repair budget
 - signed current-HEAD review evidence for blockers, same-HEAD human approval, and merge observation
 - a shared three-cycle gate/review repair budget
+- repeatable pre-PR implementation with a durable `pre_pr_reviewing` boundary and HEAD-bound review evidence
+- history-derived `pre_pr`/`post_pr` phase separation so pre-PR iteration never consumes signed-review repair budget
 - a hash-linked, append-only controller audit ledger with verified no-overwrite JSONL export
-- a read-only next-action v3 contract with lifecycle, proof, review, audit, and next-human-action projections
-- protocol v3 and governed handoff v2
+- a read-only next-action v4 contract with lifecycle phase, implementation basis, pre-PR review, proof, signed review,
+  audit, and next-human-action projections
+- protocol v4 and governed handoff v3
 
 What is not implemented yet in this slice:
 
@@ -238,9 +247,13 @@ Recommended loop:
 9. record the exact proof plan during `framed -> proof_ready`
 10. call `session gate run <gate-id>` for each declared gate while verifying
 11. import each matching receipt from the commit-pinned reusable GitHub workflow
-12. call `session next --json` to inspect independent local/CI proof and the repair budget
-13. import a current signed review snapshot and follow its blocker/approval/merge-derived next action
-14. verify and export the audit ledger for handoff or telemetry
+12. call `session next --json`; failed pre-PR proof returns to `implementing` without repair-budget use
+13. after proof passes, enter `pre_pr_reviewing` and explicitly record a current-HEAD clean or changes-required pre-PR
+    review outcome
+14. repeat implementation, proof, and pre-PR review wakes until a clean outcome closes the phase at `reviewing`
+15. after PR creation, import current signed review snapshots and follow their bounded repair, approval, and merge
+    projections
+16. verify and export the audit ledger for handoff or telemetry
 
 Use `threadloop protocol --json` as the machine-facing contract for current commands, entry kinds, artifact kinds,
 supported environment variables, and the published branch/rebase/PR workflow guidance.
@@ -248,7 +261,7 @@ supported environment variables, and the published branch/rebase/PR workflow gui
 The optional daemon only performs mechanical refresh work. It does not create semantic notes or replace explicit
 capture.
 
-The governed task lifecycle and schema-v6 audit contract are documented in [`docs/lifecycle.md`](docs/lifecycle.md). The
+The governed task lifecycle and schema-v7 contract are documented in [`docs/lifecycle.md`](docs/lifecycle.md). The
 signed package and reusable workflow are specified in
 [`docs/attestations/receipt-v1.md`](docs/attestations/receipt-v1.md) and
 [`docs/attestations/review-v1.md`](docs/attestations/review-v1.md). `session transition` revalidates local, CI, and

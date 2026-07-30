@@ -23,12 +23,12 @@ export interface WorkflowContract {
 
 export interface ProtocolContract {
   contractVersions: {
-    protocol: 3;
+    protocol: 4;
     proofPlan: 3;
-    sessionNext: 3;
+    sessionNext: 4;
     signedReviewReceipt: 1;
     auditEvent: 1;
-    handoff: 2;
+    handoff: 3;
   };
   envVars: Record<string, string>;
   commands: Record<string, string>;
@@ -51,12 +51,12 @@ export function buildProtocolContract(): ProtocolContract {
 
   return {
     contractVersions: {
-      protocol: 3,
+      protocol: 4,
       proofPlan: 3,
-      sessionNext: 3,
+      sessionNext: 4,
       signedReviewReceipt: 1,
       auditEvent: 1,
-      handoff: 2,
+      handoff: 3,
     },
     envVars: deriveEnvVars(program),
     commands,
@@ -84,11 +84,13 @@ export function buildProtocolContract(): ProtocolContract {
       'Only commands whose usage includes [--json] support machine-readable output.',
       'Session status, capture, heartbeat, transition, next, gate run, gate import, and review import require --session <id>; session reconcile requires either --session <id> or --all.',
       'Session next is read-only; lifecycle completion is available only through an evidence-authorized session transition.',
+      'Session next v4 separates repeatable pre-PR implementing work from bounded post-PR signed-review repair.',
+      'Schema-v6 sessions report migration_required until threadloop init applies the schema-v7 semantic migration.',
       'Gate run executes only stored proof-plan argv, working directory, and timeout values; it never advances lifecycle state.',
       'New proof plans require contract_version 3 with independent immutable CI and review trust policies; stored v1/v2 plans remain readable for local gate execution.',
       'Gate import verifies the immutable GitHub Actions and Sigstore policy from the stored v2/v3 proof plan; no trust override is accepted.',
       'Review receipt import verifies the current PR HEAD, canonical provider-neutral snapshot, in-toto subject, Sigstore signature, transparency log, workflow invocation identity, repository, session, and proof-plan bindings before persistence.',
-      'Review requires current-HEAD local proof, verified signed CI proof for every declared gate, and a current verified signed review receipt.',
+      'Entering pre_pr_reviewing requires current-HEAD local proof and verified signed CI proof for every gate; post-PR human readiness additionally requires a current verified signed review receipt.',
       'Audit export verifies the hash-linked ledger and refuses to overwrite an existing output path.',
       'Legacy root commands may auto-resolve a single active session when --session is omitted.',
       'ThreadLoop state and local receipt output are excluded through .git/info/exclude; review artifacts remain visible.',

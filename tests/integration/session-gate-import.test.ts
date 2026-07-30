@@ -5,12 +5,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
+import { parseJson, runCli, runCliFailure } from '../helpers/cli.js';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import type { VerifiedSigstoreSigner } from '../../src/adapters/crypto/sigstore.js';
 import { SigstoreReceiptVerificationError } from '../../src/adapters/crypto/sigstore.js';
 import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
 import { nodeSignedReceiptFileSystem } from '../../src/adapters/fs/signed-receipt-files.js';
-import { resetSqliteConnections } from '../../src/adapters/fs/sqlite-store.js';
+import { applySessionTransition, resetSqliteConnections } from '../../src/adapters/fs/sqlite-store.js';
 import {
   buildInTotoReceiptStatement,
   canonicalizeSignedGateReceiptArtifact,
@@ -19,6 +20,7 @@ import {
   type SignedGateReceiptArtifact,
 } from '../../src/domain/attestation.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
+import { canonicalizeTransitionRequest, type TransitionRequest } from '../../src/domain/session-transition.js';
 import {
   getNextSessionAction,
   importSessionGateReceipt as importSessionGateReceiptWithDependencies,
@@ -27,9 +29,6 @@ import {
 
 const execFileAsync = promisify(execFile);
 const temporaryDirectories: string[] = [];
-const projectRoot = process.cwd();
-const tsxCli = path.join(projectRoot, 'node_modules/tsx/dist/cli.mjs');
-const cliEntry = path.join(projectRoot, 'src/cli.ts');
 const branch = 'issue-41/signed-ci-receipts';
 const sourceRepository = 'https://github.com/example/project';
 const buildSignerSha = 'b'.repeat(40);
@@ -41,23 +40,6 @@ function importSessionGateReceipt(input: Omit<ImportSessionGateReceiptInput, 're
     ...input,
     receiptFileSystem: nodeSignedReceiptFileSystem,
   });
-}
-
-async function runCli(cwd: string, args: string[]) {
-  return execFileAsync('node', [tsxCli, cliEntry, ...args], { cwd });
-}
-
-async function runCliFailure(cwd: string, args: string[]) {
-  try {
-    await runCli(cwd, args);
-    throw new Error(`Expected CLI command to fail: ${args.join(' ')}`);
-  } catch (error) {
-    return error as Error & { stderr?: string };
-  }
-}
-
-function parseJson<T>(value: string | undefined) {
-  return JSON.parse(value ?? '') as T;
 }
 
 async function makeVerifyingSession() {
@@ -154,12 +136,29 @@ async function makeVerifyingSession() {
     ).stdout,
   );
 
-  await resetSqliteConnections(repoDir);
-  const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'));
-  try {
-    db.prepare(`UPDATE tasks SET status = 'verifying', state_version = 4`).run();
-  } finally {
-    db.close();
+  for (const [targetState, expectedStateVersion] of [
+    ['implementing', 2],
+    ['verifying', 3],
+  ] as const) {
+    const request: TransitionRequest = {
+      sessionId: started.data.session_id,
+      targetState,
+      expectedStateVersion,
+      actor: 'agent',
+      input: {},
+    };
+    const result = await applySessionTransition(
+      repoDir,
+      {
+        ...request,
+        idempotencyKey: `fixture:${targetState}`,
+        ...canonicalizeTransitionRequest(request, sha256),
+      },
+      () => ({ allowed: true, guardFailures: [], requiredWork: [] }),
+    );
+    if (!result.ok) {
+      throw new Error(`Could not prepare verifying fixture: ${result.error.code}`);
+    }
   }
   const head = (await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: repoDir })).stdout.trim();
   return {
@@ -359,6 +358,86 @@ describe('signed gate receipt import', { timeout: 20_000 }, () => {
     expect(failure.stderr).toContain(missingPath);
   });
 
+  it('maps a missing audit genesis before importing signed gate evidence', async () => {
+    const fixture = await makeVerifyingSession();
+    await resetSqliteConnections(fixture.repoDir);
+    const dbPath = path.join(fixture.repoDir, '.threadloop/state/state.db');
+    const corrupt = new DatabaseSync(dbPath);
+    corrupt.exec(`
+      DROP TRIGGER audit_events_no_delete;
+      DELETE FROM audit_events WHERE session_id = '${fixture.sessionId}';
+      CREATE TRIGGER audit_events_no_delete
+      BEFORE DELETE ON audit_events
+      BEGIN
+        SELECT RAISE(ABORT, 'audit events are immutable');
+      END;
+    `);
+    corrupt.close();
+
+    await expect(
+      importSessionGateReceipt({
+        cwd: fixture.repoDir,
+        sessionId: fixture.sessionId,
+        packagePath: path.join(fixture.inputDir, 'unread-package.json'),
+      }),
+    ).rejects.toMatchObject({
+      code: 'AUDIT_VERIFICATION_FAILED',
+      details: {
+        session_id: fixture.sessionId,
+        audit_error: { code: 'AUDIT_SEQUENCE_MISMATCH' },
+        hint: 'Restore the ledger from trusted storage.',
+      },
+    });
+
+    const unchanged = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      expect(unchanged.prepare(`SELECT COUNT(*) AS count FROM signed_gate_receipts`).get()).toEqual({ count: 0 });
+      expect(unchanged.prepare(`SELECT COUNT(*) AS count FROM audit_events`).get()).toEqual({ count: 0 });
+    } finally {
+      unchanged.close();
+    }
+  });
+
+  it('rejects task-projection drift before importing signed gate evidence', async () => {
+    const fixture = await makeVerifyingSession();
+    const packagePath = await writePackage(fixture, signedArtifact(fixture));
+    await resetSqliteConnections(fixture.repoDir);
+    const dbPath = path.join(fixture.repoDir, '.threadloop/state/state.db');
+    const corrupt = new DatabaseSync(dbPath);
+    corrupt.prepare(`UPDATE tasks SET state_version = 5`).run();
+    const beforeAuditCount = (
+      corrupt.prepare(`SELECT COUNT(*) AS count FROM audit_events WHERE session_id = ?`).get(fixture.sessionId) as {
+        count: number;
+      }
+    ).count;
+    corrupt.close();
+
+    await expect(
+      importSessionGateReceipt({
+        cwd: fixture.repoDir,
+        sessionId: fixture.sessionId,
+        packagePath,
+        verifyReceipt: verifier(fixture),
+      }),
+    ).rejects.toMatchObject({
+      code: 'STATE_CORRUPTED',
+      details: {
+        session_id: fixture.sessionId,
+        hint: 'Restore transition history from trusted storage before retrying the receipt import.',
+      },
+    });
+
+    const unchanged = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      expect(unchanged.prepare(`SELECT COUNT(*) AS count FROM signed_gate_receipts`).get()).toEqual({ count: 0 });
+      expect(
+        unchanged.prepare(`SELECT COUNT(*) AS count FROM audit_events WHERE session_id = ?`).get(fixture.sessionId),
+      ).toEqual({ count: beforeAuditCount });
+    } finally {
+      unchanged.close();
+    }
+  });
+
   it('imports one verified package idempotently without advancing lifecycle state', async () => {
     const fixture = await makeVerifyingSession();
     const packagePath = await writePackage(fixture, signedArtifact(fixture));
@@ -408,8 +487,8 @@ describe('signed gate receipt import', { timeout: 20_000 }, () => {
       };
     }>((await runCli(fixture.repoDir, ['session', 'next', '--session', fixture.sessionId, '--json'])).stdout);
     expect(next.data).toMatchObject({
-      contract_version: 3,
-      candidate: { target_state: 'reviewing', executable: true },
+      contract_version: 4,
+      candidate: { target_state: 'pre_pr_reviewing', executable: true },
       proof: { status: 'passed' },
       ci_proof: {
         status: 'passed',
@@ -420,7 +499,7 @@ describe('signed gate receipt import', { timeout: 20_000 }, () => {
     await resetSqliteConnections(fixture.repoDir);
     const db = new DatabaseSync(path.join(fixture.repoDir, '.threadloop/state/state.db'), { readOnly: true });
     try {
-      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '6' });
+      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '7' });
       expect(db.prepare(`SELECT COUNT(*) AS count FROM signed_gate_receipts`).get()).toEqual({ count: 1 });
       expect(db.prepare(`SELECT status, state_version FROM tasks`).get()).toEqual({
         status: 'verifying',

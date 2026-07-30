@@ -10,12 +10,12 @@ describe('protocol contract', () => {
 
     expect(Object.keys(contract.commands)).toEqual(leafCommands.map((command) => getCommandPath(command)));
     expect(contract.contractVersions).toEqual({
-      protocol: 3,
+      protocol: 4,
       proofPlan: 3,
-      sessionNext: 3,
+      sessionNext: 4,
       signedReviewReceipt: 1,
       auditEvent: 1,
-      handoff: 2,
+      handoff: 3,
     });
 
     for (const command of leafCommands) {
@@ -55,6 +55,9 @@ describe('protocol contract', () => {
     );
     expect(contract.commands['audit export']).toContain(
       'threadloop audit export --session <id> --output <path> [--json]',
+    );
+    expect(contract.notes).toContain(
+      'Entering pre_pr_reviewing requires current-HEAD local proof and verified signed CI proof for every gate; post-PR human readiness additionally requires a current verified signed review receipt.',
     );
   });
 });

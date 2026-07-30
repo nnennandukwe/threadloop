@@ -15,6 +15,7 @@ export const TASK_STATUS = Object.freeze({
   PROOF_READY: 'proof_ready',
   IMPLEMENTING: 'implementing',
   VERIFYING: 'verifying',
+  PRE_PR_REVIEWING: 'pre_pr_reviewing',
   REVIEWING: 'reviewing',
   REPAIRING: 'repairing',
   READY_FOR_HUMAN: 'ready_for_human',
@@ -28,6 +29,11 @@ const TASK_STATUS_SET = new Set<string>(TASK_STATUS_VALUES);
 export function isTaskStatus(value: string): value is TaskStatus {
   return TASK_STATUS_SET.has(value);
 }
+export const LIFECYCLE_PHASE = Object.freeze({
+  PRE_PR: 'pre_pr',
+  POST_PR: 'post_pr',
+} as const);
+export type LifecyclePhase = (typeof LIFECYCLE_PHASE)[keyof typeof LIFECYCLE_PHASE];
 export const HEARTBEAT_SOURCES = ['cli', 'daemon', 'reconcile'] as const;
 export const ENTRY_SOURCES = ['cli', 'agent'] as const;
 export const DEFAULT_BASE_REF = 'main' as const;

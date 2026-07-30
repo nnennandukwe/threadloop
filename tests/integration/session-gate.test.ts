@@ -5,38 +5,17 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
+import { parseJson, runCli, runCliFailure } from '../helpers/cli.js';
+import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
-import { resetSqliteConnections } from '../../src/adapters/fs/sqlite-store.js';
+import { applySessionTransition, resetSqliteConnections } from '../../src/adapters/fs/sqlite-store.js';
+import { canonicalizeTransitionRequest, type TransitionRequest } from '../../src/domain/session-transition.js';
 
 const execFileAsync = promisify(execFile);
 const temporaryRepos: string[] = [];
-const projectRoot = process.cwd();
-const tsxCli = path.join(projectRoot, 'node_modules/tsx/dist/cli.mjs');
-const cliEntry = path.join(projectRoot, 'src/cli.ts');
 const fixtureRepository = 'https://github.com/example/threadloop-fixture';
 const fixtureBranch = 'issue-41/signed-receipts';
 const sensorSha = 'a'.repeat(40);
-
-async function runCli(cwd: string, args: string[]) {
-  return execFileAsync('node', [tsxCli, cliEntry, ...args], { cwd });
-}
-
-async function runCliWithEnv(cwd: string, args: string[], env: Record<string, string>) {
-  return execFileAsync('node', [tsxCli, cliEntry, ...args], { cwd, env: { ...process.env, ...env } });
-}
-
-async function runCliFailure(cwd: string, args: string[]) {
-  try {
-    await runCli(cwd, args);
-    throw new Error(`Expected CLI command to fail: ${args.join(' ')}`);
-  } catch (error) {
-    return error as Error & { stdout?: string; stderr?: string };
-  }
-}
-
-function parseJson<T>(value: string | undefined) {
-  return JSON.parse(value ?? '') as T;
-}
 
 async function makeCommittedRepo() {
   const repoDir = await mkdtemp(path.join(os.tmpdir(), 'threadloop-gate-'));
@@ -156,13 +135,30 @@ async function recordProofPlan(
   );
 }
 
-async function forceVerifying(repoDir: string) {
-  await resetSqliteConnections(repoDir);
-  const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'));
-  try {
-    db.prepare(`UPDATE tasks SET status = 'verifying', state_version = 4`).run();
-  } finally {
-    db.close();
+async function forceVerifying(repoDir: string, sessionId: string) {
+  for (const [targetState, expectedStateVersion] of [
+    ['implementing', 2],
+    ['verifying', 3],
+  ] as const) {
+    const request: TransitionRequest = {
+      sessionId,
+      targetState,
+      expectedStateVersion,
+      actor: 'agent',
+      input: {},
+    };
+    const result = await applySessionTransition(
+      repoDir,
+      {
+        ...request,
+        idempotencyKey: `fixture:${targetState}`,
+        ...canonicalizeTransitionRequest(request, sha256),
+      },
+      () => ({ allowed: true, guardFailures: [], requiredWork: [] }),
+    );
+    if (!result.ok) {
+      throw new Error(`Could not prepare verifying fixture: ${result.error.code}`);
+    }
   }
 }
 
@@ -198,36 +194,6 @@ async function transition(
   );
 }
 
-async function recoverBlockedRepairSession(repoDir: string, sessionId: string) {
-  await recordProofPlan(
-    repoDir,
-    sessionId,
-    proofPlan(['node', '-e', 'process.stderr.write("repair required\\n"); process.exit(1)']),
-  );
-  await transition(repoDir, sessionId, 'implementing', 2, 'blocked-repair:implement');
-  await writeFile(path.join(repoDir, 'feature.txt'), 'initial implementation\n', 'utf8');
-  await execFileAsync('git', ['add', 'feature.txt'], { cwd: repoDir });
-  await execFileAsync('git', ['commit', '-m', 'initial implementation'], { cwd: repoDir });
-  await transition(repoDir, sessionId, 'verifying', 3, 'blocked-repair:verify');
-  await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json']);
-  await transition(repoDir, sessionId, 'repairing', 4, 'blocked-repair:open');
-  await transition(repoDir, sessionId, 'blocked', 5, 'blocked-repair:block', {
-    block: {
-      reason: 'Repair is waiting on external access',
-      evidence_ref: 'incident:repair-access',
-      recovery: 'Restore access and resume the existing repair',
-      stop_code: 'ACCESS_DENIED',
-    },
-  });
-  await transition(repoDir, sessionId, 'repairing', 6, 'blocked-repair:recover', {
-    recovery: {
-      reason: 'Repair access restored',
-      evidence_ref: 'incident:repair-access:resolved',
-      approved_by: 'Test User',
-    },
-  });
-}
-
 afterEach(async () => {
   await resetSqliteConnections();
   await Promise.all(temporaryRepos.splice(0).map((repoDir) => rm(repoDir, { recursive: true, force: true })));
@@ -254,7 +220,7 @@ describe('proof plan persistence', { timeout: 20_000 }, () => {
     await resetSqliteConnections(repoDir);
     const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
     try {
-      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '6' });
+      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '7' });
       expect(
         db
           .prepare(
@@ -458,7 +424,7 @@ describe('session gate run', { timeout: 20_000 }, () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
     await recordProofPlan(repoDir, sessionId);
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
 
     const result = parseJson<{
       command: string;
@@ -550,7 +516,7 @@ describe('session gate run', { timeout: 20_000 }, () => {
         workingDirectory,
       ),
     );
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
 
     const result = parseJson<{ data: { receipt: { artifact: { path: string } } } }>(
       (await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json'])).stdout,
@@ -573,7 +539,7 @@ describe('session gate run', { timeout: 20_000 }, () => {
       sessionId,
       proofPlan(['node', '-e', `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "started")`]),
     );
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
 
     const undeclared = await runCliFailure(repoDir, [
       'session',
@@ -617,7 +583,7 @@ describe('session gate run', { timeout: 20_000 }, () => {
       sessionId,
       proofPlan(['node', '-e', `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "started")`]),
     );
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
 
     await resetSqliteConnections(repoDir);
     const dbPath = path.join(repoDir, '.threadloop/state/state.db');
@@ -659,11 +625,44 @@ describe('session gate run', { timeout: 20_000 }, () => {
     }
   });
 
+  it('rejects task-projection drift before recording local gate evidence', async () => {
+    const repoDir = await makeCommittedRepo();
+    const sessionId = await startFramedSession(repoDir);
+    await recordProofPlan(repoDir, sessionId);
+    await resetSqliteConnections(repoDir);
+    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
+    const corrupt = new DatabaseSync(dbPath);
+    corrupt.prepare(`UPDATE tasks SET status = 'verifying', state_version = 4`).run();
+    const beforeAuditCount = (
+      corrupt.prepare(`SELECT COUNT(*) AS count FROM audit_events WHERE session_id = ?`).get(sessionId) as {
+        count: number;
+      }
+    ).count;
+    corrupt.close();
+
+    const failure = parseJson<{ error: { code: string; message: string } }>(
+      (await runCliFailure(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json']))
+        .stderr,
+    );
+    expect(failure.error.code).toBe('STATE_CORRUPTED');
+    expect(failure.error.message).toContain('current lifecycle projection does not match transition history');
+
+    const unchanged = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      expect(unchanged.prepare(`SELECT COUNT(*) AS count FROM gate_receipts`).get()).toEqual({ count: 0 });
+      expect(
+        unchanged.prepare(`SELECT COUNT(*) AS count FROM audit_events WHERE session_id = ?`).get(sessionId),
+      ).toEqual({ count: beforeAuditCount });
+    } finally {
+      unchanged.close();
+    }
+  });
+
   it('rejects gate execution after leaving the named proof-plan branch', async () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
     await recordProofPlan(repoDir, sessionId);
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
     await execFileAsync('git', ['checkout', '--detach', 'HEAD'], { cwd: repoDir });
 
     const failure = await runCliFailure(repoDir, [
@@ -720,7 +719,7 @@ describe('session gate run', { timeout: 20_000 }, () => {
       const repoDir = await makeCommittedRepo();
       const sessionId = await startFramedSession(repoDir);
       await recordProofPlan(repoDir, sessionId, proofPlan(command, timeoutMs));
-      await forceVerifying(repoDir);
+      await forceVerifying(repoDir, sessionId);
 
       const result = parseJson<{
         data: {
@@ -757,7 +756,7 @@ describe('session gate run', { timeout: 20_000 }, () => {
       sessionId,
       proofPlan(['node', '-e', 'require("node:fs").renameSync(".git/HEAD", ".git/HEAD.saved")']),
     );
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
     const headPath = path.join(repoDir, '.git', 'HEAD');
     const savedHeadPath = path.join(repoDir, '.git', 'HEAD.saved');
 
@@ -793,7 +792,7 @@ describe('session gate run', { timeout: 20_000 }, () => {
       };
     }>((await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout);
     expect(next.data).toMatchObject({
-      candidate: { target_state: 'repairing', executable: true },
+      candidate: { target_state: 'implementing', executable: true },
       proof: { status: 'failed' },
     });
   });
@@ -802,7 +801,7 @@ describe('session gate run', { timeout: 20_000 }, () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
     await recordProofPlan(repoDir, sessionId);
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
     const args = ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json'];
 
     const results = await Promise.all([runCli(repoDir, args), runCli(repoDir, args)]);
@@ -826,7 +825,7 @@ describe('session gate run', { timeout: 20_000 }, () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
     await recordProofPlan(repoDir, sessionId);
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
     await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json']);
     await resetSqliteConnections(repoDir);
 
@@ -882,7 +881,7 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
       sessionId,
       proofPlan(['node', '-e', 'process.stderr.write("failed\\n"); process.exit(1)']),
     );
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
     await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json']);
 
     await resetSqliteConnections(repoDir);
@@ -919,7 +918,7 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
     await recordProofPlan(repoDir, sessionId);
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
     const gate = parseJson<{ data: { receipt: { id: string } } }>(
       (await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json'])).stdout,
     );
@@ -940,10 +939,10 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
     }>((await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout);
 
     expect(next.data).toMatchObject({
-      contract_version: 3,
+      contract_version: 4,
       candidate: {
         from_state: 'verifying',
-        target_state: 'reviewing',
+        target_state: 'pre_pr_reviewing',
         executable: false,
       },
       guard_failures: [{ code: 'SIGNED_CI_PROOF_REQUIRED' }],
@@ -984,7 +983,7 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
     await recordProofPlan(repoDir, sessionId);
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
     await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json']);
     await mutateCheckout(repoDir);
 
@@ -997,7 +996,7 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
       };
     }>((await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout);
     expect(next.data).toMatchObject({
-      candidate: { target_state: 'reviewing', executable: false },
+      candidate: { target_state: 'pre_pr_reviewing', executable: false },
       guard_failures: [{ code: 'PROOF_CHECKOUT_MISMATCH' }],
       required_work: [{ code: 'RESTORE_PROOF_CHECKOUT' }],
       proof: { status: 'passed' },
@@ -1006,7 +1005,7 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
     const failedTransition = await runCliFailure(repoDir, [
       'session',
       'transition',
-      'reviewing',
+      'pre_pr_reviewing',
       '--session',
       sessionId,
       '--expected-state-version',
@@ -1061,7 +1060,7 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
     }>((await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout);
     expect(uncommittedNext.data).toMatchObject({
       candidate: { target_state: 'verifying', executable: false },
-      guard_failures: [{ code: 'COMMITTED_IMPLEMENTATION_REQUIRED' }],
+      guard_failures: [{ code: 'IMPLEMENTATION_BASIS_NOT_ADVANCED' }],
     });
     await writeFile(path.join(repoDir, 'feature.txt'), 'implemented\n', 'utf8');
     await execFileAsync('git', ['add', 'feature.txt'], { cwd: repoDir });
@@ -1080,7 +1079,7 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
     const rejectedReview = await runCliFailure(repoDir, [
       'session',
       'transition',
-      'reviewing',
+      'pre_pr_reviewing',
       '--session',
       sessionId,
       '--expected-state-version',
@@ -1105,7 +1104,7 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
     });
   });
 
-  it('derives three repair cycles from transition history and makes blocked the only fourth outcome', async () => {
+  it('allows more than three pre-PR implementation cycles without consuming repair budget', async () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
     await recordProofPlan(
@@ -1113,121 +1112,358 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
       sessionId,
       proofPlan(['node', '-e', 'process.stderr.write("still failing\\n"); process.exit(1)']),
     );
-    await transition(repoDir, sessionId, 'implementing', 2, 'repair:implement');
+    await transition(repoDir, sessionId, 'implementing', 2, 'iterate:implement');
     await writeFile(path.join(repoDir, 'feature.txt'), 'initial implementation\n', 'utf8');
     await execFileAsync('git', ['add', 'feature.txt'], { cwd: repoDir });
     await execFileAsync('git', ['commit', '-m', 'initial implementation'], { cwd: repoDir });
-    await transition(repoDir, sessionId, 'verifying', 3, 'repair:verify:0');
+    await transition(repoDir, sessionId, 'verifying', 3, 'iterate:verify:0');
 
     let version = 4;
-    for (let cycle = 1; cycle <= 3; cycle += 1) {
-      await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json']);
+    for (let cycle = 1; cycle <= 4; cycle += 1) {
+      const receipt = parseJson<{ data: { receipt: { head_after: string } } }>(
+        (await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json']))
+          .stdout,
+      );
       const next = parseJson<{
         data: {
           candidate: { target_state: string; executable: boolean };
           repair_budget: { attempts_used: number; remaining: number; exhausted: boolean };
+          implementation_basis: { head_sha: string; source: string };
+          pre_pr_review: { iteration_count: number };
         };
       }>((await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout);
       expect(next.data).toMatchObject({
-        candidate: { target_state: 'repairing', executable: true },
-        repair_budget: { attempts_used: cycle - 1, remaining: 4 - cycle, exhausted: false },
+        candidate: { target_state: 'implementing', executable: true },
+        implementation_basis: {
+          head_sha: receipt.data.receipt.head_after,
+          source: 'failed_local_proof',
+        },
+        pre_pr_review: { iteration_count: cycle - 1 },
+        repair_budget: { attempts_used: 0, remaining: 3, exhausted: false },
       });
-      await transition(repoDir, sessionId, 'repairing', version, `repair:open:${cycle}`);
+      await transition(repoDir, sessionId, 'implementing', version, `iterate:open:${cycle}`);
       version += 1;
-      await writeFile(path.join(repoDir, 'feature.txt'), `repair ${cycle}\n`, { flag: 'a' });
+      await writeFile(path.join(repoDir, 'feature.txt'), `iteration ${cycle}\n`, { flag: 'a' });
       await execFileAsync('git', ['add', 'feature.txt'], { cwd: repoDir });
-      await execFileAsync('git', ['commit', '-m', `repair ${cycle}`], { cwd: repoDir });
-      await transition(repoDir, sessionId, 'verifying', version, `repair:verify:${cycle}`);
+      await execFileAsync('git', ['commit', '-m', `pre-pr iteration ${cycle}`], { cwd: repoDir });
+      const committedNext = parseJson<{
+        data: {
+          candidate: { target_state: string; executable: boolean };
+          implementation_basis: { head_sha: string; source: string };
+        };
+      }>((await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout);
+      expect(committedNext.data).toMatchObject({
+        candidate: { target_state: 'verifying', executable: true },
+        implementation_basis: {
+          head_sha: receipt.data.receipt.head_after,
+          source: 'failed_local_proof',
+        },
+      });
+      await transition(repoDir, sessionId, 'verifying', version, `iterate:verify:${cycle}`);
       version += 1;
     }
 
-    await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json']);
-    const exhausted = parseJson<{
-      data: {
-        candidate: { target_state: string; executable: boolean };
-        repair_budget: { attempts_used: number; remaining: number; exhausted: boolean };
-      };
-    }>((await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout);
-    expect(exhausted.data).toMatchObject({
-      candidate: { target_state: 'blocked', executable: false },
-      repair_budget: { attempts_used: 3, remaining: 0, exhausted: true },
-    });
+    const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
+    try {
+      expect(
+        db.prepare(`SELECT COUNT(*) AS count FROM session_transitions WHERE to_state = 'repairing'`).get(),
+      ).toEqual({ count: 0 });
+      expect(
+        db
+          .prepare(
+            `SELECT COUNT(*) AS count FROM session_transitions WHERE to_state = 'implementing' AND from_state <> 'proof_ready'`,
+          )
+          .get(),
+      ).toEqual({ count: 4 });
+    } finally {
+      db.close();
+    }
+  });
 
-    const fourthRepair = await runCliFailure(repoDir, [
-      'session',
-      'transition',
-      'repairing',
-      '--session',
-      sessionId,
-      '--expected-state-version',
-      String(version),
-      '--idempotency-key',
-      'repair:open:4',
-      '--actor',
-      'agent',
-      '--input',
-      '{}',
-      '--json',
-    ]);
-    expect(
-      parseJson<{ error: { code: string; details: { guard_failures: Array<{ code: string }> } } }>(fourthRepair.stderr),
-    ).toMatchObject({
-      error: {
-        code: 'TRANSITION_GUARD_FAILED',
-        details: { guard_failures: [{ code: 'REPAIR_BUDGET_EXHAUSTED' }] },
-      },
-    });
-
-    await expect(
-      transition(repoDir, sessionId, 'blocked', version, 'repair:blocked', {
-        block: {
-          reason: 'Local proof still fails after three repairs',
-          evidence_ref: 'receipt:latest',
-          recovery: 'Human decides whether to expand the repair budget',
-          stop_code: 'REPAIR_BUDGET_EXHAUSTED',
-        },
-      }),
-    ).resolves.toMatchObject({
-      data: { lifecycle: { state: 'blocked', state_version: version + 1 } },
-    });
-  }, 60_000);
-
-  it('does not consume another repair attempt when a blocked repair is recovered', async () => {
+  it('accepts current pre-PR findings before signed CI and retains their audit summary', async () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
-    await recoverBlockedRepairSession(repoDir, sessionId);
+    await recordProofPlan(repoDir, sessionId);
+    await transition(repoDir, sessionId, 'implementing', 2, 'pre-pr-review:implement');
+    await writeFile(path.join(repoDir, 'feature.txt'), 'initial implementation\n', 'utf8');
+    await execFileAsync('git', ['add', 'feature.txt'], { cwd: repoDir });
+    await execFileAsync('git', ['commit', '-m', 'initial implementation'], { cwd: repoDir });
+    await transition(repoDir, sessionId, 'verifying', 3, 'pre-pr-review:verify');
+    await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json']);
+    const headSha = (await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: repoDir })).stdout.trim();
+    const reviewInput = {
+      pre_pr_review: {
+        outcome: 'changes_required',
+        head_sha: headSha,
+        evidence_ref: 'review-ledger:2026-07-30',
+        evidence_sha256: 'a'.repeat(64),
+        findings: [
+          {
+            id: 'capture-auth-no-mutation',
+            summary: 'Auth rejection coverage does not prove no mutation.',
+            path: 'tests/payments.test.ts',
+          },
+        ],
+      },
+    };
+
+    await expect(
+      transition(repoDir, sessionId, 'implementing', 4, 'pre-pr-review:changes', reviewInput),
+    ).resolves.toMatchObject({
+      data: { lifecycle: { state: 'implementing', state_version: 5 } },
+    });
 
     const next = parseJson<{
       data: {
-        candidate: { target_state: string };
-        repair_budget: { attempts_used: number; remaining: number; exhausted: boolean };
+        pre_pr_review: { status: string; iteration_count: number; findings: Array<{ id: string }> };
+        implementation_basis: { head_sha: string; source: string };
+        repair_budget: { attempts_used: number };
       };
     }>((await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout);
-
     expect(next.data).toMatchObject({
-      candidate: { target_state: 'verifying' },
-      repair_budget: { attempts_used: 1, remaining: 2, exhausted: false },
+      pre_pr_review: {
+        status: 'changes_required',
+        iteration_count: 1,
+        findings: [{ id: 'capture-auth-no-mutation' }],
+      },
+      implementation_basis: { head_sha: headSha, source: 'pre_pr_review' },
+      repair_budget: { attempts_used: 0 },
+    });
+
+    const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
+    try {
+      const row = db
+        .prepare(`SELECT event_json FROM audit_events WHERE event_type = 'transition_applied' ORDER BY sequence DESC`)
+        .get() as { event_json: string };
+      expect(JSON.parse(row.event_json)).toMatchObject({
+        payload: {
+          pre_pr_review: {
+            outcome: 'changes_required',
+            head_sha: headSha,
+            finding_count: 1,
+            finding_ids: ['capture-auth-no-mutation'],
+          },
+        },
+      });
+    } finally {
+      db.close();
+    }
+
+    await transition(repoDir, sessionId, 'blocked', 5, 'pre-pr-review:block', {
+      block: {
+        stop_code: 'REVIEW_PAUSED',
+        recovery: 'Obtain explicit approval to resume the same implementation work.',
+        reason: 'Pause the session without changing its review authority.',
+        evidence_ref: 'incident:pre-pr-review',
+      },
+    });
+    await transition(repoDir, sessionId, 'implementing', 6, 'pre-pr-review:resume', {
+      recovery: {
+        approved_by: 'test-controller',
+        evidence_ref: 'incident:pre-pr-review:resolved',
+        reason: 'Resume the previously authorized implementation work.',
+      },
+    });
+    const resumed = parseJson<{
+      data: {
+        candidate: { target_state: string; executable: boolean };
+        guard_failures: Array<{ code: string }>;
+        implementation_basis: { head_sha: string; source: string };
+        pre_pr_review: { iteration_count: number };
+      };
+    }>((await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout);
+    expect(resumed.data).toMatchObject({
+      candidate: { target_state: 'verifying', executable: false },
+      guard_failures: [{ code: 'IMPLEMENTATION_BASIS_NOT_ADVANCED' }],
+      implementation_basis: { head_sha: headSha, source: 'pre_pr_review' },
+      pre_pr_review: { iteration_count: 1 },
+    });
+
+    await writeFile(path.join(repoDir, 'finding-fix.txt'), 'address current finding\n', 'utf8');
+    await execFileAsync('git', ['add', 'finding-fix.txt'], { cwd: repoDir });
+    await execFileAsync('git', ['commit', '-m', 'address pre-pr finding'], { cwd: repoDir });
+    const staleAfterCommit = parseJson<{
+      data: {
+        pre_pr_review: { status: string; head_sha: string };
+        implementation_basis: { head_sha: string; source: string };
+        proof: { status: string };
+      };
+    }>((await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout);
+    expect(staleAfterCommit.data).toMatchObject({
+      pre_pr_review: { status: 'stale', head_sha: headSha },
+      implementation_basis: { head_sha: headSha, source: 'pre_pr_review' },
+      proof: { status: 'stale' },
     });
   });
 
-  it('preserves the original failure basis when a blocked repair is recovered', async () => {
+  it('rejects malformed pre-PR review input without lifecycle, evidence, or budget mutation', async () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
-    await recoverBlockedRepairSession(repoDir, sessionId);
-    await writeFile(path.join(repoDir, 'feature.txt'), 'repaired after recovery\n', { flag: 'a' });
-    await execFileAsync('git', ['add', 'feature.txt'], { cwd: repoDir });
-    await execFileAsync('git', ['commit', '-m', 'repair after blocked recovery'], { cwd: repoDir });
+    await recordProofPlan(repoDir, sessionId);
+    await forceVerifying(repoDir, sessionId);
+    await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json']);
+    const headSha = (await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: repoDir })).stdout.trim();
 
-    await expect(transition(repoDir, sessionId, 'verifying', 7, 'blocked-repair:reverify')).resolves.toMatchObject({
-      data: { lifecycle: { state: 'verifying', state_version: 8 } },
+    const before = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
+    const counts = {
+      transitions: (before.prepare(`SELECT COUNT(*) AS count FROM session_transitions`).get() as { count: number })
+        .count,
+      receipts: (before.prepare(`SELECT COUNT(*) AS count FROM gate_receipts`).get() as { count: number }).count,
+      repairs: (
+        before.prepare(`SELECT COUNT(*) AS count FROM session_transitions WHERE to_state = 'repairing'`).get() as {
+          count: number;
+        }
+      ).count,
+    };
+    before.close();
+
+    const failure = parseJson<{
+      error: {
+        code: string;
+        details: {
+          actual_state_version: number;
+          lifecycle_phase: string;
+          guard_failures: Array<{ code: string }>;
+          unchanged: string[];
+        };
+      };
+    }>(
+      (
+        await runCliFailure(repoDir, [
+          'session',
+          'transition',
+          'implementing',
+          '--session',
+          sessionId,
+          '--expected-state-version',
+          '4',
+          '--idempotency-key',
+          'pre-pr-review:invalid',
+          '--actor',
+          'agent',
+          '--input',
+          JSON.stringify({
+            pre_pr_review: {
+              outcome: 'clean',
+              head_sha: headSha,
+              evidence_ref: 'review-ledger:invalid',
+              evidence_sha256: 'a'.repeat(64),
+              findings: [{ id: 'finding-1', summary: 'Cannot accompany clean', path: 'src/index.ts' }],
+            },
+          }),
+          '--json',
+        ])
+      ).stderr,
+    );
+    expect(failure).toMatchObject({
+      error: {
+        code: 'TRANSITION_GUARD_FAILED',
+        details: {
+          actual_state_version: 4,
+          lifecycle_phase: 'pre_pr',
+          guard_failures: [{ code: 'PRE_PR_REVIEW_FINDINGS_INVALID' }],
+          unchanged: ['lifecycle', 'repair_budget', 'proof', 'review_evidence'],
+        },
+      },
     });
+
+    const after = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
+    try {
+      expect(after.prepare(`SELECT status, state_version FROM tasks`).get()).toEqual({
+        status: 'verifying',
+        state_version: 4,
+      });
+      expect(after.prepare(`SELECT COUNT(*) AS count FROM session_transitions`).get()).toEqual({
+        count: counts.transitions,
+      });
+      expect(after.prepare(`SELECT COUNT(*) AS count FROM gate_receipts`).get()).toEqual({
+        count: counts.receipts,
+      });
+      expect(
+        after.prepare(`SELECT COUNT(*) AS count FROM session_transitions WHERE to_state = 'repairing'`).get(),
+      ).toEqual({ count: counts.repairs });
+    } finally {
+      after.close();
+    }
+  });
+
+  it('rejects an unrelated clean commit that does not descend from the failed implementation basis', async () => {
+    const repoDir = await makeCommittedRepo();
+    const sessionId = await startFramedSession(repoDir);
+    const plan = await recordProofPlan(
+      repoDir,
+      sessionId,
+      proofPlan(['node', '-e', 'process.stderr.write("expected failure\\n"); process.exit(1)']),
+    );
+    await transition(repoDir, sessionId, 'implementing', 2, 'basis:implement');
+    await writeFile(path.join(repoDir, 'feature.txt'), 'first implementation\n', 'utf8');
+    await execFileAsync('git', ['add', 'feature.txt'], { cwd: repoDir });
+    await execFileAsync('git', ['commit', '-m', 'first implementation'], { cwd: repoDir });
+    await transition(repoDir, sessionId, 'verifying', 3, 'basis:verify');
+    const failedReceipt = parseJson<{ data: { receipt: { head_after: string } } }>(
+      (await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json'])).stdout,
+    );
+    await transition(repoDir, sessionId, 'implementing', 4, 'basis:reenter');
+
+    await execFileAsync('git', ['reset', '--hard', plan.data.proof_plan.baseline_head_sha], { cwd: repoDir });
+    await writeFile(path.join(repoDir, 'unrelated.txt'), 'sibling history\n', 'utf8');
+    await execFileAsync('git', ['add', 'unrelated.txt'], { cwd: repoDir });
+    await execFileAsync('git', ['commit', '-m', 'unrelated sibling commit'], { cwd: repoDir });
+
+    const rejected = parseJson<{
+      error: { code: string; details: { guard_failures: Array<{ code: string; message: string }> } };
+    }>(
+      (
+        await runCliFailure(repoDir, [
+          'session',
+          'transition',
+          'verifying',
+          '--session',
+          sessionId,
+          '--expected-state-version',
+          '5',
+          '--idempotency-key',
+          'basis:unrelated',
+          '--actor',
+          'agent',
+          '--input',
+          '{}',
+          '--json',
+        ])
+      ).stderr,
+    );
+    expect(rejected).toMatchObject({
+      error: {
+        code: 'TRANSITION_GUARD_FAILED',
+        details: {
+          guard_failures: [
+            {
+              code: 'IMPLEMENTATION_BASIS_NOT_ADVANCED',
+            },
+          ],
+        },
+      },
+    });
+    expect(rejected.error.details.guard_failures[0]?.message).toContain(
+      `implementation basis ${failedReceipt.data.receipt.head_after}`,
+    );
+
+    const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
+    try {
+      expect(db.prepare(`SELECT status, state_version FROM tasks`).get()).toEqual({
+        status: 'implementing',
+        state_version: 5,
+      });
+    } finally {
+      db.close();
+    }
   });
 
   it('marks a passing receipt stale after a commit and accepts a fresh current-HEAD rerun', async () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
     await recordProofPlan(repoDir, sessionId);
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
     const first = parseJson<{ data: { receipt: { id: string } } }>(
       (await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json'])).stdout,
     );
@@ -1256,7 +1492,7 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
       (await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout,
     );
     expect(current.data).toMatchObject({
-      candidate: { target_state: 'reviewing' },
+      candidate: { target_state: 'pre_pr_reviewing' },
       proof: { status: 'passed' },
     });
   });
@@ -1265,7 +1501,7 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
     await recordProofPlan(repoDir, sessionId);
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
     const gate = parseJson<{ data: { receipt: { artifact: { path: string } } } }>(
       (await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json'])).stdout,
     );
@@ -1296,11 +1532,11 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
       sessionId,
       proofPlan(['node', '-e', 'process.exit(Number(process.env.THREADLOOP_GATE_EXIT ?? "0"))']),
     );
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
     const args = ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json'];
-    await runCliWithEnv(repoDir, args, { THREADLOOP_GATE_EXIT: '0' });
+    await runCli(repoDir, args, { THREADLOOP_GATE_EXIT: '0' });
     const failed = parseJson<{ data: { receipt: { id: string; sequence: number; result: string } } }>(
-      (await runCliWithEnv(repoDir, args, { THREADLOOP_GATE_EXIT: '9' })).stdout,
+      (await runCli(repoDir, args, { THREADLOOP_GATE_EXIT: '9' })).stdout,
     );
     expect(failed.data.receipt).toMatchObject({ sequence: 2, result: 'failed' });
 
@@ -1311,7 +1547,7 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
       };
     }>((await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout);
     expect(next.data).toMatchObject({
-      candidate: { target_state: 'repairing' },
+      candidate: { target_state: 'implementing' },
       proof: {
         status: 'failed',
         gates: [{ receipt_id: failed.data.receipt.id, result: 'failed', status: 'failed' }],
@@ -1341,14 +1577,15 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
 
     const next = parseJson<{
       data: {
-        candidate: { target_state: string; executable: boolean };
+        candidate: null;
         proof: { status: string };
         staleness: { status: string; is_stale: null };
         repair_budget: { status: string; attempts_used: null };
       };
     }>((await runCli(repoDir, ['session', 'next', '--session', started.data.session_id, '--json'])).stdout);
     expect(next.data).toMatchObject({
-      candidate: { target_state: 'framed', executable: true },
+      candidate: null,
+      guard_failures: [{ code: 'SESSION_SCHEMA_MIGRATION_REQUIRED' }],
       proof: { status: 'migration_required' },
       staleness: { status: 'migration_required', is_stale: null },
       repair_budget: { status: 'migration_required', attempts_used: null },

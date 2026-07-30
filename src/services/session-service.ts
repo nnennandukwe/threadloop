@@ -6,6 +6,7 @@ import {
   appendEntryToSession,
   appendGateReceipt,
   applySessionTransition,
+  CURRENT_SCHEMA_VERSION,
   createId,
   ensureStateDatabase,
   ensureThreadloopLayout,
@@ -22,12 +23,14 @@ import {
   readState,
   recordArtifact,
   recordSessionHeartbeat,
+  requiresExplicitInitMigration,
   upsertRepoSnapshot,
   writeArtifactFile,
   writeConfig,
   ReceiptAppendConflictError,
   AuditChainCorruptedError,
   AuditLedgerUnavailableError,
+  SessionTransitionHistoryCorruptedError,
 } from '../adapters/fs/sqlite-store.js';
 import { AuditExportConflictError, writeAuditExportExclusive } from '../adapters/fs/audit-export.js';
 import { isThreadloopInitialized } from '../adapters/fs/repo.js';
@@ -48,6 +51,7 @@ import {
   evaluateTransitionGuards,
   getTransitionGuardRequirement,
   planNextTransition,
+  readPrePrReviewEvidence,
   requiresProofGuardContext,
 } from '../domain/session-transition.js';
 import type { ProofGuardContext, TransitionGuardDecision, TransitionRequest } from '../domain/session-transition.js';
@@ -72,8 +76,8 @@ import {
 } from '../domain/review.js';
 import { canonicalJson } from '../domain/canonical-json.js';
 import { verifyAuditChain } from '../domain/audit.js';
-import { isRepairEntryTransition } from '../domain/lifecycle.js';
-import { DEFAULT_BASE_REF, TASK_STATUS } from '../domain/types.js';
+import { deriveLifecyclePhase, isRepairEntryTransition } from '../domain/lifecycle.js';
+import { DEFAULT_BASE_REF, LIFECYCLE_PHASE, TASK_STATUS } from '../domain/types.js';
 import type {
   ActiveState,
   ArtifactKind,
@@ -81,6 +85,7 @@ import type {
   EntryKind,
   EntrySource,
   HeartbeatSource,
+  LifecyclePhase,
   RepoSnapshot,
   Session,
   SessionRecord,
@@ -158,12 +163,35 @@ interface ResolvedSession extends SessionRecord {
 
 export async function initThreadloop(cwd: string) {
   const repoRoot = await resolveRepositoryRoot(cwd);
-  const { created, gitignoreStatus } = await initializeThreadloopRepo(repoRoot);
-  return { repoRoot, created, gitignoreStatus };
+  try {
+    const { created, gitignoreStatus } = await initializeThreadloopRepo(repoRoot);
+    return { repoRoot, created, gitignoreStatus };
+  } catch (error) {
+    if (error instanceof AuditChainCorruptedError) {
+      throw mapAuditChainCorruption(
+        error.sessionId ?? '(migration)',
+        error,
+        'Restore the audit ledger from trusted storage, then rerun `threadloop init`.',
+      );
+    }
+    if (isSchemaStateError(error)) {
+      throw new ThreadloopError('STATE_CORRUPTED', error instanceof Error ? error.message : String(error), {
+        cause: error,
+        details: {
+          hint: 'Restore transition history from trusted storage, then rerun `threadloop init`.',
+        },
+      });
+    }
+    throw error;
+  }
 }
 
 export async function startTask(input: StartTaskInput) {
   const repoRoot = await resolveRepositoryRoot(input.cwd);
+  if (isThreadloopInitialized(repoRoot)) {
+    await readConfig(repoRoot);
+    assertSchemaDoesNotRequireExplicitMigration(repoRoot);
+  }
   await initializeThreadloopRepo(repoRoot);
   const baseRef =
     input.baseRef === undefined && (await refExists(repoRoot, DEFAULT_BASE_REF))
@@ -305,6 +333,10 @@ export async function transitionSession(input: TransitionSessionInput) {
     let boundProofPlan: BoundProofPlan | undefined;
     let proofGuardContext: ProofGuardContext = {};
     let preparedProofGuardRejection: TransitionGuardDecision | undefined;
+    const transitionHistory = lifecycle?.transitionHistory ?? [];
+    const phase = lifecycle
+      ? deriveLifecyclePhase(transitionHistory, lifecycle.auditGenesisState)
+      : LIFECYCLE_PHASE.PRE_PR;
     if (
       lifecycle?.state === TASK_STATUS.FRAMED &&
       lifecycle.stateVersion === input.expectedStateVersion &&
@@ -333,11 +365,12 @@ export async function transitionSession(input: TransitionSessionInput) {
           ciEvidence: preliminary.ciEvidence,
           reviewEvidence: preliminary.reviewEvidence,
           attemptsUsed: preliminary.attemptsUsed,
+          phase,
         };
       } else {
         const repository = await observeProofRepository(repoRoot);
         const proofState = await evaluateSessionProof(repoRoot, input.sessionId, repository.headSha);
-        proofGuardContext = await buildProofGuardContext(repoRoot, input.sessionId, proofState, repository);
+        proofGuardContext = await buildProofGuardContext(repoRoot, proofState, repository, phase, transitionHistory);
       }
     } else if (
       lifecycle &&
@@ -346,7 +379,7 @@ export async function transitionSession(input: TransitionSessionInput) {
     ) {
       const repository = await observeProofRepository(repoRoot);
       const proofState = await evaluateSessionProof(repoRoot, input.sessionId, repository.headSha);
-      proofGuardContext = await buildProofGuardContext(repoRoot, input.sessionId, proofState, repository);
+      proofGuardContext = await buildProofGuardContext(repoRoot, proofState, repository, phase, transitionHistory);
     }
     return await applySessionTransition(
       repoRoot,
@@ -516,8 +549,24 @@ async function prepareBoundProofPlan(repoRoot: string, value: unknown): Promise<
 
 export async function runSessionGate(input: RunSessionGateInput) {
   const repoRoot = await resolveRepositoryRoot(input.cwd);
-  await assertInitialized(repoRoot);
-  await ensureStateDatabase(repoRoot);
+  try {
+    await assertInitialized(repoRoot);
+    await ensureStateDatabase(repoRoot);
+  } catch (error) {
+    if (error instanceof AuditChainCorruptedError) {
+      throw mapAuditChainCorruption(input.sessionId, error);
+    }
+    if (isSchemaStateError(error)) {
+      throw new ThreadloopError('STATE_CORRUPTED', error instanceof Error ? error.message : String(error), {
+        cause: error,
+        details: {
+          session_id: input.sessionId,
+          hint: 'Restore transition history from trusted storage before retrying the gate.',
+        },
+      });
+    }
+    throw error;
+  }
   const context = await readSessionGateContext(repoRoot, input.sessionId);
   if (!context) {
     throw new ThreadloopError('SESSION_NOT_FOUND', `Could not find session: ${input.sessionId}`, {
@@ -700,6 +749,16 @@ export async function runSessionGate(input: RunSessionGateInput) {
     if (error instanceof AuditChainCorruptedError) {
       throw mapAuditChainCorruption(input.sessionId, error);
     }
+    if (error instanceof SessionTransitionHistoryCorruptedError) {
+      throw new ThreadloopError('STATE_CORRUPTED', error.message, {
+        cause: error,
+        details: {
+          session_id: input.sessionId,
+          orphan_artifact: relativeExecutionPath,
+          hint: 'Restore transition history from trusted storage before retrying the gate.',
+        },
+      });
+    }
     if (error instanceof ReceiptAppendConflictError) {
       throw new ThreadloopError('RECEIPT_NOT_RECORDED', error.message, {
         cause: error,
@@ -796,6 +855,7 @@ function assertSessionAuditVerified(repoRoot: string, sessionId: string) {
         verification.error.code,
         `Session ${sessionId} audit chain is corrupt at sequence ${verification.error.sequence ?? 'root'}.`,
         verification.error.sequence,
+        sessionId,
       );
     }
   } catch (error) {
@@ -923,6 +983,7 @@ export async function exportSessionAudit(input: ExportSessionAuditInput) {
 async function loadSessionAudit(input: SessionAuditInput, expectedRoot?: string) {
   const repoRoot = await resolveRepositoryRoot(input.cwd);
   await assertInitializedReadOnly(repoRoot);
+  assertSchemaDoesNotRequireExplicitMigration(repoRoot);
   const availability = inspectAuditLedgerReadOnly(repoRoot);
   if (!availability.available && availability.schemaVersion !== null && availability.schemaVersion >= 6) {
     throw auditUnavailableFailure(
@@ -930,9 +991,25 @@ async function loadSessionAudit(input: SessionAuditInput, expectedRoot?: string)
       new AuditLedgerUnavailableError('table_missing', availability.schemaVersion),
     );
   }
-  await ensureStateDatabase(repoRoot);
-  const lifecycle = readSessionLifecycleReadOnly(repoRoot, input.sessionId);
-  if (!lifecycle) {
+  try {
+    await ensureStateDatabase(repoRoot);
+  } catch (error) {
+    if (error instanceof AuditChainCorruptedError) {
+      throw mapAuditChainCorruption(input.sessionId, error, 'Restore the ledger from trusted storage.');
+    }
+    if (isSchemaStateError(error)) {
+      throw new ThreadloopError('STATE_CORRUPTED', error instanceof Error ? error.message : String(error), {
+        cause: error,
+        details: {
+          session_id: input.sessionId,
+          hint: 'Restore transition history from trusted storage before retrying the audit operation.',
+        },
+      });
+    }
+    throw error;
+  }
+  const state = await readState(repoRoot);
+  if (!state.sessions.some((session) => session.id === input.sessionId)) {
     throw new ThreadloopError('SESSION_NOT_FOUND', `Could not find session: ${input.sessionId}`, {
       details: { session_id: input.sessionId },
     });
@@ -992,7 +1069,7 @@ function auditUnavailableFailure(sessionId: string, error: AuditLedgerUnavailabl
       hint:
         error.reason === 'schema_version'
           ? 'Run a state-migrating ThreadLoop command before retrying the audit operation.'
-          : 'Restore the schema-v6 audit ledger from trusted storage before retrying.',
+          : 'Restore the schema-v6-or-newer audit ledger from trusted storage before retrying.',
     },
   });
 }
@@ -1026,6 +1103,18 @@ export async function getNextSessionAction(input: NextSessionInput) {
     if (error instanceof ThreadloopError) {
       throw error;
     }
+    if (error instanceof AuditChainCorruptedError) {
+      throw mapAuditChainCorruption(input.sessionId, error, 'Restore the ledger from trusted storage.');
+    }
+    if (error instanceof SessionTransitionHistoryCorruptedError) {
+      throw new ThreadloopError('STATE_CORRUPTED', error.message, {
+        cause: error,
+        details: {
+          session_id: error.sessionId,
+          hint: 'Restore transition history from trusted storage before retrying session next.',
+        },
+      });
+    }
     throw new ThreadloopError('STATE_CORRUPTED', error instanceof Error ? error.message : String(error), {
       cause: error,
     });
@@ -1048,31 +1137,52 @@ export async function getNextSessionAction(input: NextSessionInput) {
     });
   }
 
+  const lifecycleHistory = lifecycle.transitionHistory;
+  const phase = deriveLifecyclePhase(lifecycleHistory, lifecycle.auditGenesisState);
+  const lifecycleMigrationRequired = lifecycle.schemaVersion < CURRENT_SCHEMA_VERSION;
   const proofState =
-    lifecycle.schemaVersion >= 4
+    !lifecycleMigrationRequired && lifecycle.schemaVersion >= 4
       ? await evaluateSessionProof(repoRoot, lifecycle.sessionId, proofRepository?.headSha ?? repository.headSha)
       : null;
   const proofGuardContext =
     proofState && proofRepository
-      ? await buildProofGuardContext(repoRoot, input.sessionId, proofState, proofRepository)
+      ? await buildProofGuardContext(repoRoot, proofState, proofRepository, phase, lifecycleHistory)
       : undefined;
-  const lifecycleHistory =
-    lifecycle.schemaVersion >= 3 ? readSessionTransitionHistoryReadOnly(repoRoot, input.sessionId) : [];
-  const audit = projectSessionAuditReadOnly(repoRoot, input.sessionId, lifecycle.schemaVersion);
-  const planned = planNextTransition({
-    state: lifecycle.state,
-    stateVersion: lifecycle.stateVersion,
-    blockedFromState: lifecycle.blockedFromState,
-    ...(proofState
-      ? {
-          proof: {
-            status: proofState.evidence.status,
-            attemptsUsed: proofState.attemptsUsed,
+  const audit = projectSessionAuditReadOnly(lifecycle.schemaVersion, lifecycle.auditEvents);
+  const planned = lifecycleMigrationRequired
+    ? {
+        candidate: null,
+        guardFailures: [
+          {
+            code: 'SESSION_SCHEMA_MIGRATION_REQUIRED',
+            message: `ThreadLoop schema v${lifecycle.schemaVersion} must be migrated before lifecycle work can continue.`,
+            owner_issue: 69,
           },
-        }
-      : {}),
-    ...(proofGuardContext ? { proofGuardContext } : {}),
-  });
+        ],
+        requiredWork: [
+          {
+            code: 'MIGRATE_SESSION_SCHEMA',
+            description: 'Run `threadloop init`, then rerun `threadloop session next --session <id> --json`.',
+            owner_issue: 69,
+          },
+        ],
+        terminalReason: null,
+      }
+    : planNextTransition({
+        state: lifecycle.state,
+        stateVersion: lifecycle.stateVersion,
+        blockedFromState: lifecycle.blockedFromState,
+        phase,
+        ...(proofState
+          ? {
+              proof: {
+                status: proofState.evidence.status,
+                attemptsUsed: proofState.attemptsUsed,
+              },
+            }
+          : {}),
+        ...(proofGuardContext ? { proofGuardContext } : {}),
+      });
   const repairBudget = proofState
     ? {
         status: proofState.attemptsUsed >= 3 ? ('exhausted' as const) : ('available' as const),
@@ -1089,15 +1199,33 @@ export async function getNextSessionAction(input: NextSessionInput) {
         exhausted: null,
       };
   return {
-    contract_version: 3 as const,
+    contract_version: 4 as const,
     session_id: lifecycle.sessionId,
     task_id: lifecycle.taskId,
     lifecycle: {
       state: lifecycle.state,
       state_version: lifecycle.stateVersion,
       blocked_from_state: lifecycle.blockedFromState,
+      phase,
+      storage_schema_version: lifecycle.schemaVersion,
+      contract_status: lifecycleMigrationRequired ? ('migration_required' as const) : ('current' as const),
       history: lifecycleHistory,
     },
+    pre_pr_review: projectPrePrReview(
+      lifecycle.schemaVersion,
+      lifecycle.state,
+      lifecycleHistory,
+      proofRepository?.headSha ?? repository.headSha,
+    ),
+    implementation_basis: lifecycleMigrationRequired
+      ? {
+          head_sha: null,
+          source: null,
+        }
+      : {
+          head_sha: proofGuardContext?.implementationBasis?.headSha ?? null,
+          source: proofGuardContext?.implementationBasis?.source ?? null,
+        },
     candidate: planned.candidate,
     guard_failures: planned.guardFailures,
     required_work: planned.requiredWork,
@@ -1184,7 +1312,68 @@ export async function getNextSessionAction(input: NextSessionInput) {
   };
 }
 
-function projectSessionAuditReadOnly(repoRoot: string, sessionId: string, schemaVersion: number) {
+function projectPrePrReview(
+  schemaVersion: number,
+  state: Task['status'],
+  history: ReturnType<typeof readSessionTransitionHistoryReadOnly>,
+  currentHead: string | null,
+) {
+  const firstReviewIndex = history.findIndex((transition) => transition.to_state === TASK_STATUS.REVIEWING);
+  const prePrHistory = history.slice(0, firstReviewIndex === -1 ? history.length : firstReviewIndex + 1);
+  const iterationCount = prePrHistory.filter(
+    (transition) =>
+      transition.to_state === TASK_STATUS.IMPLEMENTING &&
+      (transition.from_state === TASK_STATUS.VERIFYING || transition.from_state === TASK_STATUS.PRE_PR_REVIEWING),
+  ).length;
+  if (schemaVersion < CURRENT_SCHEMA_VERSION) {
+    return {
+      status: 'migration_required' as const,
+      head_sha: null,
+      evidence_ref: null,
+      evidence_sha256: null,
+      findings: [],
+      iteration_count: iterationCount,
+    };
+  }
+
+  const latestReview = [...prePrHistory]
+    .reverse()
+    .map((transition) => readPrePrReviewEvidence(transition.input))
+    .find((review) => review !== null);
+  if (!latestReview) {
+    return {
+      status: state === TASK_STATUS.PRE_PR_REVIEWING ? ('review_required' as const) : ('not_started' as const),
+      head_sha: null,
+      evidence_ref: null,
+      evidence_sha256: null,
+      findings: [],
+      iteration_count: iterationCount,
+    };
+  }
+
+  return {
+    status:
+      latestReview.headSha !== currentHead
+        ? ('stale' as const)
+        : latestReview.outcome === 'changes_required'
+          ? ('changes_required' as const)
+          : ('cleared' as const),
+    head_sha: latestReview.headSha,
+    evidence_ref: latestReview.evidenceRef,
+    evidence_sha256: latestReview.evidenceSha256,
+    findings: latestReview.findings.map((finding) => ({
+      id: finding.id,
+      summary: finding.summary,
+      path: finding.path,
+    })),
+    iteration_count: iterationCount,
+  };
+}
+
+function projectSessionAuditReadOnly(
+  schemaVersion: number,
+  events: NonNullable<ReturnType<typeof readSessionLifecycleReadOnly>>['auditEvents'],
+) {
   if (schemaVersion < 6) {
     return {
       status: 'migration_required' as const,
@@ -1194,23 +1383,7 @@ function projectSessionAuditReadOnly(repoRoot: string, sessionId: string, schema
       error: null,
     };
   }
-  try {
-    const events = readSessionAuditReadOnly(repoRoot, sessionId);
-    const verification = verifyAuditChain(events, sha256);
-    const first = events[0]?.value;
-    return {
-      status: verification.valid ? ('valid' as const) : ('corrupt' as const),
-      event_count: events.length,
-      root: verification.root,
-      coverage:
-        first?.event_type === 'session_started'
-          ? ('full' as const)
-          : first?.event_type === 'audit_activated' && first.payload.coverage === 'schema_v6_forward'
-            ? ('schema_v6_forward' as const)
-            : ('unknown' as const),
-      error: verification.error,
-    };
-  } catch (error) {
+  if (!events || events.length === 0) {
     return {
       status: 'corrupt' as const,
       event_count: null,
@@ -1218,10 +1391,23 @@ function projectSessionAuditReadOnly(repoRoot: string, sessionId: string, schema
       coverage: 'unknown' as const,
       error: {
         code: 'AUDIT_READ_FAILED',
-        message: error instanceof Error ? error.message : String(error),
+        message: 'Verified session audit events are unavailable.',
       },
     };
   }
+  const first = events[0]?.value;
+  return {
+    status: 'valid' as const,
+    event_count: events.length,
+    root: events.at(-1)?.sha256 ?? null,
+    coverage:
+      first?.event_type === 'session_started'
+        ? ('full' as const)
+        : first?.event_type === 'audit_activated' && first.payload.coverage === 'schema_v6_forward'
+          ? ('schema_v6_forward' as const)
+          : ('unknown' as const),
+    error: null,
+  };
 }
 
 function nextHumanAction(state: Task['status'], planned: ReturnType<typeof planNextTransition>) {
@@ -1387,18 +1573,53 @@ function emptySessionReviewEvidence(status: ReviewEvidence['status']): ReviewEvi
 
 async function buildProofGuardContext(
   repoRoot: string,
-  sessionId: string,
   proofState: Awaited<ReturnType<typeof evaluateSessionProof>>,
   repository: Awaited<ReturnType<typeof observeProofRepository>>,
+  phase: LifecyclePhase,
+  transitionHistory: ReturnType<typeof readSessionTransitionHistoryReadOnly>,
 ): Promise<ProofGuardContext> {
   const plan = proofState.plan;
-  const committedDiffFromBaseline = plan
-    ? await hasCommittedDiff(repoRoot, plan.baselineHeadSha, repository.headSha)
-    : false;
   const latestFailure = [...proofState.receipts]
     .sort((left, right) => right.sequence - left.sequence)
     .find((receipt) => receipt.result !== 'passed');
-  const currentRepairEntry = readSessionTransitionHistoryReadOnly(repoRoot, sessionId)
+  const latestImplementationEntry = [...transitionHistory]
+    .reverse()
+    .find(
+      (entry) =>
+        entry.to_state === TASK_STATUS.IMPLEMENTING &&
+        (entry.from_state === TASK_STATUS.PROOF_READY ||
+          entry.from_state === TASK_STATUS.VERIFYING ||
+          entry.from_state === TASK_STATUS.PRE_PR_REVIEWING),
+    );
+  const implementationReview = latestImplementationEntry
+    ? readPrePrReviewEvidence(latestImplementationEntry.input)
+    : null;
+  const implementationBasis = !plan
+    ? null
+    : implementationReview
+      ? {
+          headSha: implementationReview.headSha,
+          source: 'pre_pr_review' as const,
+        }
+      : phase === LIFECYCLE_PHASE.PRE_PR &&
+          (proofState.evidence.status === 'failed' ||
+            latestImplementationEntry?.from_state === TASK_STATUS.VERIFYING) &&
+          latestFailure?.headAfter
+        ? {
+            headSha: latestFailure.headAfter,
+            source: 'failed_local_proof' as const,
+          }
+        : {
+            headSha: plan.baselineHeadSha,
+            source: 'proof_plan_baseline' as const,
+          };
+  const committedImplementationFromBasis =
+    implementationBasis &&
+    isFullCommitSha(implementationBasis.headSha) &&
+    implementationBasis.headSha !== repository.headSha
+      ? await hasCommittedDiff(repoRoot, implementationBasis.headSha, repository.headSha)
+      : false;
+  const currentRepairEntry = [...transitionHistory]
     .reverse()
     .find((entry) => isRepairEntryTransition(entry.from_state, entry.to_state));
   const repairBasis =
@@ -1421,11 +1642,13 @@ async function buildProofGuardContext(
     ciEvidence: proofState.ciEvidence,
     reviewEvidence: proofState.reviewEvidence,
     attemptsUsed: proofState.attemptsUsed,
+    phase,
+    implementationBasis,
     repository: {
       branch: repository.branch,
       headSha: repository.headSha,
       clean: repository.clean,
-      committedDiffFromBaseline,
+      committedImplementationFromBasis,
       committedRepairFromFailure,
     },
   };
@@ -1657,7 +1880,7 @@ export async function generateArtifact(
     sessionId: resolved.session.id,
     kind: artifactKind,
     path: path.relative(repoRoot, fullPath),
-    templateVersion: artifactKind === 'handoff' ? 'v2' : 'v1',
+    templateVersion: artifactKind === 'handoff' ? 'v3' : 'v1',
     generatedAt,
     snapshotSource,
   };
@@ -1712,7 +1935,32 @@ async function assertInitialized(repoRoot: string) {
     );
   }
   await readConfig(repoRoot);
+  assertSchemaDoesNotRequireExplicitMigration(repoRoot);
   await ensureStateDatabase(repoRoot);
+}
+
+function assertSchemaDoesNotRequireExplicitMigration(repoRoot: string) {
+  const { schemaVersion } = inspectAuditLedgerReadOnly(repoRoot);
+  if (schemaVersion !== null && requiresExplicitInitMigration(schemaVersion)) {
+    throw new ThreadloopError(
+      'SESSION_SCHEMA_MIGRATION_REQUIRED',
+      `ThreadLoop schema v${schemaVersion} requires explicit migration before this command can run.`,
+      {
+        details: {
+          storage_schema_version: schemaVersion,
+          hint: 'Run `threadloop init`, then retry the original command.',
+        },
+      },
+    );
+  }
+  if (schemaVersion !== null && schemaVersion > CURRENT_SCHEMA_VERSION) {
+    throw new ThreadloopError('STATE_CORRUPTED', `Unsupported ThreadLoop schema version: ${schemaVersion}`, {
+      details: {
+        storage_schema_version: schemaVersion,
+        hint: 'Use a ThreadLoop binary that supports this storage schema.',
+      },
+    });
+  }
 }
 
 async function assertInitializedReadOnly(repoRoot: string) {
@@ -1846,6 +2094,7 @@ function isSchemaStateError(error: unknown) {
     message.startsWith('Unsupported ThreadLoop schema version:') ||
     message.startsWith('Missing ThreadLoop schema version metadata.') ||
     message.startsWith('Invalid schema for ') ||
+    message.startsWith('Invalid session transition history for ') ||
     message === 'Invalid .threadloop/state/state.db'
   );
 }

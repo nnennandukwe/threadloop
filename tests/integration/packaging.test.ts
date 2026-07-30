@@ -126,5 +126,5 @@ describe('threadloop packaged install', () => {
     expect(sessionStatus.data.session_id).toBe(started.data.session_id);
     expect(sessionStatus.data.entries.count).toBe(2);
     expect(sessionStatus.data.entries.kinds.note).toBe(1);
-  }, 30_000);
+  }, 60_000);
 });

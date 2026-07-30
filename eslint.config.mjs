@@ -15,6 +15,17 @@ export default typescriptEslint.config(
     },
   },
   {
+    // Root-level build and test configuration. Linted without type-aware rules
+    // because these files sit outside the tsconfig projects; without this block
+    // they match no configuration and fail `eslint --max-warnings=0` whenever
+    // lint-staged passes one explicitly.
+    files: ['*.config.ts'],
+    extends: [eslint.configs.recommended, ...typescriptEslint.configs.recommended],
+    languageOptions: {
+      globals: globals.node,
+    },
+  },
+  {
     files: ['src/**/*.ts', 'tests/**/*.ts', 'scripts/**/*.ts'],
     extends: [eslint.configs.recommended, ...typescriptEslint.configs.recommendedTypeChecked],
     languageOptions: {
