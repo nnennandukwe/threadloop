@@ -720,7 +720,6 @@ function assertSessionTransitionHistoryAuthority(
   if (!tableExists(db, 'audit_events')) {
     return;
   }
-  assertAuditChainVerifiedForWrite(db, sessionId);
   const rows = db
     .prepare(
       `
@@ -777,7 +776,7 @@ function assertSessionTransitionHistoryAuthority(
     previous = row;
   }
 
-  const auditEvents = readAuditEvents(db, sessionId);
+  const auditEvents = readVerifiedAuditEvents(db, sessionId);
   const genesis = auditEvents[0]?.value;
   const auditFloor =
     genesis?.event_type === 'session_started'
@@ -1043,7 +1042,6 @@ export async function applySessionTransition(
         task_id: current.task_id,
       });
     }
-    assertAuditChainVerifiedForWrite(db, input.sessionId);
     assertSessionTransitionHistoryAuthority(db, input.sessionId);
     const phase = deriveLifecyclePhase(readSessionTransitionHistory(db, input.sessionId));
 
@@ -2919,6 +2917,11 @@ function assertAuditChainVerifiedForWrite(db: DatabaseSync, sessionId: string) {
     }
   }
 
+  readVerifiedAuditEvents(db, sessionId);
+}
+
+function readVerifiedAuditEvents(db: DatabaseSync, sessionId: string) {
+  const dataVersion = readDatabaseDataVersion(db);
   const events = readAuditEvents(db, sessionId);
   if (events.length === 0) {
     throw new AuditChainCorruptedError(
@@ -2940,6 +2943,7 @@ function assertAuditChainVerifiedForWrite(db: DatabaseSync, sessionId: string) {
     count: verification.count,
     root: verification.root,
   });
+  return events;
 }
 
 function cacheVerifiedAuditRoot(db: DatabaseSync, sessionId: string, event: StoredAuditEvent) {
