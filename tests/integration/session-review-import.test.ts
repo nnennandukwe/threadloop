@@ -514,6 +514,47 @@ describe('signed review receipt import', { timeout: 20_000 }, () => {
     }
   });
 
+  it('rejects task-projection drift before importing signed review evidence', async () => {
+    const fixture = await makeReviewingSession();
+    const artifact = reviewArtifact(fixture);
+    const packagePath = await writePackage(fixture, artifact);
+    await resetSqliteConnections(fixture.repoDir);
+    const dbPath = path.join(fixture.repoDir, '.threadloop/state/state.db');
+    const corrupt = new DatabaseSync(dbPath);
+    corrupt.prepare(`UPDATE tasks SET state_version = 7`).run();
+    const beforeAuditCount = (
+      corrupt.prepare(`SELECT COUNT(*) AS count FROM audit_events WHERE session_id = ?`).get(fixture.sessionId) as {
+        count: number;
+      }
+    ).count;
+    corrupt.close();
+
+    await expect(
+      importSessionReviewReceipt({
+        cwd: fixture.repoDir,
+        sessionId: fixture.sessionId,
+        packagePath,
+        verifyReceipt: () => verifier(artifact),
+      }),
+    ).rejects.toMatchObject({
+      code: 'STATE_CORRUPTED',
+      details: {
+        session_id: fixture.sessionId,
+        hint: 'Restore transition history from trusted storage before retrying the receipt import.',
+      },
+    });
+
+    const unchanged = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      expect(unchanged.prepare(`SELECT COUNT(*) AS count FROM signed_review_receipts`).get()).toEqual({ count: 0 });
+      expect(
+        unchanged.prepare(`SELECT COUNT(*) AS count FROM audit_events WHERE session_id = ?`).get(fixture.sessionId),
+      ).toEqual({ count: beforeAuditCount });
+    } finally {
+      unchanged.close();
+    }
+  });
+
   it('rejects a stale reviewed HEAD without persisting or promoting the package', async () => {
     const fixture = await makeReviewingSession();
     const artifact = reviewArtifact(fixture, {

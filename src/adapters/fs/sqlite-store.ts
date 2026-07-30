@@ -78,8 +78,6 @@ const REVIEW_AUDIT_SCHEMA_TRIGGERS = [
   'audit_events_no_delete',
   'audit_events_no_replace',
 ] as const;
-type AuditVerificationCacheEntry = { dataVersion: number; count: number; root: string };
-const auditVerificationCache = new WeakMap<DatabaseSync, Map<string, AuditVerificationCacheEntry>>();
 
 class InvalidJsonError extends Error {}
 
@@ -359,6 +357,15 @@ export class AuditChainCorruptedError extends Error {
     if (sessionId !== undefined) {
       this.sessionId = sessionId;
     }
+  }
+}
+export class SessionTransitionHistoryCorruptedError extends Error {
+  readonly sessionId: string;
+
+  constructor(sessionId: string, detail: string) {
+    super(`Invalid session transition history for ${sessionId}: ${detail}.`);
+    this.name = 'SessionTransitionHistoryCorruptedError';
+    this.sessionId = sessionId;
   }
 }
 
@@ -854,7 +861,7 @@ function assertSessionTransitionHistoryAuthority(db: DatabaseSync, sessionId: st
 }
 
 function invalidTransitionHistory(sessionId: string, detail: string) {
-  return new Error(`Invalid session transition history for ${sessionId}: ${detail}.`);
+  return new SessionTransitionHistoryCorruptedError(sessionId, detail);
 }
 
 function summarizePrePrReview(input: Record<string, unknown>) {
@@ -1286,7 +1293,7 @@ export async function appendGateReceipt(repoRoot: string, input: AppendGateRecei
         `Session ${input.receipt.session_id} proof plan changed while gate ${input.receipt.gate_id} was running.`,
       );
     }
-    assertAuditChainVerifiedForWrite(db, input.receipt.session_id);
+    assertSessionTransitionHistoryAuthority(db, input.receipt.session_id);
 
     const inserted = db
       .prepare(
@@ -1377,7 +1384,7 @@ export async function appendSignedGateReceipt(repoRoot: string, input: AppendSig
         `Session ${artifact.session_id} proof plan changed while signed gate ${artifact.gate.id} was being imported.`,
       );
     }
-    assertAuditChainVerifiedForWrite(db, artifact.session_id);
+    assertSessionTransitionHistoryAuthority(db, artifact.session_id);
 
     const inserted = db
       .prepare(
@@ -1481,7 +1488,7 @@ export async function appendSignedReviewReceipt(repoRoot: string, input: AppendS
         `Session ${artifact.session_id} proof plan changed while review evidence was being imported.`,
       );
     }
-    assertAuditChainVerifiedForWrite(db, artifact.session_id);
+    assertSessionTransitionHistoryAuthority(db, artifact.session_id);
 
     const inserted = db
       .prepare(
@@ -2928,26 +2935,10 @@ function appendAuditEvent(
     event.sha256,
     event.value.recorded_at,
   );
-  cacheVerifiedAuditRoot(db, input.sessionId, event);
   return event;
 }
 
-function assertAuditChainVerifiedForWrite(db: DatabaseSync, sessionId: string) {
-  const dataVersion = readDatabaseDataVersion(db);
-  const cache = auditVerificationCache.get(db)?.get(sessionId);
-  if (cache?.dataVersion === dataVersion) {
-    const tail = readAuditTail(db, sessionId);
-    const integrity = tail ? verifyAuditEventIntegrity(tail, sha256) : null;
-    if (tail && integrity?.valid && tail.value.sequence === cache.count && tail.sha256 === cache.root) {
-      return;
-    }
-  }
-
-  readVerifiedAuditEvents(db, sessionId);
-}
-
 function readVerifiedAuditEvents(db: DatabaseSync, sessionId: string) {
-  const dataVersion = readDatabaseDataVersion(db);
   const events = readAuditEvents(db, sessionId);
   if (events.length === 0) {
     throw new AuditChainCorruptedError(
@@ -2966,34 +2957,7 @@ function readVerifiedAuditEvents(db: DatabaseSync, sessionId: string) {
       sessionId,
     );
   }
-  setAuditVerificationCache(db, sessionId, {
-    dataVersion,
-    count: verification.count,
-    root: verification.root,
-  });
   return events;
-}
-
-function cacheVerifiedAuditRoot(db: DatabaseSync, sessionId: string, event: StoredAuditEvent) {
-  setAuditVerificationCache(db, sessionId, {
-    dataVersion: readDatabaseDataVersion(db),
-    count: event.value.sequence,
-    root: event.sha256,
-  });
-}
-
-function setAuditVerificationCache(db: DatabaseSync, sessionId: string, entry: AuditVerificationCacheEntry) {
-  const cacheBySession = auditVerificationCache.get(db) ?? new Map<string, AuditVerificationCacheEntry>();
-  cacheBySession.set(sessionId, entry);
-  auditVerificationCache.set(db, cacheBySession);
-}
-
-function readDatabaseDataVersion(db: DatabaseSync) {
-  const row = db.prepare(`PRAGMA data_version`).get() as { data_version?: unknown };
-  if (!Number.isSafeInteger(row.data_version)) {
-    throw new Error('ThreadLoop could not read the SQLite data version.');
-  }
-  return row.data_version as number;
 }
 
 function readAuditTail(db: DatabaseSync, sessionId: string) {

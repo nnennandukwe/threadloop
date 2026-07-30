@@ -377,6 +377,46 @@ describe('signed gate receipt import', { timeout: 20_000 }, () => {
     expect(failure.stderr).toContain(missingPath);
   });
 
+  it('rejects task-projection drift before importing signed gate evidence', async () => {
+    const fixture = await makeVerifyingSession();
+    const packagePath = await writePackage(fixture, signedArtifact(fixture));
+    await resetSqliteConnections(fixture.repoDir);
+    const dbPath = path.join(fixture.repoDir, '.threadloop/state/state.db');
+    const corrupt = new DatabaseSync(dbPath);
+    corrupt.prepare(`UPDATE tasks SET state_version = 5`).run();
+    const beforeAuditCount = (
+      corrupt.prepare(`SELECT COUNT(*) AS count FROM audit_events WHERE session_id = ?`).get(fixture.sessionId) as {
+        count: number;
+      }
+    ).count;
+    corrupt.close();
+
+    await expect(
+      importSessionGateReceipt({
+        cwd: fixture.repoDir,
+        sessionId: fixture.sessionId,
+        packagePath,
+        verifyReceipt: verifier(fixture),
+      }),
+    ).rejects.toMatchObject({
+      code: 'STATE_CORRUPTED',
+      details: {
+        session_id: fixture.sessionId,
+        hint: 'Restore transition history from trusted storage before retrying the receipt import.',
+      },
+    });
+
+    const unchanged = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      expect(unchanged.prepare(`SELECT COUNT(*) AS count FROM signed_gate_receipts`).get()).toEqual({ count: 0 });
+      expect(
+        unchanged.prepare(`SELECT COUNT(*) AS count FROM audit_events WHERE session_id = ?`).get(fixture.sessionId),
+      ).toEqual({ count: beforeAuditCount });
+    } finally {
+      unchanged.close();
+    }
+  });
+
   it('imports one verified package idempotently without advancing lifecycle state', async () => {
     const fixture = await makeVerifyingSession();
     const packagePath = await writePackage(fixture, signedArtifact(fixture));

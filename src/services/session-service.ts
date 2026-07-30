@@ -28,6 +28,7 @@ import {
   ReceiptAppendConflictError,
   AuditChainCorruptedError,
   AuditLedgerUnavailableError,
+  SessionTransitionHistoryCorruptedError,
 } from '../adapters/fs/sqlite-store.js';
 import { AuditExportConflictError, writeAuditExportExclusive } from '../adapters/fs/audit-export.js';
 import { isThreadloopInitialized } from '../adapters/fs/repo.js';
@@ -739,6 +740,16 @@ export async function runSessionGate(input: RunSessionGateInput) {
   } catch (error) {
     if (error instanceof AuditChainCorruptedError) {
       throw mapAuditChainCorruption(input.sessionId, error);
+    }
+    if (error instanceof SessionTransitionHistoryCorruptedError) {
+      throw new ThreadloopError('STATE_CORRUPTED', error.message, {
+        cause: error,
+        details: {
+          session_id: input.sessionId,
+          orphan_artifact: relativeExecutionPath,
+          hint: 'Restore transition history from trusted storage before retrying the gate.',
+        },
+      });
     }
     if (error instanceof ReceiptAppendConflictError) {
       throw new ThreadloopError('RECEIPT_NOT_RECORDED', error.message, {

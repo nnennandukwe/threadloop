@@ -14,6 +14,7 @@ import {
   readConfig,
   readSessionLifecycleReadOnly,
   readSessionProofEvidenceReadOnly,
+  SessionTransitionHistoryCorruptedError,
   SignedReceiptAppendConflictError,
   SignedReviewReceiptAppendConflictError,
 } from '../adapters/fs/sqlite-store.js';
@@ -170,6 +171,9 @@ export async function importSignedGateReceiptPackage(
     if (error instanceof AuditChainCorruptedError) {
       throw mapAuditChainCorruption(input.sessionId, error);
     }
+    if (error instanceof SessionTransitionHistoryCorruptedError) {
+      throw mapTransitionHistoryCorruption(error);
+    }
     if (error instanceof SignedReceiptAppendConflictError) {
       throw new ThreadloopError('SIGNED_RECEIPT_CONFLICT', error.message, { cause: error });
     }
@@ -249,6 +253,9 @@ export async function importSignedReviewReceiptPackage(
     if (error instanceof AuditChainCorruptedError) {
       throw mapAuditChainCorruption(input.sessionId, error);
     }
+    if (error instanceof SessionTransitionHistoryCorruptedError) {
+      throw mapTransitionHistoryCorruption(error);
+    }
     if (error instanceof SignedReviewReceiptAppendConflictError) {
       throw new ThreadloopError('SIGNED_RECEIPT_CONFLICT', error.message, { cause: error });
     }
@@ -261,6 +268,16 @@ export async function importSignedReviewReceiptPackage(
     }
     throw error;
   }
+}
+
+function mapTransitionHistoryCorruption(error: SessionTransitionHistoryCorruptedError) {
+  return new ThreadloopError('STATE_CORRUPTED', error.message, {
+    cause: error,
+    details: {
+      session_id: error.sessionId,
+      hint: 'Restore transition history from trusted storage before retrying the receipt import.',
+    },
+  });
 }
 
 async function prepareImport<TEnvelope extends ImportEnvelope>(

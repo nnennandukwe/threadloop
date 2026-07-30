@@ -648,6 +648,39 @@ describe('session gate run', { timeout: 20_000 }, () => {
     }
   });
 
+  it('rejects task-projection drift before recording local gate evidence', async () => {
+    const repoDir = await makeCommittedRepo();
+    const sessionId = await startFramedSession(repoDir);
+    await recordProofPlan(repoDir, sessionId);
+    await resetSqliteConnections(repoDir);
+    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
+    const corrupt = new DatabaseSync(dbPath);
+    corrupt.prepare(`UPDATE tasks SET status = 'verifying', state_version = 4`).run();
+    const beforeAuditCount = (
+      corrupt.prepare(`SELECT COUNT(*) AS count FROM audit_events WHERE session_id = ?`).get(sessionId) as {
+        count: number;
+      }
+    ).count;
+    corrupt.close();
+
+    const failure = parseJson<{ error: { code: string; message: string } }>(
+      (await runCliFailure(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json']))
+        .stderr,
+    );
+    expect(failure.error.code).toBe('STATE_CORRUPTED');
+    expect(failure.error.message).toContain('current lifecycle projection does not match transition history');
+
+    const unchanged = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      expect(unchanged.prepare(`SELECT COUNT(*) AS count FROM gate_receipts`).get()).toEqual({ count: 0 });
+      expect(
+        unchanged.prepare(`SELECT COUNT(*) AS count FROM audit_events WHERE session_id = ?`).get(sessionId),
+      ).toEqual({ count: beforeAuditCount });
+    } finally {
+      unchanged.close();
+    }
+  });
+
   it('rejects gate execution after leaving the named proof-plan branch', async () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
