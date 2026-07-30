@@ -14,6 +14,7 @@ import {
   readConfig,
   readSessionLifecycleReadOnly,
   readSessionProofEvidenceReadOnly,
+  requiresExplicitInitMigration,
   SessionTransitionHistoryCorruptedError,
   SignedReceiptAppendConflictError,
   SignedReviewReceiptAppendConflictError,
@@ -304,7 +305,7 @@ async function prepareImport<TEnvelope extends ImportEnvelope>(
       details: { session_id: input.sessionId },
     });
   }
-  if (lifecycle.schemaVersion === 6) {
+  if (requiresExplicitInitMigration(lifecycle.schemaVersion)) {
     throw new ThreadloopError(
       'SESSION_SCHEMA_MIGRATION_REQUIRED',
       `ThreadLoop schema v${lifecycle.schemaVersion} requires explicit migration before receipt import.`,

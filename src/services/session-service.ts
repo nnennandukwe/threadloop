@@ -10,7 +10,6 @@ import {
   createId,
   ensureStateDatabase,
   ensureThreadloopLayout,
-  EXPLICIT_INIT_MIGRATION_MIN_SCHEMA_VERSION,
   hasSessionTransitionIdempotencyReadOnly,
   inspectAuditLedgerReadOnly,
   insertTaskSession,
@@ -24,6 +23,7 @@ import {
   readState,
   recordArtifact,
   recordSessionHeartbeat,
+  requiresExplicitInitMigration,
   upsertRepoSnapshot,
   writeArtifactFile,
   writeConfig,
@@ -1148,7 +1148,7 @@ export async function getNextSessionAction(input: NextSessionInput) {
     proofState && proofRepository
       ? await buildProofGuardContext(repoRoot, proofState, proofRepository, phase, lifecycleHistory)
       : undefined;
-  const audit = projectSessionAuditReadOnly(repoRoot, input.sessionId, lifecycle.schemaVersion);
+  const audit = projectSessionAuditReadOnly(lifecycle.schemaVersion, lifecycle.auditEvents);
   const planned = lifecycleMigrationRequired
     ? {
         candidate: null,
@@ -1370,7 +1370,10 @@ function projectPrePrReview(
   };
 }
 
-function projectSessionAuditReadOnly(repoRoot: string, sessionId: string, schemaVersion: number) {
+function projectSessionAuditReadOnly(
+  schemaVersion: number,
+  events: NonNullable<ReturnType<typeof readSessionLifecycleReadOnly>>['auditEvents'],
+) {
   if (schemaVersion < 6) {
     return {
       status: 'migration_required' as const,
@@ -1380,23 +1383,7 @@ function projectSessionAuditReadOnly(repoRoot: string, sessionId: string, schema
       error: null,
     };
   }
-  try {
-    const events = readSessionAuditReadOnly(repoRoot, sessionId);
-    const verification = verifyAuditChain(events, sha256);
-    const first = events[0]?.value;
-    return {
-      status: verification.valid ? ('valid' as const) : ('corrupt' as const),
-      event_count: events.length,
-      root: verification.root,
-      coverage:
-        first?.event_type === 'session_started'
-          ? ('full' as const)
-          : first?.event_type === 'audit_activated' && first.payload.coverage === 'schema_v6_forward'
-            ? ('schema_v6_forward' as const)
-            : ('unknown' as const),
-      error: verification.error,
-    };
-  } catch (error) {
+  if (!events || events.length === 0) {
     return {
       status: 'corrupt' as const,
       event_count: null,
@@ -1404,10 +1391,23 @@ function projectSessionAuditReadOnly(repoRoot: string, sessionId: string, schema
       coverage: 'unknown' as const,
       error: {
         code: 'AUDIT_READ_FAILED',
-        message: error instanceof Error ? error.message : String(error),
+        message: 'Verified session audit events are unavailable.',
       },
     };
   }
+  const first = events[0]?.value;
+  return {
+    status: 'valid' as const,
+    event_count: events.length,
+    root: events.at(-1)?.sha256 ?? null,
+    coverage:
+      first?.event_type === 'session_started'
+        ? ('full' as const)
+        : first?.event_type === 'audit_activated' && first.payload.coverage === 'schema_v6_forward'
+          ? ('schema_v6_forward' as const)
+          : ('unknown' as const),
+    error: null,
+  };
 }
 
 function nextHumanAction(state: Task['status'], planned: ReturnType<typeof planNextTransition>) {
@@ -1941,11 +1941,7 @@ async function assertInitialized(repoRoot: string) {
 
 function assertSchemaDoesNotRequireExplicitMigration(repoRoot: string) {
   const { schemaVersion } = inspectAuditLedgerReadOnly(repoRoot);
-  if (
-    schemaVersion !== null &&
-    schemaVersion >= EXPLICIT_INIT_MIGRATION_MIN_SCHEMA_VERSION &&
-    schemaVersion < CURRENT_SCHEMA_VERSION
-  ) {
+  if (schemaVersion !== null && requiresExplicitInitMigration(schemaVersion)) {
     throw new ThreadloopError(
       'SESSION_SCHEMA_MIGRATION_REQUIRED',
       `ThreadLoop schema v${schemaVersion} requires explicit migration before this command can run.`,

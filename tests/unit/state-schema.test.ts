@@ -1,4 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import {
+  CURRENT_SCHEMA_VERSION,
+  EXPLICIT_INIT_MIGRATION_MIN_SCHEMA_VERSION,
+  requiresExplicitInitMigration,
+} from '../../src/adapters/fs/sqlite-store.js';
 import { taskSchema } from '../../src/schemas/state.js';
 
 const task = {
@@ -28,5 +33,16 @@ describe('task state schema', () => {
     });
     expect(taskSchema.safeParse({ ...task, status: 'unknown' }).success).toBe(false);
     expect(taskSchema.safeParse({ ...task, blockedFromState: 'unknown' }).success).toBe(false);
+  });
+});
+
+describe('storage schema migration policy', () => {
+  it('requires explicit init for every semantic schema between the migration floor and current version', () => {
+    expect(requiresExplicitInitMigration(EXPLICIT_INIT_MIGRATION_MIN_SCHEMA_VERSION - 1)).toBe(false);
+    expect(requiresExplicitInitMigration(EXPLICIT_INIT_MIGRATION_MIN_SCHEMA_VERSION)).toBe(true);
+    expect(requiresExplicitInitMigration(CURRENT_SCHEMA_VERSION)).toBe(false);
+    expect(requiresExplicitInitMigration(CURRENT_SCHEMA_VERSION + 1)).toBe(false);
+
+    expect(requiresExplicitInitMigration(7, 8)).toBe(true);
   });
 });

@@ -414,6 +414,10 @@ export function createId(prefix: string) {
   return `${prefix}_${randomUUID()}`;
 }
 
+export function requiresExplicitInitMigration(schemaVersion: number, currentSchemaVersion = CURRENT_SCHEMA_VERSION) {
+  return schemaVersion >= EXPLICIT_INIT_MIGRATION_MIN_SCHEMA_VERSION && schemaVersion < currentSchemaVersion;
+}
+
 export async function ensureThreadloopLayout(repoRoot: string) {
   const paths = threadloopPaths(repoRoot);
   await mkdir(paths.root, { recursive: true });
@@ -760,6 +764,7 @@ function assertSessionTransitionHistoryAuthority(db: DatabaseSync, sessionId: st
     return {
       history: readSessionTransitionHistory(db, sessionId),
       genesisState: null,
+      auditEvents: null,
     };
   }
   const rows = readSessionTransitionAuthorityRows(db, sessionId);
@@ -864,7 +869,7 @@ function assertSessionTransitionHistoryAuthority(db: DatabaseSync, sessionId: st
   ) {
     throw invalidTransitionHistory(sessionId, 'legacy transition history does not match the audit activation state');
   }
-  return { history, genesisState };
+  return { history, genesisState, auditEvents };
 }
 
 function readSessionAuditGenesis(db: DatabaseSync, sessionId: string) {
@@ -994,9 +999,9 @@ export function readSessionLifecycleReadOnly(repoRoot: string, sessionId: string
       throw new Error(corruption);
     }
     const authority = version >= 7 ? assertSessionTransitionHistoryAuthority(db, sessionId) : null;
+    const auditGenesis = !authority && version >= 6 ? readSessionAuditGenesis(db, sessionId) : null;
     const transitionHistory = authority?.history ?? (version >= 3 ? readSessionTransitionHistory(db, sessionId) : []);
-    const auditGenesisState =
-      authority?.genesisState ?? (version >= 6 ? readSessionAuditGenesis(db, sessionId).genesisState : null);
+    const auditGenesisState = authority?.genesisState ?? auditGenesis?.genesisState ?? null;
 
     return {
       taskId: current.task_id,
@@ -1007,6 +1012,7 @@ export function readSessionLifecycleReadOnly(repoRoot: string, sessionId: string
       endedAt: current.ended_at,
       schemaVersion: version,
       auditGenesisState,
+      auditEvents: authority?.auditEvents ?? auditGenesis?.auditEvents ?? null,
       transitionHistory,
     };
   } finally {
