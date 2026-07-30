@@ -321,6 +321,50 @@ describe('schema v7 lifecycle and audit persistence', { timeout: 20_000 }, () =>
     });
     expect(await readFile(dbPath)).toEqual(beforeBytes);
 
+    const migrationRequiredCommands = [
+      ['session', 'gate', 'run', 'unit', '--session', started.data.session_id, '--json'],
+      [
+        'session',
+        'transition',
+        'framed',
+        '--session',
+        started.data.session_id,
+        '--expected-state-version',
+        '0',
+        '--idempotency-key',
+        'migration:transition',
+        '--actor',
+        'agent',
+        '--input',
+        '{}',
+        '--json',
+      ],
+      ['session', 'gate', 'import', 'missing-package.json', '--session', started.data.session_id, '--json'],
+      ['session', 'review', 'import', 'missing-package.json', '--session', started.data.session_id, '--json'],
+      ['audit', 'show', '--session', started.data.session_id, '--json'],
+      ['audit', 'verify', '--session', started.data.session_id, '--json'],
+      ['session', 'start', 'Second task', '--goal', 'Must not migrate implicitly', '--json'],
+    ];
+    for (const args of migrationRequiredCommands) {
+      const failure = await runCliFailure(repoDir, args);
+      const error = parseJson<{
+        error: {
+          code: string;
+          details: { storage_schema_version: number; hint: string };
+        };
+      }>(failure.stderr);
+      expect(error).toMatchObject({
+        error: {
+          code: 'SESSION_SCHEMA_MIGRATION_REQUIRED',
+          details: {
+            storage_schema_version: 6,
+          },
+        },
+      });
+      expect(error.error.details.hint).toContain('Run `threadloop init`');
+      expect(await readFile(dbPath)).toEqual(beforeBytes);
+    }
+
     await runCli(repoDir, ['init']);
     await resetSqliteConnections(repoDir);
     const migrated = new DatabaseSync(dbPath, { readOnly: true });
@@ -337,7 +381,7 @@ describe('schema v7 lifecycle and audit persistence', { timeout: 20_000 }, () =>
     } finally {
       migrated.close();
     }
-  }, 20_000);
+  }, 60_000);
 
   it('revalidates canonical schema metadata on the ready read path', async () => {
     const repoDir = await makeRepo();

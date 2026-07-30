@@ -185,6 +185,13 @@ export async function initThreadloop(cwd: string) {
 
 export async function startTask(input: StartTaskInput) {
   const repoRoot = await resolveRepositoryRoot(input.cwd);
+  if (isThreadloopInitialized(repoRoot)) {
+    await readConfig(repoRoot);
+    const { schemaVersion } = inspectAuditLedgerReadOnly(repoRoot);
+    if (schemaVersion !== null) {
+      assertCurrentSchemaForCommand(repoRoot);
+    }
+  }
   await initializeThreadloopRepo(repoRoot);
   const baseRef =
     input.baseRef === undefined && (await refExists(repoRoot, DEFAULT_BASE_REF))
@@ -975,6 +982,7 @@ export async function exportSessionAudit(input: ExportSessionAuditInput) {
 async function loadSessionAudit(input: SessionAuditInput, expectedRoot?: string) {
   const repoRoot = await resolveRepositoryRoot(input.cwd);
   await assertInitializedReadOnly(repoRoot);
+  assertCurrentSchemaForCommand(repoRoot);
   const availability = inspectAuditLedgerReadOnly(repoRoot);
   if (!availability.available && availability.schemaVersion !== null && availability.schemaVersion >= 6) {
     throw auditUnavailableFailure(
@@ -1927,7 +1935,34 @@ async function assertInitialized(repoRoot: string) {
     );
   }
   await readConfig(repoRoot);
+  assertCurrentSchemaForCommand(repoRoot);
   await ensureStateDatabase(repoRoot);
+}
+
+function assertCurrentSchemaForCommand(repoRoot: string) {
+  const { schemaVersion } = inspectAuditLedgerReadOnly(repoRoot);
+  if (schemaVersion === null || schemaVersion < 7) {
+    throw new ThreadloopError(
+      'SESSION_SCHEMA_MIGRATION_REQUIRED',
+      schemaVersion === null
+        ? 'The ThreadLoop state database is missing and must be initialized before this command can run.'
+        : `ThreadLoop schema v${schemaVersion} requires explicit migration before this command can run.`,
+      {
+        details: {
+          storage_schema_version: schemaVersion,
+          hint: 'Run `threadloop init`, then retry the original command.',
+        },
+      },
+    );
+  }
+  if (schemaVersion > 7) {
+    throw new ThreadloopError('STATE_CORRUPTED', `Unsupported ThreadLoop schema version: ${schemaVersion}`, {
+      details: {
+        storage_schema_version: schemaVersion,
+        hint: 'Use a ThreadLoop binary that supports this storage schema.',
+      },
+    });
+  }
 }
 
 async function assertInitializedReadOnly(repoRoot: string) {

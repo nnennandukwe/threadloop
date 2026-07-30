@@ -287,6 +287,25 @@ async function prepareImport<TEnvelope extends ImportEnvelope>(
 ): Promise<PreparedImport<TEnvelope>> {
   const repoRoot = await resolveRepositoryRoot(input.cwd);
   await assertInitializedReadOnly(repoRoot);
+  const lifecycle = readSessionLifecycleReadOnly(repoRoot, input.sessionId);
+  if (!lifecycle) {
+    throw new ThreadloopError('SESSION_NOT_FOUND', `Could not find session: ${input.sessionId}`, {
+      details: { session_id: input.sessionId },
+    });
+  }
+  if (lifecycle.schemaVersion < 7) {
+    throw new ThreadloopError(
+      'SESSION_SCHEMA_MIGRATION_REQUIRED',
+      `ThreadLoop schema v${lifecycle.schemaVersion} requires explicit migration before receipt import.`,
+      {
+        details: {
+          session_id: input.sessionId,
+          storage_schema_version: lifecycle.schemaVersion,
+          hint: 'Run `threadloop init`, then retry the receipt import.',
+        },
+      },
+    );
+  }
   let packageRead: Awaited<ReturnType<SignedReceiptFileSystem['readWithinLimit']>>;
   try {
     packageRead = await input.receiptFileSystem.readWithinLimit(
@@ -324,12 +343,6 @@ async function prepareImport<TEnvelope extends ImportEnvelope>(
     throw mapSignedReceiptParseError(error);
   }
 
-  const lifecycle = readSessionLifecycleReadOnly(repoRoot, input.sessionId);
-  if (!lifecycle) {
-    throw new ThreadloopError('SESSION_NOT_FOUND', `Could not find session: ${input.sessionId}`, {
-      details: { session_id: input.sessionId },
-    });
-  }
   if (lifecycle.schemaVersion < 4) {
     throw new ThreadloopError(
       'SIGNED_RECEIPT_IDENTITY_MISMATCH',
