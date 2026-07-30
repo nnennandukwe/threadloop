@@ -1316,6 +1316,8 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     expect(transitionHelp.stdout).toContain('--idempotency-key <key>');
     expect(transitionHelp.stdout).toContain('--actor <actor>');
     expect(transitionHelp.stdout).toContain('--input <json-object>');
+    expect(transitionHelp.stdout).toContain('structured transition input, including');
+    expect(transitionHelp.stdout).toContain('proof_plan or pre_pr_review when required');
     expect(transitionHelp.stdout).toContain('--json');
 
     const nextHelp = await runCli(repoDir, ['session', 'next', '--help']);

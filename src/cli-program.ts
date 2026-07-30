@@ -206,7 +206,11 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
       )
       .requiredOption('--idempotency-key <key>', 'idempotency key for this canonical request', parseIdempotencyKey)
       .requiredOption('--actor <actor>', 'transition actor', parseEntrySource)
-      .requiredOption('--input <json-object>', 'structured transition input', parseJsonObject),
+      .requiredOption(
+        '--input <json-object>',
+        'structured transition input, including proof_plan or pre_pr_review when required',
+        parseJsonObject,
+      ),
   ).action(handlers.sessionTransition);
 
   withJsonOption(
