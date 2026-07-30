@@ -456,23 +456,19 @@ export async function readConfig(repoRoot: string): Promise<ThreadloopConfig> {
 export async function readState(repoRoot: string): Promise<StateData> {
   await ensureStateDatabase(repoRoot);
 
-  const db = openReadDatabase(repoRoot);
-  try {
+  return withReadSnapshot(repoRoot, (db) => {
     const state = loadState(db);
     const parsed = stateDataSchema.safeParse(state);
     if (!parsed.success) {
       throw new Error(INVALID_STATE_DB_ERROR);
     }
     return parsed.data;
-  } finally {
-    db.close();
-  }
+  });
 }
 
 export async function readSessionGateContext(repoRoot: string, sessionId: string) {
   await ensureStateDatabase(repoRoot);
-  const db = openReadDatabase(repoRoot);
-  try {
+  return withReadSnapshot(repoRoot, (db) => {
     const current = readTransitionSession(db, sessionId);
     if (!current) {
       return null;
@@ -507,14 +503,11 @@ export async function readSessionGateContext(repoRoot: string, sessionId: string
           }
         : null,
     };
-  } finally {
-    db.close();
-  }
+  });
 }
 
 export function readSessionProofEvidenceReadOnly(repoRoot: string, sessionId: string) {
-  const db = openReadDatabase(repoRoot);
-  try {
+  return withReadSnapshot(repoRoot, (db) => {
     const plan = db
       .prepare(
         `
@@ -661,14 +654,11 @@ export function readSessionProofEvidenceReadOnly(repoRoot: string, sessionId: st
       signedReviewReceipts,
       attemptsUsed,
     };
-  } finally {
-    db.close();
-  }
+  });
 }
 
 export function readSessionAuditReadOnly(repoRoot: string, sessionId: string): StoredAuditEvent[] {
-  const db = openReadDatabase(repoRoot);
-  try {
+  return withReadSnapshot(repoRoot, (db) => {
     const schemaVersion = readDatabaseSchemaVersion(db);
     if (schemaVersion < 6) {
       throw new AuditLedgerUnavailableError('schema_version', schemaVersion);
@@ -677,9 +667,7 @@ export function readSessionAuditReadOnly(repoRoot: string, sessionId: string): S
       throw new AuditLedgerUnavailableError('table_missing', schemaVersion);
     }
     return readAuditEvents(db, sessionId);
-  } finally {
-    db.close();
-  }
+  });
 }
 
 export function inspectAuditLedgerReadOnly(repoRoot: string) {
@@ -690,8 +678,7 @@ export function inspectAuditLedgerReadOnly(repoRoot: string) {
       schemaVersion: null,
     };
   }
-  const db = openReadDatabase(repoRoot);
-  try {
+  return withReadSnapshot(repoRoot, (db) => {
     if (!tableExists(db, 'metadata')) {
       return {
         available: false,
@@ -703,22 +690,17 @@ export function inspectAuditLedgerReadOnly(repoRoot: string) {
       available: schemaVersion >= 6 && tableExists(db, 'audit_events'),
       schemaVersion,
     };
-  } finally {
-    db.close();
-  }
+  });
 }
 
 export function readSessionTransitionHistoryReadOnly(repoRoot: string, sessionId: string) {
-  const db = openReadDatabase(repoRoot);
-  try {
+  return withReadSnapshot(repoRoot, (db) => {
     if (readDatabaseSchemaVersion(db) >= 7) {
       assertTransitionSchemaShape(db, true);
       return assertSessionTransitionHistoryAuthority(db, sessionId).history;
     }
     return readSessionTransitionHistory(db, sessionId);
-  } finally {
-    db.close();
-  }
+  });
 }
 
 function readSessionTransitionHistory(db: DatabaseSync, sessionId: string): SessionTransitionHistoryEntry[] {
@@ -914,9 +896,8 @@ function summarizePrePrReview(input: Record<string, unknown>) {
 }
 
 export function hasSessionTransitionIdempotencyReadOnly(repoRoot: string, sessionId: string, idempotencyKey: string) {
-  const db = openReadDatabase(repoRoot);
-  try {
-    return Boolean(
+  return withReadSnapshot(repoRoot, (db) =>
+    Boolean(
       db
         .prepare(
           `
@@ -926,10 +907,8 @@ export function hasSessionTransitionIdempotencyReadOnly(repoRoot: string, sessio
           `,
         )
         .get(sessionId, idempotencyKey),
-    );
-  } finally {
-    db.close();
-  }
+    ),
+  );
 }
 
 export function readSessionLifecycleReadOnly(repoRoot: string, sessionId: string) {
@@ -938,8 +917,7 @@ export function readSessionLifecycleReadOnly(repoRoot: string, sessionId: string
     throw new Error('ThreadLoop state database is missing.');
   }
 
-  const db = openReadDatabase(repoRoot);
-  try {
+  return withReadSnapshot(repoRoot, (db) => {
     if (!tableExists(db, 'metadata')) {
       throw new Error('Missing ThreadLoop schema version metadata.');
     }
@@ -1015,9 +993,7 @@ export function readSessionLifecycleReadOnly(repoRoot: string, sessionId: string
       auditEvents: authority?.auditEvents ?? auditGenesis?.auditEvents ?? null,
       transitionHistory,
     };
-  } finally {
-    db.close();
-  }
+  });
 }
 
 export async function insertTaskSession(
@@ -1645,8 +1621,7 @@ export async function upsertRepoSnapshot(
 export async function readRepoSnapshot(repoRoot: string, sessionId: string) {
   await ensureStateDatabase(repoRoot);
 
-  const db = openReadDatabase(repoRoot);
-  try {
+  return withReadSnapshot(repoRoot, (db) => {
     const row = db
       .prepare(
         `
@@ -1685,9 +1660,7 @@ export async function readRepoSnapshot(repoRoot: string, sessionId: string) {
       commitRange: parseJsonText<string[]>(row.commit_range_json, INVALID_STATE_DB_ERROR),
       reconciledAt: row.reconciled_at,
     };
-  } finally {
-    db.close();
-  }
+  });
 }
 
 export async function closeSqliteConnections(repoRoot?: string) {
@@ -1724,6 +1697,39 @@ function openReadDatabase(repoRoot: string) {
   const db = new DatabaseSync(stateDbPath, { readOnly: true });
   db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
   return db;
+}
+
+/**
+ * Runs every read in `action` against a single database snapshot.
+ *
+ * Without an enclosing transaction each prepared statement gets its own implicit
+ * read snapshot, so a concurrent writer committing between two statements is
+ * visible to the later one but not the earlier one. Projections cross-checked
+ * against history then disagree, and a fail-closed reader reports that torn read
+ * as `STATE_CORRUPTED` even though nothing on disk is inconsistent. WAL keeps a
+ * deferred read transaction from blocking writers.
+ *
+ * Exported so `tests/unit/read-snapshot.test.ts` can assert the isolation
+ * directly; production callers should use it through the `*ReadOnly` functions.
+ */
+export function withReadSnapshot<T>(repoRoot: string, action: (db: DatabaseSync) => T): T {
+  const db = openReadDatabase(repoRoot);
+
+  try {
+    db.exec('BEGIN DEFERRED');
+    try {
+      const result = action(db);
+      db.exec('COMMIT');
+      return result;
+    } catch (error) {
+      if (db.isTransaction) {
+        db.exec('ROLLBACK');
+      }
+      throw error;
+    }
+  } finally {
+    db.close();
+  }
 }
 
 function getRepoConnectionState(repoRoot: string) {
@@ -1824,14 +1830,13 @@ function ensureDatabaseReady(db: DatabaseSync, state: RepoConnectionState, repoR
 }
 
 function assertReadySchemaVersion(repoRoot: string, state: RepoConnectionState) {
-  const db = openReadDatabase(repoRoot);
   try {
-    assertSchemaVersion(db);
+    withReadSnapshot(repoRoot, (db) => {
+      assertSchemaVersion(db);
+    });
   } catch (error) {
     state.setup = { status: 'failed', error };
     throw error;
-  } finally {
-    db.close();
   }
 }
 
