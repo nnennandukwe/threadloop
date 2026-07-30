@@ -5,8 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
+import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
-import { resetSqliteConnections } from '../../src/adapters/fs/sqlite-store.js';
+import { applySessionTransition, resetSqliteConnections } from '../../src/adapters/fs/sqlite-store.js';
+import { canonicalizeTransitionRequest, type TransitionRequest } from '../../src/domain/session-transition.js';
 
 const execFileAsync = promisify(execFile);
 const temporaryRepos: string[] = [];
@@ -156,13 +158,30 @@ async function recordProofPlan(
   );
 }
 
-async function forceVerifying(repoDir: string) {
-  await resetSqliteConnections(repoDir);
-  const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'));
-  try {
-    db.prepare(`UPDATE tasks SET status = 'verifying', state_version = 4`).run();
-  } finally {
-    db.close();
+async function forceVerifying(repoDir: string, sessionId: string) {
+  for (const [targetState, expectedStateVersion] of [
+    ['implementing', 2],
+    ['verifying', 3],
+  ] as const) {
+    const request: TransitionRequest = {
+      sessionId,
+      targetState,
+      expectedStateVersion,
+      actor: 'agent',
+      input: {},
+    };
+    const result = await applySessionTransition(
+      repoDir,
+      {
+        ...request,
+        idempotencyKey: `fixture:${targetState}`,
+        ...canonicalizeTransitionRequest(request, sha256),
+      },
+      () => ({ allowed: true, guardFailures: [], requiredWork: [] }),
+    );
+    if (!result.ok) {
+      throw new Error(`Could not prepare verifying fixture: ${result.error.code}`);
+    }
   }
 }
 
@@ -428,7 +447,7 @@ describe('session gate run', { timeout: 20_000 }, () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
     await recordProofPlan(repoDir, sessionId);
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
 
     const result = parseJson<{
       command: string;
@@ -520,7 +539,7 @@ describe('session gate run', { timeout: 20_000 }, () => {
         workingDirectory,
       ),
     );
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
 
     const result = parseJson<{ data: { receipt: { artifact: { path: string } } } }>(
       (await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json'])).stdout,
@@ -543,7 +562,7 @@ describe('session gate run', { timeout: 20_000 }, () => {
       sessionId,
       proofPlan(['node', '-e', `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "started")`]),
     );
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
 
     const undeclared = await runCliFailure(repoDir, [
       'session',
@@ -587,7 +606,7 @@ describe('session gate run', { timeout: 20_000 }, () => {
       sessionId,
       proofPlan(['node', '-e', `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "started")`]),
     );
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
 
     await resetSqliteConnections(repoDir);
     const dbPath = path.join(repoDir, '.threadloop/state/state.db');
@@ -633,7 +652,7 @@ describe('session gate run', { timeout: 20_000 }, () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
     await recordProofPlan(repoDir, sessionId);
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
     await execFileAsync('git', ['checkout', '--detach', 'HEAD'], { cwd: repoDir });
 
     const failure = await runCliFailure(repoDir, [
@@ -690,7 +709,7 @@ describe('session gate run', { timeout: 20_000 }, () => {
       const repoDir = await makeCommittedRepo();
       const sessionId = await startFramedSession(repoDir);
       await recordProofPlan(repoDir, sessionId, proofPlan(command, timeoutMs));
-      await forceVerifying(repoDir);
+      await forceVerifying(repoDir, sessionId);
 
       const result = parseJson<{
         data: {
@@ -727,7 +746,7 @@ describe('session gate run', { timeout: 20_000 }, () => {
       sessionId,
       proofPlan(['node', '-e', 'require("node:fs").renameSync(".git/HEAD", ".git/HEAD.saved")']),
     );
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
     const headPath = path.join(repoDir, '.git', 'HEAD');
     const savedHeadPath = path.join(repoDir, '.git', 'HEAD.saved');
 
@@ -772,7 +791,7 @@ describe('session gate run', { timeout: 20_000 }, () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
     await recordProofPlan(repoDir, sessionId);
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
     const args = ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json'];
 
     const results = await Promise.all([runCli(repoDir, args), runCli(repoDir, args)]);
@@ -796,7 +815,7 @@ describe('session gate run', { timeout: 20_000 }, () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
     await recordProofPlan(repoDir, sessionId);
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
     await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json']);
     await resetSqliteConnections(repoDir);
 
@@ -852,7 +871,7 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
       sessionId,
       proofPlan(['node', '-e', 'process.stderr.write("failed\\n"); process.exit(1)']),
     );
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
     await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json']);
 
     await resetSqliteConnections(repoDir);
@@ -889,7 +908,7 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
     await recordProofPlan(repoDir, sessionId);
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
     const gate = parseJson<{ data: { receipt: { id: string } } }>(
       (await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json'])).stdout,
     );
@@ -954,7 +973,7 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
     await recordProofPlan(repoDir, sessionId);
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
     await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json']);
     await mutateCheckout(repoDir);
 
@@ -1241,7 +1260,7 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
     await recordProofPlan(repoDir, sessionId);
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
     await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json']);
     const headSha = (await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: repoDir })).stdout.trim();
 
@@ -1404,7 +1423,7 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
     await recordProofPlan(repoDir, sessionId);
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
     const first = parseJson<{ data: { receipt: { id: string } } }>(
       (await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json'])).stdout,
     );
@@ -1442,7 +1461,7 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
     await recordProofPlan(repoDir, sessionId);
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
     const gate = parseJson<{ data: { receipt: { artifact: { path: string } } } }>(
       (await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json'])).stdout,
     );
@@ -1473,7 +1492,7 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
       sessionId,
       proofPlan(['node', '-e', 'process.exit(Number(process.env.THREADLOOP_GATE_EXIT ?? "0"))']),
     );
-    await forceVerifying(repoDir);
+    await forceVerifying(repoDir, sessionId);
     const args = ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json'];
     await runCliWithEnv(repoDir, args, { THREADLOOP_GATE_EXIT: '0' });
     const failed = parseJson<{ data: { receipt: { id: string; sequence: number; result: string } } }>(

@@ -10,7 +10,7 @@ import type { VerifiedSigstoreSigner } from '../../src/adapters/crypto/sigstore.
 import { SigstoreReceiptVerificationError } from '../../src/adapters/crypto/sigstore.js';
 import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
 import { nodeSignedReceiptFileSystem } from '../../src/adapters/fs/signed-receipt-files.js';
-import { resetSqliteConnections } from '../../src/adapters/fs/sqlite-store.js';
+import { applySessionTransition, resetSqliteConnections } from '../../src/adapters/fs/sqlite-store.js';
 import {
   buildInTotoReceiptStatement,
   canonicalizeSignedGateReceiptArtifact,
@@ -19,6 +19,7 @@ import {
   type SignedGateReceiptArtifact,
 } from '../../src/domain/attestation.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
+import { canonicalizeTransitionRequest, type TransitionRequest } from '../../src/domain/session-transition.js';
 import {
   getNextSessionAction,
   importSessionGateReceipt as importSessionGateReceiptWithDependencies,
@@ -154,12 +155,29 @@ async function makeVerifyingSession() {
     ).stdout,
   );
 
-  await resetSqliteConnections(repoDir);
-  const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'));
-  try {
-    db.prepare(`UPDATE tasks SET status = 'verifying', state_version = 4`).run();
-  } finally {
-    db.close();
+  for (const [targetState, expectedStateVersion] of [
+    ['implementing', 2],
+    ['verifying', 3],
+  ] as const) {
+    const request: TransitionRequest = {
+      sessionId: started.data.session_id,
+      targetState,
+      expectedStateVersion,
+      actor: 'agent',
+      input: {},
+    };
+    const result = await applySessionTransition(
+      repoDir,
+      {
+        ...request,
+        idempotencyKey: `fixture:${targetState}`,
+        ...canonicalizeTransitionRequest(request, sha256),
+      },
+      () => ({ allowed: true, guardFailures: [], requiredWork: [] }),
+    );
+    if (!result.ok) {
+      throw new Error(`Could not prepare verifying fixture: ${result.error.code}`);
+    }
   }
   const head = (await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: repoDir })).stdout.trim();
   return {

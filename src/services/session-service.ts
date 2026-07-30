@@ -159,8 +159,27 @@ interface ResolvedSession extends SessionRecord {
 
 export async function initThreadloop(cwd: string) {
   const repoRoot = await resolveRepositoryRoot(cwd);
-  const { created, gitignoreStatus } = await initializeThreadloopRepo(repoRoot);
-  return { repoRoot, created, gitignoreStatus };
+  try {
+    const { created, gitignoreStatus } = await initializeThreadloopRepo(repoRoot);
+    return { repoRoot, created, gitignoreStatus };
+  } catch (error) {
+    if (error instanceof AuditChainCorruptedError) {
+      throw mapAuditChainCorruption(
+        error.sessionId ?? '(migration)',
+        error,
+        'Restore the audit ledger from trusted storage, then rerun `threadloop init`.',
+      );
+    }
+    if (isSchemaStateError(error)) {
+      throw new ThreadloopError('STATE_CORRUPTED', error instanceof Error ? error.message : String(error), {
+        cause: error,
+        details: {
+          hint: 'Restore transition history from trusted storage, then rerun `threadloop init`.',
+        },
+      });
+    }
+    throw error;
+  }
 }
 
 export async function startTask(input: StartTaskInput) {
@@ -817,6 +836,7 @@ function assertSessionAuditVerified(repoRoot: string, sessionId: string) {
         verification.error.code,
         `Session ${sessionId} audit chain is corrupt at sequence ${verification.error.sequence ?? 'root'}.`,
         verification.error.sequence,
+        sessionId,
       );
     }
   } catch (error) {

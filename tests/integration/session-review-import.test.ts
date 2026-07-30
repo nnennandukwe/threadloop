@@ -9,7 +9,7 @@ import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import { SigstoreReceiptVerificationError, type VerifiedSigstoreSigner } from '../../src/adapters/crypto/sigstore.js';
 import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
 import { nodeSignedReceiptFileSystem } from '../../src/adapters/fs/signed-receipt-files.js';
-import { resetSqliteConnections } from '../../src/adapters/fs/sqlite-store.js';
+import { applySessionTransition, resetSqliteConnections } from '../../src/adapters/fs/sqlite-store.js';
 import {
   buildInTotoReceiptStatement,
   canonicalizeSignedGateReceiptArtifact,
@@ -18,6 +18,7 @@ import {
   type SignedGateReceiptArtifact,
 } from '../../src/domain/attestation.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
+import { canonicalizeTransitionRequest, type TransitionRequest } from '../../src/domain/session-transition.js';
 import {
   buildInTotoReviewStatement,
   canonicalizeSignedReviewReceiptArtifact,
@@ -152,12 +153,31 @@ async function makeReviewingSession(
   );
 
   if (options.directReviewState ?? true) {
-    await resetSqliteConnections(repoDir);
-    const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'));
-    try {
-      db.prepare(`UPDATE tasks SET status = 'reviewing', state_version = 5`).run();
-    } finally {
-      db.close();
+    for (const [targetState, expectedStateVersion] of [
+      ['implementing', 2],
+      ['verifying', 3],
+      ['pre_pr_reviewing', 4],
+      ['reviewing', 5],
+    ] as const) {
+      const request: TransitionRequest = {
+        sessionId: started.data.session_id,
+        targetState,
+        expectedStateVersion,
+        actor: 'agent',
+        input: {},
+      };
+      const result = await applySessionTransition(
+        repoDir,
+        {
+          ...request,
+          idempotencyKey: `fixture:${targetState}`,
+          ...canonicalizeTransitionRequest(request, sha256),
+        },
+        () => ({ allowed: true, guardFailures: [], requiredWork: [] }),
+      );
+      if (!result.ok) {
+        throw new Error(`Could not prepare reviewing fixture: ${result.error.code}`);
+      }
     }
   }
   const head = (await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: repoDir })).stdout.trim();
@@ -466,7 +486,7 @@ describe('signed review receipt import', { timeout: 20_000 }, () => {
         decision: 'APPROVED',
         blocking_findings: [],
       },
-      lifecycle: { state: 'reviewing', state_version: 5 },
+      lifecycle: { state: 'reviewing', state_version: 6 },
     });
     expect(duplicate).toMatchObject({
       receipt: { id: 'review_signed_123', sequence: 1 },
@@ -487,7 +507,7 @@ describe('signed review receipt import', { timeout: 20_000 }, () => {
       ).toEqual({ count: 1 });
       expect(db.prepare(`SELECT status, state_version FROM tasks`).get()).toEqual({
         status: 'reviewing',
-        state_version: 5,
+        state_version: 6,
       });
     } finally {
       db.close();

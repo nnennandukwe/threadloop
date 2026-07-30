@@ -11,7 +11,7 @@ import {
   resetSqliteConnections,
 } from '../../src/adapters/fs/sqlite-store.js';
 import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
-import { canonicalizeTransitionRequest } from '../../src/domain/session-transition.js';
+import { canonicalizeTransitionRequest, type TransitionRequest } from '../../src/domain/session-transition.js';
 
 const execFileAsync = promisify(execFile);
 const temporaryRepos: string[] = [];
@@ -47,6 +47,66 @@ async function makeRepo() {
     'utf8',
   );
   return repoDir;
+}
+
+async function startQueuedSession(repoDir: string) {
+  const started = parseJson<{ data: { session_id: string; task_id: string } }>(
+    (
+      await runCli(repoDir, [
+        'session',
+        'start',
+        'Transition task',
+        '--goal',
+        'Prove deterministic transition behavior',
+        '--json',
+      ])
+    ).stdout,
+  );
+  return started.data;
+}
+
+async function applyFixtureTransition(
+  repoDir: string,
+  sessionId: string,
+  targetState: TransitionRequest['targetState'],
+  expectedStateVersion: number,
+  idempotencyKey: string,
+  input: Record<string, unknown> = {},
+) {
+  const request: TransitionRequest = {
+    sessionId,
+    targetState,
+    expectedStateVersion,
+    actor: 'agent',
+    input,
+  };
+  const result = await applySessionTransition(
+    repoDir,
+    {
+      ...request,
+      idempotencyKey,
+      ...canonicalizeTransitionRequest(request, sha256),
+    },
+    () => ({ allowed: true, guardFailures: [], requiredWork: [] }),
+  );
+  if (!result.ok) {
+    throw new Error(`Could not prepare ${targetState} fixture: ${result.error.code}`);
+  }
+  return result;
+}
+
+async function prepareReadyForHumanFixture(repoDir: string, sessionId: string) {
+  for (const [targetState, expectedStateVersion] of [
+    ['framed', 0],
+    ['proof_ready', 1],
+    ['implementing', 2],
+    ['verifying', 3],
+    ['pre_pr_reviewing', 4],
+    ['reviewing', 5],
+    ['ready_for_human', 6],
+  ] as const) {
+    await applyFixtureTransition(repoDir, sessionId, targetState, expectedStateVersion, `fixture:${targetState}`);
+  }
 }
 
 function createSchemaV2(repoDir: string) {
@@ -567,6 +627,109 @@ describe('schema v7 lifecycle and audit persistence', () => {
     }
   });
 
+  it('fails reads and writes closed when the task projection drifts from authoritative history', async () => {
+    const repoDir = await makeRepo();
+    const { session_id: sessionId, task_id: taskId } = await startQueuedSession(repoDir);
+    await runCli(repoDir, [
+      'session',
+      'transition',
+      'framed',
+      '--session',
+      sessionId,
+      '--expected-state-version',
+      '0',
+      '--idempotency-key',
+      'projection-drift:framed',
+      '--actor',
+      'agent',
+      '--input',
+      '{}',
+      '--json',
+    ]);
+    await resetSqliteConnections(repoDir);
+    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
+    const corrupt = new DatabaseSync(dbPath);
+    const beforeAuditCount = (
+      corrupt.prepare(`SELECT COUNT(*) AS count FROM audit_events WHERE session_id = ?`).get(sessionId) as {
+        count: number;
+      }
+    ).count;
+    corrupt.prepare(`UPDATE tasks SET status = 'implementing' WHERE id = ?`).run(taskId);
+    corrupt.close();
+
+    for (const args of [
+      ['session', 'next', '--session', sessionId, '--json'],
+      [
+        'session',
+        'transition',
+        'verifying',
+        '--session',
+        sessionId,
+        '--expected-state-version',
+        '1',
+        '--idempotency-key',
+        'projection-drift:transition',
+        '--actor',
+        'agent',
+        '--input',
+        '{}',
+        '--json',
+      ],
+      [
+        'session',
+        'transition',
+        'verifying',
+        '--session',
+        sessionId,
+        '--expected-state-version',
+        '1',
+        '--idempotency-key',
+        'projection-drift:framed',
+        '--actor',
+        'agent',
+        '--input',
+        '{"changed_request":true}',
+        '--json',
+      ],
+    ]) {
+      const failure = parseJson<{ error: { code: string; message: string } }>(
+        (await runCliFailure(repoDir, args)).stderr,
+      );
+      expect(failure.error.code).toBe('STATE_CORRUPTED');
+      expect(failure.error.message).toContain('current lifecycle projection does not match transition history');
+    }
+
+    const unchanged = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      expect(unchanged.prepare(`SELECT status, state_version FROM tasks WHERE id = ?`).get(taskId)).toEqual({
+        status: 'implementing',
+        state_version: 1,
+      });
+      expect(unchanged.prepare(`SELECT COUNT(*) AS count FROM session_transitions`).get()).toEqual({ count: 1 });
+      expect(
+        unchanged.prepare(`SELECT COUNT(*) AS count FROM audit_events WHERE session_id = ?`).get(sessionId),
+      ).toEqual({ count: beforeAuditCount });
+    } finally {
+      unchanged.close();
+    }
+  }, 20_000);
+
+  it('binds a no-transition task projection to the session-started genesis event', async () => {
+    const repoDir = await makeRepo();
+    const { session_id: sessionId, task_id: taskId } = await startQueuedSession(repoDir);
+    await resetSqliteConnections(repoDir);
+    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
+    const corrupt = new DatabaseSync(dbPath);
+    corrupt.prepare(`UPDATE tasks SET status = 'implementing' WHERE id = ?`).run(taskId);
+    corrupt.close();
+
+    const failure = parseJson<{ error: { code: string; message: string } }>(
+      (await runCliFailure(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stderr,
+    );
+    expect(failure.error.code).toBe('STATE_CORRUPTED');
+    expect(failure.error.message).toContain('current lifecycle projection does not match transition history');
+  }, 20_000);
+
   it('rolls back schema-v6 migration when legacy transition history is inconsistent', async () => {
     const repoDir = await makeRepo();
     const started = parseJson<{ data: { session_id: string } }>(
@@ -610,7 +773,11 @@ describe('schema v7 lifecycle and audit persistence', () => {
     `);
     corrupt.close();
 
-    await expect(runCli(repoDir, ['init'])).rejects.toThrow('Invalid session transition history');
+    const failure = await runCliFailure(repoDir, ['init']);
+    expect(failure.stderr).toContain('threadloop [STATE_CORRUPTED]: Invalid session transition history');
+    expect(failure.stderr).toContain(
+      'Hint: Restore transition history from trusted storage, then rerun `threadloop init`.',
+    );
     await resetSqliteConnections(repoDir);
 
     const unchanged = new DatabaseSync(dbPath, { readOnly: true });
@@ -633,22 +800,6 @@ describe('schema v7 lifecycle and audit persistence', () => {
 });
 
 describe('session transition command', { timeout: 20_000 }, () => {
-  async function startQueuedSession(repoDir: string) {
-    const started = parseJson<{ data: { session_id: string; task_id: string } }>(
-      (
-        await runCli(repoDir, [
-          'session',
-          'start',
-          'Transition task',
-          '--goal',
-          'Prove deterministic transition behavior',
-          '--json',
-        ])
-      ).stdout,
-    );
-    return started.data;
-  }
-
   function transitionArgs(sessionId: string, target: string, version: string, key: string, input = '{}') {
     return [
       'session',
@@ -1028,11 +1179,9 @@ describe('session transition command', { timeout: 20_000 }, () => {
 
   it('keeps completion atomic behind an injected authoritative guard seam', async () => {
     const repoDir = await makeRepo();
-    const { session_id: sessionId, task_id: taskId } = await startQueuedSession(repoDir);
+    const { session_id: sessionId } = await startQueuedSession(repoDir);
     const dbPath = path.join(repoDir, '.threadloop/state/state.db');
-    const setup = new DatabaseSync(dbPath);
-    setup.prepare(`UPDATE tasks SET status = 'ready_for_human', state_version = 7 WHERE id = ?`).run(taskId);
-    setup.close();
+    await prepareReadyForHumanFixture(repoDir, sessionId);
 
     const request = {
       sessionId,
@@ -1069,8 +1218,8 @@ describe('session transition command', { timeout: 20_000 }, () => {
       expect(typeof ended.ended_at).toBe('string');
       expect(completed.prepare(`SELECT COUNT(*) AS count FROM active_sessions`).get()).toEqual({ count: 0 });
       expect(completed.prepare(`SELECT COUNT(*) AS count FROM active_state`).get()).toEqual({ count: 0 });
-      expect(completed.prepare(`SELECT COUNT(*) AS count FROM session_transitions`).get()).toEqual({ count: 1 });
-      expect(completed.prepare(`SELECT COUNT(*) AS count FROM transition_idempotency`).get()).toEqual({ count: 1 });
+      expect(completed.prepare(`SELECT COUNT(*) AS count FROM session_transitions`).get()).toEqual({ count: 8 });
+      expect(completed.prepare(`SELECT COUNT(*) AS count FROM transition_idempotency`).get()).toEqual({ count: 8 });
     } finally {
       completed.close();
     }
@@ -1080,9 +1229,7 @@ describe('session transition command', { timeout: 20_000 }, () => {
     const repoDir = await makeRepo();
     const { session_id: sessionId } = await startQueuedSession(repoDir);
     const dbPath = path.join(repoDir, '.threadloop/state/state.db');
-    const setup = new DatabaseSync(dbPath);
-    setup.prepare(`UPDATE tasks SET status = 'ready_for_human', state_version = 7`).run();
-    setup.close();
+    await prepareReadyForHumanFixture(repoDir, sessionId);
 
     const failure = await runCliFailure(repoDir, transitionArgs(sessionId, 'completed', '7', 'public:completion'));
     expect(
@@ -1341,12 +1488,25 @@ describe('session next command', { timeout: 15_000 }, () => {
       terminal_reason: 'BLOCKED_REQUIRES_HUMAN_RECOVERY',
     });
 
-    const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'));
-    db.prepare(`UPDATE tasks SET status = 'completed', state_version = 2, blocked_from_state = NULL`).run();
-    db.prepare(`UPDATE sessions SET ended_at = '2026-07-23T13:00:00.000Z'`).run();
-    db.prepare(`DELETE FROM active_sessions`).run();
-    db.prepare(`DELETE FROM active_state`).run();
-    db.close();
+    await applyFixtureTransition(repoDir, sessionId, 'queued', 1, 'fixture:recover', {
+      recovery: {
+        approved_by: 'test-controller',
+        evidence_ref: 'recovery:test',
+        reason: 'Prepare a completed terminal fixture.',
+      },
+    });
+    for (const [targetState, expectedStateVersion] of [
+      ['framed', 2],
+      ['proof_ready', 3],
+      ['implementing', 4],
+      ['verifying', 5],
+      ['pre_pr_reviewing', 6],
+      ['reviewing', 7],
+      ['ready_for_human', 8],
+      ['completed', 9],
+    ] as const) {
+      await applyFixtureTransition(repoDir, sessionId, targetState, expectedStateVersion, `terminal:${targetState}`);
+    }
 
     const completed = parseJson<{ data: { candidate: null; terminal_reason: string } }>(
       (await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout,

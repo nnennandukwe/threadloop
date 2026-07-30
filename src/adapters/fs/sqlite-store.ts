@@ -347,13 +347,17 @@ export class AuditLedgerUnavailableError extends Error {
 export class AuditChainCorruptedError extends Error {
   readonly code: AuditVerificationErrorCode;
   readonly sequence?: number;
+  readonly sessionId?: string;
 
-  constructor(code: AuditVerificationErrorCode, message: string, sequence?: number) {
+  constructor(code: AuditVerificationErrorCode, message: string, sequence?: number, sessionId?: string) {
     super(message);
     this.name = 'AuditChainCorruptedError';
     this.code = code;
     if (sequence !== undefined) {
       this.sequence = sequence;
+    }
+    if (sessionId !== undefined) {
+      this.sessionId = sessionId;
     }
   }
 }
@@ -708,15 +712,11 @@ function readSessionTransitionHistory(db: DatabaseSync, sessionId: string) {
 function assertAllSessionTransitionHistoryAuthority(db: DatabaseSync) {
   const sessions = db.prepare(`SELECT id FROM sessions ORDER BY id`).all() as Array<{ id: string }>;
   for (const session of sessions) {
-    assertSessionTransitionHistoryAuthority(db, session.id, true);
+    assertSessionTransitionHistoryAuthority(db, session.id);
   }
 }
 
-function assertSessionTransitionHistoryAuthority(
-  db: DatabaseSync,
-  sessionId: string,
-  requireCurrentProjection = false,
-) {
+function assertSessionTransitionHistoryAuthority(db: DatabaseSync, sessionId: string) {
   if (!tableExists(db, 'audit_events')) {
     return;
   }
@@ -784,11 +784,25 @@ function assertSessionTransitionHistoryAuthority(
       : genesis?.event_type === 'audit_activated' && genesis.payload.coverage === 'schema_v6_forward'
         ? genesis.state_version
         : null;
-  if (auditFloor === null) {
+  if (!genesis || auditFloor === null) {
     throw invalidTransitionHistory(sessionId, 'audit coverage does not establish a lifecycle history boundary');
+  }
+  const genesisState =
+    genesis.event_type === 'session_started'
+      ? genesis.payload.lifecycle_state
+      : genesis.payload.lifecycle_state_at_activation;
+  if (typeof genesisState !== 'string' || !isTaskStatus(genesisState)) {
+    throw invalidTransitionHistory(sessionId, 'audit genesis does not bind a valid lifecycle state');
   }
 
   const authoritativeRows = rows.filter((row) => row.from_state_version >= auditFloor);
+  const firstAuthoritativeRow = authoritativeRows[0];
+  if (
+    firstAuthoritativeRow &&
+    (firstAuthoritativeRow.from_state_version !== auditFloor || firstAuthoritativeRow.from_state !== genesisState)
+  ) {
+    throw invalidTransitionHistory(sessionId, 'transition history does not continue from the audit genesis state');
+  }
   const rowsById = new Map(authoritativeRows.map((row) => [row.id, row]));
   const appliedEvents = auditEvents.filter(({ value }) => value.event_type === 'transition_applied');
   if (appliedEvents.length !== authoritativeRows.length) {
@@ -810,21 +824,32 @@ function assertSessionTransitionHistoryAuthority(
     }
   }
 
-  if (requireCurrentProjection) {
-    const current = readTransitionSession(db, sessionId);
-    if (!current) {
-      throw invalidTransitionHistory(sessionId, 'session projection is missing');
-    }
-    const latest = rows.at(-1);
-    if (
-      (latest &&
-        (latest.task_id !== current.task_id ||
-          latest.to_state !== current.status ||
-          latest.to_state_version !== current.state_version)) ||
-      (!latest && current.state_version !== 0)
-    ) {
-      throw invalidTransitionHistory(sessionId, 'current lifecycle projection does not match transition history');
-    }
+  const current = readTransitionSession(db, sessionId);
+  if (!current) {
+    throw invalidTransitionHistory(sessionId, 'session projection is missing');
+  }
+  if (
+    genesis.event_type === 'session_started' &&
+    (genesis.payload.task_id !== current.task_id || genesis.state_version !== 0)
+  ) {
+    throw invalidTransitionHistory(sessionId, 'session projection does not match the audit genesis task');
+  }
+  const latest = rows.at(-1);
+  if (
+    (latest &&
+      (latest.task_id !== current.task_id ||
+        latest.to_state !== current.status ||
+        latest.to_state_version !== current.state_version)) ||
+    (!latest && (current.state_version !== auditFloor || current.status !== genesisState))
+  ) {
+    throw invalidTransitionHistory(sessionId, 'current lifecycle projection does not match transition history');
+  }
+  if (
+    !firstAuthoritativeRow &&
+    latest &&
+    (latest.to_state_version !== auditFloor || latest.to_state !== genesisState)
+  ) {
+    throw invalidTransitionHistory(sessionId, 'legacy transition history does not match the audit activation state');
   }
 }
 
@@ -999,7 +1024,7 @@ export async function applySessionTransition(
     const existing = readTransitionIdempotency(db, input.sessionId, input.idempotencyKey);
     if (existing) {
       if (existing.request_sha256 !== input.requestSha256 || existing.request_json !== input.requestJson) {
-        assertAuditChainVerifiedForWrite(db, input.sessionId);
+        assertSessionTransitionHistoryAuthority(db, input.sessionId);
         const priorConflict = readTransitionIdempotencyConflict(
           db,
           input.sessionId,
@@ -2869,6 +2894,7 @@ function appendAuditEvent(
       integrity.error?.code ?? 'AUDIT_HASH_MISMATCH',
       `Session ${input.sessionId} audit tail is corrupt at sequence ${previous?.value.sequence ?? 'root'}.`,
       previous?.value.sequence,
+      input.sessionId,
     );
   }
   const event = createAuditEvent(
@@ -2928,6 +2954,7 @@ function readVerifiedAuditEvents(db: DatabaseSync, sessionId: string) {
       'AUDIT_SEQUENCE_MISMATCH',
       `Session ${sessionId} audit chain has no genesis event.`,
       1,
+      sessionId,
     );
   }
   const verification = verifyAuditChain(events, sha256);
@@ -2936,6 +2963,7 @@ function readVerifiedAuditEvents(db: DatabaseSync, sessionId: string) {
       verification.error?.code ?? 'AUDIT_HASH_MISMATCH',
       `Session ${sessionId} audit chain is corrupt at sequence ${verification.error?.sequence ?? 'root'}.`,
       verification.error?.sequence,
+      sessionId,
     );
   }
   setAuditVerificationCache(db, sessionId, {
@@ -3010,6 +3038,7 @@ function storedAuditEventFromRow(row: AuditEventRow, sessionId: string): StoredA
       'AUDIT_CANONICALIZATION_MISMATCH',
       `Session ${sessionId} audit row ${row.sequence} does not contain a valid canonical event.`,
       row.sequence,
+      sessionId,
     );
   }
   if (
@@ -3025,6 +3054,7 @@ function storedAuditEventFromRow(row: AuditEventRow, sessionId: string): StoredA
       'AUDIT_CANONICALIZATION_MISMATCH',
       `Session ${sessionId} audit row ${row.sequence} does not match its canonical event.`,
       row.sequence,
+      sessionId,
     );
   }
   return { value, json: row.event_json, sha256: row.event_sha256 };
