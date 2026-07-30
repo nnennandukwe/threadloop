@@ -247,12 +247,14 @@ For a fresh wake, stop before candidate or required-work handling when:
 
 1. lifecycle state is `ready_for_human`;
 2. lifecycle state is `blocked`;
-3. phase is `post_pr` and repair budget is exhausted;
-4. lifecycle state is `completed`; or
-5. a candidate targets `blocked` or `completed`.
+3. lifecycle state is `completed`; or
+4. a candidate targets `blocked` or `completed`.
 
-An exhausted historical repair budget does not stop pre-PR implementation work. It does stop any later post-PR repair.
-Blocking, recovery, approval, merge, completion, and budget override remain human/controller authority.
+Repair-budget exhaustion alone is not a stop: a third authorized `repairing` wake must still be able to commit its
+repair, return to `verifying`, refresh proof, and progress without entering a fourth repair. A projected
+`REPAIR_BUDGET_EXHAUSTED -> TRANSITION_TO_BLOCKED` handoff stops an attempted fourth repair entry. An exhausted
+historical repair budget does not stop pre-PR implementation work. Blocking, recovery, approval, merge, completion, and
+budget override remain human/controller authority.
 
 ### 9. Select one action
 

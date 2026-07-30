@@ -30,6 +30,13 @@ export const REPAIR_ENTRY_STATES = [
   TASK_STATUS.READY_FOR_HUMAN,
 ] as const satisfies readonly TaskStatus[];
 
+const POST_PR_STATES = [
+  TASK_STATUS.REVIEWING,
+  TASK_STATUS.REPAIRING,
+  TASK_STATUS.READY_FOR_HUMAN,
+  TASK_STATUS.COMPLETED,
+] as const satisfies readonly TaskStatus[];
+
 const FORWARD_TRANSITIONS: Readonly<Record<TaskStatus, readonly TaskStatus[]>> = {
   [TASK_STATUS.QUEUED]: [TASK_STATUS.FRAMED],
   [TASK_STATUS.FRAMED]: [TASK_STATUS.PROOF_READY],
@@ -136,8 +143,12 @@ export function evaluateLifecycleTransition(
   );
 }
 
-export function deriveLifecyclePhase(history: ReadonlyArray<{ to_state: TaskStatus }>): LifecyclePhase {
-  return history.some((transition) => transition.to_state === TASK_STATUS.REVIEWING)
+export function deriveLifecyclePhase(
+  history: ReadonlyArray<{ to_state: TaskStatus }>,
+  auditGenesisState: TaskStatus | null = null,
+): LifecyclePhase {
+  return (auditGenesisState !== null && POST_PR_STATES.some((state) => state === auditGenesisState)) ||
+    history.some((transition) => POST_PR_STATES.some((state) => state === transition.to_state))
     ? LIFECYCLE_PHASE.POST_PR
     : LIFECYCLE_PHASE.PRE_PR;
 }

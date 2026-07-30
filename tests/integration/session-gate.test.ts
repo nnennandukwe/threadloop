@@ -1272,6 +1272,36 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
       db.close();
     }
 
+    await transition(repoDir, sessionId, 'blocked', 5, 'pre-pr-review:block', {
+      block: {
+        stop_code: 'REVIEW_PAUSED',
+        recovery: 'Obtain explicit approval to resume the same implementation work.',
+        reason: 'Pause the session without changing its review authority.',
+        evidence_ref: 'incident:pre-pr-review',
+      },
+    });
+    await transition(repoDir, sessionId, 'implementing', 6, 'pre-pr-review:resume', {
+      recovery: {
+        approved_by: 'test-controller',
+        evidence_ref: 'incident:pre-pr-review:resolved',
+        reason: 'Resume the previously authorized implementation work.',
+      },
+    });
+    const resumed = parseJson<{
+      data: {
+        candidate: { target_state: string; executable: boolean };
+        guard_failures: Array<{ code: string }>;
+        implementation_basis: { head_sha: string; source: string };
+        pre_pr_review: { iteration_count: number };
+      };
+    }>((await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout);
+    expect(resumed.data).toMatchObject({
+      candidate: { target_state: 'verifying', executable: false },
+      guard_failures: [{ code: 'IMPLEMENTATION_BASIS_NOT_ADVANCED' }],
+      implementation_basis: { head_sha: headSha, source: 'pre_pr_review' },
+      pre_pr_review: { iteration_count: 1 },
+    });
+
     await writeFile(path.join(repoDir, 'finding-fix.txt'), 'address current finding\n', 'utf8');
     await execFileAsync('git', ['add', 'finding-fix.txt'], { cwd: repoDir });
     await execFileAsync('git', ['commit', '-m', 'address pre-pr finding'], { cwd: repoDir });

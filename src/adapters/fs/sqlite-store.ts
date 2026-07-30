@@ -783,24 +783,7 @@ function assertSessionTransitionHistoryAuthority(db: DatabaseSync, sessionId: st
     previous = row;
   }
 
-  const auditEvents = readVerifiedAuditEvents(db, sessionId);
-  const genesis = auditEvents[0]?.value;
-  const auditFloor =
-    genesis?.event_type === 'session_started'
-      ? 0
-      : genesis?.event_type === 'audit_activated' && genesis.payload.coverage === 'schema_v6_forward'
-        ? genesis.state_version
-        : null;
-  if (!genesis || auditFloor === null) {
-    throw invalidTransitionHistory(sessionId, 'audit coverage does not establish a lifecycle history boundary');
-  }
-  const genesisState =
-    genesis.event_type === 'session_started'
-      ? genesis.payload.lifecycle_state
-      : genesis.payload.lifecycle_state_at_activation;
-  if (typeof genesisState !== 'string' || !isTaskStatus(genesisState)) {
-    throw invalidTransitionHistory(sessionId, 'audit genesis does not bind a valid lifecycle state');
-  }
+  const { auditEvents, auditFloor, genesis, genesisState } = readSessionAuditGenesis(db, sessionId);
 
   const authoritativeRows = rows.filter((row) => row.from_state_version >= auditFloor);
   const firstAuthoritativeRow = authoritativeRows[0];
@@ -858,6 +841,28 @@ function assertSessionTransitionHistoryAuthority(db: DatabaseSync, sessionId: st
   ) {
     throw invalidTransitionHistory(sessionId, 'legacy transition history does not match the audit activation state');
   }
+}
+
+function readSessionAuditGenesis(db: DatabaseSync, sessionId: string) {
+  const auditEvents = readVerifiedAuditEvents(db, sessionId);
+  const genesis = auditEvents[0]?.value;
+  const auditFloor =
+    genesis?.event_type === 'session_started'
+      ? 0
+      : genesis?.event_type === 'audit_activated' && genesis.payload.coverage === 'schema_v6_forward'
+        ? genesis.state_version
+        : null;
+  if (!genesis || auditFloor === null) {
+    throw invalidTransitionHistory(sessionId, 'audit coverage does not establish a lifecycle history boundary');
+  }
+  const genesisState =
+    genesis.event_type === 'session_started'
+      ? genesis.payload.lifecycle_state
+      : genesis.payload.lifecycle_state_at_activation;
+  if (typeof genesisState !== 'string' || !isTaskStatus(genesisState)) {
+    throw invalidTransitionHistory(sessionId, 'audit genesis does not bind a valid lifecycle state');
+  }
+  return { auditEvents, auditFloor, genesis, genesisState };
 }
 
 function invalidTransitionHistory(sessionId: string, detail: string) {
@@ -964,6 +969,7 @@ export function readSessionLifecycleReadOnly(repoRoot: string, sessionId: string
     if (corruption) {
       throw new Error(corruption);
     }
+    const auditGenesisState = version >= 6 ? readSessionAuditGenesis(db, sessionId).genesisState : null;
 
     return {
       taskId: current.task_id,
@@ -973,6 +979,7 @@ export function readSessionLifecycleReadOnly(repoRoot: string, sessionId: string
       blockedFromState: current.blocked_from_state,
       endedAt: current.ended_at,
       schemaVersion: version,
+      auditGenesisState,
     };
   } finally {
     db.close();
@@ -1075,7 +1082,10 @@ export async function applySessionTransition(
       });
     }
     assertSessionTransitionHistoryAuthority(db, input.sessionId);
-    const phase = deriveLifecyclePhase(readSessionTransitionHistory(db, input.sessionId));
+    const phase = deriveLifecyclePhase(
+      readSessionTransitionHistory(db, input.sessionId),
+      readSessionAuditGenesis(db, input.sessionId).genesisState,
+    );
 
     if (input.expectedStateVersion !== current.state_version) {
       return persistRejectedTransition(

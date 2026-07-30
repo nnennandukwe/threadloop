@@ -280,6 +280,46 @@ describe('schema v7 lifecycle and audit persistence', { timeout: 20_000 }, () =>
     }
   });
 
+  it('retains post-PR phase when audit coverage begins in reviewing', async () => {
+    const repoDir = await makeRepo();
+    const dbPath = createSchemaV2(repoDir);
+    const legacy = new DatabaseSync(dbPath);
+    legacy.prepare(`UPDATE tasks SET status = 'reviewing', state_version = 4`).run();
+    legacy.close();
+
+    await runCli(repoDir, ['init']);
+    const projected = parseJson<{ data: { lifecycle: { phase: string } } }>(
+      (await runCli(repoDir, ['session', 'next', '--session', 'session_queued', '--json'])).stdout,
+    );
+    expect(projected.data.lifecycle.phase).toBe('post_pr');
+
+    await applyFixtureTransition(repoDir, 'session_queued', 'repairing', 4, 'legacy:repair');
+    await applyFixtureTransition(repoDir, 'session_queued', 'verifying', 5, 'legacy:verify');
+    const request: TransitionRequest = {
+      sessionId: 'session_queued',
+      targetState: 'implementing',
+      expectedStateVersion: 6,
+      actor: 'agent',
+      input: {},
+    };
+    const forbidden = await applySessionTransition(
+      repoDir,
+      {
+        ...request,
+        idempotencyKey: 'legacy:implementing-reentry',
+        ...canonicalizeTransitionRequest(request, sha256),
+      },
+      () => ({ allowed: true, guardFailures: [], requiredWork: [] }),
+    );
+    expect(forbidden).toMatchObject({
+      ok: false,
+      error: {
+        code: 'TRANSITION_NOT_ALLOWED',
+        details: { decision_code: 'POST_PR_IMPLEMENTATION_REENTRY_FORBIDDEN' },
+      },
+    });
+  });
+
   it('projects schema-v6 migration requirements read-only and migrates only through init', async () => {
     const repoDir = await makeRepo();
     const started = parseJson<{ data: { session_id: string } }>(

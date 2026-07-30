@@ -83,6 +83,7 @@ import type {
   EntryKind,
   EntrySource,
   HeartbeatSource,
+  LifecyclePhase,
   RepoSnapshot,
   Session,
   SessionRecord,
@@ -331,7 +332,10 @@ export async function transitionSession(input: TransitionSessionInput) {
     let proofGuardContext: ProofGuardContext = {};
     let preparedProofGuardRejection: TransitionGuardDecision | undefined;
     const phase = lifecycle
-      ? deriveLifecyclePhase(readSessionTransitionHistoryReadOnly(repoRoot, input.sessionId))
+      ? deriveLifecyclePhase(
+          readSessionTransitionHistoryReadOnly(repoRoot, input.sessionId),
+          lifecycle.auditGenesisState,
+        )
       : LIFECYCLE_PHASE.PRE_PR;
     if (
       lifecycle?.state === TASK_STATUS.FRAMED &&
@@ -366,7 +370,7 @@ export async function transitionSession(input: TransitionSessionInput) {
       } else {
         const repository = await observeProofRepository(repoRoot);
         const proofState = await evaluateSessionProof(repoRoot, input.sessionId, repository.headSha);
-        proofGuardContext = await buildProofGuardContext(repoRoot, input.sessionId, proofState, repository);
+        proofGuardContext = await buildProofGuardContext(repoRoot, input.sessionId, proofState, repository, phase);
       }
     } else if (
       lifecycle &&
@@ -375,7 +379,7 @@ export async function transitionSession(input: TransitionSessionInput) {
     ) {
       const repository = await observeProofRepository(repoRoot);
       const proofState = await evaluateSessionProof(repoRoot, input.sessionId, repository.headSha);
-      proofGuardContext = await buildProofGuardContext(repoRoot, input.sessionId, proofState, repository);
+      proofGuardContext = await buildProofGuardContext(repoRoot, input.sessionId, proofState, repository, phase);
     }
     return await applySessionTransition(
       repoRoot,
@@ -1137,7 +1141,7 @@ export async function getNextSessionAction(input: NextSessionInput) {
       },
     });
   }
-  const phase = deriveLifecyclePhase(lifecycleHistory);
+  const phase = deriveLifecyclePhase(lifecycleHistory, lifecycle.auditGenesisState);
   const lifecycleMigrationRequired = lifecycle.schemaVersion < 7;
   const proofState =
     !lifecycleMigrationRequired && lifecycle.schemaVersion >= 4
@@ -1145,7 +1149,7 @@ export async function getNextSessionAction(input: NextSessionInput) {
       : null;
   const proofGuardContext =
     proofState && proofRepository
-      ? await buildProofGuardContext(repoRoot, input.sessionId, proofState, proofRepository)
+      ? await buildProofGuardContext(repoRoot, input.sessionId, proofState, proofRepository, phase)
       : undefined;
   const audit = projectSessionAuditReadOnly(repoRoot, input.sessionId, lifecycle.schemaVersion);
   const planned = lifecycleMigrationRequired
@@ -1321,7 +1325,8 @@ function projectPrePrReview(
   const prePrHistory = history.slice(0, firstReviewIndex === -1 ? history.length : firstReviewIndex + 1);
   const iterationCount = prePrHistory.filter(
     (transition) =>
-      transition.to_state === TASK_STATUS.IMPLEMENTING && transition.from_state !== TASK_STATUS.PROOF_READY,
+      transition.to_state === TASK_STATUS.IMPLEMENTING &&
+      (transition.from_state === TASK_STATUS.VERIFYING || transition.from_state === TASK_STATUS.PRE_PR_REVIEWING),
   ).length;
   if (schemaVersion < 7) {
     return {
@@ -1574,10 +1579,10 @@ async function buildProofGuardContext(
   sessionId: string,
   proofState: Awaited<ReturnType<typeof evaluateSessionProof>>,
   repository: Awaited<ReturnType<typeof observeProofRepository>>,
+  phase: LifecyclePhase,
 ): Promise<ProofGuardContext> {
   const plan = proofState.plan;
   const transitionHistory = readSessionTransitionHistoryReadOnly(repoRoot, sessionId);
-  const phase = deriveLifecyclePhase(transitionHistory);
   const committedDiffFromBaseline = plan
     ? await hasCommittedDiff(repoRoot, plan.baselineHeadSha, repository.headSha)
     : false;
@@ -1586,7 +1591,13 @@ async function buildProofGuardContext(
     .find((receipt) => receipt.result !== 'passed');
   const latestImplementationEntry = [...transitionHistory]
     .reverse()
-    .find((entry) => entry.to_state === TASK_STATUS.IMPLEMENTING);
+    .find(
+      (entry) =>
+        entry.to_state === TASK_STATUS.IMPLEMENTING &&
+        (entry.from_state === TASK_STATUS.PROOF_READY ||
+          entry.from_state === TASK_STATUS.VERIFYING ||
+          entry.from_state === TASK_STATUS.PRE_PR_REVIEWING),
+    );
   const implementationReview = latestImplementationEntry
     ? readPrePrReviewEvidence(latestImplementationEntry.input)
     : null;

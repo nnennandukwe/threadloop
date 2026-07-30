@@ -39,11 +39,13 @@ recorded prior state, and `completed` is terminal.
 Structural permission is not evidence that a transition should occur. Proof plans, gate receipts, review state, attempt
 budgets, approval, and merge observations are separate guards layered onto this graph.
 
-Lifecycle phase is derived from append-only transition history. A session is `pre_pr` until its first applied transition
-into `reviewing`; it is permanently `post_pr` afterward. SQLite schema version 7 retains all prior lifecycle, proof,
-signed receipt, audit, and repair records and adds this semantic interpretation without a second mutable phase flag.
-Persistent triggers reject update, delete, and replacement. Repair usage remains derived from applied transitions into
-`repairing`, so only post-PR gate and signed-review repairs share the three-entry budget.
+Lifecycle phase is derived from append-only transition history plus the immutable audit-genesis state that bounds
+migrated history. A session is `pre_pr` until its first applied transition into `reviewing`; a migrated session whose
+audit coverage begins in `reviewing`, `repairing`, `ready_for_human`, or `completed` is already `post_pr`. The phase is
+permanently `post_pr` afterward. SQLite schema version 7 retains all prior lifecycle, proof, signed receipt, audit, and
+repair records and adds this semantic interpretation without a second mutable phase flag. Persistent triggers reject
+update, delete, and replacement. Repair usage remains derived from applied transitions into `repairing`, so only post-PR
+gate and signed-review repairs share the three-entry budget.
 
 `threadloop session next --session <id> --json` is read-only and returns one deterministic candidate or `null`. It
 reports live Git facts without refreshing persisted snapshots. It rehashes the latest receipt manifest and output
@@ -127,7 +129,8 @@ approval, and merge projections. See [Signed review receipt v1](attestations/rev
 
 Re-entering verification after post-PR gate or signed-review repair requires a clean committed change after the exact
 evidence basis that opened that repair. Pre-PR iterations never enter `repairing`, even when a migrated session already
-has three historical repair entries. Once all three post-PR entries are consumed, the caller must submit an explicit
+has three historical repair entries. Entering the third repair exhausts new-entry authority but does not prevent that
+repair from being committed, verified, and returned to review. An attempted fourth repair instead requires an explicit
 evidence-bearing transition to `blocked`.
 
 ## Audit coverage

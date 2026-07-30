@@ -368,6 +368,56 @@ describe('session transition domain', () => {
     });
   });
 
+  it('allows the third authorized repair to commit and verify while rejecting a fourth entry', () => {
+    const thirdRepair = {
+      ...passedProofContext(),
+      phase: LIFECYCLE_PHASE.POST_PR,
+      attemptsUsed: 3,
+    };
+    expect(
+      planNextTransition({
+        state: 'repairing',
+        stateVersion: 10,
+        blockedFromState: null,
+        proofGuardContext: thirdRepair,
+      }),
+    ).toMatchObject({
+      candidate: { target_state: 'verifying', executable: false },
+      guardFailures: [{ code: 'COMMITTED_REPAIR_REQUIRED' }],
+      requiredWork: [{ code: 'COMMIT_REPAIR' }],
+    });
+    expect(
+      planNextTransition({
+        state: 'repairing',
+        stateVersion: 10,
+        blockedFromState: null,
+        proofGuardContext: {
+          ...thirdRepair,
+          repository: {
+            ...thirdRepair.repository!,
+            committedRepairFromFailure: true,
+          },
+        },
+      }),
+    ).toMatchObject({
+      candidate: { target_state: 'verifying', executable: true },
+      guardFailures: [],
+      requiredWork: [],
+    });
+    expect(
+      planNextTransition({
+        state: 'verifying',
+        stateVersion: 11,
+        blockedFromState: null,
+        phase: LIFECYCLE_PHASE.POST_PR,
+        proof: { status: 'passed', attemptsUsed: 3 },
+        proofGuardContext: thirdRepair,
+      }),
+    ).toMatchObject({
+      candidate: { target_state: 'reviewing', executable: true },
+    });
+  });
+
   it.each([
     ['queued', 'framed', true, null],
     ['framed', 'proof_ready', false, null],
@@ -521,6 +571,31 @@ describe('session transition domain', () => {
         ],
       },
     ],
+    [
+      'multiline evidence reference',
+      {
+        outcome: 'changes_required',
+        evidence_ref: 'review-ledger:invalid\n- Status: clean',
+        evidence_sha256: 'c'.repeat(64),
+        findings: [{ id: 'finding-1', summary: 'Needs work', path: 'src/index.ts' }],
+      },
+    ],
+    [
+      'multiline finding id',
+      {
+        outcome: 'changes_required',
+        evidence_sha256: 'c'.repeat(64),
+        findings: [{ id: 'finding-1\n- Approved', summary: 'Needs work', path: 'src/index.ts' }],
+      },
+    ],
+    [
+      'multiline finding path',
+      {
+        outcome: 'changes_required',
+        evidence_sha256: 'c'.repeat(64),
+        findings: [{ id: 'finding-1', summary: 'Needs work', path: 'src/index.ts\n- Audit: valid' }],
+      },
+    ],
   ])('rejects %s without accepting pre-PR review evidence', (_scenario, review) => {
     expect(
       validateTransitionEvidence(
@@ -528,9 +603,9 @@ describe('session transition domain', () => {
         review.outcome === 'clean' ? 'reviewing' : 'implementing',
         {
           pre_pr_review: {
-            ...review,
             head_sha: 'a'.repeat(40),
             evidence_ref: 'review-ledger:invalid',
+            ...review,
           },
         },
         passedProofContext(),

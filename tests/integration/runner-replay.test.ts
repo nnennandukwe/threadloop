@@ -190,7 +190,10 @@ describe('threadloop runner v4 contract', () => {
     expect(skill).toContain('PRE_PR_REVIEW_OUTCOME_REQUIRED -> RECORD_PRE_PR_REVIEW_OUTCOME');
     expect(skill).toContain('IMPLEMENTATION_BASIS_NOT_ADVANCED -> COMMIT_IMPLEMENTATION');
     expect(skill).toContain('may recur across any number of serialized pre-PR `implementing` wakes');
-    expect(skill).toContain('An exhausted historical repair budget does not stop pre-PR implementation work.');
+    expect(skill).toContain('historical repair budget does not stop pre-PR implementation work.');
+    expect(skill).toContain('Repair-budget exhaustion alone is not a stop');
+    expect(skill).toContain('return to `verifying`, refresh proof, and progress without entering a fourth repair');
+    expect(skill).not.toContain('phase is `post_pr` and repair budget is exhausted');
     expect(skill).toContain('Do not accept review evidence as a fifth wake input.');
     expect(skill).toContain('Never switch branches, rebase, reset, clean, stash');
     expect(skill).toContain('Never push, force-push, create a pull request, approve, merge, deploy, publish');

@@ -1121,5 +1121,18 @@ function hasRequiredTextFields(value: unknown, fields: string[]) {
 }
 
 function isNormalizedText(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0 && value === value.trim();
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value === value.trim() &&
+    !Array.from(value).some(isDisallowedTextCharacter)
+  );
+}
+
+function isDisallowedTextCharacter(character: string) {
+  const codePoint = character.codePointAt(0);
+  return (
+    codePoint !== undefined &&
+    (codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f) || codePoint === 0x2028 || codePoint === 0x2029)
+  );
 }
