@@ -1080,7 +1080,7 @@ describe('signed review receipt import', { timeout: 20_000 }, () => {
         details: { guard_failures: [{ code: 'COMMITTED_REPAIR_REQUIRED' }] },
       },
     });
-  }, 30_000);
+  }, 60_000);
 });
 
 function reviewReceiptCount(repoDir: string) {

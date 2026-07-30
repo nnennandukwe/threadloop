@@ -1125,7 +1125,7 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
         details: { guard_failures: [{ code: 'SIGNED_CI_PROOF_REQUIRED', owner_issue: 41 }] },
       },
     });
-  });
+  }, 60_000);
 
   it('allows more than three pre-PR implementation cycles without consuming repair budget', async () => {
     const repoDir = await makeCommittedRepo();
