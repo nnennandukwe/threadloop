@@ -951,7 +951,23 @@ async function loadSessionAudit(input: SessionAuditInput, expectedRoot?: string)
       new AuditLedgerUnavailableError('table_missing', availability.schemaVersion),
     );
   }
-  await ensureStateDatabase(repoRoot);
+  try {
+    await ensureStateDatabase(repoRoot);
+  } catch (error) {
+    if (error instanceof AuditChainCorruptedError) {
+      throw mapAuditChainCorruption(input.sessionId, error, 'Restore the ledger from trusted storage.');
+    }
+    if (isSchemaStateError(error)) {
+      throw new ThreadloopError('STATE_CORRUPTED', error instanceof Error ? error.message : String(error), {
+        cause: error,
+        details: {
+          session_id: input.sessionId,
+          hint: 'Restore transition history from trusted storage before retrying the audit operation.',
+        },
+      });
+    }
+    throw error;
+  }
   const lifecycle = readSessionLifecycleReadOnly(repoRoot, input.sessionId);
   if (!lifecycle) {
     throw new ThreadloopError('SESSION_NOT_FOUND', `Could not find session: ${input.sessionId}`, {
