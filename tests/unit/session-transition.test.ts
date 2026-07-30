@@ -48,7 +48,6 @@ function passedProofContext(repository: Partial<NonNullable<ProofGuardContext['r
       branch: 'main',
       headSha,
       clean: true,
-      committedDiffFromBaseline: true,
       committedImplementationFromBasis: true,
       committedRepairFromFailure: false,
       ...repository,
@@ -152,6 +151,26 @@ describe('session transition domain', () => {
       allowed: false,
       guardFailures: [{ code: 'RECOVERY_EVIDENCE_REQUIRED' }],
     });
+    expect(evaluateTransitionGuards('pre_pr_reviewing', 'blocked', {}, null, passedProofContext())).toMatchObject({
+      allowed: false,
+      guardFailures: [{ code: 'BLOCK_EVIDENCE_REQUIRED' }],
+    });
+    expect(
+      evaluateTransitionGuards(
+        'pre_pr_reviewing',
+        'blocked',
+        {
+          block: {
+            reason: 'Review cannot continue',
+            evidence_ref: 'incident:pre-pr-review',
+            recovery: 'Resolve the incident and obtain explicit recovery approval',
+            stop_code: 'REVIEW_BLOCKED',
+          },
+        },
+        null,
+        passedProofContext(),
+      ),
+    ).toMatchObject({ allowed: true, guardFailures: [], requiredWork: [] });
   });
 
   it('fails proof and review transitions closed under their downstream owner', () => {

@@ -377,6 +377,46 @@ describe('signed gate receipt import', { timeout: 20_000 }, () => {
     expect(failure.stderr).toContain(missingPath);
   });
 
+  it('maps a missing audit genesis before importing signed gate evidence', async () => {
+    const fixture = await makeVerifyingSession();
+    await resetSqliteConnections(fixture.repoDir);
+    const dbPath = path.join(fixture.repoDir, '.threadloop/state/state.db');
+    const corrupt = new DatabaseSync(dbPath);
+    corrupt.exec(`
+      DROP TRIGGER audit_events_no_delete;
+      DELETE FROM audit_events WHERE session_id = '${fixture.sessionId}';
+      CREATE TRIGGER audit_events_no_delete
+      BEFORE DELETE ON audit_events
+      BEGIN
+        SELECT RAISE(ABORT, 'audit events are immutable');
+      END;
+    `);
+    corrupt.close();
+
+    await expect(
+      importSessionGateReceipt({
+        cwd: fixture.repoDir,
+        sessionId: fixture.sessionId,
+        packagePath: path.join(fixture.inputDir, 'unread-package.json'),
+      }),
+    ).rejects.toMatchObject({
+      code: 'AUDIT_VERIFICATION_FAILED',
+      details: {
+        session_id: fixture.sessionId,
+        audit_error: { code: 'AUDIT_SEQUENCE_MISMATCH' },
+        hint: 'Restore the ledger from trusted storage.',
+      },
+    });
+
+    const unchanged = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      expect(unchanged.prepare(`SELECT COUNT(*) AS count FROM signed_gate_receipts`).get()).toEqual({ count: 0 });
+      expect(unchanged.prepare(`SELECT COUNT(*) AS count FROM audit_events`).get()).toEqual({ count: 0 });
+    } finally {
+      unchanged.close();
+    }
+  });
+
   it('rejects task-projection drift before importing signed gate evidence', async () => {
     const fixture = await makeVerifyingSession();
     const packagePath = await writePackage(fixture, signedArtifact(fixture));

@@ -75,7 +75,6 @@ export interface ProofGuardContext {
     branch: string | null;
     headSha: string;
     clean: boolean;
-    committedDiffFromBaseline: boolean;
     committedImplementationFromBasis?: boolean;
     committedRepairFromFailure: boolean;
   };
@@ -677,6 +676,9 @@ export function validateTransitionEvidence(
         description: 'Provide complete block evidence without changing the prior lifecycle state.',
       },
     );
+  }
+  if (targetState === TASK_STATUS.BLOCKED) {
+    return allowedGuards();
   }
 
   if (

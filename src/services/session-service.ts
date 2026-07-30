@@ -1103,6 +1103,18 @@ export async function getNextSessionAction(input: NextSessionInput) {
     if (error instanceof ThreadloopError) {
       throw error;
     }
+    if (error instanceof AuditChainCorruptedError) {
+      throw mapAuditChainCorruption(input.sessionId, error, 'Restore the ledger from trusted storage.');
+    }
+    if (error instanceof SessionTransitionHistoryCorruptedError) {
+      throw new ThreadloopError('STATE_CORRUPTED', error.message, {
+        cause: error,
+        details: {
+          session_id: error.sessionId,
+          hint: 'Restore transition history from trusted storage before retrying session next.',
+        },
+      });
+    }
     throw new ThreadloopError('STATE_CORRUPTED', error instanceof Error ? error.message : String(error), {
       cause: error,
     });
@@ -1583,9 +1595,6 @@ async function buildProofGuardContext(
 ): Promise<ProofGuardContext> {
   const plan = proofState.plan;
   const transitionHistory = readSessionTransitionHistoryReadOnly(repoRoot, sessionId);
-  const committedDiffFromBaseline = plan
-    ? await hasCommittedDiff(repoRoot, plan.baselineHeadSha, repository.headSha)
-    : false;
   const latestFailure = [...proofState.receipts]
     .sort((left, right) => right.sequence - left.sequence)
     .find((receipt) => receipt.result !== 'passed');
@@ -1655,7 +1664,6 @@ async function buildProofGuardContext(
       branch: repository.branch,
       headSha: repository.headSha,
       clean: repository.clean,
-      committedDiffFromBaseline,
       committedImplementationFromBasis,
       committedRepairFromFailure,
     },

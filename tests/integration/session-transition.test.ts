@@ -757,6 +757,52 @@ describe('schema v7 lifecycle and audit persistence', { timeout: 20_000 }, () =>
     }
   });
 
+  it('maps a missing audit genesis during session next to actionable audit recovery', async () => {
+    const repoDir = await makeRepo();
+    const { session_id: sessionId } = await startQueuedSession(repoDir);
+    await resetSqliteConnections(repoDir);
+    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
+    const corrupt = new DatabaseSync(dbPath);
+    corrupt.exec(`
+      DROP TRIGGER audit_events_no_delete;
+      DELETE FROM audit_events WHERE session_id = '${sessionId}';
+      CREATE TRIGGER audit_events_no_delete
+      BEFORE DELETE ON audit_events
+      BEGIN
+        SELECT RAISE(ABORT, 'audit events are immutable');
+      END;
+    `);
+    corrupt.close();
+
+    const failure = parseJson<{
+      error: {
+        code: string;
+        details: { session_id: string; audit_error: { code: string }; hint: string };
+      };
+    }>((await runCliFailure(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stderr);
+    expect(failure).toMatchObject({
+      error: {
+        code: 'AUDIT_VERIFICATION_FAILED',
+        details: {
+          session_id: sessionId,
+          audit_error: { code: 'AUDIT_SEQUENCE_MISMATCH' },
+          hint: 'Restore the ledger from trusted storage.',
+        },
+      },
+    });
+
+    const unchanged = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      expect(unchanged.prepare(`SELECT status, state_version FROM tasks`).get()).toEqual({
+        status: 'queued',
+        state_version: 0,
+      });
+      expect(unchanged.prepare(`SELECT COUNT(*) AS count FROM audit_events`).get()).toEqual({ count: 0 });
+    } finally {
+      unchanged.close();
+    }
+  });
+
   it('fails reads and writes closed when the task projection drifts from authoritative history', async () => {
     const repoDir = await makeRepo();
     const { session_id: sessionId, task_id: taskId } = await startQueuedSession(repoDir);

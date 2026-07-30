@@ -287,7 +287,18 @@ async function prepareImport<TEnvelope extends ImportEnvelope>(
 ): Promise<PreparedImport<TEnvelope>> {
   const repoRoot = await resolveRepositoryRoot(input.cwd);
   await assertInitializedReadOnly(repoRoot);
-  const lifecycle = readSessionLifecycleReadOnly(repoRoot, input.sessionId);
+  let lifecycle: ReturnType<typeof readSessionLifecycleReadOnly>;
+  try {
+    lifecycle = readSessionLifecycleReadOnly(repoRoot, input.sessionId);
+  } catch (error) {
+    if (error instanceof AuditChainCorruptedError) {
+      throw mapAuditChainCorruption(input.sessionId, error, 'Restore the ledger from trusted storage.');
+    }
+    if (error instanceof SessionTransitionHistoryCorruptedError) {
+      throw mapTransitionHistoryCorruption(error);
+    }
+    throw error;
+  }
   if (!lifecycle) {
     throw new ThreadloopError('SESSION_NOT_FOUND', `Could not find session: ${input.sessionId}`, {
       details: { session_id: input.sessionId },
