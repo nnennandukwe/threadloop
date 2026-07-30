@@ -521,8 +521,24 @@ async function prepareBoundProofPlan(repoRoot: string, value: unknown): Promise<
 
 export async function runSessionGate(input: RunSessionGateInput) {
   const repoRoot = await resolveRepositoryRoot(input.cwd);
-  await assertInitialized(repoRoot);
-  await ensureStateDatabase(repoRoot);
+  try {
+    await assertInitialized(repoRoot);
+    await ensureStateDatabase(repoRoot);
+  } catch (error) {
+    if (error instanceof AuditChainCorruptedError) {
+      throw mapAuditChainCorruption(input.sessionId, error);
+    }
+    if (isSchemaStateError(error)) {
+      throw new ThreadloopError('STATE_CORRUPTED', error instanceof Error ? error.message : String(error), {
+        cause: error,
+        details: {
+          session_id: input.sessionId,
+          hint: 'Restore transition history from trusted storage before retrying the gate.',
+        },
+      });
+    }
+    throw error;
+  }
   const context = await readSessionGateContext(repoRoot, input.sessionId);
   if (!context) {
     throw new ThreadloopError('SESSION_NOT_FOUND', `Could not find session: ${input.sessionId}`, {
@@ -1053,8 +1069,22 @@ export async function getNextSessionAction(input: NextSessionInput) {
     });
   }
 
-  const lifecycleHistory =
-    lifecycle.schemaVersion >= 3 ? readSessionTransitionHistoryReadOnly(repoRoot, input.sessionId) : [];
+  let lifecycleHistory: ReturnType<typeof readSessionTransitionHistoryReadOnly>;
+  try {
+    lifecycleHistory =
+      lifecycle.schemaVersion >= 3 ? readSessionTransitionHistoryReadOnly(repoRoot, input.sessionId) : [];
+  } catch (error) {
+    if (error instanceof AuditChainCorruptedError) {
+      throw mapAuditChainCorruption(input.sessionId, error);
+    }
+    throw new ThreadloopError('STATE_CORRUPTED', error instanceof Error ? error.message : String(error), {
+      cause: error,
+      details: {
+        session_id: input.sessionId,
+        hint: 'Restore transition history from trusted storage before retrying session next.',
+      },
+    });
+  }
   const phase = deriveLifecyclePhase(lifecycleHistory);
   const lifecycleMigrationRequired = lifecycle.schemaVersion < 7;
   const proofState =
@@ -1984,6 +2014,7 @@ function isSchemaStateError(error: unknown) {
     message.startsWith('Unsupported ThreadLoop schema version:') ||
     message.startsWith('Missing ThreadLoop schema version metadata.') ||
     message.startsWith('Invalid schema for ') ||
+    message.startsWith('Invalid session transition history for ') ||
     message === 'Invalid .threadloop/state/state.db'
   );
 }

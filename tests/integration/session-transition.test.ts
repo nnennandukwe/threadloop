@@ -187,6 +187,17 @@ describe('schema v7 lifecycle and audit persistence', () => {
       ]);
       expect(
         db
+          .prepare(
+            `SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'session_transitions_no_%' ORDER BY name`,
+          )
+          .all(),
+      ).toEqual([
+        { name: 'session_transitions_no_delete' },
+        { name: 'session_transitions_no_replace' },
+        { name: 'session_transitions_no_update' },
+      ]);
+      expect(
+        db
           .prepare(`SELECT sequence, event_type, state_version, previous_sha256 FROM audit_events WHERE session_id = ?`)
           .get('session_queued'),
       ).toMatchObject({
@@ -408,6 +419,213 @@ describe('schema v7 lifecycle and audit persistence', () => {
           pk: 0,
         },
       ]);
+    } finally {
+      unchanged.close();
+    }
+  });
+
+  it('makes applied transition history immutable in schema v7', async () => {
+    const repoDir = await makeRepo();
+    const started = parseJson<{ data: { session_id: string } }>(
+      (await runCli(repoDir, ['session', 'start', 'Immutable history', '--goal', 'Protect lifecycle phase', '--json']))
+        .stdout,
+    );
+    await runCli(repoDir, [
+      'session',
+      'transition',
+      'framed',
+      '--session',
+      started.data.session_id,
+      '--expected-state-version',
+      '0',
+      '--idempotency-key',
+      'immutability:framed',
+      '--actor',
+      'agent',
+      '--input',
+      '{}',
+      '--json',
+    ]);
+    await resetSqliteConnections(repoDir);
+
+    const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'));
+    try {
+      expect(() =>
+        db
+          .prepare(`UPDATE session_transitions SET to_state = 'queued' WHERE session_id = ?`)
+          .run(started.data.session_id),
+      ).toThrow('session transitions are immutable');
+      expect(() =>
+        db.prepare(`DELETE FROM session_transitions WHERE session_id = ?`).run(started.data.session_id),
+      ).toThrow('session transitions are immutable');
+      expect(() =>
+        db
+          .prepare(
+            `
+              INSERT OR REPLACE INTO session_transitions
+              SELECT * FROM session_transitions WHERE session_id = ?
+            `,
+          )
+          .run(started.data.session_id),
+      ).toThrow('session transitions are immutable');
+      expect(
+        db.prepare(`SELECT from_state, to_state, from_state_version, to_state_version FROM session_transitions`).all(),
+      ).toEqual([
+        {
+          from_state: 'queued',
+          to_state: 'framed',
+          from_state_version: 0,
+          to_state_version: 1,
+        },
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('fails session next closed when transition history no longer matches the audit ledger', async () => {
+    const repoDir = await makeRepo();
+    const started = parseJson<{ data: { session_id: string; task_id: string } }>(
+      (
+        await runCli(repoDir, [
+          'session',
+          'start',
+          'Corrupt history',
+          '--goal',
+          'Fail phase derivation closed',
+          '--json',
+        ])
+      ).stdout,
+    );
+    await runCli(repoDir, [
+      'session',
+      'transition',
+      'framed',
+      '--session',
+      started.data.session_id,
+      '--expected-state-version',
+      '0',
+      '--idempotency-key',
+      'corrupt-history:framed',
+      '--actor',
+      'agent',
+      '--input',
+      '{}',
+      '--json',
+    ]);
+    await resetSqliteConnections(repoDir);
+
+    const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'));
+    db.exec(`
+      DROP TRIGGER session_transitions_no_update;
+      DROP TRIGGER session_transitions_no_delete;
+      DROP TRIGGER session_transitions_no_replace;
+      UPDATE session_transitions SET input_json = '{"tampered":true}'
+      WHERE session_id = '${started.data.session_id}';
+      CREATE TRIGGER session_transitions_no_update
+      BEFORE UPDATE ON session_transitions
+      BEGIN
+        SELECT RAISE(ABORT, 'session transitions are immutable');
+      END;
+      CREATE TRIGGER session_transitions_no_delete
+      BEFORE DELETE ON session_transitions
+      BEGIN
+        SELECT RAISE(ABORT, 'session transitions are immutable');
+      END;
+      CREATE TRIGGER session_transitions_no_replace
+      BEFORE INSERT ON session_transitions
+      WHEN EXISTS (
+        SELECT 1 FROM session_transitions
+        WHERE id = NEW.id OR (task_id = NEW.task_id AND to_state_version = NEW.to_state_version)
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'session transitions are immutable');
+      END;
+    `);
+    db.close();
+
+    const failure = await runCliFailure(repoDir, ['session', 'next', '--session', started.data.session_id, '--json']);
+    const parsedFailure = parseJson<{ error: { code: string; message: string } }>(failure.stderr);
+    expect(parsedFailure.error.code).toBe('STATE_CORRUPTED');
+    expect(parsedFailure.error.message).toContain('Invalid session transition history');
+
+    const unchanged = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
+    try {
+      expect(
+        unchanged.prepare(`SELECT status, state_version FROM tasks WHERE id = ?`).get(started.data.task_id),
+      ).toEqual({
+        status: 'framed',
+        state_version: 1,
+      });
+      expect(
+        unchanged
+          .prepare(`SELECT COUNT(*) AS count FROM session_transitions WHERE session_id = ?`)
+          .get(started.data.session_id),
+      ).toEqual({ count: 1 });
+    } finally {
+      unchanged.close();
+    }
+  });
+
+  it('rolls back schema-v6 migration when legacy transition history is inconsistent', async () => {
+    const repoDir = await makeRepo();
+    const started = parseJson<{ data: { session_id: string } }>(
+      (
+        await runCli(repoDir, [
+          'session',
+          'start',
+          'Legacy corrupt history',
+          '--goal',
+          'Reject an unsafe semantic migration',
+          '--json',
+        ])
+      ).stdout,
+    );
+    await runCli(repoDir, [
+      'session',
+      'transition',
+      'framed',
+      '--session',
+      started.data.session_id,
+      '--expected-state-version',
+      '0',
+      '--idempotency-key',
+      'legacy-corrupt:framed',
+      '--actor',
+      'agent',
+      '--input',
+      '{}',
+      '--json',
+    ]);
+    await resetSqliteConnections(repoDir);
+    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
+    const corrupt = new DatabaseSync(dbPath);
+    corrupt.exec(`
+      UPDATE metadata SET value = '6' WHERE key = 'schema_version';
+      DROP TRIGGER session_transitions_no_update;
+      DROP TRIGGER session_transitions_no_delete;
+      DROP TRIGGER session_transitions_no_replace;
+      UPDATE session_transitions SET input_json = '{"tampered":true}'
+      WHERE session_id = '${started.data.session_id}';
+    `);
+    corrupt.close();
+
+    await expect(runCli(repoDir, ['init'])).rejects.toThrow('Invalid session transition history');
+    await resetSqliteConnections(repoDir);
+
+    const unchanged = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      expect(unchanged.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({
+        value: '6',
+      });
+      expect(
+        unchanged
+          .prepare(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'session_transitions_no_%'`)
+          .all(),
+      ).toEqual([]);
+      expect(unchanged.prepare(`SELECT input_json FROM session_transitions`).get()).toEqual({
+        input_json: '{"tampered":true}',
+      });
     } finally {
       unchanged.close();
     }

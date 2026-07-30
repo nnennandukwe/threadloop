@@ -20,6 +20,7 @@ import {
   type LifecycleTransitionDecision,
 } from '../../domain/lifecycle.js';
 import {
+  canonicalizeTransitionRequest,
   type CanonicalTransitionRequest,
   type TransitionGuardDecision,
   type TransitionRequest,
@@ -51,6 +52,11 @@ const INVALID_CONFIG_ERROR = 'Invalid .threadloop/config.json';
 const INVALID_STATE_JSON_ERROR = 'Invalid .threadloop/state/state.json';
 const INVALID_STATE_DB_ERROR = 'Invalid .threadloop/state/state.db';
 const SQLITE_BUSY_TIMEOUT_MS = 10_000;
+const TRANSITION_SCHEMA_TRIGGERS = [
+  'session_transitions_no_update',
+  'session_transitions_no_delete',
+  'session_transitions_no_replace',
+] as const;
 const PROOF_SCHEMA_TRIGGERS = [
   'proof_plans_no_update',
   'proof_plans_no_delete',
@@ -652,6 +658,10 @@ export function inspectAuditLedgerReadOnly(repoRoot: string) {
 export function readSessionTransitionHistoryReadOnly(repoRoot: string, sessionId: string) {
   const db = openReadDatabase(repoRoot);
   try {
+    if (readDatabaseSchemaVersion(db) >= 7) {
+      assertTransitionSchemaShape(db, true);
+      assertSessionTransitionHistoryAuthority(db, sessionId);
+    }
     return readSessionTransitionHistory(db, sessionId);
   } finally {
     db.close();
@@ -693,6 +703,134 @@ function readSessionTransitionHistory(db: DatabaseSync, sessionId: string) {
     input: parseJsonText<Record<string, unknown>>(row.input_json, INVALID_STATE_DB_ERROR),
     created_at: row.created_at,
   }));
+}
+
+function assertAllSessionTransitionHistoryAuthority(db: DatabaseSync) {
+  const sessions = db.prepare(`SELECT id FROM sessions ORDER BY id`).all() as Array<{ id: string }>;
+  for (const session of sessions) {
+    assertSessionTransitionHistoryAuthority(db, session.id, true);
+  }
+}
+
+function assertSessionTransitionHistoryAuthority(
+  db: DatabaseSync,
+  sessionId: string,
+  requireCurrentProjection = false,
+) {
+  if (!tableExists(db, 'audit_events')) {
+    return;
+  }
+  assertAuditChainVerifiedForWrite(db, sessionId);
+  const rows = db
+    .prepare(
+      `
+        SELECT
+          id, session_id, task_id, from_state, to_state, from_state_version, to_state_version,
+          actor, input_json, request_sha256, created_at
+        FROM session_transitions
+        WHERE session_id = ?
+        ORDER BY to_state_version, rowid
+      `,
+    )
+    .all(sessionId) as Array<{
+    id: string;
+    session_id: string;
+    task_id: string;
+    from_state: string;
+    to_state: string;
+    from_state_version: number;
+    to_state_version: number;
+    actor: Entry['source'];
+    input_json: string;
+    request_sha256: string;
+    created_at: string;
+  }>;
+
+  let previous: (typeof rows)[number] | null = null;
+  for (const row of rows) {
+    if (
+      !isTaskStatus(row.from_state) ||
+      !isTaskStatus(row.to_state) ||
+      !Number.isSafeInteger(row.from_state_version) ||
+      row.from_state_version < 0 ||
+      row.to_state_version !== row.from_state_version + 1
+    ) {
+      throw invalidTransitionHistory(sessionId, `transition ${row.id} has invalid lifecycle fields`);
+    }
+    if (previous && (row.from_state_version !== previous.to_state_version || row.from_state !== previous.to_state)) {
+      throw invalidTransitionHistory(sessionId, `transition ${row.id} does not continue the prior transition`);
+    }
+    const input = parseJsonText<Record<string, unknown>>(row.input_json, INVALID_STATE_DB_ERROR);
+    const request = canonicalizeTransitionRequest(
+      {
+        sessionId,
+        targetState: row.to_state,
+        expectedStateVersion: row.from_state_version,
+        actor: row.actor,
+        input,
+      },
+      sha256,
+    );
+    if (request.requestSha256 !== row.request_sha256 || JSON.stringify(request.canonicalInput) !== row.input_json) {
+      throw invalidTransitionHistory(sessionId, `transition ${row.id} request binding is invalid`);
+    }
+    previous = row;
+  }
+
+  const auditEvents = readAuditEvents(db, sessionId);
+  const genesis = auditEvents[0]?.value;
+  const auditFloor =
+    genesis?.event_type === 'session_started'
+      ? 0
+      : genesis?.event_type === 'audit_activated' && genesis.payload.coverage === 'schema_v6_forward'
+        ? genesis.state_version
+        : null;
+  if (auditFloor === null) {
+    throw invalidTransitionHistory(sessionId, 'audit coverage does not establish a lifecycle history boundary');
+  }
+
+  const authoritativeRows = rows.filter((row) => row.from_state_version >= auditFloor);
+  const rowsById = new Map(authoritativeRows.map((row) => [row.id, row]));
+  const appliedEvents = auditEvents.filter(({ value }) => value.event_type === 'transition_applied');
+  if (appliedEvents.length !== authoritativeRows.length) {
+    throw invalidTransitionHistory(sessionId, 'transition rows do not match authoritative audit coverage');
+  }
+  for (const { value } of appliedEvents) {
+    const transitionId = value.payload.transition_id;
+    const row = typeof transitionId === 'string' ? rowsById.get(transitionId) : undefined;
+    if (
+      !row ||
+      value.state_version !== row.to_state_version ||
+      value.payload.request_sha256 !== row.request_sha256 ||
+      value.payload.from_state !== row.from_state ||
+      value.payload.to_state !== row.to_state ||
+      value.payload.from_state_version !== row.from_state_version ||
+      value.payload.to_state_version !== row.to_state_version
+    ) {
+      throw invalidTransitionHistory(sessionId, `audit event ${value.id} does not match its transition row`);
+    }
+  }
+
+  if (requireCurrentProjection) {
+    const current = readTransitionSession(db, sessionId);
+    if (!current) {
+      throw invalidTransitionHistory(sessionId, 'session projection is missing');
+    }
+    const latest = rows.at(-1);
+    if (
+      (latest &&
+        (latest.task_id !== current.task_id ||
+          latest.to_state !== current.status ||
+          latest.to_state_version !== current.state_version)) ||
+      (!latest && current.state_version !== 0)
+    ) {
+      throw invalidTransitionHistory(sessionId, 'current lifecycle projection does not match transition history');
+    }
+  }
+}
+
+function invalidTransitionHistory(sessionId: string, detail: string) {
+  return new Error(`Invalid session transition history for ${sessionId}: ${detail}.`);
 }
 
 function summarizePrePrReview(input: Record<string, unknown>) {
@@ -758,7 +896,7 @@ export function readSessionLifecycleReadOnly(repoRoot: string, sessionId: string
       if (!taskColumns.has('blocked_from_state')) {
         throw new Error('Invalid schema for tasks');
       }
-      assertTransitionSchemaShape(db);
+      assertTransitionSchemaShape(db, version >= 7);
     }
     if (version >= 4) {
       assertProofSchemaShape(db);
@@ -906,6 +1044,7 @@ export async function applySessionTransition(
       });
     }
     assertAuditChainVerifiedForWrite(db, input.sessionId);
+    assertSessionTransitionHistoryAuthority(db, input.sessionId);
     const phase = deriveLifecyclePhase(readSessionTransitionHistory(db, input.sessionId));
 
     if (input.expectedStateVersion !== current.state_version) {
@@ -1598,10 +1737,11 @@ function ensureDatabaseReady(db: DatabaseSync, state: RepoConnectionState, repoR
       bootstrapDatabase(db);
       assertSupportedSchemaVersion(db);
       runPendingMigrations(db, repoRoot);
-      assertTransitionSchemaShape(db);
+      assertTransitionSchemaShape(db, true);
       assertProofSchemaShape(db);
       assertSignedReceiptSchemaShape(db);
       assertReviewAuditSchemaShape(db);
+      assertAllSessionTransitionHistoryAuthority(db);
       writeSchemaVersion(db);
     });
     assertSchemaVersion(db);
@@ -1661,6 +1801,9 @@ function databaseNeedsSetup(db: DatabaseSync, repoRoot: string) {
   ];
 
   if (requiredTables.some((table) => !tableExists(db, table))) {
+    return true;
+  }
+  if (TRANSITION_SCHEMA_TRIGGERS.some((trigger) => !triggerExists(db, trigger))) {
     return true;
   }
   if (PROOF_SCHEMA_TRIGGERS.some((trigger) => !triggerExists(db, trigger))) {
@@ -1941,6 +2084,28 @@ function bootstrapDatabase(db: DatabaseSync) {
 
     CREATE INDEX IF NOT EXISTS audit_events_session_sequence_idx
       ON audit_events(session_id, sequence);
+
+    CREATE TRIGGER IF NOT EXISTS session_transitions_no_update
+    BEFORE UPDATE ON session_transitions
+    BEGIN
+      SELECT RAISE(ABORT, 'session transitions are immutable');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS session_transitions_no_delete
+    BEFORE DELETE ON session_transitions
+    BEGIN
+      SELECT RAISE(ABORT, 'session transitions are immutable');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS session_transitions_no_replace
+    BEFORE INSERT ON session_transitions
+    WHEN EXISTS (
+      SELECT 1 FROM session_transitions
+      WHERE id = NEW.id OR (task_id = NEW.task_id AND to_state_version = NEW.to_state_version)
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'session transitions are immutable');
+    END;
 
     CREATE TRIGGER IF NOT EXISTS proof_plans_no_update
     BEFORE UPDATE ON proof_plans
@@ -2270,7 +2435,7 @@ function parseSchemaVersion(rawVersion: string) {
   return version;
 }
 
-function assertTransitionSchemaShape(db: DatabaseSync) {
+function assertTransitionSchemaShape(db: DatabaseSync, requireImmutableHistory = false) {
   assertTableColumns(db, 'session_transitions', [
     'id',
     'session_id',
@@ -2294,6 +2459,13 @@ function assertTransitionSchemaShape(db: DatabaseSync) {
     'result_json',
     'created_at',
   ]);
+  if (requireImmutableHistory) {
+    for (const trigger of TRANSITION_SCHEMA_TRIGGERS) {
+      if (!triggerExists(db, trigger)) {
+        throw new Error(`Invalid schema trigger: ${trigger}`);
+      }
+    }
+  }
 }
 
 function assertProofSchemaShape(db: DatabaseSync) {

@@ -1155,7 +1155,11 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
     await recordProofPlan(repoDir, sessionId);
-    await forceVerifying(repoDir);
+    await transition(repoDir, sessionId, 'implementing', 2, 'pre-pr-review:implement');
+    await writeFile(path.join(repoDir, 'feature.txt'), 'initial implementation\n', 'utf8');
+    await execFileAsync('git', ['add', 'feature.txt'], { cwd: repoDir });
+    await execFileAsync('git', ['commit', '-m', 'initial implementation'], { cwd: repoDir });
+    await transition(repoDir, sessionId, 'verifying', 3, 'pre-pr-review:verify');
     await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json']);
     const headSha = (await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: repoDir })).stdout.trim();
     const reviewInput = {
