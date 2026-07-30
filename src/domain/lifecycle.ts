@@ -1,4 +1,4 @@
-import { TASK_STATUS, type TaskStatus } from './types.js';
+import { LIFECYCLE_PHASE, TASK_STATUS, type LifecyclePhase, type TaskStatus } from './types.js';
 
 export const LIFECYCLE_DECISION_CODES = [
   'TRANSITION_ALLOWED',
@@ -6,12 +6,15 @@ export const LIFECYCLE_DECISION_CODES = [
   'COMPLETED_TERMINAL',
   'BLOCKED_RESUME_REQUIRED',
   'BLOCKED_RESUME_MISMATCH',
+  'PRE_PR_REVIEW_BOUNDARY_REQUIRED',
+  'POST_PR_IMPLEMENTATION_REENTRY_FORBIDDEN',
 ] as const;
 
 export type LifecycleDecisionCode = (typeof LIFECYCLE_DECISION_CODES)[number];
 
 export interface LifecycleTransitionContext {
   blockedFromState?: TaskStatus | null;
+  phase?: LifecyclePhase;
 }
 
 export interface LifecycleTransitionDecision {
@@ -32,7 +35,13 @@ const FORWARD_TRANSITIONS: Readonly<Record<TaskStatus, readonly TaskStatus[]>> =
   [TASK_STATUS.FRAMED]: [TASK_STATUS.PROOF_READY],
   [TASK_STATUS.PROOF_READY]: [TASK_STATUS.IMPLEMENTING],
   [TASK_STATUS.IMPLEMENTING]: [TASK_STATUS.VERIFYING],
-  [TASK_STATUS.VERIFYING]: [TASK_STATUS.REVIEWING, TASK_STATUS.REPAIRING],
+  [TASK_STATUS.VERIFYING]: [
+    TASK_STATUS.IMPLEMENTING,
+    TASK_STATUS.PRE_PR_REVIEWING,
+    TASK_STATUS.REVIEWING,
+    TASK_STATUS.REPAIRING,
+  ],
+  [TASK_STATUS.PRE_PR_REVIEWING]: [TASK_STATUS.IMPLEMENTING, TASK_STATUS.REVIEWING],
   [TASK_STATUS.REVIEWING]: [TASK_STATUS.REPAIRING, TASK_STATUS.READY_FOR_HUMAN],
   [TASK_STATUS.REPAIRING]: [TASK_STATUS.VERIFYING],
   [TASK_STATUS.READY_FOR_HUMAN]: [TASK_STATUS.REPAIRING, TASK_STATUS.COMPLETED],
@@ -81,6 +90,41 @@ export function evaluateLifecycleTransition(
     return allowed(sourceState, targetState);
   }
 
+  if (
+    context.phase === LIFECYCLE_PHASE.POST_PR &&
+    targetState === TASK_STATUS.IMPLEMENTING &&
+    sourceState !== TASK_STATUS.PROOF_READY
+  ) {
+    return denied(
+      'POST_PR_IMPLEMENTATION_REENTRY_FORBIDDEN',
+      `Lifecycle transition ${sourceState} -> implementing is forbidden after reviewing has been entered.`,
+      'Use the signed-review-authorized repairing path while repair budget remains.',
+    );
+  }
+
+  if (
+    context.phase === LIFECYCLE_PHASE.PRE_PR &&
+    sourceState === TASK_STATUS.VERIFYING &&
+    targetState === TASK_STATUS.REVIEWING
+  ) {
+    return denied(
+      'PRE_PR_REVIEW_BOUNDARY_REQUIRED',
+      'A pre-PR session must pass through pre_pr_reviewing before reviewing.',
+      'Transition to pre_pr_reviewing after current local and signed CI proof pass.',
+    );
+  }
+
+  if (
+    context.phase === LIFECYCLE_PHASE.POST_PR &&
+    (sourceState === TASK_STATUS.PRE_PR_REVIEWING || targetState === TASK_STATUS.PRE_PR_REVIEWING)
+  ) {
+    return denied(
+      'INVALID_TRANSITION',
+      'The pre_pr_reviewing state is unavailable after reviewing has been entered.',
+      'Use the post-PR reviewing and repairing lifecycle.',
+    );
+  }
+
   if (isForwardLifecycleTransition(sourceState, targetState)) {
     return allowed(sourceState, targetState);
   }
@@ -90,6 +134,12 @@ export function evaluateLifecycleTransition(
     `Lifecycle transition ${sourceState} -> ${targetState} is not structurally allowed.`,
     'Run `threadloop session next --json` and satisfy the reported guard before retrying.',
   );
+}
+
+export function deriveLifecyclePhase(history: ReadonlyArray<{ to_state: TaskStatus }>): LifecyclePhase {
+  return history.some((transition) => transition.to_state === TASK_STATUS.REVIEWING)
+    ? LIFECYCLE_PHASE.POST_PR
+    : LIFECYCLE_PHASE.PRE_PR;
 }
 
 export function isActiveTaskStatus(status: TaskStatus) {

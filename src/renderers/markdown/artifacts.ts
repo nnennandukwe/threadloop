@@ -5,6 +5,9 @@ export interface HandoffGovernance {
   lifecycle: {
     state: string;
     state_version: number;
+    phase: string;
+    storage_schema_version: number;
+    contract_status: string;
     history: Array<{
       id: string;
       from_state: string;
@@ -14,6 +17,18 @@ export interface HandoffGovernance {
       actor: string;
       created_at: string;
     }>;
+  };
+  pre_pr_review: {
+    status: string;
+    head_sha: string | null;
+    evidence_ref: string | null;
+    evidence_sha256: string | null;
+    findings: Array<{ id: string; summary: string; path: string }>;
+    iteration_count: number;
+  };
+  implementation_basis: {
+    head_sha: string | null;
+    source: string | null;
   };
   proof: {
     status: string;
@@ -85,7 +100,7 @@ function frontmatterFor(input: ArtifactRenderInput) {
   const { task, session, repoSnapshot, generatedAt, artifactKind } = input;
   return {
     kind: artifactKind,
-    ...(artifactKind === 'handoff' ? { contract_version: 2 } : {}),
+    ...(artifactKind === 'handoff' ? { contract_version: 3 } : {}),
     task_id: task.id,
     session_id: session.id,
     issue_ref: task.issueRef,
@@ -224,6 +239,8 @@ function renderHandoff(input: ArtifactRenderInput) {
       `- Base ref: ${session.baseRef ?? 'Not set'}`,
       `- Changed files: ${repoSnapshot.changedFiles.length}`,
       `- Lifecycle: ${governance.lifecycle.state} @ ${governance.lifecycle.state_version}`,
+      `- Lifecycle phase: ${governance.lifecycle.phase}`,
+      `- Storage schema: v${governance.lifecycle.storage_schema_version} (${governance.lifecycle.contract_status})`,
     ]),
     section(
       'Lifecycle history',
@@ -242,6 +259,19 @@ function renderHandoff(input: ArtifactRenderInput) {
       `- Freshness: ${governance.staleness.status}`,
       `- Proof plan SHA-256: ${governance.proof.plan_sha256 ?? 'Not available'}`,
       `- Baseline HEAD: ${governance.proof.baseline_head_sha ?? 'Not available'}`,
+      `- Implementation basis: ${governance.implementation_basis.head_sha ?? 'Not available'}`,
+      `- Implementation basis source: ${governance.implementation_basis.source ?? 'Not available'}`,
+    ]),
+    section('Pre-PR review and iteration', [
+      `- Status: ${governance.pre_pr_review.status}`,
+      `- Reviewed HEAD: ${governance.pre_pr_review.head_sha ?? 'Not available'}`,
+      `- Evidence reference: ${governance.pre_pr_review.evidence_ref ?? 'Not available'}`,
+      `- Evidence SHA-256: ${governance.pre_pr_review.evidence_sha256 ?? 'Not available'}`,
+      `- Iterations authorized: ${governance.pre_pr_review.iteration_count}`,
+      `- Findings: ${governance.pre_pr_review.findings.length}`,
+      ...governance.pre_pr_review.findings.map(
+        (finding) => `  - [${finding.id}] ${finding.path}: ${oneLine(finding.summary)}`,
+      ),
     ]),
     section(
       'Review findings',

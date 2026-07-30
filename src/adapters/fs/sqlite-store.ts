@@ -14,6 +14,7 @@ import {
   ZERO_AUDIT_HASH,
 } from '../../domain/audit.js';
 import {
+  deriveLifecyclePhase,
   evaluateLifecycleTransition,
   REPAIR_ENTRY_STATES,
   type LifecycleTransitionDecision,
@@ -23,6 +24,7 @@ import {
   type TransitionGuardDecision,
   type TransitionRequest,
   evaluateTransitionGuards,
+  readPrePrReviewEvidence,
 } from '../../domain/session-transition.js';
 import type { BoundProofPlan, GateReceiptPayload, GateReceiptResult, StoredGateReceipt } from '../../domain/proof.js';
 import type { ParsedSignedReceiptPackage, StoredSignedGateReceipt } from '../../domain/attestation.js';
@@ -44,7 +46,7 @@ import type { ThreadloopErrorCode } from '../../contracts/errors.js';
 import { threadloopPaths } from './repo.js';
 import { DatabaseSync } from './sqlite-driver.js';
 
-const CURRENT_SCHEMA_VERSION = 6;
+const CURRENT_SCHEMA_VERSION = 7;
 const INVALID_CONFIG_ERROR = 'Invalid .threadloop/config.json';
 const INVALID_STATE_JSON_ERROR = 'Invalid .threadloop/state/state.json';
 const INVALID_STATE_DB_ERROR = 'Invalid .threadloop/state/state.db';
@@ -328,7 +330,7 @@ export class AuditLedgerUnavailableError extends Error {
   constructor(reason: 'schema_version' | 'table_missing', schemaVersion: number) {
     const message =
       reason === 'schema_version'
-        ? `Audit storage requires schema v6; found schema v${schemaVersion}.`
+        ? `Audit storage requires schema v6 or newer; found schema v${schemaVersion}.`
         : `Audit storage is unavailable for schema v${schemaVersion}.`;
     super(message);
     this.name = 'AuditLedgerUnavailableError';
@@ -650,43 +652,62 @@ export function inspectAuditLedgerReadOnly(repoRoot: string) {
 export function readSessionTransitionHistoryReadOnly(repoRoot: string, sessionId: string) {
   const db = openReadDatabase(repoRoot);
   try {
-    if (!tableExists(db, 'session_transitions')) {
-      return [];
-    }
-    const rows = db
-      .prepare(
-        `
-          SELECT
-            id, from_state, to_state, from_state_version, to_state_version,
-            actor, input_json, created_at
-          FROM session_transitions
-          WHERE session_id = ?
-          ORDER BY to_state_version, rowid
-        `,
-      )
-      .all(sessionId) as Array<{
-      id: string;
-      from_state: TaskStatus;
-      to_state: TaskStatus;
-      from_state_version: number;
-      to_state_version: number;
-      actor: Entry['source'];
-      input_json: string;
-      created_at: string;
-    }>;
-    return rows.map((row) => ({
-      id: row.id,
-      from_state: row.from_state,
-      to_state: row.to_state,
-      from_state_version: row.from_state_version,
-      to_state_version: row.to_state_version,
-      actor: row.actor,
-      input: parseJsonText<Record<string, unknown>>(row.input_json, INVALID_STATE_DB_ERROR),
-      created_at: row.created_at,
-    }));
+    return readSessionTransitionHistory(db, sessionId);
   } finally {
     db.close();
   }
+}
+
+function readSessionTransitionHistory(db: DatabaseSync, sessionId: string) {
+  if (!tableExists(db, 'session_transitions')) {
+    return [];
+  }
+  const rows = db
+    .prepare(
+      `
+        SELECT
+          id, from_state, to_state, from_state_version, to_state_version,
+          actor, input_json, created_at
+        FROM session_transitions
+        WHERE session_id = ?
+        ORDER BY to_state_version, rowid
+      `,
+    )
+    .all(sessionId) as Array<{
+    id: string;
+    from_state: TaskStatus;
+    to_state: TaskStatus;
+    from_state_version: number;
+    to_state_version: number;
+    actor: Entry['source'];
+    input_json: string;
+    created_at: string;
+  }>;
+  return rows.map((row) => ({
+    id: row.id,
+    from_state: row.from_state,
+    to_state: row.to_state,
+    from_state_version: row.from_state_version,
+    to_state_version: row.to_state_version,
+    actor: row.actor,
+    input: parseJsonText<Record<string, unknown>>(row.input_json, INVALID_STATE_DB_ERROR),
+    created_at: row.created_at,
+  }));
+}
+
+function summarizePrePrReview(input: Record<string, unknown>) {
+  const review = readPrePrReviewEvidence(input);
+  if (!review) {
+    throw new Error('Validated pre-PR review evidence could not be summarized.');
+  }
+  return {
+    outcome: review.outcome,
+    head_sha: review.headSha,
+    evidence_ref: review.evidenceRef,
+    evidence_sha256: review.evidenceSha256,
+    finding_count: review.findings.length,
+    finding_ids: review.findings.map((finding) => finding.id),
+  };
 }
 
 export function hasSessionTransitionIdempotencyReadOnly(repoRoot: string, sessionId: string, idempotencyKey: string) {
@@ -885,6 +906,7 @@ export async function applySessionTransition(
       });
     }
     assertAuditChainVerifiedForWrite(db, input.sessionId);
+    const phase = deriveLifecyclePhase(readSessionTransitionHistory(db, input.sessionId));
 
     if (input.expectedStateVersion !== current.state_version) {
       return persistRejectedTransition(
@@ -898,6 +920,8 @@ export async function applySessionTransition(
             expected_state_version: input.expectedStateVersion,
             actual_state: current.status,
             actual_state_version: current.state_version,
+            lifecycle_phase: phase,
+            unchanged: ['lifecycle', 'repair_budget', 'proof', 'review_evidence'],
             hint: `Run threadloop session next --session ${input.sessionId} --json before retrying.`,
           },
         ),
@@ -906,6 +930,7 @@ export async function applySessionTransition(
 
     const structural: LifecycleTransitionDecision = evaluateLifecycleTransition(current.status, input.targetState, {
       blockedFromState: current.blocked_from_state,
+      phase,
     });
     if (!structural.allowed) {
       return persistRejectedTransition(
@@ -915,7 +940,10 @@ export async function applySessionTransition(
           session_id: input.sessionId,
           from_state: current.status,
           target_state: input.targetState,
+          actual_state_version: current.state_version,
+          lifecycle_phase: phase,
           decision_code: structural.code,
+          unchanged: ['lifecycle', 'repair_budget', 'proof', 'review_evidence'],
           recovery: structural.recovery,
         }),
       );
@@ -933,8 +961,11 @@ export async function applySessionTransition(
             session_id: input.sessionId,
             from_state: current.status,
             target_state: input.targetState,
+            actual_state_version: current.state_version,
+            lifecycle_phase: phase,
             guard_failures: guards.guardFailures,
             required_work: guards.requiredWork,
+            unchanged: ['lifecycle', 'repair_budget', 'proof', 'review_evidence'],
           },
         ),
       );
@@ -1063,6 +1094,11 @@ export async function applySessionTransition(
         to_state: input.targetState,
         from_state_version: current.state_version,
         to_state_version: nextVersion,
+        ...(readPrePrReviewEvidence(input.canonicalInput)
+          ? {
+              pre_pr_review: summarizePrePrReview(input.canonicalInput),
+            }
+          : {}),
       },
     });
     return result;

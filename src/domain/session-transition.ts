@@ -1,5 +1,5 @@
 import { getDeterministicForwardTarget, isForwardLifecycleTransition } from './lifecycle.js';
-import { TASK_STATUS, type EntrySource, type TaskStatus } from './types.js';
+import { LIFECYCLE_PHASE, TASK_STATUS, type EntrySource, type LifecyclePhase, type TaskStatus } from './types.js';
 import { canonicalizeJsonValue, isPlainObject } from './canonical-json.js';
 import type { BoundProofPlan } from './proof.js';
 import type { ProofEvidence, ProofEvidenceStatus } from './proof.js';
@@ -25,13 +25,13 @@ export type RequestDigest = (value: string) => string;
 export interface TransitionGuardFailure {
   code: string;
   message: string;
-  owner_issue?: 40 | 41 | 42;
+  owner_issue?: number;
 }
 
 export interface TransitionRequiredWork {
   code: string;
   description: string;
-  owner_issue?: 40 | 41 | 42;
+  owner_issue?: number;
 }
 
 export interface TransitionGuardDecision {
@@ -42,17 +42,41 @@ export interface TransitionGuardDecision {
 
 export type TransitionGuardRequirement = 'none' | 'proof_plan' | 'proof' | 'review';
 
+export type PrePrReviewOutcome = 'changes_required' | 'clean';
+
+export interface PrePrReviewFinding {
+  id: string;
+  summary: string;
+  path: string;
+}
+
+export interface PrePrReviewEvidence {
+  outcome: PrePrReviewOutcome;
+  headSha: string;
+  evidenceRef: string;
+  evidenceSha256: string;
+  findings: PrePrReviewFinding[];
+}
+
+export interface ImplementationBasis {
+  headSha: string;
+  source: 'proof_plan_baseline' | 'failed_local_proof' | 'pre_pr_review';
+}
+
 export interface ProofGuardContext {
   boundPlan?: BoundProofPlan;
   plan?: BoundProofPlan | null;
   evidence?: ProofEvidence;
   ciEvidence?: CiProofEvidence;
   reviewEvidence?: ReviewEvidence;
+  phase?: LifecyclePhase;
+  implementationBasis?: ImplementationBasis | null;
   repository?: {
     branch: string | null;
     headSha: string;
     clean: boolean;
     committedDiffFromBaseline: boolean;
+    committedImplementationFromBasis?: boolean;
     committedRepairFromFailure: boolean;
   };
   attemptsUsed?: number;
@@ -111,7 +135,7 @@ export function evaluateTransitionGuards(
     );
   }
 
-  const evidence = validateTransitionEvidence(sourceState, targetState, input);
+  const evidence = validateTransitionEvidence(sourceState, targetState, input, proof);
   if (!evidence.allowed) {
     return evidence;
   }
@@ -121,10 +145,10 @@ export function evaluateTransitionGuards(
     return allowedGuards();
   }
   if (requirement === 'proof_plan') {
-    return proof.boundPlan ? allowedGuards() : evaluateProofOwnedGuards(sourceState, targetState, proof);
+    return proof.boundPlan ? allowedGuards() : evaluateProofOwnedGuards(sourceState, targetState, input, proof);
   }
   if (requirement === 'proof') {
-    return evaluateProofOwnedGuards(sourceState, targetState, proof);
+    return evaluateProofOwnedGuards(sourceState, targetState, input, proof);
   }
   return evaluateReviewOwnedGuards(sourceState, targetState, proof);
 }
@@ -297,6 +321,7 @@ export function requiresProofGuardContext(sourceState: TaskStatus, targetState: 
 function evaluateProofOwnedGuards(
   sourceState: TaskStatus,
   targetState: TaskStatus,
+  input: Record<string, unknown>,
   proof: ProofGuardContext,
 ): TransitionGuardDecision {
   const plan = proof.plan;
@@ -338,26 +363,108 @@ function evaluateProofOwnedGuards(
     if (
       repository.clean &&
       repository.branch === plan.baselineBranch &&
-      repository.headSha !== plan.baselineHeadSha &&
-      repository.committedDiffFromBaseline
+      proof.implementationBasis &&
+      repository.headSha !== proof.implementationBasis.headSha &&
+      repository.committedImplementationFromBasis
     ) {
       return allowedGuards();
     }
     return deniedGuards(
       {
-        code: 'COMMITTED_IMPLEMENTATION_REQUIRED',
-        message: 'Verification requires a clean committed diff from the proof-plan baseline.',
-        owner_issue: 40,
+        code: proof.implementationBasis ? 'IMPLEMENTATION_BASIS_NOT_ADVANCED' : 'COMMITTED_IMPLEMENTATION_REQUIRED',
+        message: proof.implementationBasis
+          ? `Live HEAD ${repository.headSha} must be a clean descendant commit after implementation basis ${proof.implementationBasis.headSha}.`
+          : 'Verification requires a clean committed diff from an authoritative implementation basis.',
+        owner_issue: 69,
       },
       {
         code: 'COMMIT_IMPLEMENTATION',
-        description: 'Commit the implementation on the proof-plan branch and clean the worktree.',
-        owner_issue: 40,
+        description:
+          'Agent repository-work authority must create one clean scoped commit after the reported implementation basis, then retry.',
+        owner_issue: 69,
       },
     );
   }
 
-  if (sourceState === TASK_STATUS.VERIFYING && targetState === TASK_STATUS.REVIEWING) {
+  if (sourceState === TASK_STATUS.VERIFYING && targetState === TASK_STATUS.IMPLEMENTING) {
+    if (proof.phase !== LIFECYCLE_PHASE.PRE_PR) {
+      return deniedGuards(
+        {
+          code: 'POST_PR_IMPLEMENTATION_REENTRY_FORBIDDEN',
+          message: 'A post-PR session cannot re-enter implementing.',
+          owner_issue: 69,
+        },
+        {
+          code: 'ENTER_REVIEW_REPAIR',
+          description: 'The signed-review controller must use the repairing path while post-PR repair budget remains.',
+          owner_issue: 69,
+        },
+      );
+    }
+    if (!repository.clean || repository.branch !== plan.baselineBranch) {
+      return deniedGuards(
+        {
+          code: 'PROOF_CHECKOUT_MISMATCH',
+          message: 'Pre-PR implementation re-entry requires a clean checkout on the proof-plan branch.',
+          owner_issue: 69,
+        },
+        {
+          code: 'RESTORE_PROOF_CHECKOUT',
+          description: 'Restore the clean proof-plan branch at the reviewed or failed HEAD, then retry.',
+          owner_issue: 69,
+        },
+      );
+    }
+    if (proof.evidence?.status === 'failed' || readPrePrReviewEvidence(input)?.outcome === 'changes_required') {
+      return allowedGuards();
+    }
+    return deniedGuards(
+      {
+        code: 'PRE_PR_REVIEW_INPUT_REQUIRED',
+        message: 'Pre-PR implementation re-entry requires a current failed gate or current review findings.',
+        owner_issue: 69,
+      },
+      {
+        code: 'RECORD_PRE_PR_REVIEW_OUTCOME',
+        description:
+          'The operator/controller must retry with changes_required pre_pr_review evidence bound to the live HEAD.',
+        owner_issue: 69,
+      },
+    );
+  }
+
+  if (
+    sourceState === TASK_STATUS.VERIFYING &&
+    (targetState === TASK_STATUS.PRE_PR_REVIEWING || targetState === TASK_STATUS.REVIEWING)
+  ) {
+    if (targetState === TASK_STATUS.PRE_PR_REVIEWING && proof.phase !== LIFECYCLE_PHASE.PRE_PR) {
+      return deniedGuards(
+        {
+          code: 'POST_PR_IMPLEMENTATION_REENTRY_FORBIDDEN',
+          message: 'A post-PR session cannot enter the pre-PR review boundary.',
+          owner_issue: 69,
+        },
+        {
+          code: 'REFRESH_REVIEW_PROOF_SET',
+          description: 'Refresh post-PR proof and return to reviewing.',
+          owner_issue: 69,
+        },
+      );
+    }
+    if (targetState === TASK_STATUS.REVIEWING && proof.phase !== LIFECYCLE_PHASE.POST_PR) {
+      return deniedGuards(
+        {
+          code: 'PRE_PR_REVIEW_INPUT_REQUIRED',
+          message: 'A pre-PR session must enter pre_pr_reviewing before reviewing.',
+          owner_issue: 69,
+        },
+        {
+          code: 'RECORD_PRE_PR_REVIEW_OUTCOME',
+          description: 'Enter pre_pr_reviewing, then record a clean current-HEAD pre-PR review outcome.',
+          owner_issue: 69,
+        },
+      );
+    }
     if (proof.evidence?.status !== 'passed') {
       return deniedGuards(
         {
@@ -392,7 +499,82 @@ function evaluateProofOwnedGuards(
     return allowedGuards();
   }
 
+  if (sourceState === TASK_STATUS.PRE_PR_REVIEWING && targetState === TASK_STATUS.IMPLEMENTING) {
+    if (
+      proof.phase === LIFECYCLE_PHASE.PRE_PR &&
+      repository.clean &&
+      repository.branch === plan.baselineBranch &&
+      readPrePrReviewEvidence(input)?.outcome === 'changes_required'
+    ) {
+      return allowedGuards();
+    }
+    return deniedGuards(
+      {
+        code: 'PRE_PR_REVIEW_INPUT_REQUIRED',
+        message: 'Pre-PR review remediation requires current changes_required evidence on a clean proof-plan branch.',
+        owner_issue: 69,
+      },
+      {
+        code: 'RECORD_PRE_PR_REVIEW_OUTCOME',
+        description:
+          'The operator/controller must record current-HEAD changes_required evidence, then retry the implementing transition.',
+        owner_issue: 69,
+      },
+    );
+  }
+
+  if (sourceState === TASK_STATUS.PRE_PR_REVIEWING && targetState === TASK_STATUS.REVIEWING) {
+    if (proof.phase !== LIFECYCLE_PHASE.PRE_PR || readPrePrReviewEvidence(input)?.outcome !== 'clean') {
+      return deniedGuards(
+        {
+          code: 'PRE_PR_REVIEW_INPUT_REQUIRED',
+          message: 'Entering reviewing requires a clean current-HEAD pre-PR review outcome.',
+          owner_issue: 69,
+        },
+        {
+          code: 'RECORD_PRE_PR_REVIEW_OUTCOME',
+          description: 'The operator/controller must record a clean pre_pr_review outcome for the live HEAD.',
+          owner_issue: 69,
+        },
+      );
+    }
+    if (
+      proof.evidence?.status !== 'passed' ||
+      proof.ciEvidence?.status !== 'passed' ||
+      !repository.clean ||
+      repository.branch !== plan.baselineBranch
+    ) {
+      return deniedGuards(
+        {
+          code: 'CURRENT_REVIEW_PROOF_SET_REQUIRED',
+          message: 'Pre-PR clearance requires current local and signed CI proof from the clean proof-plan branch.',
+          owner_issue: 69,
+        },
+        {
+          code: 'REFRESH_REVIEW_PROOF_SET',
+          description: 'Refresh local and signed CI proof for the live HEAD before entering reviewing.',
+          owner_issue: 69,
+        },
+      );
+    }
+    return allowedGuards();
+  }
+
   if (sourceState === TASK_STATUS.VERIFYING && targetState === TASK_STATUS.REPAIRING) {
+    if (proof.phase !== LIFECYCLE_PHASE.POST_PR) {
+      return deniedGuards(
+        {
+          code: 'CURRENT_FAILED_PROOF_REQUIRED',
+          message: 'Pre-PR gate failures return to implementing and do not enter repairing.',
+          owner_issue: 69,
+        },
+        {
+          code: 'COMMIT_IMPLEMENTATION',
+          description: 'Transition to implementing without consuming repair budget, then create one scoped commit.',
+          owner_issue: 69,
+        },
+      );
+    }
     if (proof.evidence?.status === 'failed' && (proof.attemptsUsed ?? 3) < 3) {
       return allowedGuards();
     }
@@ -479,6 +661,7 @@ export function validateTransitionEvidence(
   sourceState: TaskStatus,
   targetState: TaskStatus,
   input: Record<string, unknown>,
+  proof: ProofGuardContext = {},
 ): TransitionGuardDecision {
   if (
     targetState === TASK_STATUS.BLOCKED &&
@@ -512,13 +695,168 @@ export function validateTransitionEvidence(
     );
   }
 
+  const prePrReview = readPrePrReviewEvidence(input);
+  const suppliedPrePrReview = Object.hasOwn(input, 'pre_pr_review');
+  const requiresPrePrReview =
+    sourceState === TASK_STATUS.PRE_PR_REVIEWING ||
+    (sourceState === TASK_STATUS.VERIFYING &&
+      targetState === TASK_STATUS.IMPLEMENTING &&
+      proof.evidence?.status !== 'failed');
+
+  if (suppliedPrePrReview && !prePrReview) {
+    return deniedGuards(
+      {
+        code: 'PRE_PR_REVIEW_FINDINGS_INVALID',
+        message:
+          'pre_pr_review must contain a valid outcome, live 40-character HEAD, evidence reference, SHA-256 digest, and unique normalized findings.',
+        owner_issue: 69,
+      },
+      {
+        code: 'RECORD_PRE_PR_REVIEW_OUTCOME',
+        description:
+          'The operator/controller must correct the pre_pr_review object and retry without changing lifecycle state.',
+        owner_issue: 69,
+      },
+    );
+  }
+
+  if (requiresPrePrReview && !prePrReview) {
+    return deniedGuards(
+      {
+        code: 'PRE_PR_REVIEW_INPUT_REQUIRED',
+        message: `Lifecycle transition ${sourceState} -> ${targetState} requires pre_pr_review evidence.`,
+        owner_issue: 69,
+      },
+      {
+        code: 'RECORD_PRE_PR_REVIEW_OUTCOME',
+        description:
+          'The operator/controller must provide a canonical pre_pr_review object bound to the live repository HEAD.',
+        owner_issue: 69,
+      },
+    );
+  }
+
+  if (prePrReview) {
+    if (prePrReview.headSha !== proof.repository?.headSha) {
+      return deniedGuards(
+        {
+          code: 'PRE_PR_REVIEW_HEAD_MISMATCH',
+          message: `Pre-PR review HEAD ${prePrReview.headSha} does not match live HEAD ${proof.repository?.headSha ?? '(unavailable)'}.`,
+          owner_issue: 69,
+        },
+        {
+          code: 'RECORD_PRE_PR_REVIEW_OUTCOME',
+          description:
+            'The operator/controller must review the live HEAD and retry with evidence bound to that exact commit.',
+          owner_issue: 69,
+        },
+      );
+    }
+
+    const expectedOutcome =
+      targetState === TASK_STATUS.IMPLEMENTING
+        ? 'changes_required'
+        : sourceState === TASK_STATUS.PRE_PR_REVIEWING && targetState === TASK_STATUS.REVIEWING
+          ? 'clean'
+          : null;
+    if (expectedOutcome && prePrReview.outcome !== expectedOutcome) {
+      return deniedGuards(
+        {
+          code: 'PRE_PR_REVIEW_FINDINGS_INVALID',
+          message: `${sourceState} -> ${targetState} requires pre_pr_review outcome ${expectedOutcome}.`,
+          owner_issue: 69,
+        },
+        {
+          code: 'RECORD_PRE_PR_REVIEW_OUTCOME',
+          description: `The operator/controller must retry with a ${expectedOutcome} outcome that matches the requested transition.`,
+          owner_issue: 69,
+        },
+      );
+    }
+
+    const isPrePrReviewTransition =
+      (sourceState === TASK_STATUS.VERIFYING && targetState === TASK_STATUS.IMPLEMENTING) ||
+      sourceState === TASK_STATUS.PRE_PR_REVIEWING;
+    if (!isPrePrReviewTransition) {
+      return deniedGuards(
+        {
+          code: 'PRE_PR_REVIEW_FINDINGS_INVALID',
+          message: `pre_pr_review evidence is not accepted for ${sourceState} -> ${targetState}.`,
+          owner_issue: 69,
+        },
+        {
+          code: 'RECORD_PRE_PR_REVIEW_OUTCOME',
+          description:
+            'The operator/controller must remove pre_pr_review evidence or select the matching pre-PR transition.',
+          owner_issue: 69,
+        },
+      );
+    }
+  }
+
   return allowedGuards();
+}
+
+export function readPrePrReviewEvidence(input: Record<string, unknown>): PrePrReviewEvidence | null {
+  const value = input.pre_pr_review;
+  if (!isPlainObject(value)) {
+    return null;
+  }
+  if (value.outcome !== 'changes_required' && value.outcome !== 'clean') {
+    return null;
+  }
+  if (
+    !isNormalizedText(value.head_sha) ||
+    !/^[0-9a-f]{40}$/.test(value.head_sha) ||
+    !isNormalizedText(value.evidence_ref) ||
+    !isNormalizedText(value.evidence_sha256) ||
+    !/^[0-9a-f]{64}$/.test(value.evidence_sha256) ||
+    !Array.isArray(value.findings)
+  ) {
+    return null;
+  }
+
+  const findings: PrePrReviewFinding[] = [];
+  const findingIds = new Set<string>();
+  for (const candidate of value.findings) {
+    if (
+      !isPlainObject(candidate) ||
+      !isNormalizedText(candidate.id) ||
+      !isNormalizedText(candidate.summary) ||
+      !isNormalizedText(candidate.path) ||
+      findingIds.has(candidate.id)
+    ) {
+      return null;
+    }
+    findingIds.add(candidate.id);
+    findings.push({
+      id: candidate.id,
+      summary: candidate.summary,
+      path: candidate.path,
+    });
+  }
+
+  if (
+    (value.outcome === 'changes_required' && findings.length === 0) ||
+    (value.outcome === 'clean' && findings.length !== 0)
+  ) {
+    return null;
+  }
+
+  return {
+    outcome: value.outcome,
+    headSha: value.head_sha,
+    evidenceRef: value.evidence_ref,
+    evidenceSha256: value.evidence_sha256,
+    findings,
+  };
 }
 
 export function planNextTransition(input: {
   state: TaskStatus;
   stateVersion: number;
   blockedFromState: TaskStatus | null;
+  phase?: LifecyclePhase;
   proof?: {
     status: ProofEvidenceStatus;
     attemptsUsed: number;
@@ -562,7 +900,34 @@ export function planNextTransition(input: {
   }
 
   if (input.state === TASK_STATUS.VERIFYING && input.proof) {
-    return planVerifyingTransition(input.stateVersion, input.proof, input.proofGuardContext);
+    return planVerifyingTransition(
+      input.stateVersion,
+      input.phase ?? LIFECYCLE_PHASE.PRE_PR,
+      input.proof,
+      input.proofGuardContext,
+    );
+  }
+
+  if (input.state === TASK_STATUS.PRE_PR_REVIEWING) {
+    return {
+      candidate: null,
+      guardFailures: [
+        {
+          code: 'PRE_PR_REVIEW_OUTCOME_REQUIRED',
+          message: 'A current-HEAD pre-PR review outcome is required before lifecycle progression.',
+          owner_issue: 69,
+        },
+      ],
+      requiredWork: [
+        {
+          code: 'RECORD_PRE_PR_REVIEW_OUTCOME',
+          description:
+            'The operator/controller must explicitly transition to implementing with changes_required evidence or reviewing with clean evidence.',
+          owner_issue: 69,
+        },
+      ],
+      terminalReason: null,
+    };
   }
 
   if (input.state === TASK_STATUS.REVIEWING || input.state === TASK_STATUS.READY_FOR_HUMAN) {
@@ -614,15 +979,38 @@ export function planNextTransition(input: {
 
 function planVerifyingTransition(
   stateVersion: number,
+  phase: LifecyclePhase,
   proof: { status: ProofEvidenceStatus; attemptsUsed: number },
   proofGuardContext: ProofGuardContext | undefined,
 ): PlannedTransition {
+  const phaseAwareGuardContext = { ...proofGuardContext, phase };
   if (proof.status === 'passed') {
-    const guards = evaluateTransitionGuards(TASK_STATUS.VERIFYING, TASK_STATUS.REVIEWING, {}, null, proofGuardContext);
+    const target = phase === LIFECYCLE_PHASE.PRE_PR ? TASK_STATUS.PRE_PR_REVIEWING : TASK_STATUS.REVIEWING;
+    const guards = evaluateTransitionGuards(TASK_STATUS.VERIFYING, target, {}, null, phaseAwareGuardContext);
     return {
       candidate: {
         from_state: TASK_STATUS.VERIFYING,
-        target_state: TASK_STATUS.REVIEWING,
+        target_state: target,
+        expected_state_version: stateVersion,
+        executable: guards.allowed,
+      },
+      guardFailures: guards.guardFailures,
+      requiredWork: guards.requiredWork,
+      terminalReason: null,
+    };
+  }
+  if (proof.status === 'failed' && phase === LIFECYCLE_PHASE.PRE_PR) {
+    const guards = evaluateTransitionGuards(
+      TASK_STATUS.VERIFYING,
+      TASK_STATUS.IMPLEMENTING,
+      {},
+      null,
+      phaseAwareGuardContext,
+    );
+    return {
+      candidate: {
+        from_state: TASK_STATUS.VERIFYING,
+        target_state: TASK_STATUS.IMPLEMENTING,
         expected_state_version: stateVersion,
         executable: guards.allowed,
       },
@@ -730,4 +1118,8 @@ function hasRequiredTextFields(value: unknown, fields: string[]) {
   }
 
   return fields.every((field) => typeof value[field] === 'string' && value[field].trim().length > 0);
+}
+
+function isNormalizedText(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value === value.trim();
 }

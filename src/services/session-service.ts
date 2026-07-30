@@ -48,6 +48,7 @@ import {
   evaluateTransitionGuards,
   getTransitionGuardRequirement,
   planNextTransition,
+  readPrePrReviewEvidence,
   requiresProofGuardContext,
 } from '../domain/session-transition.js';
 import type { ProofGuardContext, TransitionGuardDecision, TransitionRequest } from '../domain/session-transition.js';
@@ -72,8 +73,8 @@ import {
 } from '../domain/review.js';
 import { canonicalJson } from '../domain/canonical-json.js';
 import { verifyAuditChain } from '../domain/audit.js';
-import { isRepairEntryTransition } from '../domain/lifecycle.js';
-import { DEFAULT_BASE_REF, TASK_STATUS } from '../domain/types.js';
+import { deriveLifecyclePhase, isRepairEntryTransition } from '../domain/lifecycle.js';
+import { DEFAULT_BASE_REF, LIFECYCLE_PHASE, TASK_STATUS } from '../domain/types.js';
 import type {
   ActiveState,
   ArtifactKind,
@@ -305,6 +306,9 @@ export async function transitionSession(input: TransitionSessionInput) {
     let boundProofPlan: BoundProofPlan | undefined;
     let proofGuardContext: ProofGuardContext = {};
     let preparedProofGuardRejection: TransitionGuardDecision | undefined;
+    const phase = lifecycle
+      ? deriveLifecyclePhase(readSessionTransitionHistoryReadOnly(repoRoot, input.sessionId))
+      : LIFECYCLE_PHASE.PRE_PR;
     if (
       lifecycle?.state === TASK_STATUS.FRAMED &&
       lifecycle.stateVersion === input.expectedStateVersion &&
@@ -333,6 +337,7 @@ export async function transitionSession(input: TransitionSessionInput) {
           ciEvidence: preliminary.ciEvidence,
           reviewEvidence: preliminary.reviewEvidence,
           attemptsUsed: preliminary.attemptsUsed,
+          phase,
         };
       } else {
         const repository = await observeProofRepository(repoRoot);
@@ -992,7 +997,7 @@ function auditUnavailableFailure(sessionId: string, error: AuditLedgerUnavailabl
       hint:
         error.reason === 'schema_version'
           ? 'Run a state-migrating ThreadLoop command before retrying the audit operation.'
-          : 'Restore the schema-v6 audit ledger from trusted storage before retrying.',
+          : 'Restore the schema-v6-or-newer audit ledger from trusted storage before retrying.',
     },
   });
 }
@@ -1048,31 +1053,53 @@ export async function getNextSessionAction(input: NextSessionInput) {
     });
   }
 
+  const lifecycleHistory =
+    lifecycle.schemaVersion >= 3 ? readSessionTransitionHistoryReadOnly(repoRoot, input.sessionId) : [];
+  const phase = deriveLifecyclePhase(lifecycleHistory);
+  const lifecycleMigrationRequired = lifecycle.schemaVersion < 7;
   const proofState =
-    lifecycle.schemaVersion >= 4
+    !lifecycleMigrationRequired && lifecycle.schemaVersion >= 4
       ? await evaluateSessionProof(repoRoot, lifecycle.sessionId, proofRepository?.headSha ?? repository.headSha)
       : null;
   const proofGuardContext =
     proofState && proofRepository
       ? await buildProofGuardContext(repoRoot, input.sessionId, proofState, proofRepository)
       : undefined;
-  const lifecycleHistory =
-    lifecycle.schemaVersion >= 3 ? readSessionTransitionHistoryReadOnly(repoRoot, input.sessionId) : [];
   const audit = projectSessionAuditReadOnly(repoRoot, input.sessionId, lifecycle.schemaVersion);
-  const planned = planNextTransition({
-    state: lifecycle.state,
-    stateVersion: lifecycle.stateVersion,
-    blockedFromState: lifecycle.blockedFromState,
-    ...(proofState
-      ? {
-          proof: {
-            status: proofState.evidence.status,
-            attemptsUsed: proofState.attemptsUsed,
+  const planned = lifecycleMigrationRequired
+    ? {
+        candidate: null,
+        guardFailures: [
+          {
+            code: 'SESSION_SCHEMA_MIGRATION_REQUIRED',
+            message: `ThreadLoop schema v${lifecycle.schemaVersion} must be migrated before lifecycle work can continue.`,
+            owner_issue: 69,
           },
-        }
-      : {}),
-    ...(proofGuardContext ? { proofGuardContext } : {}),
-  });
+        ],
+        requiredWork: [
+          {
+            code: 'MIGRATE_SESSION_SCHEMA',
+            description: 'Run `threadloop init`, then rerun `threadloop session next --session <id> --json`.',
+            owner_issue: 69,
+          },
+        ],
+        terminalReason: null,
+      }
+    : planNextTransition({
+        state: lifecycle.state,
+        stateVersion: lifecycle.stateVersion,
+        blockedFromState: lifecycle.blockedFromState,
+        phase,
+        ...(proofState
+          ? {
+              proof: {
+                status: proofState.evidence.status,
+                attemptsUsed: proofState.attemptsUsed,
+              },
+            }
+          : {}),
+        ...(proofGuardContext ? { proofGuardContext } : {}),
+      });
   const repairBudget = proofState
     ? {
         status: proofState.attemptsUsed >= 3 ? ('exhausted' as const) : ('available' as const),
@@ -1089,15 +1116,33 @@ export async function getNextSessionAction(input: NextSessionInput) {
         exhausted: null,
       };
   return {
-    contract_version: 3 as const,
+    contract_version: 4 as const,
     session_id: lifecycle.sessionId,
     task_id: lifecycle.taskId,
     lifecycle: {
       state: lifecycle.state,
       state_version: lifecycle.stateVersion,
       blocked_from_state: lifecycle.blockedFromState,
+      phase,
+      storage_schema_version: lifecycle.schemaVersion,
+      contract_status: lifecycleMigrationRequired ? ('migration_required' as const) : ('current' as const),
       history: lifecycleHistory,
     },
+    pre_pr_review: projectPrePrReview(
+      lifecycle.schemaVersion,
+      lifecycle.state,
+      lifecycleHistory,
+      proofRepository?.headSha ?? repository.headSha,
+    ),
+    implementation_basis: lifecycleMigrationRequired
+      ? {
+          head_sha: null,
+          source: null,
+        }
+      : {
+          head_sha: proofGuardContext?.implementationBasis?.headSha ?? null,
+          source: proofGuardContext?.implementationBasis?.source ?? null,
+        },
     candidate: planned.candidate,
     guard_failures: planned.guardFailures,
     required_work: planned.requiredWork,
@@ -1181,6 +1226,63 @@ export async function getNextSessionAction(input: NextSessionInput) {
     audit,
     next_human_action: nextHumanAction(lifecycle.state, planned),
     terminal_reason: planned.terminalReason,
+  };
+}
+
+function projectPrePrReview(
+  schemaVersion: number,
+  state: Task['status'],
+  history: ReturnType<typeof readSessionTransitionHistoryReadOnly>,
+  currentHead: string | null,
+) {
+  const firstReviewIndex = history.findIndex((transition) => transition.to_state === TASK_STATUS.REVIEWING);
+  const prePrHistory = history.slice(0, firstReviewIndex === -1 ? history.length : firstReviewIndex + 1);
+  const iterationCount = prePrHistory.filter(
+    (transition) =>
+      transition.to_state === TASK_STATUS.IMPLEMENTING && transition.from_state !== TASK_STATUS.PROOF_READY,
+  ).length;
+  if (schemaVersion < 7) {
+    return {
+      status: 'migration_required' as const,
+      head_sha: null,
+      evidence_ref: null,
+      evidence_sha256: null,
+      findings: [],
+      iteration_count: iterationCount,
+    };
+  }
+
+  const latestReview = [...prePrHistory]
+    .reverse()
+    .map((transition) => readPrePrReviewEvidence(transition.input))
+    .find((review) => review !== null);
+  if (!latestReview) {
+    return {
+      status: state === TASK_STATUS.PRE_PR_REVIEWING ? ('review_required' as const) : ('not_started' as const),
+      head_sha: null,
+      evidence_ref: null,
+      evidence_sha256: null,
+      findings: [],
+      iteration_count: iterationCount,
+    };
+  }
+
+  return {
+    status:
+      latestReview.headSha !== currentHead
+        ? ('stale' as const)
+        : latestReview.outcome === 'changes_required'
+          ? ('changes_required' as const)
+          : ('cleared' as const),
+    head_sha: latestReview.headSha,
+    evidence_ref: latestReview.evidenceRef,
+    evidence_sha256: latestReview.evidenceSha256,
+    findings: latestReview.findings.map((finding) => ({
+      id: finding.id,
+      summary: finding.summary,
+      path: finding.path,
+    })),
+    iteration_count: iterationCount,
   };
 }
 
@@ -1392,13 +1494,46 @@ async function buildProofGuardContext(
   repository: Awaited<ReturnType<typeof observeProofRepository>>,
 ): Promise<ProofGuardContext> {
   const plan = proofState.plan;
+  const transitionHistory = readSessionTransitionHistoryReadOnly(repoRoot, sessionId);
+  const phase = deriveLifecyclePhase(transitionHistory);
   const committedDiffFromBaseline = plan
     ? await hasCommittedDiff(repoRoot, plan.baselineHeadSha, repository.headSha)
     : false;
   const latestFailure = [...proofState.receipts]
     .sort((left, right) => right.sequence - left.sequence)
     .find((receipt) => receipt.result !== 'passed');
-  const currentRepairEntry = readSessionTransitionHistoryReadOnly(repoRoot, sessionId)
+  const latestImplementationEntry = [...transitionHistory]
+    .reverse()
+    .find((entry) => entry.to_state === TASK_STATUS.IMPLEMENTING);
+  const implementationReview = latestImplementationEntry
+    ? readPrePrReviewEvidence(latestImplementationEntry.input)
+    : null;
+  const implementationBasis = !plan
+    ? null
+    : implementationReview
+      ? {
+          headSha: implementationReview.headSha,
+          source: 'pre_pr_review' as const,
+        }
+      : phase === LIFECYCLE_PHASE.PRE_PR &&
+          (proofState.evidence.status === 'failed' ||
+            latestImplementationEntry?.from_state === TASK_STATUS.VERIFYING) &&
+          latestFailure?.headAfter
+        ? {
+            headSha: latestFailure.headAfter,
+            source: 'failed_local_proof' as const,
+          }
+        : {
+            headSha: plan.baselineHeadSha,
+            source: 'proof_plan_baseline' as const,
+          };
+  const committedImplementationFromBasis =
+    implementationBasis &&
+    isFullCommitSha(implementationBasis.headSha) &&
+    implementationBasis.headSha !== repository.headSha
+      ? await hasCommittedDiff(repoRoot, implementationBasis.headSha, repository.headSha)
+      : false;
+  const currentRepairEntry = [...transitionHistory]
     .reverse()
     .find((entry) => isRepairEntryTransition(entry.from_state, entry.to_state));
   const repairBasis =
@@ -1421,11 +1556,14 @@ async function buildProofGuardContext(
     ciEvidence: proofState.ciEvidence,
     reviewEvidence: proofState.reviewEvidence,
     attemptsUsed: proofState.attemptsUsed,
+    phase,
+    implementationBasis,
     repository: {
       branch: repository.branch,
       headSha: repository.headSha,
       clean: repository.clean,
       committedDiffFromBaseline,
+      committedImplementationFromBasis,
       committedRepairFromFailure,
     },
   };
@@ -1657,7 +1795,7 @@ export async function generateArtifact(
     sessionId: resolved.session.id,
     kind: artifactKind,
     path: path.relative(repoRoot, fullPath),
-    templateVersion: artifactKind === 'handoff' ? 'v2' : 'v1',
+    templateVersion: artifactKind === 'handoff' ? 'v3' : 'v1',
     generatedAt,
     snapshotSource,
   };
