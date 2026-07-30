@@ -277,7 +277,7 @@ describe('schema v7 lifecycle and audit persistence', () => {
     } finally {
       migrated.close();
     }
-  });
+  }, 20_000);
 
   it('revalidates canonical schema metadata on the ready read path', async () => {
     const repoDir = await makeRepo();

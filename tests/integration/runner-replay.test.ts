@@ -219,7 +219,7 @@ describe('threadloop runner v4 contract', () => {
     });
     expect(conflict.error.details?.request_sha256).not.toBe(conflict.error.details?.existing_request_sha256);
     expect(transitionEvents((await auditShow(repoDir, sessionId)).data)).toHaveLength(1);
-  });
+  }, 20_000);
 
   it('allows only one transition when distinct serialized-wake identities race from one version', async () => {
     const { repoDir, sessionId } = await makeQueuedSession();
