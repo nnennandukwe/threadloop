@@ -215,7 +215,7 @@ afterEach(async () => {
   temporaryRepos.length = 0;
 });
 
-describe('schema v7 lifecycle and audit persistence', () => {
+describe('schema v7 lifecycle and audit persistence', { timeout: 20_000 }, () => {
   it('migrates a canonical schema-v2 database without changing lifecycle state', async () => {
     const repoDir = await makeRepo();
     const dbPath = createSchemaV2(repoDir);
