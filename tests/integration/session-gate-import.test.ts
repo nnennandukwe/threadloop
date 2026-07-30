@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
+import { parseJson, runCli, runCliFailure } from '../helpers/cli.js';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import type { VerifiedSigstoreSigner } from '../../src/adapters/crypto/sigstore.js';
 import { SigstoreReceiptVerificationError } from '../../src/adapters/crypto/sigstore.js';
@@ -28,9 +29,6 @@ import {
 
 const execFileAsync = promisify(execFile);
 const temporaryDirectories: string[] = [];
-const projectRoot = process.cwd();
-const tsxCli = path.join(projectRoot, 'node_modules/tsx/dist/cli.mjs');
-const cliEntry = path.join(projectRoot, 'src/cli.ts');
 const branch = 'issue-41/signed-ci-receipts';
 const sourceRepository = 'https://github.com/example/project';
 const buildSignerSha = 'b'.repeat(40);
@@ -42,23 +40,6 @@ function importSessionGateReceipt(input: Omit<ImportSessionGateReceiptInput, 're
     ...input,
     receiptFileSystem: nodeSignedReceiptFileSystem,
   });
-}
-
-async function runCli(cwd: string, args: string[]) {
-  return execFileAsync('node', [tsxCli, cliEntry, ...args], { cwd });
-}
-
-async function runCliFailure(cwd: string, args: string[]) {
-  try {
-    await runCli(cwd, args);
-    throw new Error(`Expected CLI command to fail: ${args.join(' ')}`);
-  } catch (error) {
-    return error as Error & { stderr?: string };
-  }
-}
-
-function parseJson<T>(value: string | undefined) {
-  return JSON.parse(value ?? '') as T;
 }
 
 async function makeVerifyingSession() {

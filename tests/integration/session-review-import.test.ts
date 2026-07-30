@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
+import { parseJson, runCli } from '../helpers/cli.js';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import { SigstoreReceiptVerificationError, type VerifiedSigstoreSigner } from '../../src/adapters/crypto/sigstore.js';
 import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
@@ -35,9 +36,6 @@ import {
 
 const execFileAsync = promisify(execFile);
 const temporaryDirectories: string[] = [];
-const projectRoot = process.cwd();
-const tsxCli = path.join(projectRoot, 'node_modules/tsx/dist/cli.mjs');
-const cliEntry = path.join(projectRoot, 'src/cli.ts');
 const branch = 'issue-42/review-audit-handoff';
 const sourceRepository = 'https://github.com/example/project';
 const workflowHead = 'd'.repeat(40);
@@ -59,14 +57,6 @@ function importSessionGateReceipt(input: Omit<ImportSessionGateReceiptInput, 're
     ...input,
     receiptFileSystem: nodeSignedReceiptFileSystem,
   });
-}
-
-async function runCli(cwd: string, args: string[]) {
-  return execFileAsync('node', [tsxCli, cliEntry, ...args], { cwd });
-}
-
-function parseJson<T>(value: string | undefined) {
-  return JSON.parse(value ?? '') as T;
 }
 
 async function makeReviewingSession(
@@ -826,7 +816,7 @@ describe('signed review receipt import', { timeout: 20_000 }, () => {
       },
     });
     expect(readLifecycle(fixture.repoDir)).toEqual({ status: 'reviewing', state_version: 6 });
-  }, 30_000);
+  });
 
   it('forbids implementation re-entry after the pre-PR phase closes', async () => {
     const fixture = await makeAuthoritativeReviewingSession();
@@ -893,7 +883,7 @@ describe('signed review receipt import', { timeout: 20_000 }, () => {
 
     await transitionSession(fixture.repoDir, fixture.sessionId, 'repairing', 7, 'review:late-repair');
     expect(readLifecycle(fixture.repoDir)).toEqual({ status: 'repairing', state_version: 8 });
-  }, 30_000);
+  });
 
   it('rejects a wrong-HEAD approval, then completes through public transitions after current approval and merge evidence', async () => {
     const fixture = await makeAuthoritativeReviewingSession();
@@ -970,7 +960,7 @@ describe('signed review receipt import', { timeout: 20_000 }, () => {
     });
     expect(completed.data.session.ended_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(readLifecycle(fixture.repoDir)).toEqual({ status: 'completed', state_version: 8 });
-  }, 30_000);
+  });
 
   it('counts persisted review and gate repair entries together and rejects a fourth review repair', async () => {
     const gateCommand = [
@@ -1038,7 +1028,7 @@ describe('signed review receipt import', { timeout: 20_000 }, () => {
     });
     expect(readLifecycle(fixture.repoDir)).toEqual({ status: 'reviewing', state_version: 13 });
     expect(repairTransitionCount(fixture.repoDir)).toBe(3);
-  }, 60_000);
+  });
 
   it('requires a descendant commit after the exact evidence that opened each repair cycle', async () => {
     const fixture = await makeAuthoritativeReviewingSession([
@@ -1120,7 +1110,7 @@ describe('signed review receipt import', { timeout: 20_000 }, () => {
         details: { guard_failures: [{ code: 'COMMITTED_REPAIR_REQUIRED' }] },
       },
     });
-  }, 60_000);
+  });
 });
 
 function reviewReceiptCount(repoDir: string) {

@@ -1,20 +1,16 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { parseJson, runCli, runCliFailure } from '../helpers/cli.js';
 import { resetSqliteConnections } from '../../src/adapters/fs/sqlite-store.js';
 
 const execFileAsync = promisify(execFile);
 const projectRoot = process.cwd();
-const cliSource = path.join(projectRoot, 'src/cli.ts');
 const skillPath = path.join(projectRoot, '.agents/skills/threadloop-runner/SKILL.md');
-const tsupCli = path.join(projectRoot, 'node_modules/tsup/dist/cli-default.js');
 const temporaryDirectories: string[] = [];
-
-let cliEntry = cliSource;
-let cliBundleDirectory: string | null = null;
 
 interface Envelope<T> {
   ok: true;
@@ -41,62 +37,10 @@ interface AuditShow {
   }>;
 }
 
-beforeAll(async () => {
-  const cacheDirectory = path.join(projectRoot, 'node_modules', '.cache');
-  await mkdir(cacheDirectory, { recursive: true });
-  cliBundleDirectory = await realpath(await mkdtemp(path.join(cacheDirectory, 'threadloop-runner-cli-')));
-  await execFileAsync(
-    process.execPath,
-    [
-      tsupCli,
-      cliSource,
-      '--format',
-      'esm',
-      '--clean',
-      '--out-dir',
-      cliBundleDirectory,
-      '--tsconfig',
-      path.join(projectRoot, 'tsconfig.build.json'),
-    ],
-    { cwd: projectRoot, maxBuffer: 10 * 1024 * 1024 },
-  );
-  cliEntry = path.join(cliBundleDirectory, 'cli.js');
-});
-
 afterEach(async () => {
   await resetSqliteConnections();
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
-
-afterAll(async () => {
-  if (cliBundleDirectory) {
-    await rm(cliBundleDirectory, { recursive: true, force: true });
-  }
-  cliBundleDirectory = null;
-  cliEntry = cliSource;
-});
-
-async function runCli(cwd: string, args: string[]) {
-  return execFileAsync(process.execPath, [cliEntry, ...args], {
-    cwd,
-    maxBuffer: 10 * 1024 * 1024,
-  });
-}
-
-async function runCliFailure(cwd: string, args: string[]) {
-  const result = await runCli(cwd, args).then(
-    () => null,
-    (error: Error & { stderr?: string }) => error,
-  );
-  if (!result) {
-    throw new Error(`Expected CLI failure: ${args.join(' ')}`);
-  }
-  return result;
-}
-
-function parseJson<T>(value: string | undefined) {
-  return JSON.parse(value ?? '') as T;
-}
 
 async function makeQueuedSession() {
   const repoDir = await realpath(await mkdtemp(path.join(os.tmpdir(), 'threadloop-runner-')));
@@ -222,7 +166,7 @@ describe('threadloop runner v4 contract', () => {
     });
     expect(conflict.error.details?.request_sha256).not.toBe(conflict.error.details?.existing_request_sha256);
     expect(transitionEvents((await auditShow(repoDir, sessionId)).data)).toHaveLength(1);
-  }, 20_000);
+  });
 
   it('allows only one transition when distinct serialized-wake identities race from one version', async () => {
     const { repoDir, sessionId } = await makeQueuedSession();

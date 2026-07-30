@@ -5,6 +5,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { runCli, runCliFailure } from '../helpers/cli.js';
 import {
   appendEntryToSession,
   closeSqliteConnections,
@@ -15,26 +16,6 @@ import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
 import { buildProtocolContract } from '../../src/contracts/protocol.js';
 
 const execFileAsync = promisify(execFile);
-
-const projectRoot = process.cwd();
-const tsxCli = path.join(projectRoot, 'node_modules/tsx/dist/cli.mjs');
-const cliEntry = path.join(projectRoot, 'src/cli.ts');
-
-async function runCli(cwd: string, args: string[], env?: NodeJS.ProcessEnv) {
-  return execFileAsync('node', [tsxCli, cliEntry, ...args], {
-    cwd,
-    env: env ? { ...process.env, ...env } : process.env,
-  });
-}
-
-async function runCliFailure(cwd: string, args: string[], env?: NodeJS.ProcessEnv) {
-  try {
-    await runCli(cwd, args, env);
-    throw new Error(`Expected CLI command to fail: ${args.join(' ')}`);
-  } catch (error) {
-    return error as Error & { stdout?: string; stderr?: string };
-  }
-}
 
 async function readArtifact(repoDir: string, name: string) {
   return readFile(path.join(repoDir, `.threadloop/artifacts/${name}`), 'utf8');
@@ -1466,7 +1447,7 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
         .stdout,
     );
     await runConcurrentMutationBurst(repoDir, started.data.session_id, 'Concurrent flow');
-  }, 15_000);
+  });
 
   it('reopens cached sqlite handles after close/reset hooks and keeps writes working', async () => {
     await runCli(repoDir, ['init']);
@@ -1502,7 +1483,7 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
 
     expect(statusAfterReuse.data.entries.count).toBe(3);
     expect(statusAfterReuse.data.entries.kinds.note).toBe(1);
-  }, 15_000);
+  });
 
   it('keeps SQLite-backed state intact across repeated concurrent mutation bursts in one process', async () => {
     await runCli(repoDir, ['init']);
@@ -1535,7 +1516,7 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     } finally {
       db.close();
     }
-  }, 30_000);
+  });
 
   it('assembles the explicit v2 flow end to end on SQLite state', async () => {
     await runCli(repoDir, ['init']);
@@ -1628,7 +1609,7 @@ describe('threadloop CLI', { timeout: 15_000 }, () => {
     const renderedArtifact = await readFile(path.join(repoDir, artifact.data.artifact.path), 'utf8');
     expect(renderedArtifact).toContain('feature.ts');
     expect(renderedArtifact).not.toContain('.threadloop/');
-  }, 15_000);
+  });
 
   it('renders reconcile command in help output', async () => {
     const sessionHelp = await runCli(repoDir, ['session', '--help']);

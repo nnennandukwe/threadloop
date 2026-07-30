@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
+import { parseJson, runCli, runCliFailure } from '../helpers/cli.js';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import {
   applySessionTransition,
@@ -15,26 +16,6 @@ import { canonicalizeTransitionRequest, type TransitionRequest } from '../../src
 
 const execFileAsync = promisify(execFile);
 const temporaryRepos: string[] = [];
-const projectRoot = process.cwd();
-const tsxCli = path.join(projectRoot, 'node_modules/tsx/dist/cli.mjs');
-const cliEntry = path.join(projectRoot, 'src/cli.ts');
-
-async function runCli(cwd: string, args: string[]) {
-  return execFileAsync('node', [tsxCli, cliEntry, ...args], { cwd });
-}
-
-async function runCliFailure(cwd: string, args: string[]) {
-  try {
-    await runCli(cwd, args);
-    throw new Error(`Expected CLI command to fail: ${args.join(' ')}`);
-  } catch (error) {
-    return error as Error & { stdout?: string; stderr?: string };
-  }
-}
-
-function parseJson<T>(value: string | undefined) {
-  return JSON.parse(value ?? '') as T;
-}
 
 async function makeRepo() {
   const repoDir = await mkdtemp(path.join(os.tmpdir(), 'threadloop-transition-'));
@@ -514,7 +495,7 @@ describe('schema v7 lifecycle and audit persistence', { timeout: 20_000 }, () =>
     } finally {
       migrated.close();
     }
-  }, 60_000);
+  });
 
   it('revalidates canonical schema metadata on the ready read path', async () => {
     const repoDir = await makeRepo();
@@ -1012,7 +993,7 @@ describe('schema v7 lifecycle and audit persistence', { timeout: 20_000 }, () =>
     } finally {
       unchanged.close();
     }
-  }, 20_000);
+  });
 
   it('binds a no-transition task projection to the session-started genesis event', async () => {
     const repoDir = await makeRepo();
@@ -1028,7 +1009,7 @@ describe('schema v7 lifecycle and audit persistence', { timeout: 20_000 }, () =>
     );
     expect(failure.error.code).toBe('STATE_CORRUPTED');
     expect(failure.error.message).toContain('current lifecycle projection does not match transition history');
-  }, 20_000);
+  });
 
   it('rolls back schema-v6 migration when legacy transition history is inconsistent', async () => {
     const repoDir = await makeRepo();
