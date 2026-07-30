@@ -1008,8 +1008,8 @@ async function loadSessionAudit(input: SessionAuditInput, expectedRoot?: string)
     }
     throw error;
   }
-  const lifecycle = readSessionLifecycleReadOnly(repoRoot, input.sessionId);
-  if (!lifecycle) {
+  const state = await readState(repoRoot);
+  if (!state.sessions.some((session) => session.id === input.sessionId)) {
     throw new ThreadloopError('SESSION_NOT_FOUND', `Could not find session: ${input.sessionId}`, {
       details: { session_id: input.sessionId },
     });
