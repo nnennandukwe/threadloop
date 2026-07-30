@@ -10,6 +10,7 @@ import {
   validateTransitionEvidence,
 } from '../../src/domain/session-transition.js';
 import type { ReviewEvidence } from '../../src/domain/review.js';
+import { LIFECYCLE_PHASE } from '../../src/domain/types.js';
 
 function passedProofContext(repository: Partial<NonNullable<ProofGuardContext['repository']>> = {}): ProofGuardContext {
   const headSha = 'a'.repeat(40);
@@ -37,12 +38,18 @@ function passedProofContext(repository: Partial<NonNullable<ProofGuardContext['r
       policy: null,
       gates: [],
     },
+    phase: LIFECYCLE_PHASE.PRE_PR,
+    implementationBasis: {
+      headSha,
+      source: 'proof_plan_baseline',
+    },
     attemptsUsed: 0,
     repository: {
       branch: 'main',
       headSha,
       clean: true,
       committedDiffFromBaseline: true,
+      committedImplementationFromBasis: true,
       committedRepairFromFailure: false,
       ...repository,
     },
@@ -74,9 +81,9 @@ describe('session transition domain', () => {
   it('derives guard ownership from the canonical structural workflow', () => {
     expect(getTransitionGuardRequirement('queued', 'framed')).toBe('none');
     expect(getTransitionGuardRequirement('framed', 'proof_ready')).toBe('proof_plan');
-    expect(getTransitionGuardRequirement('verifying', 'reviewing')).toBe('proof');
+    expect(getTransitionGuardRequirement('verifying', 'pre_pr_reviewing')).toBe('proof');
     expect(getTransitionGuardRequirement('reviewing', 'ready_for_human')).toBe('review');
-    expect(requiresProofGuardContext('verifying', 'reviewing')).toBe(true);
+    expect(requiresProofGuardContext('verifying', 'pre_pr_reviewing')).toBe(true);
     expect(requiresProofGuardContext('queued', 'reviewing')).toBe(false);
   });
 
@@ -177,7 +184,7 @@ describe('session transition domain', () => {
   ])('denies review for %s in both guard and next-action planning', (_scenario, repository) => {
     const proofGuardContext = passedProofContext(repository);
 
-    expect(evaluateTransitionGuards('verifying', 'reviewing', {}, null, proofGuardContext)).toMatchObject({
+    expect(evaluateTransitionGuards('verifying', 'pre_pr_reviewing', {}, null, proofGuardContext)).toMatchObject({
       allowed: false,
       guardFailures: [
         {
@@ -203,7 +210,7 @@ describe('session transition domain', () => {
     ).toMatchObject({
       candidate: {
         from_state: 'verifying',
-        target_state: 'reviewing',
+        target_state: 'pre_pr_reviewing',
         expected_state_version: 4,
         executable: false,
       },
@@ -231,7 +238,7 @@ describe('session transition domain', () => {
     const proofGuardContext = passedProofContext();
     proofGuardContext.ciEvidence = { status, policy: null, gates: [] };
 
-    expect(evaluateTransitionGuards('verifying', 'reviewing', {}, null, proofGuardContext)).toMatchObject({
+    expect(evaluateTransitionGuards('verifying', 'pre_pr_reviewing', {}, null, proofGuardContext)).toMatchObject({
       allowed: false,
       guardFailures: [{ code, owner_issue: 41 }],
       requiredWork: [{ code: workCode, owner_issue: 41 }],
@@ -245,7 +252,7 @@ describe('session transition domain', () => {
         proofGuardContext,
       }),
     ).toMatchObject({
-      candidate: { target_state: 'reviewing', executable: false },
+      candidate: { target_state: 'pre_pr_reviewing', executable: false },
       guardFailures: [{ code, owner_issue: 41 }],
     });
   });
@@ -367,6 +374,7 @@ describe('session transition domain', () => {
     ['proof_ready', 'implementing', false, null],
     ['implementing', 'verifying', false, null],
     ['verifying', null, false, null],
+    ['pre_pr_reviewing', null, false, null],
     ['reviewing', 'ready_for_human', false, null],
     ['repairing', 'verifying', false, null],
     ['ready_for_human', 'completed', false, null],
@@ -390,6 +398,182 @@ describe('session transition domain', () => {
               executable,
             },
       terminalReason,
+    });
+  });
+
+  it('authorizes failed pre-PR proof to return to implementing without repair budget', () => {
+    const context = passedProofContext();
+    context.evidence = {
+      status: 'failed',
+      gates: [],
+      staleReceiptIds: [],
+      failedReceiptIds: ['receipt_1'],
+      corruptReceiptIds: [],
+    };
+    context.attemptsUsed = 3;
+
+    expect(
+      planNextTransition({
+        state: 'verifying',
+        stateVersion: 4,
+        blockedFromState: null,
+        phase: LIFECYCLE_PHASE.PRE_PR,
+        proof: { status: 'failed', attemptsUsed: 3 },
+        proofGuardContext: context,
+      }),
+    ).toMatchObject({
+      candidate: {
+        from_state: 'verifying',
+        target_state: 'implementing',
+        expected_state_version: 4,
+        executable: true,
+      },
+      guardFailures: [],
+      requiredWork: [],
+    });
+  });
+
+  it('validates HEAD-bound pre-PR findings and clean outcomes', () => {
+    const context = passedProofContext();
+    const changesRequired = {
+      pre_pr_review: {
+        outcome: 'changes_required',
+        head_sha: 'a'.repeat(40),
+        evidence_ref: 'review-ledger:2026-07-30',
+        evidence_sha256: 'c'.repeat(64),
+        findings: [
+          {
+            id: 'capture-auth-no-mutation',
+            summary: 'Auth rejection coverage does not prove no mutation.',
+            path: 'tests/payments.test.ts',
+          },
+        ],
+      },
+    };
+    expect(evaluateTransitionGuards('verifying', 'implementing', changesRequired, null, context)).toMatchObject({
+      allowed: true,
+    });
+    expect(
+      evaluateTransitionGuards(
+        'verifying',
+        'implementing',
+        {
+          pre_pr_review: {
+            ...changesRequired.pre_pr_review,
+            head_sha: 'd'.repeat(40),
+          },
+        },
+        null,
+        context,
+      ),
+    ).toMatchObject({
+      allowed: false,
+      guardFailures: [{ code: 'PRE_PR_REVIEW_HEAD_MISMATCH' }],
+    });
+    expect(
+      evaluateTransitionGuards(
+        'pre_pr_reviewing',
+        'reviewing',
+        {
+          pre_pr_review: {
+            outcome: 'clean',
+            head_sha: 'a'.repeat(40),
+            evidence_ref: 'review-ledger:clean',
+            evidence_sha256: 'e'.repeat(64),
+            findings: [],
+          },
+        },
+        null,
+        context,
+      ),
+    ).toMatchObject({ allowed: true });
+  });
+
+  it.each([
+    [
+      'clean outcome with findings',
+      {
+        outcome: 'clean',
+        evidence_sha256: 'c'.repeat(64),
+        findings: [{ id: 'finding-1', summary: 'Unexpected finding', path: 'src/index.ts' }],
+      },
+    ],
+    [
+      'changes-required outcome without findings',
+      { outcome: 'changes_required', evidence_sha256: 'c'.repeat(64), findings: [] },
+    ],
+    [
+      'malformed evidence digest',
+      {
+        outcome: 'changes_required',
+        evidence_sha256: 'not-a-digest',
+        findings: [{ id: 'finding-1', summary: 'Needs work', path: 'src/index.ts' }],
+      },
+    ],
+    [
+      'duplicate finding ids',
+      {
+        outcome: 'changes_required',
+        evidence_sha256: 'c'.repeat(64),
+        findings: [
+          { id: 'finding-1', summary: 'First', path: 'src/index.ts' },
+          { id: 'finding-1', summary: 'Second', path: 'src/other.ts' },
+        ],
+      },
+    ],
+  ])('rejects %s without accepting pre-PR review evidence', (_scenario, review) => {
+    expect(
+      validateTransitionEvidence(
+        'pre_pr_reviewing',
+        review.outcome === 'clean' ? 'reviewing' : 'implementing',
+        {
+          pre_pr_review: {
+            ...review,
+            head_sha: 'a'.repeat(40),
+            evidence_ref: 'review-ledger:invalid',
+          },
+        },
+        passedProofContext(),
+      ),
+    ).toMatchObject({
+      allowed: false,
+      guardFailures: [{ code: 'PRE_PR_REVIEW_FINDINGS_INVALID' }],
+      requiredWork: [{ code: 'RECORD_PRE_PR_REVIEW_OUTCOME' }],
+    });
+  });
+
+  it('forbids post-PR implementation re-entry even with a current failed gate', () => {
+    const context = passedProofContext();
+    context.phase = LIFECYCLE_PHASE.POST_PR;
+    context.evidence = {
+      status: 'failed',
+      gates: [],
+      staleReceiptIds: [],
+      failedReceiptIds: ['receipt_post_pr'],
+      corruptReceiptIds: [],
+    };
+
+    expect(evaluateTransitionGuards('verifying', 'implementing', {}, null, context)).toMatchObject({
+      allowed: false,
+      guardFailures: [{ code: 'POST_PR_IMPLEMENTATION_REENTRY_FORBIDDEN' }],
+      requiredWork: [{ code: 'ENTER_REVIEW_REPAIR' }],
+    });
+  });
+
+  it('requires one new descendant commit after each implementation basis', () => {
+    const context = passedProofContext({
+      headSha: 'a'.repeat(40),
+      committedImplementationFromBasis: false,
+    });
+    context.implementationBasis = {
+      headSha: 'a'.repeat(40),
+      source: 'pre_pr_review',
+    };
+
+    expect(evaluateTransitionGuards('implementing', 'verifying', {}, null, context)).toMatchObject({
+      allowed: false,
+      guardFailures: [{ code: 'IMPLEMENTATION_BASIS_NOT_ADVANCED' }],
+      requiredWork: [{ code: 'COMMIT_IMPLEMENTATION' }],
     });
   });
 

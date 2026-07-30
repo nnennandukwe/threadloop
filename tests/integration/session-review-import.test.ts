@@ -390,7 +390,16 @@ async function makeAuthoritativeReviewingSession(
   await transitionSession(fixture.repoDir, fixture.sessionId, 'verifying', 3, 'implementation:verify');
   await runCli(fixture.repoDir, ['session', 'gate', 'run', 'check', '--session', fixture.sessionId, '--json']);
   await importCurrentSignedGate(fixture, 'receipt_signed_initial');
-  await transitionSession(fixture.repoDir, fixture.sessionId, 'reviewing', 4, 'implementation:review');
+  await transitionSession(fixture.repoDir, fixture.sessionId, 'pre_pr_reviewing', 4, 'implementation:pre-pr-review');
+  await transitionSession(fixture.repoDir, fixture.sessionId, 'reviewing', 5, 'implementation:review', {
+    pre_pr_review: {
+      outcome: 'clean',
+      head_sha: fixture.head,
+      evidence_ref: 'review-ledger:clean',
+      evidence_sha256: 'a'.repeat(64),
+      findings: [],
+    },
+  });
   return fixture;
 }
 
@@ -696,7 +705,7 @@ describe('signed review receipt import', { timeout: 20_000 }, () => {
       };
     }>((await runCli(fixture.repoDir, ['session', 'next', '--session', fixture.sessionId, '--json'])).stdout);
     expect(next.data).toMatchObject({
-      lifecycle: { state: 'reviewing', state_version: 5 },
+      lifecycle: { state: 'reviewing', state_version: 6 },
       candidate: { target_state: 'ready_for_human', executable: false },
       review: { status: 'corrupt' },
       required_work: [{ code: 'RESTORE_SIGNED_REVIEW_PROOF' }],
@@ -706,7 +715,7 @@ describe('signed review receipt import', { timeout: 20_000 }, () => {
       fixture.repoDir,
       fixture.sessionId,
       'ready_for_human',
-      5,
+      6,
       'review:corrupt-package',
     );
     expect(rejected).toMatchObject({
@@ -715,8 +724,32 @@ describe('signed review receipt import', { timeout: 20_000 }, () => {
         details: { guard_failures: [{ code: 'UNCORRUPTED_REVIEW_PROOF_REQUIRED' }] },
       },
     });
-    expect(readLifecycle(fixture.repoDir)).toEqual({ status: 'reviewing', state_version: 5 });
+    expect(readLifecycle(fixture.repoDir)).toEqual({ status: 'reviewing', state_version: 6 });
   }, 30_000);
+
+  it('forbids implementation re-entry after the pre-PR phase closes', async () => {
+    const fixture = await makeAuthoritativeReviewingSession();
+    const rejected = await transitionSessionFailure(
+      fixture.repoDir,
+      fixture.sessionId,
+      'implementing',
+      6,
+      'post-pr:implementation-reentry',
+    );
+    expect(rejected).toMatchObject({
+      error: {
+        code: 'TRANSITION_NOT_ALLOWED',
+        details: {
+          actual_state_version: 6,
+          lifecycle_phase: 'post_pr',
+          decision_code: 'POST_PR_IMPLEMENTATION_REENTRY_FORBIDDEN',
+          unchanged: ['lifecycle', 'repair_budget', 'proof', 'review_evidence'],
+        },
+      },
+    });
+    expect(readLifecycle(fixture.repoDir)).toEqual({ status: 'reviewing', state_version: 6 });
+    expect(repairTransitionCount(fixture.repoDir)).toBe(0);
+  });
 
   it('routes a later current-HEAD blocking finding from human authority back to repair', async () => {
     const fixture = await makeAuthoritativeReviewingSession();
@@ -728,7 +761,7 @@ describe('signed review receipt import', { timeout: 20_000 }, () => {
       packagePath: cleanPackagePath,
       verifyReceipt: () => verifier(cleanArtifact),
     });
-    await transitionSession(fixture.repoDir, fixture.sessionId, 'ready_for_human', 5, 'review:ready');
+    await transitionSession(fixture.repoDir, fixture.sessionId, 'ready_for_human', 6, 'review:ready');
 
     const lateFinding = blockingReviewArtifact(
       fixture,
@@ -757,8 +790,8 @@ describe('signed review receipt import', { timeout: 20_000 }, () => {
       },
     });
 
-    await transitionSession(fixture.repoDir, fixture.sessionId, 'repairing', 6, 'review:late-repair');
-    expect(readLifecycle(fixture.repoDir)).toEqual({ status: 'repairing', state_version: 7 });
+    await transitionSession(fixture.repoDir, fixture.sessionId, 'repairing', 7, 'review:late-repair');
+    expect(readLifecycle(fixture.repoDir)).toEqual({ status: 'repairing', state_version: 8 });
   }, 30_000);
 
   it('rejects a wrong-HEAD approval, then completes through public transitions after current approval and merge evidence', async () => {
@@ -788,13 +821,13 @@ describe('signed review receipt import', { timeout: 20_000 }, () => {
       packagePath: wrongHeadPackagePath,
       verifyReceipt: () => verifier(wrongHeadArtifact),
     });
-    await transitionSession(fixture.repoDir, fixture.sessionId, 'ready_for_human', 5, 'review:human-authority');
+    await transitionSession(fixture.repoDir, fixture.sessionId, 'ready_for_human', 6, 'review:human-authority');
 
     const wrongHeadCompletion = await transitionSessionFailure(
       fixture.repoDir,
       fixture.sessionId,
       'completed',
-      6,
+      7,
       'review:wrong-head-completion',
     );
     expect(wrongHeadCompletion).toMatchObject({
@@ -803,7 +836,7 @@ describe('signed review receipt import', { timeout: 20_000 }, () => {
         details: { guard_failures: [{ code: 'CURRENT_HUMAN_APPROVAL_REQUIRED' }] },
       },
     });
-    expect(readLifecycle(fixture.repoDir)).toEqual({ status: 'ready_for_human', state_version: 6 });
+    expect(readLifecycle(fixture.repoDir)).toEqual({ status: 'ready_for_human', state_version: 7 });
 
     const approvedMergedArtifact = reviewArtifact(fixture, {
       receipt_id: 'review_merged_current_head',
@@ -828,14 +861,14 @@ describe('signed review receipt import', { timeout: 20_000 }, () => {
         session: { ended_at: string | null };
       };
     }>(
-      (await transitionSession(fixture.repoDir, fixture.sessionId, 'completed', 6, 'review:approved-merged-completion'))
+      (await transitionSession(fixture.repoDir, fixture.sessionId, 'completed', 7, 'review:approved-merged-completion'))
         .stdout,
     );
     expect(completed.data).toMatchObject({
-      lifecycle: { state: 'completed', state_version: 7 },
+      lifecycle: { state: 'completed', state_version: 8 },
     });
     expect(completed.data.session.ended_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-    expect(readLifecycle(fixture.repoDir)).toEqual({ status: 'completed', state_version: 7 });
+    expect(readLifecycle(fixture.repoDir)).toEqual({ status: 'completed', state_version: 8 });
   }, 30_000);
 
   it('counts persisted review and gate repair entries together and rejects a fourth review repair', async () => {
@@ -853,28 +886,28 @@ describe('signed review receipt import', { timeout: 20_000 }, () => {
       packagePath: firstReviewPackagePath,
       verifyReceipt: () => verifier(firstReviewBlocker),
     });
-    await transitionSession(fixture.repoDir, fixture.sessionId, 'repairing', 5, 'budget:review-repair');
+    await transitionSession(fixture.repoDir, fixture.sessionId, 'repairing', 6, 'budget:review-repair');
 
     await writeFile(path.join(fixture.repoDir, 'gate-mode.txt'), 'fail\n', 'utf8');
     await writeFile(path.join(fixture.repoDir, 'repairs.txt'), 'review repair\n', 'utf8');
     await commitFixtureChanges(fixture, 'repair review finding', ['gate-mode.txt', 'repairs.txt']);
-    await transitionSession(fixture.repoDir, fixture.sessionId, 'verifying', 6, 'budget:first-verify');
+    await transitionSession(fixture.repoDir, fixture.sessionId, 'verifying', 7, 'budget:first-verify');
     await runCli(fixture.repoDir, ['session', 'gate', 'run', 'check', '--session', fixture.sessionId, '--json']);
-    await transitionSession(fixture.repoDir, fixture.sessionId, 'repairing', 7, 'budget:first-gate-repair');
+    await transitionSession(fixture.repoDir, fixture.sessionId, 'repairing', 8, 'budget:first-gate-repair');
 
     await writeFile(path.join(fixture.repoDir, 'repairs.txt'), 'first gate repair\n', { flag: 'a' });
     await commitFixtureChanges(fixture, 'repair first gate failure', ['repairs.txt']);
-    await transitionSession(fixture.repoDir, fixture.sessionId, 'verifying', 8, 'budget:second-verify');
+    await transitionSession(fixture.repoDir, fixture.sessionId, 'verifying', 9, 'budget:second-verify');
     await runCli(fixture.repoDir, ['session', 'gate', 'run', 'check', '--session', fixture.sessionId, '--json']);
-    await transitionSession(fixture.repoDir, fixture.sessionId, 'repairing', 9, 'budget:second-gate-repair');
+    await transitionSession(fixture.repoDir, fixture.sessionId, 'repairing', 10, 'budget:second-gate-repair');
 
     await writeFile(path.join(fixture.repoDir, 'gate-mode.txt'), 'pass\n', 'utf8');
     await writeFile(path.join(fixture.repoDir, 'repairs.txt'), 'second gate repair\n', { flag: 'a' });
     await commitFixtureChanges(fixture, 'repair second gate failure', ['gate-mode.txt', 'repairs.txt']);
-    await transitionSession(fixture.repoDir, fixture.sessionId, 'verifying', 10, 'budget:third-verify');
+    await transitionSession(fixture.repoDir, fixture.sessionId, 'verifying', 11, 'budget:third-verify');
     await runCli(fixture.repoDir, ['session', 'gate', 'run', 'check', '--session', fixture.sessionId, '--json']);
     await importCurrentSignedGate(fixture, 'receipt_signed_after_three_repairs');
-    await transitionSession(fixture.repoDir, fixture.sessionId, 'reviewing', 11, 'budget:return-to-review');
+    await transitionSession(fixture.repoDir, fixture.sessionId, 'reviewing', 12, 'budget:return-to-review');
 
     const fourthReviewBlocker = blockingReviewArtifact(
       fixture,
@@ -893,7 +926,7 @@ describe('signed review receipt import', { timeout: 20_000 }, () => {
       fixture.repoDir,
       fixture.sessionId,
       'repairing',
-      12,
+      13,
       'budget:fourth-review-repair',
     );
     expect(rejected).toMatchObject({
@@ -902,15 +935,15 @@ describe('signed review receipt import', { timeout: 20_000 }, () => {
         details: { guard_failures: [{ code: 'REPAIR_BUDGET_EXHAUSTED' }] },
       },
     });
-    expect(readLifecycle(fixture.repoDir)).toEqual({ status: 'reviewing', state_version: 12 });
+    expect(readLifecycle(fixture.repoDir)).toEqual({ status: 'reviewing', state_version: 13 });
     expect(repairTransitionCount(fixture.repoDir)).toBe(3);
   }, 60_000);
 
   it('requires a descendant commit after the exact evidence that opened each repair cycle', async () => {
-    const fixture = await makeReviewingSession([
+    const fixture = await makeAuthoritativeReviewingSession([
       'node',
       '-e',
-      'process.stderr.write("newer gate failure\\n"); process.exit(1)',
+      `const { readFileSync } = require('node:fs'); process.exit(readFileSync('gate-mode.txt', 'utf8').trim() === 'pass' ? 0 : 1);`,
     ]);
     const reviewHead = fixture.head;
     const blockingArtifact = reviewArtifact(fixture, {
@@ -941,23 +974,24 @@ describe('signed review receipt import', { timeout: 20_000 }, () => {
       packagePath,
       verifyReceipt: () => verifier(blockingArtifact),
     });
-    await transitionSession(fixture.repoDir, fixture.sessionId, 'repairing', 5, 'review-cycle:open');
+    await transitionSession(fixture.repoDir, fixture.sessionId, 'repairing', 6, 'review-cycle:open');
 
     await writeFile(path.join(fixture.repoDir, 'repair.txt'), 'review repair\n', 'utf8');
-    await execFileAsync('git', ['add', 'repair.txt'], { cwd: fixture.repoDir });
+    await writeFile(path.join(fixture.repoDir, 'gate-mode.txt'), 'fail\n', 'utf8');
+    await execFileAsync('git', ['add', 'repair.txt', 'gate-mode.txt'], { cwd: fixture.repoDir });
     await execFileAsync('git', ['commit', '-m', 'repair review finding'], { cwd: fixture.repoDir });
-    await transitionSession(fixture.repoDir, fixture.sessionId, 'verifying', 6, 'review-cycle:verify');
+    await transitionSession(fixture.repoDir, fixture.sessionId, 'verifying', 7, 'review-cycle:verify');
     const gateFailureHead = (await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: fixture.repoDir })).stdout.trim();
     expect(gateFailureHead).not.toBe(reviewHead);
 
     await runCli(fixture.repoDir, ['session', 'gate', 'run', 'check', '--session', fixture.sessionId, '--json']);
-    await transitionSession(fixture.repoDir, fixture.sessionId, 'repairing', 7, 'gate-cycle:open');
+    await transitionSession(fixture.repoDir, fixture.sessionId, 'repairing', 8, 'gate-cycle:open');
 
     const immediateRetry = await transitionSessionFailure(
       fixture.repoDir,
       fixture.sessionId,
       'verifying',
-      8,
+      9,
       'gate-cycle:no-repair',
     );
     expect(immediateRetry).toMatchObject({
@@ -976,7 +1010,7 @@ describe('signed review receipt import', { timeout: 20_000 }, () => {
       fixture.repoDir,
       fixture.sessionId,
       'verifying',
-      8,
+      9,
       'gate-cycle:ancestor-rollback',
     );
     expect(ancestorRollback).toMatchObject({
@@ -1047,6 +1081,7 @@ async function transitionSession(
   targetState: string,
   expectedVersion: number,
   idempotencyKey: string,
+  input: Record<string, unknown> = {},
 ) {
   return runCli(repoDir, [
     'session',
@@ -1061,7 +1096,7 @@ async function transitionSession(
     '--actor',
     'agent',
     '--input',
-    '{}',
+    JSON.stringify(input),
     '--json',
   ]);
 }
@@ -1080,7 +1115,7 @@ async function transitionSessionFailure(
     return parseJson<{
       error: {
         code: string;
-        details: { guard_failures: Array<{ code: string }> };
+        details: Record<string, unknown> & { guard_failures?: Array<{ code: string }> };
       };
     }>((error as Error & { stderr?: string }).stderr);
   }

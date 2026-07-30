@@ -10,12 +10,12 @@ describe('protocol contract', () => {
 
     expect(Object.keys(contract.commands)).toEqual(leafCommands.map((command) => getCommandPath(command)));
     expect(contract.contractVersions).toEqual({
-      protocol: 3,
+      protocol: 4,
       proofPlan: 3,
-      sessionNext: 3,
+      sessionNext: 4,
       signedReviewReceipt: 1,
       auditEvent: 1,
-      handoff: 2,
+      handoff: 3,
     });
 
     for (const command of leafCommands) {

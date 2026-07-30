@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  deriveLifecyclePhase,
   evaluateLifecycleTransition,
   getDeterministicForwardTarget,
   isActiveTaskStatus,
 } from '../../src/domain/lifecycle.js';
-import { TASK_STATUS, TASK_STATUS_VALUES } from '../../src/domain/types.js';
+import { LIFECYCLE_PHASE, TASK_STATUS, TASK_STATUS_VALUES } from '../../src/domain/types.js';
 
 describe('governed lifecycle', () => {
   it('publishes the complete ordered lifecycle state set', () => {
@@ -14,6 +15,7 @@ describe('governed lifecycle', () => {
       'proof_ready',
       'implementing',
       'verifying',
+      'pre_pr_reviewing',
       'reviewing',
       'repairing',
       'ready_for_human',
@@ -33,8 +35,12 @@ describe('governed lifecycle', () => {
       ['framed', 'proof_ready'],
       ['proof_ready', 'implementing'],
       ['implementing', 'verifying'],
+      ['verifying', 'implementing'],
+      ['verifying', 'pre_pr_reviewing'],
       ['verifying', 'reviewing'],
       ['verifying', 'repairing'],
+      ['pre_pr_reviewing', 'implementing'],
+      ['pre_pr_reviewing', 'reviewing'],
       ['reviewing', 'repairing'],
       ['reviewing', 'ready_for_human'],
       ['repairing', 'verifying'],
@@ -57,8 +63,12 @@ describe('governed lifecycle', () => {
       'framed:proof_ready',
       'proof_ready:implementing',
       'implementing:verifying',
+      'verifying:implementing',
+      'verifying:pre_pr_reviewing',
       'verifying:reviewing',
       'verifying:repairing',
+      'pre_pr_reviewing:implementing',
+      'pre_pr_reviewing:reviewing',
       'reviewing:repairing',
       'reviewing:ready_for_human',
       'repairing:verifying',
@@ -127,5 +137,41 @@ describe('governed lifecycle', () => {
     expect(getDeterministicForwardTarget('repairing')).toBe('verifying');
     expect(getDeterministicForwardTarget('verifying')).toBeNull();
     expect(getDeterministicForwardTarget('completed')).toBeNull();
+  });
+
+  it('derives a monotonic pre-PR or post-PR phase from transition history', () => {
+    expect(deriveLifecyclePhase([])).toBe(LIFECYCLE_PHASE.PRE_PR);
+    expect(deriveLifecyclePhase([{ to_state: TASK_STATUS.PRE_PR_REVIEWING }])).toBe(LIFECYCLE_PHASE.PRE_PR);
+    expect(
+      deriveLifecyclePhase([
+        { to_state: TASK_STATUS.REVIEWING },
+        { to_state: TASK_STATUS.REPAIRING },
+        { to_state: TASK_STATUS.VERIFYING },
+      ]),
+    ).toBe(LIFECYCLE_PHASE.POST_PR);
+  });
+
+  it('separates pre-PR iteration from post-PR repair authority', () => {
+    expect(evaluateLifecycleTransition('verifying', 'reviewing', { phase: LIFECYCLE_PHASE.PRE_PR })).toMatchObject({
+      allowed: false,
+      code: 'PRE_PR_REVIEW_BOUNDARY_REQUIRED',
+    });
+    expect(evaluateLifecycleTransition('verifying', 'implementing', { phase: LIFECYCLE_PHASE.POST_PR })).toMatchObject({
+      allowed: false,
+      code: 'POST_PR_IMPLEMENTATION_REENTRY_FORBIDDEN',
+    });
+    expect(evaluateLifecycleTransition('verifying', 'implementing', { phase: LIFECYCLE_PHASE.PRE_PR })).toMatchObject({
+      allowed: true,
+    });
+    expect(
+      evaluateLifecycleTransition('pre_pr_reviewing', 'repairing', { phase: LIFECYCLE_PHASE.PRE_PR }),
+    ).toMatchObject({
+      allowed: false,
+      code: 'INVALID_TRANSITION',
+    });
+    expect(evaluateLifecycleTransition('reviewing', 'implementing', { phase: LIFECYCLE_PHASE.POST_PR })).toMatchObject({
+      allowed: false,
+      code: 'POST_PR_IMPLEMENTATION_REENTRY_FORBIDDEN',
+    });
   });
 });

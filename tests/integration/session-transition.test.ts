@@ -155,7 +155,7 @@ afterEach(async () => {
   temporaryRepos.length = 0;
 });
 
-describe('schema v6 review and audit persistence', () => {
+describe('schema v7 lifecycle and audit persistence', () => {
   it('migrates a canonical schema-v2 database without changing lifecycle state', async () => {
     const repoDir = await makeRepo();
     const dbPath = createSchemaV2(repoDir);
@@ -165,7 +165,7 @@ describe('schema v6 review and audit persistence', () => {
 
     const db = new DatabaseSync(dbPath, { readOnly: true });
     try {
-      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '6' });
+      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '7' });
       expect(
         (db.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>).map((column) => column.name),
       ).toContain('blocked_from_state');
@@ -206,6 +206,65 @@ describe('schema v6 review and audit persistence', () => {
       });
     } finally {
       db.close();
+    }
+  });
+
+  it('projects schema-v6 migration requirements read-only and migrates only through init', async () => {
+    const repoDir = await makeRepo();
+    const started = parseJson<{ data: { session_id: string } }>(
+      (await runCli(repoDir, ['session', 'start', 'Migration task', '--goal', 'Preserve semantic history', '--json']))
+        .stdout,
+    );
+    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
+    await resetSqliteConnections(repoDir);
+    const downgrade = new DatabaseSync(dbPath);
+    downgrade.prepare(`UPDATE metadata SET value = '6' WHERE key = 'schema_version'`).run();
+    const beforeCounts = {
+      transitions: (downgrade.prepare(`SELECT COUNT(*) AS count FROM session_transitions`).get() as { count: number })
+        .count,
+      audit: (downgrade.prepare(`SELECT COUNT(*) AS count FROM audit_events`).get() as { count: number }).count,
+    };
+    downgrade.close();
+    const beforeBytes = await readFile(dbPath);
+
+    const next = parseJson<{
+      data: {
+        contract_version: number;
+        lifecycle: { storage_schema_version: number; contract_status: string };
+        candidate: unknown;
+        guard_failures: Array<{ code: string }>;
+        required_work: Array<{ code: string }>;
+        pre_pr_review: { status: string };
+      };
+    }>((await runCli(repoDir, ['session', 'next', '--session', started.data.session_id, '--json'])).stdout);
+    expect(next.data).toMatchObject({
+      contract_version: 4,
+      lifecycle: {
+        storage_schema_version: 6,
+        contract_status: 'migration_required',
+      },
+      candidate: null,
+      guard_failures: [{ code: 'SESSION_SCHEMA_MIGRATION_REQUIRED' }],
+      required_work: [{ code: 'MIGRATE_SESSION_SCHEMA' }],
+      pre_pr_review: { status: 'migration_required' },
+    });
+    expect(await readFile(dbPath)).toEqual(beforeBytes);
+
+    await runCli(repoDir, ['init']);
+    await resetSqliteConnections(repoDir);
+    const migrated = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      expect(migrated.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({
+        value: '7',
+      });
+      expect(
+        (migrated.prepare(`SELECT COUNT(*) AS count FROM session_transitions`).get() as { count: number }).count,
+      ).toBe(beforeCounts.transitions);
+      expect((migrated.prepare(`SELECT COUNT(*) AS count FROM audit_events`).get() as { count: number }).count).toBe(
+        beforeCounts.audit,
+      );
+    } finally {
+      migrated.close();
     }
   });
 
@@ -907,9 +966,26 @@ describe('session next command', { timeout: 15_000 }, () => {
       ok: true,
       command: 'session next',
       data: {
-        contract_version: 3,
+        contract_version: 4,
         session_id: started.data.session_id,
-        lifecycle: { state: 'queued', state_version: 0, blocked_from_state: null, history: [] },
+        lifecycle: {
+          state: 'queued',
+          state_version: 0,
+          blocked_from_state: null,
+          phase: 'pre_pr',
+          storage_schema_version: 7,
+          contract_status: 'current',
+          history: [],
+        },
+        pre_pr_review: {
+          status: 'not_started',
+          iteration_count: 0,
+          findings: [],
+        },
+        implementation_basis: {
+          head_sha: null,
+          source: null,
+        },
         candidate: { from_state: 'queued', target_state: 'framed', expected_state_version: 0, executable: true },
         guard_failures: [],
         required_work: [],

@@ -408,8 +408,8 @@ describe('signed gate receipt import', { timeout: 20_000 }, () => {
       };
     }>((await runCli(fixture.repoDir, ['session', 'next', '--session', fixture.sessionId, '--json'])).stdout);
     expect(next.data).toMatchObject({
-      contract_version: 3,
-      candidate: { target_state: 'reviewing', executable: true },
+      contract_version: 4,
+      candidate: { target_state: 'pre_pr_reviewing', executable: true },
       proof: { status: 'passed' },
       ci_proof: {
         status: 'passed',
@@ -420,7 +420,7 @@ describe('signed gate receipt import', { timeout: 20_000 }, () => {
     await resetSqliteConnections(fixture.repoDir);
     const db = new DatabaseSync(path.join(fixture.repoDir, '.threadloop/state/state.db'), { readOnly: true });
     try {
-      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '6' });
+      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '7' });
       expect(db.prepare(`SELECT COUNT(*) AS count FROM signed_gate_receipts`).get()).toEqual({ count: 1 });
       expect(db.prepare(`SELECT status, state_version FROM tasks`).get()).toEqual({
         status: 'verifying',
