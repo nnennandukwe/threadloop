@@ -293,7 +293,7 @@ async function prepareImport<TEnvelope extends ImportEnvelope>(
       details: { session_id: input.sessionId },
     });
   }
-  if (lifecycle.schemaVersion < 7) {
+  if (lifecycle.schemaVersion === 6) {
     throw new ThreadloopError(
       'SESSION_SCHEMA_MIGRATION_REQUIRED',
       `ThreadLoop schema v${lifecycle.schemaVersion} requires explicit migration before receipt import.`,

@@ -187,10 +187,7 @@ export async function startTask(input: StartTaskInput) {
   const repoRoot = await resolveRepositoryRoot(input.cwd);
   if (isThreadloopInitialized(repoRoot)) {
     await readConfig(repoRoot);
-    const { schemaVersion } = inspectAuditLedgerReadOnly(repoRoot);
-    if (schemaVersion !== null) {
-      assertCurrentSchemaForCommand(repoRoot);
-    }
+    assertSchemaDoesNotRequireExplicitMigration(repoRoot);
   }
   await initializeThreadloopRepo(repoRoot);
   const baseRef =
@@ -982,7 +979,7 @@ export async function exportSessionAudit(input: ExportSessionAuditInput) {
 async function loadSessionAudit(input: SessionAuditInput, expectedRoot?: string) {
   const repoRoot = await resolveRepositoryRoot(input.cwd);
   await assertInitializedReadOnly(repoRoot);
-  assertCurrentSchemaForCommand(repoRoot);
+  assertSchemaDoesNotRequireExplicitMigration(repoRoot);
   const availability = inspectAuditLedgerReadOnly(repoRoot);
   if (!availability.available && availability.schemaVersion !== null && availability.schemaVersion >= 6) {
     throw auditUnavailableFailure(
@@ -1935,18 +1932,16 @@ async function assertInitialized(repoRoot: string) {
     );
   }
   await readConfig(repoRoot);
-  assertCurrentSchemaForCommand(repoRoot);
+  assertSchemaDoesNotRequireExplicitMigration(repoRoot);
   await ensureStateDatabase(repoRoot);
 }
 
-function assertCurrentSchemaForCommand(repoRoot: string) {
+function assertSchemaDoesNotRequireExplicitMigration(repoRoot: string) {
   const { schemaVersion } = inspectAuditLedgerReadOnly(repoRoot);
-  if (schemaVersion === null || schemaVersion < 7) {
+  if (schemaVersion === 6) {
     throw new ThreadloopError(
       'SESSION_SCHEMA_MIGRATION_REQUIRED',
-      schemaVersion === null
-        ? 'The ThreadLoop state database is missing and must be initialized before this command can run.'
-        : `ThreadLoop schema v${schemaVersion} requires explicit migration before this command can run.`,
+      'ThreadLoop schema v6 requires explicit migration before this command can run.',
       {
         details: {
           storage_schema_version: schemaVersion,
@@ -1955,7 +1950,7 @@ function assertCurrentSchemaForCommand(repoRoot: string) {
       },
     );
   }
-  if (schemaVersion > 7) {
+  if (schemaVersion !== null && schemaVersion > 7) {
     throw new ThreadloopError('STATE_CORRUPTED', `Unsupported ThreadLoop schema version: ${schemaVersion}`, {
       details: {
         storage_schema_version: schemaVersion,
