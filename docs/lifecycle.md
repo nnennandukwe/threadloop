@@ -41,11 +41,13 @@ budgets, approval, and merge observations are separate guards layered onto this 
 
 Lifecycle phase is derived from append-only transition history plus the immutable audit-genesis state that bounds
 migrated history. A session is `pre_pr` until its first applied transition into `reviewing`; a migrated session whose
-audit coverage begins in `reviewing`, `repairing`, `ready_for_human`, or `completed` is already `post_pr`. The phase is
-permanently `post_pr` afterward. SQLite schema version 7 retains all prior lifecycle, proof, signed receipt, audit, and
-repair records and adds this semantic interpretation without a second mutable phase flag. Persistent triggers reject
-update, delete, and replacement. Repair usage remains derived from applied transitions into `repairing`, so only post-PR
-gate and signed-review repairs share the three-entry budget.
+audit coverage begins in `reviewing`, `ready_for_human`, or `completed` is already `post_pr`. A legacy `repairing` state
+or repair transition without evidence of entry into `reviewing` remains `pre_pr`, because older lifecycles allowed
+pre-PR repair. The phase is permanently `post_pr` afterward. SQLite schema version 7 retains all prior lifecycle, proof,
+signed receipt, audit, and repair records and adds this semantic interpretation without a second mutable phase flag.
+Persistent triggers reject update, delete, and replacement. Repair usage remains derived from applied transitions into
+`repairing`; historical entries remain counted, while new entries are allowed only for post-PR gate and signed-review
+repairs.
 
 `threadloop session next --session <id> --json` is read-only and returns one deterministic candidate or `null`. It
 reports live Git facts without refreshing persisted snapshots. It rehashes the latest receipt manifest and output

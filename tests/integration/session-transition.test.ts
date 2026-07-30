@@ -320,6 +320,52 @@ describe('schema v7 lifecycle and audit persistence', { timeout: 20_000 }, () =>
     });
   });
 
+  it('retains pre-PR authority for a legacy repair history that never entered reviewing', async () => {
+    const repoDir = await makeRepo();
+    const { session_id: sessionId } = await startQueuedSession(repoDir);
+    for (const [targetState, expectedStateVersion] of [
+      ['framed', 0],
+      ['proof_ready', 1],
+      ['implementing', 2],
+      ['verifying', 3],
+      ['repairing', 4],
+    ] as const) {
+      await applyFixtureTransition(
+        repoDir,
+        sessionId,
+        targetState,
+        expectedStateVersion,
+        `legacy-pre-pr:${targetState}`,
+      );
+    }
+    await resetSqliteConnections(repoDir);
+    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
+    const legacy = new DatabaseSync(dbPath);
+    legacy.prepare(`UPDATE metadata SET value = '6' WHERE key = 'schema_version'`).run();
+    legacy.close();
+
+    await runCli(repoDir, ['init']);
+    const projected = parseJson<{
+      data: {
+        lifecycle: { phase: string };
+        repair_budget: { attempts_used: number };
+      };
+    }>((await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout);
+    expect(projected.data).toMatchObject({
+      lifecycle: { phase: 'pre_pr' },
+      repair_budget: { attempts_used: 1 },
+    });
+
+    await applyFixtureTransition(repoDir, sessionId, 'verifying', 5, 'legacy-pre-pr:verify');
+    await expect(
+      applyFixtureTransition(repoDir, sessionId, 'implementing', 6, 'legacy-pre-pr:implement'),
+    ).resolves.toMatchObject({
+      data: {
+        lifecycle: { state: 'implementing', state_version: 7 },
+      },
+    });
+  });
+
   it('projects schema-v6 migration requirements read-only and migrates only through init', async () => {
     const repoDir = await makeRepo();
     const started = parseJson<{ data: { session_id: string } }>(

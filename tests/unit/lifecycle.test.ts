@@ -149,14 +149,12 @@ describe('governed lifecycle', () => {
         { to_state: TASK_STATUS.VERIFYING },
       ]),
     ).toBe(LIFECYCLE_PHASE.POST_PR);
-    for (const migratedState of [
-      TASK_STATUS.REVIEWING,
-      TASK_STATUS.REPAIRING,
-      TASK_STATUS.READY_FOR_HUMAN,
-      TASK_STATUS.COMPLETED,
-    ]) {
+    for (const migratedState of [TASK_STATUS.REVIEWING, TASK_STATUS.READY_FOR_HUMAN, TASK_STATUS.COMPLETED]) {
       expect(deriveLifecyclePhase([], migratedState), migratedState).toBe(LIFECYCLE_PHASE.POST_PR);
     }
+    expect(deriveLifecyclePhase([{ to_state: TASK_STATUS.REPAIRING }], TASK_STATUS.REPAIRING)).toBe(
+      LIFECYCLE_PHASE.PRE_PR,
+    );
     expect(deriveLifecyclePhase([], TASK_STATUS.VERIFYING)).toBe(LIFECYCLE_PHASE.PRE_PR);
   });
 

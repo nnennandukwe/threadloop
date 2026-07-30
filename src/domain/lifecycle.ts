@@ -32,7 +32,6 @@ export const REPAIR_ENTRY_STATES = [
 
 const POST_PR_STATES = [
   TASK_STATUS.REVIEWING,
-  TASK_STATUS.REPAIRING,
   TASK_STATUS.READY_FOR_HUMAN,
   TASK_STATUS.COMPLETED,
 ] as const satisfies readonly TaskStatus[];
