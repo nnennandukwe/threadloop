@@ -9,6 +9,7 @@ export const GATE_RECEIPT_RESULTS = [
   'invalidated',
   'execution_error',
   'cleanup_failed',
+  'setup_failed',
 ] as const;
 
 export type GateReceiptResult = (typeof GATE_RECEIPT_RESULTS)[number];

@@ -32,6 +32,113 @@ export interface GateProcessResult {
   error: { name: string; message: string; code?: string } | null;
 }
 
+/** The subset of a repository observation that gate execution depends on. */
+export interface GateRepositoryObservation {
+  headSha: string;
+  clean: boolean;
+}
+
+export interface GateSetupStepInput extends GateProcessInput {
+  id: string;
+}
+
+/** One declared setup step as it actually ran, including the observations taken around it. */
+export interface SetupStepExecution {
+  id: string;
+  command: string[];
+  timeoutMs: number;
+  process: GateProcessResult;
+  headBefore: string;
+  headAfter: string;
+  cleanBefore: boolean;
+  cleanAfter: boolean;
+}
+
+export interface GateWithSetupInput {
+  setup: readonly GateSetupStepInput[];
+  gate: GateProcessInput;
+  observedBefore: GateRepositoryObservation;
+  /** Returns null when the observation itself failed, which is treated as a compromised repository. */
+  observe: () => Promise<GateRepositoryObservation | null>;
+}
+
+export interface GateWithSetupResult {
+  setup: SetupStepExecution[];
+  /** Null when a setup step short-circuited the sequence, so the gate command never ran. */
+  gate: GateProcessResult | null;
+  observedAfter: GateRepositoryObservation | null;
+}
+
+/**
+ * Runs every declared setup step in order and then the gate command. The single execution path shared by
+ * `session gate run` and the CI sensor, so a local receipt and a signed receipt for the same HEAD cannot
+ * describe setup differently.
+ *
+ * A setup step that does not pass stops the sequence: remaining steps and the gate command do not run. A
+ * compromised repository observation stops it too, because continuing would attribute later work to a HEAD
+ * that is no longer the one being verified.
+ */
+export async function runGateWithSetup(input: GateWithSetupInput): Promise<GateWithSetupResult> {
+  const setup: SetupStepExecution[] = [];
+  let observed: GateRepositoryObservation | null = input.observedBefore;
+
+  for (const step of input.setup) {
+    const stepBefore = observed;
+    if (!stepBefore) {
+      return { setup, gate: null, observedAfter: null };
+    }
+    const process = await runGateProcess(step);
+    const stepAfter = await input.observe();
+    setup.push({
+      id: step.id,
+      command: step.command,
+      timeoutMs: step.timeoutMs,
+      process,
+      headBefore: stepBefore.headSha,
+      headAfter: stepAfter?.headSha ?? stepBefore.headSha,
+      cleanBefore: stepBefore.clean,
+      cleanAfter: stepAfter?.clean ?? false,
+    });
+    observed = stepAfter;
+
+    if (process.result !== 'passed' || !stepAfter || !stepAfter.clean || stepAfter.headSha !== stepBefore.headSha) {
+      return { setup, gate: null, observedAfter: stepAfter };
+    }
+  }
+
+  const gate = await runGateProcess(input.gate);
+  return { setup, gate, observedAfter: await input.observe() };
+}
+
+/**
+ * Maps a recorded execution to the gate result that goes on the receipt. The one place the precedence
+ * between repository invalidation, setup failure, and the gate's own outcome is decided, so the local and CI
+ * paths cannot classify the same execution differently.
+ *
+ * `invalidated` is supplied by the caller because each path compares its own notion of an unchanged
+ * repository: the local path also requires the bound branch, the CI path also requires the caller SHA.
+ *
+ * Every non-passing setup outcome collapses to one `setup_failed`. The distinction between a step that timed
+ * out and one that exited non-zero lives in the recorded step itself, so the receipt keeps it without adding
+ * a contract value that consumers would have to pin against.
+ */
+export function classifyGateOutcome(input: {
+  setup: readonly SetupStepExecution[];
+  gate: GateProcessResult | null;
+  invalidated: boolean;
+}): GateReceiptResult {
+  // Evidence integrity outranks classification: a receipt must never claim to describe a HEAD it does not.
+  if (input.invalidated) {
+    return 'invalidated';
+  }
+  if (input.setup.some((step) => step.process.result !== 'passed')) {
+    return 'setup_failed';
+  }
+  // Setup passed, so the sequence should have reached the gate. A missing gate result means execution broke
+  // rather than that the gate passed.
+  return input.gate?.result ?? 'execution_error';
+}
+
 export async function runGateProcess(input: GateProcessInput): Promise<GateProcessResult> {
   const [executable, ...args] = input.command;
   if (!executable) {

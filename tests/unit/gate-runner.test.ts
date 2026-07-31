@@ -1,8 +1,13 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { runGateProcess } from '../../src/adapters/process/gate-runner.js';
+import {
+  runGateProcess,
+  runGateWithSetup,
+  type GateRepositoryObservation,
+  type GateSetupStepInput,
+} from '../../src/adapters/process/gate-runner.js';
 
 const temporaryDirectories: string[] = [];
 
@@ -97,5 +102,158 @@ describe('gate process runner', () => {
         }
       }
     }
+  });
+});
+
+describe('gate runner with declared setup', () => {
+  const head = 'd'.repeat(40);
+
+  function stepInput(directory: string, id: string, command: string[]): GateSetupStepInput {
+    return {
+      id,
+      command,
+      cwd: directory,
+      timeoutMs: 5_000,
+      stdoutPath: path.join(directory, `${id}.stdout.log`),
+      stderrPath: path.join(directory, `${id}.stderr.log`),
+    };
+  }
+
+  function stableObserver(): { observe: () => Promise<GateRepositoryObservation>; calls: () => number } {
+    let calls = 0;
+    return {
+      observe: () => {
+        calls += 1;
+        return Promise.resolve({ headSha: head, clean: true });
+      },
+      calls: () => calls,
+    };
+  }
+
+  it('runs declared setup steps in order before the gate command', async () => {
+    const directory = await makeDirectory();
+    const orderPath = path.join(directory, 'order.txt');
+    const append = (label: string) => `require("node:fs").appendFileSync(${JSON.stringify(orderPath)}, "${label}\\n")`;
+    const observer = stableObserver();
+
+    const result = await runGateWithSetup({
+      setup: [
+        stepInput(directory, 'first', ['node', '-e', append('first')]),
+        stepInput(directory, 'second', ['node', '-e', append('second')]),
+      ],
+      gate: {
+        command: ['node', '-e', append('gate')],
+        cwd: directory,
+        timeoutMs: 5_000,
+        stdoutPath: path.join(directory, 'gate.stdout.log'),
+        stderrPath: path.join(directory, 'gate.stderr.log'),
+      },
+      observedBefore: { headSha: head, clean: true },
+      observe: observer.observe,
+    });
+
+    expect(await readFile(orderPath, 'utf8')).toBe('first\nsecond\ngate\n');
+    expect(result.setup.map((step) => step.id)).toEqual(['first', 'second']);
+    expect(result.setup.every((step) => step.process.result === 'passed')).toBe(true);
+    expect(result.gate?.result).toBe('passed');
+    // One observation after each setup step, plus one after the gate.
+    expect(observer.calls()).toBe(3);
+  });
+
+  it('stops the sequence at a failing setup step so the gate command never runs', async () => {
+    const directory = await makeDirectory();
+    const markerPath = path.join(directory, 'gate-ran.txt');
+    const observer = stableObserver();
+
+    const result = await runGateWithSetup({
+      setup: [
+        stepInput(directory, 'broken', ['node', '-e', 'process.exit(3)']),
+        stepInput(directory, 'unreached', ['node', '-e', 'process.exit(0)']),
+      ],
+      gate: {
+        command: ['node', '-e', `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "ran")`],
+        cwd: directory,
+        timeoutMs: 5_000,
+        stdoutPath: path.join(directory, 'gate.stdout.log'),
+        stderrPath: path.join(directory, 'gate.stderr.log'),
+      },
+      observedBefore: { headSha: head, clean: true },
+      observe: observer.observe,
+    });
+
+    expect(result.setup.map((step) => step.id)).toEqual(['broken']);
+    expect(result.setup[0]?.process).toMatchObject({ result: 'failed', exitStatus: 3 });
+    expect(result.gate).toBeNull();
+    await expect(readFile(markerPath, 'utf8')).rejects.toThrow();
+  });
+
+  it('stops the sequence when a setup step leaves the repository dirty', async () => {
+    const directory = await makeDirectory();
+    const observer = {
+      observe: () => Promise.resolve({ headSha: head, clean: false }),
+    };
+
+    const result = await runGateWithSetup({
+      setup: [
+        stepInput(directory, 'dirties', ['node', '-e', 'process.exit(0)']),
+        stepInput(directory, 'unreached', ['node', '-e', 'process.exit(0)']),
+      ],
+      gate: {
+        command: ['node', '-e', 'process.exit(0)'],
+        cwd: directory,
+        timeoutMs: 5_000,
+        stdoutPath: path.join(directory, 'gate.stdout.log'),
+        stderrPath: path.join(directory, 'gate.stderr.log'),
+      },
+      observedBefore: { headSha: head, clean: true },
+      observe: observer.observe,
+    });
+
+    expect(result.setup.map((step) => step.id)).toEqual(['dirties']);
+    expect(result.setup[0]).toMatchObject({ cleanBefore: true, cleanAfter: false });
+    expect(result.gate).toBeNull();
+  });
+
+  it('treats a failed observation as a compromised repository and records it as unclean', async () => {
+    const directory = await makeDirectory();
+
+    const result = await runGateWithSetup({
+      setup: [stepInput(directory, 'sync', ['node', '-e', 'process.exit(0)'])],
+      gate: {
+        command: ['node', '-e', 'process.exit(0)'],
+        cwd: directory,
+        timeoutMs: 5_000,
+        stdoutPath: path.join(directory, 'gate.stdout.log'),
+        stderrPath: path.join(directory, 'gate.stderr.log'),
+      },
+      observedBefore: { headSha: head, clean: true },
+      observe: () => Promise.resolve(null),
+    });
+
+    expect(result.setup[0]).toMatchObject({ headAfter: head, cleanAfter: false });
+    expect(result.gate).toBeNull();
+    expect(result.observedAfter).toBeNull();
+  });
+
+  it('runs the gate directly when no setup is declared', async () => {
+    const directory = await makeDirectory();
+    const observer = stableObserver();
+
+    const result = await runGateWithSetup({
+      setup: [],
+      gate: {
+        command: ['node', '-e', 'process.exit(0)'],
+        cwd: directory,
+        timeoutMs: 5_000,
+        stdoutPath: path.join(directory, 'gate.stdout.log'),
+        stderrPath: path.join(directory, 'gate.stderr.log'),
+      },
+      observedBefore: { headSha: head, clean: true },
+      observe: observer.observe,
+    });
+
+    expect(result.setup).toEqual([]);
+    expect(result.gate?.result).toBe('passed');
+    expect(observer.calls()).toBe(1);
   });
 });
