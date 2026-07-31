@@ -1,0 +1,1471 @@
+let's talk through this interesting conversation I had. Keep in mind, I'm in Developer Relations (Nnenna Ndukwe), working at Qodo, in AI for software engineering. I'm supposed to share deeply technical (L3) content, speak on stages, and influence the broader developer ecosystem. I'm a developer by trade and I enjoy sharing and creating. I want to tell powerful stories with what I surface in code, with customers, with the industry, and market. I have some ideas on graph engineering and loop engineering and software factories. And, unbeknownst to me, I might've created 2 projects months ago that are positioned well as artifacts of graph and loop eneingeering. My goal would be to build something real, develop technical case studies and articles, videos, open-sourced code, and use that all to speak at conferences too. It's part of my career if I can develop something interesting here for developeers. I have a voice canon system I use in Codex that I might need you to extract and create agnostic skills for that you'd be able to use by the way, so you udnerstand my framing, perspective, opinions, purpose, and how I craft technical narratives. Here's the chat session I had with Claude that I want us to continue: # Research graph engineering limits
+
+> [https://qodo-ai.slack.com/archives/C0920DBH97W/p1785262828470039](https://qodo-ai.slack.com/archives/C0920DBH97W/p1785262828470039)
+> It's time to do a deep analysis on graph engineering. What is the current state or known information about it and potential limitations? Think architecturally, about architectural limitations or usability limitations at scale. I'm saying that we need to look into that and consider it. This could be a very attractive talk track topic, or overarching topic that could lead to some really interesting specific talk ideas that will increase the chances of being accepted to this summit. Do your research into this Slack thread.
+
+<details><summary>10 previous messages</summary>
+
+> I’m using the Slack skill to recover the complete thread context and the research skill to test its claims against current primary sources. I’ll treat this as an architectural opportunity analysis—state of the field, scale/usability limits, and summit-worthy talk territories—not as a content package or publication claim.
+>
+> The research skill explicitly requires an independent background researcher, so I’ll dispatch that once I’ve extracted the thread’s actual claims. I’m first resolving the Slack permalink directly so the external research answers the conversation—not a guess about what “graph engineering” means.
+>
+> <details><summary>Called a tool</summary>
+>
+> MCP tool call
+>
+> codex_apps.slack.slack_read_thread
+>
+> ```json
+> {
+>   "channel_id": "C0920DBH97W",
+>   "message_ts": "1785262828.470039",
+>   "limit": 1000,
+>   "response_format": "detailed"
+> }
+> ```
+>
+> ```text
+> {"messages":"=== THREAD PARENT MESSAGE ===\nFrom: Leigh Moore <leigh.m@qodo.ai> (U097VQYDXHS)\nTime: 2026-07-28 14:20:28 EDT\nMessage TS: 1785262828.470039\n<@U03M9272ZLJ|Itamar Friedman> <@U08UV47J5JQ|Nnenna Ndukwe><@U0AQ5FQR1D2|Filip Hric> Call for speakers for AIE Code Summit in November <https:\/\/www.ai.engineer\/code\/2026|ai.engineer\/code\/2026>\nReactions: raised_hands::skin-tone-4 (1), raised_hands (1)\n\n=== THREAD REPLIES (6 total) ===\n\n--- Reply 1 of 6 ---\nFrom: Itamar Friedman <itamar.f@codium.ai> (U03M9272ZLJ)\nTime: 2026-07-28 15:39:57 EDT\nMessage TS: 1785267597.225429\nAI Factory are not dead, but need a redo\n\n--- Reply 2 of 6 ---\nFrom: Itamar Friedman <itamar.f@codium.ai> (U03M9272ZLJ)\nTime: 2026-07-28 15:40:23 EDT\nMessage TS: 1785267623.389489\nAI Factory in 10 steps\n\n--- Reply 3 of 6 ---\nFrom: Nnenna Ndukwe <nnenna.n@qodo.ai> (U08UV47J5JQ)\nTime: 2026-07-28 16:10:41 EDT\nMessage TS: 1785269441.922409\nThat and loop engineering would be high value topics to cover.\n\n--- Reply 4 of 6 ---\nFrom: Nnenna Ndukwe <nnenna.n@qodo.ai> (U08UV47J5JQ)\nTime: 2026-07-28 16:10:55 EDT\nMessage TS: 1785269455.575119\nas well as token optimization\n\n--- Reply 5 of 6 ---\nFrom: Itamar Friedman <itamar.f@codium.ai> (U03M9272ZLJ)\nTime: 2026-07-28 19:01:44 EDT\nMessage TS: 1785279704.424059\nBy then it will be : Graph engineering \n\n--- Reply 6 of 6 ---\nFrom: Itamar Friedman <itamar.f@codium.ai> (U03M9272ZLJ)\nTime: 2026-07-28 19:02:32 EDT\nMessage TS: 1785279752.900869\nGraph engineering isn't enough for AI factories \nReactions: eyes (1)\n","pagination_info":"There are no more messages in this thread.\n"}
+> ```
+>
+> </details>
+>
+> The thread is compact but strategically clear: Itamar’s progression is “AI factories” → “loop engineering” → “graph engineering,” followed by the warning that “graph engineering isn’t enough for AI factories.” I’m treating that as a hypothesis about production agent systems—moving from optimizing one reasoning loop to engineering multi-step, stateful dependency graphs—while explicitly testing adjacent meanings such as knowledge graphs and workflow DAGs.
+>
+> <details><summary>Searched the web</summary>
+>
+> Searched the web for `site:ai.engineer/code/2026 AIE Code Summit 2026 call for speakers November tracks CFP ...`
+>
+> Searched the web for `https://www.ai.engineer/code/2026`
+>
+> Searched the web for `site:docs.langchain.com langgraph durable execution idempotent side effects deterministic replay concurrent state reducer graph migrations ...`
+>
+> Searched the web for `site:opentelemetry.io/docs/specs/semconv/gen-ai agent spans status development experimental ...`
+>
+> Searched the web for `site:modelcontextprotocol.io/docs security best practices MCP prompt injection OAuth authorization ...`
+>
+> Searched the web for `site:microsoft.github.io/autogen GraphFlow experimental directed graph workflow limitations ...`
+>
+> </details>
+>
+> The market signal is unusually fresh: LangChain publicly framed “graph engineering” on July 22, while Google shipped a graph-first ADK 2.0 in late June/early July; Microsoft’s comparable GraphFlow is still labeled experimental. That makes the topic timely, but it also means a generic “what is graph engineering?” submission will likely be crowded and vendor-comparison-heavy. The stronger wedge is the failure boundary: what graphs control, what they merely visualize, and what an AI code factory still has to supply.
+>
+> <details><summary>Searched the web</summary>
+>
+> Searched the web for `site:youtube.com/@aiDotEngineer "graph" "coding agents" AIE CODE ...`
+>
+> </details>
+>
+> The architectural fault line is now clear: an execution graph controls allowed transitions, but it does not automatically control message visibility, state consistency, external side effects, identity, evaluation, or release proof. AutoGen’s own documentation separates the execution graph from the message graph; LangGraph documents checkpoint conflicts, replay/idempotency requirements, and live-run migration constraints. Those are precisely the scale failures a summit audience will recognize.
+>
+> <details><summary>Searched the web</summary>
+>
+> Searched the web for `https://www.ai.engineer/worldsfair/schedule?track=Graphs`
+>
+> </details>
+>
+> The summit fit is strong but competitive: the CFP says 5–15% historical acceptance, expects production practitioners, and makes 15–20 minute stage talks the main format. The winning submission needs one falsifiable technical claim and evidence. My current recommendation is to lead with a failure-forensics architecture talk, then use the broader “AI factory” thesis as the framing—not submit a category overview.
+</details>
+
+I completed the deep analysis and saved the full 448-line, 44-source brief here:
+
+[Graph engineering for AI factories](~/Documents/Engineering%20Enablement%20AI/research/graph-engineering-ai-factories-2026-07-29.md:1)
+
+## Bottom line
+
+The Slack thread’s progression is sound:
+
+`AI factories → loop engineering → graph engineering`
+
+But graph engineering is not the factory.
+
+- Loop engineering governs one adaptive agent loop.
+- Graph engineering composes loops, tools, deterministic checks, routing, parallel work, retries, and human gates.
+- AI-factory engineering operates those graphs safely across durability, identity, evaluation, cost, versioning, governance, and release.
+
+The core thesis is:
+
+> The graph is the process topology. It is not the factory.
+
+## Current state
+
+“Graph engineering” is a very new label for an established architectural pattern. LangChain publicly framed the term on July 22, while acknowledging that graph-based agent orchestration has existed for years. Google ADK 2.0 has moved graph-first, AutoGen’s GraphFlow remains experimental, and OpenAI explicitly warns that declarative graphs become cumbersome as workflows grow dynamic and complex. [LangChain](https://www.langchain.com/blog/3-years-of-graph-engineering-with-langgraph), [Google ADK](https://developers.googleblog.com/announcing-adk-go-20/), [OpenAI](https://openai.com/business/guides-and-resources/a-practical-guide-to-building-ai-agents/)
+
+There is currently:
+
+- no shared definition of graph engineering;
+- no portable cross-framework graph format;
+- no standard checkpoint, reducer, replay, migration, or evaluation contract;
+- substantial ambiguity with knowledge graphs, context graphs, lineage graphs, and model computation graphs.
+
+The Slack sequence most plausibly means control-flow/stateful execution graphs, not knowledge graphs. The latter should remain a secondary topic because the AI Engineer ecosystem already treats “Graphs,” “Software Factories,” and “AI Factories” as separate territories.
+
+## Architectural and scale limitations
+
+The major problems are:
+
+- **Topology is not semantics.** A deterministic edge can still lead to a nondeterministic model, stale context, an unsafe tool call, or an incorrect patch.
+- **Execution graphs and information-flow graphs differ.** AutoGen, for example, separates its execution graph from its message graph. Controlling who runs next does not automatically control who sees which context.
+- **Durability changes application semantics.** Resume and replay can re-execute model calls and external actions. Side effects require durable intent, idempotency keys, receipts, deduplication, and sometimes compensation.
+- **Parallelism creates merge problems.** Fan-out introduces checkpoint conflicts, state reducers, conflicting patches, partial success, cancellation, and rate-limit pressure. Coding work is also less naturally parallel than research.
+- **Static diagrams stop matching runtime reality.** Dynamic workers, model-selected routes, cycles, nested graphs, and late-bound tools make visual comprehensibility and exhaustive path testing difficult.
+- **Observability is not evaluation.** A trace shows what ran; it does not prove that the route was justified, the patch was correct, or the workflow was economical.
+- **Security extends through every node.** An allowed edge is not authorization. Persistent state and cross-tool execution add prompt injection, confused-deputy, credential, provenance, and secret-retention risks.
+- **Human approval can become stale.** A paused graph may resume after the repository, policy, model, or target action has changed.
+- **Costs are topology-dependent and stochastic.** Anthropic reports roughly 15× chat token usage in its multi-agent research workload and specifically notes that coding offers fewer truly parallelizable tasks. [Anthropic](https://www.anthropic.com/engineering/multi-agent-research-system)
+- **Live-run versioning is hard.** Graph topology, state schemas, prompts, models, tools, policies, and evaluators can all change while checkpoints remain active.
+- **MCP and A2A do not solve graph portability.** They standardize capability access and agent communication, not internal orchestration or recovery semantics.
+
+## Strongest summit direction
+
+The lead proposal should be:
+
+> **The Graph Is Not the Factory: Seven Systems Missing from Production Coding Agents**
+
+This is stronger than “What Is Graph Engineering?” because it is a falsifiable production argument, not a category overview.
+
+The two best additional proposals are:
+
+1. **Replay Is a Side-Effect Bug: Idempotency for Long-Running Coding-Agent Graphs**
+2. **When the Work Graph Changes Mid-Run: Versioning Stateful Coding Agents**
+
+The submission should be backed by one representative coding workflow and injected failures: crash after an external write, concurrent patch conflict, stale approval, permission denial, token-budget exhaustion, and mid-run topology migration.
+
+That evidence is the missing development work. The conceptual pieces already connect your existing separation-of-agentic-concerns, tracing, governed-autonomy, and executable-quality-gates material.
+
+The CFP is open, accepts up to three proposals, reports a historical 5–15% acceptance rate, and primarily uses 15–20 minute stage talks. September 15 is the early-review target; October 11 is the final deadline. [Official event page](https://www.ai.engineer/code/2026), [official CFP](https://sessionize.com/aiecode26/)
+
+No Slack message, content package, CFP submission, approval, or publication state was created.
+
+> For the lead proposal, if I'm presenting problems then I need to present potential solutions as well...
+
+Exactly. The lead talk should not be “here are seven ways graphs fail.” It should present a production architecture that addresses those failures.
+
+A stronger formulation is:
+
+> **The Graph Is Not the Factory: A Reference Architecture for Production Coding Agents**
+
+The organizing pattern should be:
+
+`failure → architectural control → proof that the control works`
+
+For example:
+
+1. **Retries duplicate external actions**
+
+   Solution: durable intent records, stable idempotency keys, tool receipts, deduplication, and compensation paths.
+
+   Proof: crash immediately after creating a branch or PR, resume the graph, and show that the external action occurs only once.
+
+2. **Parallel agents create conflicting state and patches**
+
+   Solution: isolated workspaces, typed state reducers, explicit artifact ownership, deterministic joins, and conflict escalation.
+
+   Proof: run two agents against overlapping files and demonstrate safe merge, rejection, or human escalation.
+
+3. **Approvals become stale**
+
+   Solution: bind approval to the exact artifact hash, repository revision, policy version, proposed action, and expiry.
+
+   Proof: change the repository after approval and show that execution fails closed rather than applying the stale decision.
+
+4. **Graph replay is not reproducible**
+
+   Solution: a run manifest pinning the graph, state schema, prompt, model, tool contract, policy, and evaluator versions.
+
+   Proof: resume an old checkpoint after deploying a new graph and demonstrate controlled migration or quarantine.
+
+5. **An allowed edge becomes an authorization bypass**
+
+   Solution: per-node workload identity, least-privilege capabilities, trusted state labels, sandboxing, and action-scoped authorization.
+
+   Proof: inject a manipulated tool description or credential-scope mismatch and show the policy layer denying it.
+
+6. **Traces show activity but not correctness**
+
+   Solution: connect execution traces to node, transition, trajectory, outcome, and policy evaluations.
+
+   Proof: show a graph that completes successfully but fails its artifact or trajectory invariant.
+
+7. **Fan-out destroys the economics**
+
+   Solution: branch-level token, tool, retry, concurrency, and latency budgets with admission control and early termination.
+
+   Proof: compare unrestricted fan-out with budgeted execution using quality, latency, and cost measurements.
+
+For a 15–20 minute talk, I would not give all seven equal time. Use three failures as live or recorded demonstrations—duplicate side effects, conflicting parallel edits, and stale approval—then show how the seven controls fit into one reference architecture.
+
+The audience should leave with three reusable artifacts:
+
+- a production reference architecture;
+- a failure-injection matrix;
+- a run-manifest and evidence contract.
+
+The proposal’s central promise becomes:
+
+> I will take a plausible coding-agent graph, break it in production-relevant ways, then rebuild it with durability, side-effect safety, isolation, authorization, evaluation, budgets, and lifecycle controls. The result is a practical definition of what turns an agent graph into an AI software factory.
+
+That is much more acceptance-worthy: it has a problem, an implementable solution, empirical proof, and something attendees can apply to their own systems.
+
+> Also how does my threadloop project relate to this? and the governed agent autonomy patterns project?
+
+<details><summary>3 previous messages</summary>
+
+> I’m going to map both projects against the proposed graph/factory architecture using their actual current contracts—not just their project summaries. I’m using the codebase-wisdom skill because this is specifically a cross-repository architecture and coupling question; I’ll separate what each project already proves from what would still need to be built for the talk.
+>
+> The historical summaries already suggest a clean division: ThreadLoop is the durable lifecycle/evidence controller, while governed-agent-autonomy-patterns is the authority-and-boundary harness. I’m now verifying that against the indexed repositories and their current files, because the talk should not claim those prototypes solve surfaces they do not actually implement.
+>
+> The Qodo index returned zero matches for both repository names, so I cannot claim indexed cross-repository coupling from that source. I’m falling back to the two local checkouts and will cite their current files and commits directly; any relationship I describe will be an architectural synthesis, not a declared dependency unless the code shows one.
+</details>
+
+The two projects give the talk its solution architecture.
+
+> **Governed Agent Autonomy Patterns governs execution inside a node or agent loop. ThreadLoop governs advancement across the software-delivery lifecycle.**
+
+```mermaid
+flowchart TD
+    I["Issue and task intent"] --> T1["ThreadLoop: lifecycle authority"]
+    T1 --> H["Governed harness: execution authority"]
+    H --> S["Sandboxed tools and bounded mutations"]
+    S --> V["Independent verification"]
+    V --> R["Content-addressed run receipt"]
+    R --> T2["ThreadLoop: receipt validation and staleness checks"]
+    T2 --> Q["Review, repair, human approval, and completion"]
+```
+
+## How the projects divide responsibility
+
+| Project | Primary question | Contribution to the talk |
+|---|---|---|
+| **Governed Agent Autonomy Patterns** | “May this agent action execute?” | Plan approval, permissions, capability trust, isolation, budgets, exact-subject approval, independent verification, and execution receipts |
+| **ThreadLoop** | “May this task advance?” | Durable lifecycle state, optimistic concurrency, idempotent transitions, proof staleness, repair loops, signed CI/review evidence, human approval, completion authority, and audit history |
+| **The missing integration** | “Can proof from the governed execution safely authorize the next lifecycle transition?” | The concrete system and experiment that would make the summit talk original |
+
+## Governed Agent Autonomy Patterns: the governed node
+
+This project is effectively the implementation of loop engineering.
+
+The provider does not own execution authority. The repository-owned harness decides whether tools run, approvals are valid, lifecycle advances, verification passes, and success can be declared. [Harness architecture](~/Code/governed-agent-autonomy-patterns/examples/governed-coding-agent/README.md:3)
+
+It already supplies several of the proposed solutions:
+
+- exact-subject approvals bind the run, scope, digest and event position;
+- capability changes invalidate earlier trust;
+- token, tool-call and cost limits fail closed;
+- protected actions require an approved plan;
+- source mutations run through bounded repository tools and isolated containers;
+- verification is performed against the exact workspace digest by an independent verifier;
+- the final receipt contains approvals, usage, cost, patch/workspace digests, verification and cleanup evidence. [Enforced controls](~/Code/governed-agent-autonomy-patterns/examples/governed-coding-agent/README.md:39), [approval binding](~/Code/governed-agent-autonomy-patterns/examples/governed-coding-agent/src/harness.ts:312), [budget enforcement](~/Code/governed-agent-autonomy-patterns/examples/governed-coding-agent/src/harness.ts:626), [receipt construction](~/Code/governed-agent-autonomy-patterns/examples/governed-coding-agent/src/harness.ts:1197)
+
+BoundaryBench adds the failure-first evaluation method: frozen decisions, unsafe mutants and reproducible evidence. That is the beginning of the talk’s experimental proof.
+
+Its limitation is important: the harness currently creates its lifecycle and ledger in memory and assembles the receipt at the end of a trial. It is not yet a general crash-resumable, distributed graph runtime. The repository also explicitly says there are no live pilot results yet. [Run initialization](~/Code/governed-agent-autonomy-patterns/examples/governed-coding-agent/src/harness.ts:239), [claim boundary](~/Code/governed-agent-autonomy-patterns/README.md:80)
+
+## ThreadLoop: the outer work graph
+
+ThreadLoop is already a concrete answer to “graph topology is not enough.”
+
+Its lifecycle is an explicit cyclic state graph:
+
+`queued → framed → proof_ready → implementing → verifying → reviewing ↔ repairing → ready_for_human → completed`
+
+But the edge alone never authorizes advancement. Each transition is guarded by plans, current-HEAD proof, repair budgets, review state, approval and merge observations. [Lifecycle graph](~/Code/threadloop/docs/lifecycle.md:3)
+
+It contributes:
+
+- persistent SQLite lifecycle state;
+- expected state versions and idempotency keys;
+- atomic transition, audit and idempotency records;
+- immutable receipts that become stale after a new commit;
+- bounded repair re-entry;
+- signed, identity-bound CI and review evidence;
+- same-HEAD human approval and merge requirements for completion;
+- separation between lifecycle authority and telemetry. [Transition transaction](~/Code/threadloop/docs/lifecycle.md:51), [transition authorities](~/Code/threadloop/docs/lifecycle.md:56), [telemetry boundary](~/Code/threadloop/docs/observability.md:67)
+
+ThreadLoop is therefore closer to a proof-carrying workflow controller than an agent framework. It does not decide how an agent reasons, dynamically schedule arbitrary graph nodes, or govern every tool action inside implementation. The caller executes work; ThreadLoop determines whether the resulting evidence authorizes advancement.
+
+## The combined architecture
+
+A credible integration would work like this:
+
+1. ThreadLoop creates the immutable task and proof plan.
+2. It authorizes entry into `implementing`.
+3. The governed harness executes the coding run under the five gates.
+4. The harness emits a receipt bound to the plan, capability set, budget, patch and workspace digest.
+5. A signing adapter wraps that receipt with ThreadLoop’s session, gate, repository, branch and HEAD identities.
+6. ThreadLoop imports and verifies it without automatically advancing state.
+7. An explicit transition revalidates the current repository and evidence.
+8. Independent review, repair and same-HEAD human approval remain outside the implementing agent’s authority.
+
+There is no direct code dependency between the two local repositories today, and their receipt formats are not currently compatible. That is useful: the integration is a real research contribution, not something to imply already exists.
+
+## How this strengthens the lead proposal
+
+The talk becomes:
+
+> **The Graph Is Not the Factory: Building Proof-Carrying Coding Agents with Governed Loops and Durable Lifecycles**
+
+The practical case study can demonstrate:
+
+- capability drift invalidated by the governed harness;
+- stale code or approval rejected by ThreadLoop;
+- budget exhaustion stopping execution without marking the task complete;
+- independent verification producing a digest-bound receipt;
+- a later review blocker forcing lifecycle re-entry into repair;
+- exact receipt replay remaining idempotent;
+- a crash during the inner harness exposing the remaining durability gap.
+
+That last point matters. You are not presenting the projects as a finished AI factory. You are using two implemented systems to show what the factory requires, which controls already work, where their authority boundaries meet, and what remains unsolved.
+
+Current evidence boundary: the governed-autonomy checkout is clean, but its own documentation limits the evidence to deterministic conformance rather than production outcomes. ThreadLoop’s local `issue-42/review-audit-handoff` checkout contains extensive uncommitted work, so the review-sensor and audit surfaces should be presented as working-tree implementation until they are separately committed, tested and landed. The Qodo codebase index returned no matches for either repository, so this assessment comes from the current local checkouts rather than indexed cross-repository analysis.
+
+> Provide a note I can share in the slack that will exemplify what I could submit as a result of this idea we have here. Do not send it just share the draft with me here.
+
+<details><summary>2 previous messages</summary>
+
+> I’m drafting this as a private, post-ready Slack note only—nothing will be sent or saved as a publication state. I’m using the outbound Slack formatting rules plus your voice system; the weekly workflow will only constrain claims and status language here, not turn this into a content package.
+>
+> Context compaction
+>
+> Source: automatic
+> Status: completed
+</details>
+
+Draft:
+
+I did a first architecture pass on the “graph engineering” idea, and I think there’s a strong CODE Summit proposal in it:
+
+**The Graph Is Not the Factory: Building Proof-Carrying Coding Agents with Governed Loops and Durable Lifecycles**
+
+Graph engineering gives us a way to compose multi-step agents: nodes, tools, branches, evaluators, and human gates. But the graph only describes the execution topology. It does not make an AI factory reliable.
+
+At scale, the hard problems are durable state, safe retries, concurrent workspace changes, stale approvals, permission drift, budget enforcement, independent verification, and proving exactly what ran. The talk would pair each problem with an implementable control:
+
+- Crashes and retries after side effects → durable intents, idempotency keys, and replay-safe receipts
+- Code, policy, or tools changing after approval → approvals bound to the exact digest, repository HEAD, capabilities, and expiry
+- The agent claiming its own work passed → independent verification and content-addressed evidence
+- An agent run finishing before the task is safely complete → separate execution authority from lifecycle authority
+
+That last distinction is where my two projects fit.
+
+**Governed Agent Autonomy Patterns** governs the inner execution loop: planning, permissions, tool trust, budgets, isolation, and verification.
+
+**ThreadLoop** governs the outer work lifecycle: durable state transitions, current-HEAD proof, review and repair loops, and explicit human authorization of completion.
+
+The architectural bridge is a proof-carrying handoff. The governed harness produces a digest-bound run receipt. ThreadLoop verifies that receipt against the expected task, plan, repository state, and policy before allowing the work to advance.
+
+A live demonstration could deliberately trigger stale approval, capability drift, budget exhaustion, replay after failure, and a later review blocker—then show each failure being contained instead of silently becoming “success.”
+
+The audience would leave with a reference architecture, a failure matrix, and a concrete proof contract. I think this gives us a practical move from graph engineering to AI factory engineering, grounded in systems we can actually demonstrate.
+
+If this direction resonates, I can turn it into the full 15–20 minute CFP abstract and talk outline.
+
+> This is incredible information and something we need to consider in the next steps for governed agent autonomy patterns and thread loop. I'm sure there are aspects of thread loops we've been working on, and there are upcoming issues or tasks to complete that could help build this into the exact tool people will want to see in the market and in the developer ecosystem.
+>
+> We need to consider thread loop and the future work for governed agent autonomy patterns so I can figure out what gaps I need to close to make this a real thing for graph engineering and loop engineering, with these tools separately for their different purposes.
+>
+> You need to research both of these projects and the future upcoming work that would satisfy the constraints, and then assess the remaining gaps that would not bloat the projects but rather make them even more refined and clear on their value.
+
+<details><summary>14 previous messages</summary>
+
+> I’m treating this as a product-architecture assessment, not a request to merge the projects. I’ll use the research skill to establish current evidence and the codebase-design lens to separate each project’s core responsibility from tempting but bloating additions. Then I’ll map existing and upcoming work to the minimum gaps needed for a credible graph/loop engineering story.
+>
+> The first important distinction is already visible: ThreadLoop’s checkout contains a large uncommitted issue-42 implementation on top of `origin/main`, while Governed Agent Autonomy Patterns is on a pushed feature branch. I’ll keep those states separate from landed capability and from future recommendations.
+>
+> The clean architectural split is becoming clear: a graph runtime should continue to own topology and scheduling; Governed Agent Autonomy Patterns should make an individual adaptive node enforceable and testable; ThreadLoop should decide whether the larger coding task may advance. Neither project benefits from becoming a generic DAG engine. The useful connection is an evidence contract, not shared internal state.
+>
+> The Governed Agent Autonomy Patterns review is complete and confirms an important boundary: its best future is a portable execution-authority and conformance kit, not another graph orchestrator. It also found that the open pricing PR still needs schema-version remediation before the real 60-cell pilot can be frozen and run.
+>
+> The lean-roadmap filter I’m applying is: deepen an existing interface, keep authority in the correct project, require a failure case, and defer any seam that has only one hypothetical consumer. That is pushing several attractive ideas—graph editors, distributed scheduling, arbitrary multi-agent routing, and the results dashboard—out of the near-term roadmap.
+>
+> One roadmap risk is now confirmed: ThreadLoop’s M003 Rust rewrite is explicitly planning-only and still targets an older pre-M002 contract. Starting it now would freeze the wrong interface. It should wait until #42, #43, and the proof-carrying runner experiment stabilize the TypeScript contract.
+>
+> ThreadLoop’s local issue-42 implementation is close but still not a deliverable: 255 of 256 tests passed in the full run, and the remaining packaging test timed out only under the parallel suite while passing alone. I’ll treat that as a validation/reliability gap to resolve before opening the PR, not as evidence that #42 is complete.
+>
+> The ThreadLoop repository changed externally while the research was running: the previously uncommitted issue-42 work is now a clean commit on a remote branch. I’m re-opening the live branch and PR state before finalizing so the report does not freeze a stale status claim.
+>
+> <details><summary>Edited 2 files</summary>
+>
+> - Wrote `./research/threadloop-governed-autonomy-seam-2026-07-29.md` (+11 -4)
+> - Wrote `./research/threadloop-graph-loop-future-2026-07-29.md` (+16 -11)
+>
+> </details>
+>
+> Context compaction
+>
+> Source: automatic
+> Status: completed
+>
+> I’ve finished the architectural comparison and the anti-bloat roadmap. I’m doing one last live check of both pull requests so the handoff reflects their actual status, not the earlier snapshot.
+>
+> The final check exposed a concrete priority: ThreadLoop PR #67 is mergeable, but both macOS jobs now fail on the same 30-second integration-test timeout seen locally, and its workflow-security check is also red. That strengthens the recommendation to treat reliability and proof completion—not new surface area—as the immediate next work.
+>
+> <details><summary>Edited 2 files</summary>
+>
+> - Wrote `./research/threadloop-governed-autonomy-seam-2026-07-29.md` (+3 -1)
+> - Wrote `./research/threadloop-graph-loop-future-2026-07-29.md` (+7 -3)
+>
+> </details>
+>
+> The reports are complete. The central outcome is a focused two-product strategy: Governed Agent Autonomy Patterns governs one bounded execution; ThreadLoop governs whether the durable coding task may advance; an external runner connects them without turning either into a general graph framework.
+</details>
+
+The right architecture is two focused products around an external graph runtime—not one combined graph framework.
+
+| Product | Core question | Authority |
+| --- | --- | --- |
+| Governed Agent Autonomy Patterns | “May this exact agent attempt execute, and was its result independently verified?” | Plan, permission, tools, sandbox, budget, verification, execution receipt |
+| ThreadLoop | “May this coding task advance based on current repository evidence?” | Durable lifecycle, current-HEAD proof, CI, review, repair, human completion |
+| External runner | “What runs next?” | Wakeups, scheduling, retries, graph topology |
+
+The critical invariant is: **a successful governed execution never automatically completes or advances a ThreadLoop task.**
+
+## Immediate priorities
+
+1. **Finish ThreadLoop issue #42 through [PR #67](https://github.com/nnennandukwe/threadloop/pull/67).**
+   The review sensor, audit ledger, signed review receipts, and handoff are substantial, but the PR is not ready. Workflow security is red, and both macOS jobs passed 255/256 tests before the same repair-history test timed out. The completion bar should include terminal green CI and a real commit-pinned OIDC review-sensor run with positive and negative imports.
+
+2. **Run ThreadLoop [issue #43](https://github.com/nnennandukwe/threadloop/issues/43) against SignalPay.**
+   This is the most valuable market-facing test: duplicate wakes, crash/restart, stale HEAD, bounded repair, review re-entry, and human-only completion. Add a wake lease only if this pilot actually reproduces duplicate execution or spend.
+
+3. **Resolve and merge Governed Agent Autonomy Patterns [PR #5](https://github.com/nnennandukwe/governed-agent-autonomy-patterns/pull/5).**
+   It is approved and green, but the experiment schema-version mismatch remains unresolved. After correcting it, freeze the real 60-cell pilot against the merge commit, run it, reconcile costs, and complete human claim review. No live empirical claim exists yet.
+
+4. **Keep both deferred expansions deferred.**
+   Do not start ThreadLoop’s Rust rewrite or the BoundaryBench explorer until the current contracts and representative evidence stabilize.
+
+## Narrow gaps worth adding
+
+For Governed Agent Autonomy Patterns:
+
+- An internal `WorkspaceMaterializer` supporting fixtures and arbitrary clean Git repositories.
+- A small `RunJournal` for stable execution identity, duplicate-start suppression, and crash-visible partial evidence.
+- A compact, versioned, redaction-safe `ExecutionReceiptProjector`.
+- `EventSink` and `AbortSignal` seams for observable cancellation.
+- Pre-call budget reservation and post-call reconciliation.
+
+For ThreadLoop:
+
+- Proof-plan validation from a file and machine-readable JSON Schemas.
+- File-based transition input for safer runner integration.
+- An immutable evidence-bundle export after #42 lands.
+- Basic public release hygiene after #42, #43, and the dependency exception in #46 are resolved.
+
+The first integration should live in a separate runner and exchange only:
+
+- `change.patch`
+- `execution-receipt.json`
+
+ThreadLoop should then independently observe the resulting commit, current HEAD, CI, review, and merge evidence. A first-class receipt importer should be added only if a real lifecycle transition needs executor provenance; it should not be built speculatively.
+
+## Explicit anti-bloat boundary
+
+Neither project should add:
+
+- A graph DSL, scheduler, distributed task queue, or plugin registry.
+- General workflow replay infrastructure.
+- Cloud persistence merely for scale optics.
+- Model/tool/sandbox policy inside ThreadLoop.
+- Ticket, PR, merge, or release lifecycle authority inside the governed harness.
+- Configurable repair limits, multiple orchestrator adapters, or signing infrastructure without representative demand.
+
+The resulting market story is unusually clear: **Governed Agent Autonomy Patterns makes an execution attempt permissioned and provable; ThreadLoop makes repeated coding work durable and evidence-bound. Together, they demonstrate safe loop engineering without competing with graph runtimes.**
+
+The primary deliverable is the validated [architecture and roadmap memo](<./research/threadloop-governed-autonomy-seam-2026-07-29.md>). Supporting detail is in the [ThreadLoop assessment](<./research/threadloop-graph-loop-future-2026-07-29.md>) and [Governed Agent Autonomy Patterns assessment](<./research/governed-agent-autonomy-graph-loop-future-2026-07-29.md>).
+
+No product source code was changed. Live repositories, issues, and pull requests were verified; GitHub Projects board data was unavailable because the current credential lacks `read:project`, so no unseen board state is presented as researched.
+
+> I've made some updates to Governed Agent Autonomy and ThreadLoop. Can you now assess its current state and provide separate plans for the very next steps that I will need to talk with Codex about for architecting implementation for closing the gap, knowing everything you know now?
+
+<details><summary>7 previous messages</summary>
+
+> I’ll reassess both repositories from their current HEADs and live GitHub state, then produce two independent, implementation-ready architecture plans. I’m using the research, codebase-design, and software-build-plan skills because this needs verified evidence, clear module boundaries, and plans Codex can execute without prematurely coupling the projects.
+>
+> The updates are material. ThreadLoop’s review/audit work is now on `main`, followed by new governed-graph positioning. Governed Agent Autonomy Patterns has three additional fixes on its pricing branch, including the schema-version correction that was previously blocking the next pilot. I’m now checking whether CI, issues, contracts, and evidence state match those commits.
+>
+> The previous blockers are now closed: ThreadLoop #42 and Governed PR #5 both merged with green checks. That changes the sequence. ThreadLoop’s next authoritative build is issue #43. For Governed Agent Autonomy Patterns, the schema/pricing work is complete, but the live pilot still has a runtime-accountability gap: resumption recognizes only finalized receipts, so a crash after provider spend but before atomic receipt publication can be retried without durable evidence of the first attempt. I’m testing whether that should be the final pre-pilot build rather than adding broader framework features.
+>
+> A new ThreadLoop commit landed while this assessment was running. I’m refreshing again because `main` moved beyond the graph-positioning commit and its latest CI is red; I won’t base the next-step plan on the earlier green snapshot.
+>
+> Both repositories now validate cleanly locally: ThreadLoop passed 263 tests plus build and packaged-install smoke; Governed passed build, typecheck, all deterministic/experiment tests, and BoundaryBench 35/35 with 5/5 mutants. Governed’s merged main CI also passed the Docker lane. The only live anomaly is ThreadLoop’s newest `main` run: one Ubuntu/Node 22.23 job timed out in a concurrency test after the same commit’s PR matrix and all other main jobs passed, so I’m treating it as a required stability entry gate—not folding an arbitrary timeout increase into the runner work.
+>
+> The deeper governed-run inspection changed one sequencing decision from the earlier seam memo: the paid pilot should not auto-resume receipt-less cells until start admission is durable. I’m reconciling the research notes so the final recommendation is consistent: a tiny experiment-local write-once marker now; leases, general journaling, and replay infrastructure remain deferred.
+>
+> <details><summary>Edited 2 files</summary>
+>
+> - Wrote `./research/threadloop-governed-seam-refresh-2026-07-29.md` (+41 -25)
+> - Wrote `./research/governed-current-state-next-build-2026-07-29.md` (+2 -0)
+> - Wrote `./research/threadloop-governed-seam-refresh-2026-07-29.md` (+2 -0)
+>
+> </details>
+</details>
+
+Your updates closed the two earlier blockers. The projects are now ready for two distinct next builds—not an integration build.
+
+Current verified state:
+
+- **ThreadLoop:** `main@ae85c76`; issue #42 and [PR #67](https://github.com/nnennandukwe/threadloop/pull/67) are complete. M002 is 5/6, leaving [issue #43](https://github.com/nnennandukwe/threadloop/issues/43). Local validation passed 263/263 tests, build, security threshold, and packaged-install smoke. The latest main CI has one floating Ubuntu/Node 22 timeout, despite the same commit’s PR matrix and all other jobs passing.
+- **Governed Agent Autonomy Patterns:** `main@6316a77`; [PR #5](https://github.com/nnennandukwe/governed-agent-autonomy-patterns/pull/5) merged with experiment schemas at `v0.2.0`, corrected pricing evidence, and green Docker-enabled CI. No live manifest, run set, or empirical result exists.
+- **Architecture:** Governed continues to own one bounded agent attempt. ThreadLoop owns the durable software-delivery lifecycle. Neither should depend on the other yet.
+
+# ThreadLoop Runner Contract and Replay Build Plan
+
+## Summary
+
+- **Outcome:** Package the one-wake Codex operating contract and prove it with duplicate-wake and SignalPay replay fixtures.
+- **Authority:** ThreadLoop issue #43.
+- **Starting baseline:** `origin/main@ae85c765e542b015e7bc9aa2297f6742af5d55da`, subject to the CI entry gate below.
+- **Review unit:** One ThreadLoop PR that says `Part of #43` or `Refs #43`; it must not close #43.
+- **Primary boundary:** Use existing protocol/session interfaces. Add no scheduler, lease, state, schema, or runtime module.
+
+## Skills To Use
+
+- `code-review`: final Standards and Spec review.
+- `workflow-invariants`: enforce one action per wake and human stops.
+- `failure-path-testing`: prove duplicate delivery, lost response, stale state, and evidence failures.
+- `dx-audit`: verify the skill can be followed using documented CLI fields alone.
+
+## Scope
+
+In scope:
+
+- `.agents/skills/threadloop-runner/SKILL.md`.
+- Stable wake identity and transition idempotency.
+- Duplicate, concurrent, stale, and conflicting-wake tests.
+- A pinned SignalPay PR #4 review/repair replay fixture.
+- Stopping at `ready_for_human`.
+- Correcting the README’s stale statement that review-owned edges are unavailable.
+
+Out of scope:
+
+- The SignalPay enablement PR and scheduled live replay.
+- Closing #43.
+- Exactly-once agent execution claims.
+- Executor leases, queues, schedulers, graph DSLs, or same-checkout concurrency.
+- Governed-harness receipt ingestion.
+- Product source, schema, lifecycle, protocol, dependency, or repair-limit changes.
+
+## Package Layout / File-to-Task Mapping
+
+- `.agents/skills/threadloop-runner/SKILL.md` **(new):** wake contract and authority limits.
+- `tests/fixtures/runner/signalpay-pr-4-replay.json` **(new):** pinned replay scenario.
+- `tests/integration/runner-replay.test.ts` **(new):** public-CLI replay tests.
+- `docs/agent-mode.md`: runner usage and scheduler assumptions.
+- `README.md`: landed review behavior and unrun-pilot boundary.
+
+No `src/`, workflow, migration, or dependency changes are planned. If implementation requires them, stop and re-scope.
+
+## Dependencies And Settings
+
+- No dependency changes.
+- SQLite remains schema `6`.
+- Protocol and `session next` remain version `3`.
+- Node remains `>=22.13.0`.
+- The scheduler supplies an explicit `wake_id`; no ambient environment state is added.
+
+## Canonical Contracts
+
+Wake input:
+
+```text
+repo_root: canonical dedicated worktree path
+session_id: explicit ThreadLoop session
+wake_id: stable scheduler delivery identity
+mode: normal | replay
+```
+
+Transition key:
+
+```text
+runner:v1:<wake_id>:<expected_state_version>
+```
+
+Wake invariant:
+
+1. Verify repository, branch, HEAD, cleanliness, session, and protocol v3.
+2. Read `session next --json`.
+3. If terminal or human-owned, stop.
+4. If the candidate is executable, submit exactly that transition and stop.
+5. Otherwise, perform at most one explicitly allowed `required_work` action and stop.
+6. Unknown work codes fail closed.
+
+A successful or replayed transition is always the final action of that wake. This proves idempotent transition delivery; it does not claim exactly-once agent execution.
+
+## TDD And BDD Implementation Strategy
+
+Vertical slices:
+
+1. Exact duplicate transition → one state change and one audit event.
+2. Lost-response retry → byte-identical replay with no new event.
+3. Changed request under the same key → `IDEMPOTENCY_CONFLICT`.
+4. Distinct concurrent wakes → one winner and one `STATE_VERSION_CONFLICT`.
+5. SignalPay replay → implementation, review blocker, descendant repair, re-verification, then `ready_for_human`.
+6. Unknown or human-owned work → stop without generic execution.
+
+Tests should assert through `protocol`, `session next`, `session transition`, gate, review, and audit CLI projections—not SQLite internals.
+
+## Component Design
+
+The skill is the orchestration module. Existing ThreadLoop commands remain the interface and lifecycle authority. The external scheduler owns wake delivery and worktree serialization.
+
+No `Runner` class, action-dispatch framework, scheduler interface, plugin registry, or lease abstraction belongs in `src/`.
+
+## Failure And Recovery Rules
+
+- Dirty or mismatched checkout: preserve it and stop; never clean/reset automatically.
+- State-version conflict: stop; a later wake must reread state.
+- Idempotency conflict: retain both request digests; never mint a replacement key in the same wake.
+- Missing/stale/corrupt evidence: perform at most one declared recovery action.
+- Repair budget exhausted: stop for explicit block evidence.
+- `ready_for_human`, approval, merge, deployment, publication, secret rotation, or policy activation: stop.
+- Crash after an ambiguous transition response: retry the identical request with the same `wake_id`.
+- Crash during implementation: preserve the worktree; do not silently restart it.
+
+## Commit Plan
+
+1. `feat(runner): add one-action wake contract and duplicate-wake proof`
+2. `test(runner): add pinned SignalPay review-repair replay`
+3. `docs(runner): align landed graph edges and pilot boundary`
+
+## Branch And PR Flow
+
+1. Resolve the current main-CI entry gate. Rerun/reproduce the Ubuntu Node 22.23 timeout. If it repeats, fix it separately by profiling the concurrent child-process/SQLite path—not by arbitrarily increasing the timeout.
+2. Create `feat/issue-43-runner-contract` from the then-green `origin/main`.
+3. Implement the vertical slices.
+4. Run focused and full verification.
+5. Review the fixed complete change set with Codex `code-review`.
+6. Independently review the same fixed point with:
+
+```bash
+claude -p --model claude-opus-5 "<read-only review against issue #43, repository standards, and the complete change set>"
+```
+
+7. Reproduce, deduplicate, and remediate every confirmed finding; rerun both reviews.
+8. Open one PR using `Part of #43` or `Refs #43`.
+
+## Test Plan
+
+```bash
+npx vitest run tests/integration/runner-replay.test.ts
+npm run lint:markdown
+npm run check
+npm run security:dependencies
+git diff --check origin/main...HEAD
+```
+
+Manual acceptance must confirm the skill references only real protocol-v3 fields, the fixture pins the intended SignalPay repository and commits, and no `src/` or workflow files changed.
+
+## Definition Of Done
+
+- Duplicate/lost delivery produces one lifecycle transition.
+- Conflicting/stale wakes fail closed.
+- The replay reaches `ready_for_human` without performing human actions.
+- No scheduler, lease, schema, state, dependency, or runtime surface is added.
+- Required CI and dual reviews are green.
+- The PR links but does not close #43.
+
+## Assumptions And Defaults
+
+- The intended pilot is `nnennandukwe/qodo-quality-workshop-signalpay` PR #4. The live issue currently says only “SignalPay PR #4,” which is ambiguous and should be clarified.
+- The scheduler serializes execution in one dedicated worktree.
+- A new durable wake claim is authorized only if the live replay reproduces overlapping implementation execution.
+
+The complete plan is in [ThreadLoop current state and next build](<./research/threadloop-current-state-next-build-2026-07-29.md>).
+
+# BoundaryBench Attempt Admission Build Plan
+
+## Summary
+
+- **Outcome:** Make the start of every paid experiment cell durable before model activity.
+- **Authority:** The frozen experiment’s one-independent-run and visible-failure requirements.
+- **Starting baseline:** `origin/main@6316a77d4033a269cfbd9162b16a67b62ffd1d47`.
+- **Review unit:** One experiment-local PR before freezing the live manifest.
+- **Primary boundary:** Write-once attempt admission and fail-stop recovery—not a general runtime journal.
+
+The current runner considers every cell without a terminal receipt pending. A crash after provider activity but before `AtomicEvidenceSink.write` therefore makes the same cell eligible for silent replay, potentially duplicating spend and replacing the declared single sample.
+
+## Skills To Use
+
+- `code-review`: final Standards and Spec review.
+- `tdd-bdd`: define attempt states before implementation.
+- `failure-path-testing`: prove crash, race, tampering, and write-failure behavior.
+- `codebase-design`: keep admission behind one small experiment-local interface.
+
+## Scope
+
+In scope:
+
+- A canonical write-once attempt-start artifact.
+- Exclusive local acquisition before `createModel` or `runTrial`.
+- Derived states: `never_started`, `finalized`, `uncertain`, and `invalid`.
+- Resume only `never_started` cells.
+- Stop the complete run set when any attempt is uncertain or invalid.
+- Preserve existing finalized receipts as terminal evidence.
+
+Out of scope:
+
+- Full event, transcript, approval, or usage journaling.
+- Leases, heartbeats, takeover, queues, distributed locking, or automatic retry.
+- Synthetic crash receipts.
+- Manifest, receipt, or deterministic-protocol schema changes.
+- ThreadLoop integration or the interactive explorer.
+- Running the paid pilot inside this PR.
+
+## Package Layout / File-to-Task Mapping
+
+- `boundarybench/experiment/src/attempt-journal.ts` **(new):** marker construction, validation, exclusive creation, and classification.
+- `boundarybench/experiment/src/types.ts`: attempt-start and derived-state types.
+- `boundarybench/experiment/src/runner.ts`: inspect before provider readiness and acquire before inference.
+- `boundarybench/experiment/test/attempt-journal.test.ts` **(new):** persistence and race tests.
+- `boundarybench/experiment/test/runner.test.ts`: fail-stop resume regressions.
+- `boundarybench/experiment/README.md`: artifact and recovery contract.
+
+The harness, providers, `AtomicEvidenceSink`, and deterministic protocol remain unchanged.
+
+## Dependencies And Settings
+
+- No new dependencies or environment variables.
+- Add only `boundarybench.attempt-start.v0.1.0`.
+- Config, draft, and manifest remain `v0.2.0`.
+- Receipt remains `boundarybench.receipt.v0.1.0`.
+- Store markers under `.boundarybench/runs/<run-set-id>/attempts/<run-id>.json`.
+- Use exclusive creation and flush before admission succeeds.
+
+## Canonical Contracts
+
+Marker:
+
+```json
+{
+  "schemaVersion": "boundarybench.attempt-start.v0.1.0",
+  "runSetId": "<frozen run set>",
+  "manifestDigest": "sha256:<digest>",
+  "runId": "<exact frozen cell>",
+  "taskId": "<task>",
+  "provider": "<provider>",
+  "condition": "<condition>",
+  "startedAt": "<ISO timestamp>",
+  "markerDigest": "sha256:<preceding fields>"
+}
+```
+
+State derivation:
+
+| Marker | Valid receipt | State | Action |
+| --- | --- | --- | --- |
+| Absent | Absent | `never_started` | Eligible for exclusive acquisition |
+| Valid | Absent | `uncertain` | Stop before provider work |
+| Valid | Present | `finalized` | Preserve and continue |
+| Absent | Present | `legacy_finalized` | Preserve; never replay |
+| Invalid/foreign | Any | `invalid` | Fail closed |
+
+The experiment-local module exposes only `inspect()` and `begin()`. A terminal receipt remains completion evidence.
+
+## TDD And BDD Implementation Strategy
+
+Vertical slices:
+
+1. Two simultaneous `begin` calls → exactly one `acquired`.
+2. Start marker without receipt → `uncertain`, never pending.
+3. Marker plus valid receipt → `finalized`.
+4. Malformed, foreign, or digest-mismatched marker → fail before provider work.
+5. Simulated provider activity followed by pre-receipt failure → restart makes zero provider calls.
+6. Legacy valid receipt without marker → remains terminal.
+
+## Component Design
+
+`FileAttemptJournal` owns admission and classification. `runExperiment` owns sequencing. `GovernedHarness` still owns one attempt, and `AtomicEvidenceSink` still owns terminal publication.
+
+The exclusive marker create is the admission transaction; the atomic receipt rename is completion. A crash between them is intentionally `uncertain`.
+
+No storage adapter registry or generic `RunJournal` should be introduced.
+
+## Failure And Recovery Rules
+
+- Marker write/flush fails: no model construction or call.
+- Existing marker without receipt: retain the run set and stop.
+- Invalid or foreign marker: fail closed; do not repair or overwrite it.
+- Two processes race: one acquires; every loser stops.
+- Crash after marker but before provider work: conservatively uncertain.
+- Crash during provider work: preserve unknown usage; never convert it to zero.
+- Receipt write fails: retain marker and stop.
+- Any uncertain attempt stops later cells because aggregate spend is unknown.
+- Recovery requires investigation and, if another sample is authorized, a newly seeded and frozen run set.
+
+## Commit Plan
+
+1. `test(experiment): specify write-once attempt admission`
+2. `fix(experiment): stop resume on uncertain attempts`
+3. `docs(experiment): define crash-visible resume semantics`
+
+## Branch And PR Flow
+
+1. Fast-forward local `main` to `6316a77`; do not use the stale local `main@77cfb8f`.
+2. Create `feat/boundarybench-attempt-admission`.
+3. Implement failure-first slices.
+4. Run focused and complete validation.
+5. Run Codex `code-review` and independent `claude-opus-5` review against the same fixed point.
+6. Remediate and rerun both reviews.
+7. Require green Docker-enabled CI.
+8. Only after merge, re-check prices/configuration and freeze the live manifest against the new merge commit.
+
+## Test Plan
+
+```bash
+npm run build
+npm run typecheck
+npm test
+npm run boundarybench
+npm audit --audit-level=moderate
+```
+
+The PR must also pass the repository’s Docker-enabled CI. No paid provider call is required for acceptance.
+
+## Definition Of Done
+
+- Every new live cell is admitted through a flushed write-once marker.
+- Two local processes cannot both acquire one frozen cell.
+- Marker without receipt is visibly uncertain and blocks further provider work.
+- Only never-started cells are eligible for execution.
+- No synthetic evidence hides unknown usage or outcomes.
+- The 60-cell denominator cannot silently acquire extra stochastic attempts.
+- All deterministic, experiment, Docker, audit, and dual-review gates pass.
+- No lease, scheduler, automatic replay, general journal, or integration feature leaks in.
+- The live pilot remains a post-merge activity.
+
+## Assumptions And Defaults
+
+- One frozen cell means one started provider attempt—not one eventual receipt.
+- Unproven absence of provider effects means `uncertain`.
+- Conservative false positives are acceptable for this exploratory pilot.
+- The local filesystem remains the single-host store.
+- The manifest’s commit binding covers this implementation; its shape need not move to `v0.3.0`.
+
+The complete plan is in [Governed current state and next build](<./research/governed-current-state-next-build-2026-07-29.md>). The reconciled product relationship is in the [seam refresh](<./research/threadloop-governed-seam-refresh-2026-07-29.md>).
+
+Only local research files were created or updated. Neither product repository, its branches, nor its GitHub issues or pull requests were changed. Prior memory was used only to route earlier work; every current status claim above was revalidated against the live repositories.
+
+> The threadloop plan was supposed to be about testing if it could run successfully in a repo that a coding agent is working in, like when using a coding agent for working on a feature....
+
+<details><summary>17 previous messages</summary>
+
+> You’re right—the ThreadLoop plan was scoped one layer too early. The runner skill and replay fixture are supporting work; the actual acceptance target is: **a coding agent uses ThreadLoop while implementing a real feature in a separate repository, and ThreadLoop successfully governs the work from framing through proof, review/repair, and the human stop.**
+>
+> I’m revising it as a consumer-repository feature pilot. I’ll use the Software Build Plan and codebase-design guidance to keep the pilot implementation-ready without turning ThreadLoop into the coding agent or scheduler.
+>
+> Context compaction
+>
+> Source: automatic
+> Status: completed
+>
+> The live repositories sharpen the correction: ThreadLoop issue #43 is already closed and its runner/replay work exists on `feat/issue-43-runner-contract`, while SignalPay PR #4 is still the old refund implementation. That replay can prove transition mechanics, but it cannot answer whether ThreadLoop works during a new coding-agent feature session. I’m treating the replay as a prerequisite, not the pilot result.
+>
+> The corrected plan will therefore test two things separately: the feature itself must be successfully implemented and verified in SignalPay, and the control loop must remain trustworthy across fresh Codex wakes, evidence collection, review/repair, and the final human stop. I’m also adding explicit usability measurements so a “successful demo” cannot hide excessive controller intervention.
+>
+> One important current-state finding is already clear: the runner contract is not on ThreadLoop `main`. PR #68 was closed without merge, and its latest scope no longer matches the earlier Qodo review that discussed the removed 5,000-line replay. Before using it as pilot authority, that exact four-file branch needs a fresh review and integration decision.
+>
+> I’m validating the plan against the actual lifecycle and authority contracts now. The key architectural seam is deliberate: Codex performs the bounded feature/repair action; ThreadLoop authorizes and records the lifecycle; a thin external controller handles GitHub sensor packages and PR operations; the human retains approval and merge. The pilot should measure whether that separation is usable, not silently collapse those roles.
+>
+> The main usability risk the pilot must expose is the clean-worktree/one-commit discipline. The current runner allows a coding agent to iterate on tests and code inside one `COMMIT_IMPLEMENTATION` wake, but it expects that wake to end as one clean commit. That is a meaningful constraint on normal agent work, so the acceptance criteria will measure it instead of assuming it is acceptable.
+>
+> So are you saying that you need the runner skill or something else?
+>
+> The runner skill is needed, but it is only the operating contract for each Codex wake. It tells the agent: inspect this exact repo/session, take at most one authorized action, preserve evidence, and stop at the human boundary.
+>
+> What is still needed for the actual feature pilot is a thin pilot controller around it:
+>
+> - prepare the clean SignalPay worktree and start the ThreadLoop session;
+> - retain `wake_id` records and invoke Codex with the runner skill;
+> - handle the actions the runner intentionally cannot do—push/open the PR and collect/import signed CI or review evidence;
+> - invoke the next Codex wake until ThreadLoop reaches `ready_for_human`.
+>
+> So: **runner skill = how one coding-agent wake behaves; pilot controller = what safely connects multiple wakes into an end-to-end feature run.** We do not need a full scheduler product yet. The smallest honest test can use a manual controller runbook plus durable wake records, then automate only the friction the pilot proves is real.
+>
+> then add it to the plan to extract that code specifically. it's there.
+>
+> Understood. I’ll make “extract the existing pilot-controller code” an explicit plan item, not “design a controller from scratch.” I’m locating the exact commit/file boundary now so the plan can name what to recover, what to keep, and what not to drag back in.
+>
+> I found the exact source. The controller prototype is in the currently unreachable commit `ffa9269a4761325867a2fae90fe1cc7950854140`, embedded inside the old 5,188-line `runner-replay.test.ts`. It contains the preflight validator, action selector, retained wake-record logic, transition retry, repository-action wrapper, gate runner, and external-evidence boundary. The plan will preserve that commit first and extract those components selectively—never cherry-pick the giant replay or restore its PII-bearing fixture.
+>
+> <details><summary>Created a file</summary>
+>
+> - Wrote `./research/threadloop-current-state-next-build-2026-07-29.md` (+565 -0)
+>
+> </details>
+>
+> The plan is updated now. It names the recovery SHA, the exact prototype regions to extract, the proposed pilot-controller files, the durable wake-store gap, and the fresh SignalPay feature acceptance. I’m doing the final read-only consistency pass on that revised artifact; no product repository has been modified.
+>
+> The extraction boundary is intentionally narrow: the plan keeps the pure validation/decision/record code and the real CLI-facing wake routines, while excluding the old synthetic SignalPay repository, fake signed packages, raw commit payloads, and the monolithic replay scenario. That is the part that turns existing code into a usable pilot without importing the earlier test bloat.
+>
+> One correction worth calling out explicitly: the recovery SHA currently has no branch or tag pointing to it. The first implementation step in the plan is therefore preservation, before rebase, cleanup, or worktree changes. Codex should extract with `git show`; it should not cherry-pick that historical commit.
+>
+> <details><summary>Edited a file</summary>
+>
+> - Wrote `./research/threadloop-current-state-next-build-2026-07-29.md` (+2 -2)
+>
+> </details>
+</details>
+
+Updated the [ThreadLoop Consumer-Repository Feature Pilot Build Plan](<./research/threadloop-current-state-next-build-2026-07-29.md:3>).
+
+It now explicitly:
+
+- Preserves the unreachable controller prototype at `ffa9269a4761325867a2fae90fe1cc7950854140`.
+- Identifies the [exact code regions to extract](<./research/threadloop-current-state-next-build-2026-07-29.md:140>).
+- Prohibits cherry-picking the giant historical replay and its PII fixture.
+- Defines the proposed `tools/runner-pilot/` controller modules and durable wake-record store.
+- Separates the runner skill, pilot controller, Codex, external evidence controller, and human authority.
+- Makes a [fresh SignalPay capture-state feature](<./research/threadloop-current-state-next-build-2026-07-29.md:105>) the real acceptance test.
+- Requires a fresh Codex context to continue from durable repository state.
+- Measures controller intervention and usability friction—not merely whether the demo reaches the final state.
+
+The independent review found only an inaccurate historical test line count; I corrected it to “roughly 5,300 lines.” No product repositories were changed, staged, or committed.
+
+> Why would we need `runner-replay.test.ts`? I thought we only needed the skill?
+
+<details><summary>3 previous messages</summary>
+
+> You’re right. The live feature pilot needs the runner skill, not `runner-replay.test.ts`. I conflated “prove the skill works” with “extract a software controller from the old test harness,” which added an automation layer you did not ask for.
+>
+> I’m using the Software Build Plan guidance to remove that extraction work from the plan. The test can remain ThreadLoop’s internal regression coverage, but SignalPay and the Codex feature run must not depend on it.
+>
+> Live state is unchanged: the runner skill is still on the closed, unmerged PR #68 branch, while SignalPay PR #4 remains an unrelated open refund PR. The corrected plan will therefore use the reviewed skill snapshot as the pilot procedure and treat both replay tests as internal ThreadLoop evidence only—never as pilot code or a consumer dependency.
+>
+> <details><summary>Created a file</summary>
+>
+> - Wrote `./research/threadloop-current-state-next-build-2026-07-29.md` (+542 -0)
+>
+> </details>
+</details>
+
+You’re right. `runner-replay.test.ts` is not needed to run the consumer-repository pilot. It is only internal ThreadLoop regression coverage.
+
+From ThreadLoop, the pilot needs:
+
+- The runner skill.
+- The existing ThreadLoop CLI.
+- The existing signed sensor workflows if testing the full proof/review lifecycle.
+
+A supervised operator or scheduled task can supply each wake and retain its JSONL handoff. No extracted controller code is required.
+
+I corrected the [ThreadLoop pilot plan](<./research/threadloop-current-state-next-build-2026-07-29.md:5>) to remove:
+
+- The historical recovery SHA.
+- Controller extraction.
+- `tools/runner-pilot/`.
+- A durable controller implementation.
+- Any SignalPay dependency on replay tests or fixtures.
+
+The file remains an untracked, local research artifact. No product repositories were changed.
+
+> provide it in the chat as a doc I can copy paste please.
+
+<details><summary>1 previous message</summary>
+
+> I’ll paste the corrected skill-only pilot plan exactly as a standalone Markdown document. It will preserve the distinction that `runner-replay.test.ts` is internal regression coverage, not part of the SignalPay pilot.
+</details>
+
+````markdown
+# ThreadLoop Consumer-Repository Feature Pilot Build Plan
+
+## Summary
+
+The next ThreadLoop acceptance target is a supervised, real consumer-repository feature run:
+
+> Can Codex use the ThreadLoop runner skill while implementing a fresh feature in SignalPay, continue across separate wakes, preserve lifecycle and proof state, respond to current review evidence, and stop at `ready_for_human`?
+
+The pilot needs the runner skill and the existing ThreadLoop CLI. It does **not** need `runner-replay.test.ts`, a controller extracted from that test, or a new scheduler product.
+
+The role of each existing artifact is:
+
+- `.agents/skills/threadloop-runner/SKILL.md`: the procedure Codex follows for one explicit wake.
+- ThreadLoop CLI: lifecycle, proof, review, audit, and guarded-transition authority.
+- `tests/integration/runner-replay.test.ts`: ThreadLoop-internal regression coverage only; it is not installed, copied, imported, or executed by SignalPay.
+- The operator or a simple scheduled task: supplies the four wake inputs, retains the wake handoff, and starts the next Codex wake.
+- The human: retains approval, merge, recovery, and policy authority.
+
+This is intentionally a supervised pilot. A manually retained wake record and explicit invocations are sufficient to test whether the skill is usable. If the pilot later demonstrates that manual wake delivery is the dominant friction, that evidence can justify a separate controller or scheduler build.
+
+Current state on 2026-07-30:
+
+- ThreadLoop `origin/main` is `1312105dc860fe67c32eb207763fd262ff28282a`.
+- The runner skill is on `feat/issue-43-runner-contract@dce6d423bd790258ec09f84e3115b38632da8d6d`.
+- ThreadLoop PR #68 and issue #43 are closed, but the live consumer-repository pilot was not run.
+- SignalPay `main` is `a6e832cd8a5e031a3ea65729e04f1406ccf59b88`.
+- SignalPay PR #4 remains an open refund PR and is not the pilot target.
+- The current SignalPay checkout contains unrelated untracked local artifacts, so the pilot must use a fresh worktree.
+
+The intended review unit is the SignalPay pilot feature pull request. The runner skill must first be available from a reviewed, immutable ThreadLoop commit, but the pilot does not add ThreadLoop runtime code.
+
+## Skills To Use
+
+- `software-build-plan`: keep the consumer pilot implementation-ready and separate from future automation.
+- `threadloop-runner`: govern each explicit Codex wake and enforce the one-action and human-authority boundaries.
+- `tdd-bdd`: require failing SignalPay behavior tests before production code.
+- `failure-path-testing`: prove idempotency, state-transition rejection, and no-mutation failure paths.
+- `workflow-invariants`: verify the wake, lifecycle, evidence, and authority boundaries throughout the run.
+- `dx-audit`: record setup burden, manual handoffs, unclear stops, and context-restart usability.
+- `code-review`: perform the mandatory final Standards and Spec review against the SignalPay feature fixed point.
+
+## Scope
+
+### In scope
+
+- Make the reviewed runner skill available in the fresh SignalPay worktree.
+- Use an immutable ThreadLoop package and signer commit SHA.
+- Create a dedicated SignalPay worktree and feature branch from current `origin/main`.
+- Start one explicit ThreadLoop session for one bounded feature.
+- Retain the four runner inputs and each wake result in a pilot handoff record.
+- Invoke Codex separately for each wake using the runner skill.
+- Have Codex write tests, implement one bounded feature, run focused checks, and create one scoped implementation commit when ThreadLoop authorizes `COMMIT_IMPLEMENTATION`.
+- Run SignalPay’s immutable `make verify` gate through ThreadLoop.
+- Collect and import current signed CI and review evidence outside the runner wake.
+- Enter a bounded `COMMIT_REPAIR` wake only if the current review contains a legitimate blocking finding.
+- Start at least one later wake in a fresh Codex context to test continuity without transcript memory.
+- Stop at `ready_for_human` and export the verified audit trail.
+- Record technical success and developer-experience friction.
+
+The default fresh feature is **capture-state safety and retry semantics**:
+
+- Only an `authorized` payment can begin a new capture.
+- An exact idempotent retry of a successful capture returns the original response and emits no duplicate event.
+- A new idempotency key against a `captured` or `pending` payment fails without mutation or a new event.
+- Existing auth, scope, camelCase response, and event contracts remain stable.
+
+### Out of scope
+
+- Extracting any code from `runner-replay.test.ts`.
+- Copying `runner-replay.test.ts` or a replay fixture into SignalPay.
+- Making the historical SignalPay PR #4 replay the pilot result.
+- Building a controller, scheduler, queue, lease service, agent launcher, provider abstraction, dashboard, or hosted service.
+- Changing ThreadLoop lifecycle, schema, protocol, CLI, or runtime packages.
+- Using the runner to push, open or merge a PR, approve, deploy, publish, rotate secrets, activate policy, or recover a blocked session.
+- Manufacturing a review defect solely to force a repair cycle.
+- Modifying, merging, or closing SignalPay PR #4.
+- Same-checkout multi-agent execution.
+
+## Package Layout / File-to-Task Mapping
+
+### ThreadLoop source
+
+- `.agents/skills/threadloop-runner/SKILL.md`: existing runner procedure copied or installed into SignalPay from the reviewed immutable ThreadLoop SHA.
+- `tests/integration/runner-replay.test.ts`: existing ThreadLoop-only regression. It remains where it is and is not a pilot dependency.
+- `.github/workflows/threadloop-gate-sensor.yml`: existing reusable signed gate sensor, pinned by full ThreadLoop commit SHA.
+- `.github/workflows/threadloop-review-sensor.yml`: existing reusable signed review sensor, pinned by the same full ThreadLoop commit SHA.
+
+No ThreadLoop source file is added or extracted for this pilot.
+
+### SignalPay pilot
+
+- `.agents/skills/threadloop-runner/SKILL.md` **(new in the pilot worktree):** exact reviewed skill snapshot. Record its ThreadLoop source SHA in the file handoff or PR description.
+- `.github/workflows/threadloop.yml` **(new):** minimal caller workflow for the pinned ThreadLoop gate and review sensors.
+- `.threadloop/config.json` **(new):** visible repo-local ThreadLoop configuration. Commit it before the first runner wake.
+- `.plan/threadloop-capture-state-pilot/plan.md` **(new):** feature behavior, selected `PAY-*` rules, proof plan, and authority boundary.
+- `.plan/threadloop-capture-state-pilot/build-session-execution-plan.md` **(new):** ordered TDD and wake sequence.
+- `tests/test_payments_api.py` **(current):** capture-state and retry behavior tests.
+- `src/signalpay_api/app.py` **(current):** smallest production change that satisfies those tests.
+
+### Pilot evidence outside the worktree
+
+- `wake-handoffs.jsonl` **(new, local-only):** one operator-retained record per wake containing the exact inputs, preflight facts, selected action, outcome, stop reason, and next authority.
+- Signed gate/review packages **(local-only):** downloaded and imported receipts, never treated as source code.
+- `threadloop-audit.jsonl` **(local-only unless deliberately attached to the pilot report):** verified ThreadLoop audit export.
+- `pilot-report.md` **(new, local-only during the run):** setup time, wake count, manual interventions, context-restart result, evidence friction, and final outcome.
+
+The handoff record is an operating artifact, not a new controller or product schema. The operator can append it manually after each wake.
+
+## Dependencies And Settings
+
+- No new ThreadLoop runtime or development dependency.
+- No SignalPay package dependency, database, or Node project metadata.
+- Build the ThreadLoop CLI tarball from the reviewed full SHA and install it in a tool directory outside SignalPay, or invoke an already verified binary from that SHA.
+- Pin both reusable sensor workflows to the same reviewed full ThreadLoop SHA.
+- SignalPay remains Python 3.11+ with `uv`.
+- SignalPay’s immutable local gate is `make verify`.
+- ThreadLoop protocol, proof plan, and `session next` remain version `3`; SQLite schema remains version `6`.
+- The runner receives only:
+
+  ```text
+  repo_root
+  session_id
+  wake_id
+  mode: normal
+  ```
+
+- Use one unique `wake_id` per scheduled delivery. Reuse it only for an ambiguous duplicate delivery of that same wake.
+- Keep `.threadloop/state/`, receipt packages, wake handoffs, and the pilot report out of the feature diff unless explicitly selected as review evidence.
+
+## Canonical Contracts
+
+### Runner skill contract
+
+Each Codex wake:
+
+1. Receives the four explicit inputs.
+2. Validates the canonical repository root, named branch, HEAD, clean worktree, protocol version, explicit session, audit status, and repair budget.
+3. Reads `session next`.
+4. Performs at most one authorized action:
+   - one executable lifecycle transition;
+   - one bounded `COMMIT_IMPLEMENTATION` or `COMMIT_REPAIR` action;
+   - one stored local gate; or
+   - no mutation and a handoff.
+5. Stops after that action or handoff.
+
+The skill is the runner. No extracted TypeScript controller sits between Codex and the existing ThreadLoop CLI in this pilot.
+
+### Operator-retained wake handoff
+
+Before a transition or other side effect, the operator retains the fields the skill requires:
+
+```text
+repo_root
+session_id
+wake_id
+mode
+branch
+head_sha
+worktree_clean
+lifecycle_state
+lifecycle_state_version
+selected_action
+action_started
+action_outcome
+action_result
+transition_request
+stop_reason
+next_authority
+```
+
+The record may be maintained as one append-only local JSONL file. It is needed for honest duplicate/crash handling, but it does not require new runtime code.
+
+### Coding-agent action
+
+During `COMMIT_IMPLEMENTATION`, Codex may:
+
+- Read the task, rules, and plan.
+- Write failing behavior tests.
+- Implement the smallest feature.
+- Run focused non-ThreadLoop checks.
+- Create at most one scoped commit.
+
+It must leave a clean worktree and stop. It must not run a ThreadLoop gate, transition, evidence import, push, or PR action in the same wake.
+
+`COMMIT_REPAIR` follows the same boundary and is limited to the complete current blocking finding set.
+
+### External evidence handoff
+
+The runner stops when signed CI or review evidence is required. The operator:
+
+1. Invokes the exact pinned caller workflow.
+2. Downloads the exact package for the current feature HEAD.
+3. Imports it using the explicit session.
+4. Records the result in the wake handoff.
+5. Starts a later wake with a new `wake_id`.
+
+These are supervised pilot operations, not runner behavior.
+
+### Human stop
+
+At `ready_for_human`, `blocked`, `completed`, or exhausted repair budget, Codex starts no new action. The pilot ends at `ready_for_human` without approval or merge.
+
+## TDD And BDD Implementation Strategy
+
+The feature wake begins with these red scenarios:
+
+1. Authorized payment + new key -> one capture and one event.
+2. Same key retry -> identical response and no second event.
+3. Captured payment + new key -> conflict, no mutation, no event.
+4. Pending payment + new key -> conflict, no mutation, no event.
+5. Missing scope or idempotency key -> existing fail-closed behavior remains.
+
+Only after the targeted tests demonstrate the gap does Codex modify `src/signalpay_api/app.py`. It then reruns the focused tests and creates one feature commit.
+
+Full `make verify` is not bundled into the implementation action. ThreadLoop runs it later as the stored local gate while the repository is clean and committed.
+
+If review produces a legitimate blocker, a later repair wake begins from a test or reproduction for that finding, applies the smallest correction, and creates one repair commit. All local and signed evidence must then be refreshed for the repair HEAD.
+
+The pilot deliberately starts at least one verification, review, or repair wake in a fresh Codex context. The new context receives only the repository, the runner skill, and the four explicit inputs.
+
+## Component Design
+
+The pilot uses the existing architecture:
+
+```text
+operator or scheduled task
+  -> four explicit wake inputs
+  -> Codex reads runner skill
+  -> existing ThreadLoop CLI projection
+  -> one Codex action or one handoff
+  -> operator records outcome
+  -> later independent wake
+```
+
+ThreadLoop owns lifecycle truth, proof plans, receipts, review evidence, repair budget, guarded transitions, and audit persistence.
+
+The runner skill owns the procedure for one wake. Codex owns the bounded code change. The operator owns wake delivery and the local handoff record. GitHub Actions owns signed sensor execution. The human owns irreversible authority.
+
+The pilot is testing whether this division is usable. Adding a software controller before running the pilot would hide the coordination friction the experiment needs to reveal.
+
+## Failure And Recovery Rules
+
+- Missing or invalid wake input -> run no ThreadLoop command; operator corrects the invocation.
+- Dirty worktree before a wake -> preserve it exactly and stop; never clean, reset, stash, or repeat work automatically.
+- Branch, HEAD, repository, session, or protocol mismatch -> stop and record the observed facts.
+- Ambiguous transition response -> reuse the same wake ID and exact retained request only after revalidating the Git snapshot.
+- `STATE_VERSION_CONFLICT` or `IDEMPOTENCY_CONFLICT` -> stop; do not mint a new key in the same wake.
+- Crash during repository work -> preserve the worktree and mark the handoff outcome unknown; a human inspects before any later action.
+- Uncertain local gate outcome -> do not replay it as a duplicate.
+- Missing, stale, or corrupt proof -> remain in the current state and follow the exact required-work handoff.
+- Signed package collection/import failure -> retain the current lifecycle state and exact error; retry only under operator supervision.
+- Blocking review finding -> enter repair only through the executable reviewing-to-repairing transition and within budget.
+- Clean review -> do not invent a defect to exercise repair.
+- Fresh Codex context cannot continue -> record a failed usability criterion; do not compensate with hidden transcript context.
+- Unknown required-work code -> fail closed and hand it to the operator.
+- `ready_for_human`, blocked state, exhausted budget, approval, or merge requirement -> stop for human authority.
+
+## Commit Plan
+
+### ThreadLoop skill prerequisite
+
+1. `feat(runner): add one-action wake contract and transition proof`
+   - Review the existing branch’s skill and its small ThreadLoop regression test together.
+   - The test remains internal and is not promoted to pilot code.
+2. `docs(runner): document supervised consumer pilot boundary`
+   - Make explicit that the npm package contains the CLI, the skill is a repository procedure, and no scheduler/controller is included.
+
+If those commits are not merged before the pilot, pin the exact reviewed `dce6d423bd790258ec09f84e3115b38632da8d6d` snapshot and describe the pilot as pre-merge validation.
+
+### SignalPay pilot
+
+1. `chore(threadloop): add pinned supervised pilot enablement`
+   - Add the exact skill snapshot, pinned sensor caller workflow, ThreadLoop config, and pilot plan.
+2. `feat(payments): enforce safe capture transitions`
+   - Keep the red tests and smallest implementation in one behavior-closed commit.
+3. `fix(payments): address current review findings`
+   - Add only when a legitimate current blocking review requires repair.
+
+## Branch And PR Flow
+
+1. Review the exact ThreadLoop runner-skill branch against current `origin/main`.
+2. Either merge a new/reopened runner-skill PR or explicitly pin the reviewed branch SHA for a pre-merge pilot. Do not imply the closed PR is merged.
+3. Build and verify the ThreadLoop CLI tarball from that exact SHA.
+4. Create a fresh SignalPay worktree and feature branch from `a6e832cd8a5e031a3ea65729e04f1406ccf59b88`.
+5. Add and commit the minimal pilot enablement.
+6. Start the explicit ThreadLoop session and retain its `session_id`.
+7. Invoke serialized Codex wakes manually or through a simple scheduled task, using the skill and four explicit inputs.
+8. After the implementation commit, let ThreadLoop run `make verify` in a later wake.
+9. Under explicit pilot execution authority, the operator may push and open the SignalPay feature PR, invoke the signed sensors, and import their packages. The runner never performs those operations.
+10. Follow current review evidence through optional repair and fresh proof.
+11. Stop at `ready_for_human`, verify/export the audit, and write the pilot report.
+12. Decide from measured friction whether a separate controller/scheduler ticket is warranted.
+
+Before either PR, pin one fixed point and review the complete change set, including untracked files:
+
+- Run the Codex `code-review` skill on separate Standards and Spec axes.
+- Run this independent read-only review against the same fixed point:
+
+  ```bash
+  claude -p \
+    --model claude-sonnet-5 \
+    --effort high \
+    --permission-mode plan \
+    "<focused prompt forbidding edits, network, subagents, and a full test run; require confirmed P0-P3 findings with file, line, evidence, and correction, or CLEAN>"
+  ```
+
+Reproduce and deduplicate findings, resolve every confirmed actionable issue, rerun affected and full checks, then rerun both reviews before opening the PR. Do not silently substitute another Claude model.
+
+## Test Plan
+
+### ThreadLoop prerequisite verification
+
+```bash
+npx vitest run tests/integration/runner-replay.test.ts
+npm run check
+npm run security:dependencies
+git diff --check origin/main...HEAD
+```
+
+This verifies the existing runner-skill change inside ThreadLoop. It does not make the test part of SignalPay or the live pilot runtime.
+
+### SignalPay feature verification
+
+```bash
+uv run pytest tests/test_payments_api.py -q
+make verify
+git diff --check <pilot-fixed-point>...HEAD
+```
+
+Required live acceptance:
+
+- The feature tests pass at the feature HEAD.
+- The ThreadLoop local gate receipt is current.
+- The signed CI package is produced by the pinned workflow and imported.
+- The current signed review package is imported.
+- Any legitimate repair produces a descendant commit and fresh proof.
+- A fresh Codex context completes at least one later wake.
+- Final state is `ready_for_human`.
+- Audit verification and export pass.
+- No runner-owned push, PR, approval, merge, deployment, publication, secret rotation, or policy activation occurs.
+
+### Review commands
+
+Use the same fixed point for Codex and Claude:
+
+```bash
+claude -p \
+  --model claude-sonnet-5 \
+  --effort high \
+  --permission-mode plan \
+  "<read the applicable AGENTS.md, rules, feature specification, and complete fixed-point diff; do not edit, use network, spawn subagents, or run the full suite; report confirmed P0-P3 findings with file, line, evidence, and correction, or CLEAN>"
+```
+
+After remediation, rerun the focused tests, `make verify`, both reviews, and the fixed-point diff check.
+
+### Usability measurements
+
+Record:
+
+- Setup time before the first Codex wake.
+- Total wake count.
+- Operator and human interventions.
+- Time spent retaining handoffs and collecting/importing evidence.
+- Ambiguous or unknown stops.
+- Dirty-worktree or crash recovery.
+- Fresh-context continuation success.
+- Whether one implementation wake and commit was natural for the feature.
+- Any attempted authority violation or duplicate effect.
+
+## Definition Of Done
+
+- The reviewed runner skill is available in the fresh SignalPay worktree.
+- No replay test, fixture, or extracted controller code is a SignalPay dependency.
+- The pilot uses the existing ThreadLoop CLI and explicit four-input wakes.
+- Every wake has a retained handoff with no more than one started action.
+- Codex implements the capture-state feature from red tests to one clean, scoped feature commit.
+- Existing capture, auth, idempotency, response, and event contracts remain passing.
+- A fresh Codex context continues at least one later wake without transcript reconstruction.
+- Current local, signed CI, and signed review evidence is imported for the actual feature HEAD.
+- Any real blocking review finding is repaired within budget and reverified.
+- ThreadLoop reaches and stops at `ready_for_human`.
+- Audit verification/export reconstructs the lifecycle and authority handoffs.
+- The pilot report records technical evidence and manual coordination cost.
+- No scheduler, controller, queue, lease, provider abstraction, dashboard, or hosted service is added.
+- Any future automation build is justified by observed pilot friction rather than assumed need.
+
+## Assumptions And Defaults
+
+- The runner skill is sufficient for a supervised pilot because Codex and the operator can execute its documented procedure directly.
+- “Sufficient” does not mean self-scheduling: a human or simple scheduled task still supplies the next wake.
+- The operator-retained JSONL handoff is operational evidence, not product code.
+- SignalPay is the default consumer because it has repo-local rules, TDD guidance, `make verify`, GitHub CI, and a bounded payment mutation surface.
+- Capture-state safety is the default fresh feature because it is absent from SignalPay `main` and does not duplicate the open refund PR.
+- The exact feature behavior should be approved before binding the immutable proof plan.
+- The current `runner-replay.test.ts` may remain as ThreadLoop regression coverage. The historical large replay is irrelevant to this plan.
+- One session owns one dedicated worktree.
+- GitHub is the first signed-evidence provider.
+- Issue #43 and PR #68 are not evidence that the live pilot ran merely because they are closed.
+
+Primary evidence:
+
+- [ThreadLoop issue #43](https://github.com/nnennandukwe/threadloop/issues/43)
+- [ThreadLoop PR #68](https://github.com/nnennandukwe/threadloop/pull/68)
+- [SignalPay PR #4](https://github.com/nnennandukwe/qodo-quality-workshop-signalpay/pull/4)
+- ThreadLoop runner skill snapshot: `dce6d423bd790258ec09f84e3115b38632da8d6d`
+- SignalPay pilot baseline: `a6e832cd8a5e031a3ea65729e04f1406ccf59b88`
+````
+
+---
+
+Do I need to start a new session to leverage the voice canon?
+
+---
+
+invoke it against these 4 options to present them to me, revised. then we will do a grilling session using grilling skill.
+
+---
+
+Compare graph engineering and loop engineering and software factories (all their relevance) to angle C and D. Which ones of these has stronger connection to those overarching topics?
+
+---
+
+sounds good do that. grill D frames with C as its mechanism. And please assume that I can build any gaps that currently exist in my projects that you previously identified. those gaps should not be taken into consideration. assume I've already built everything that's missing when you grill D with C as its mechanism. filling the gap is super easy. I just need to ensure my narrative makes and sense and that I can truly stand behind what I say and what drives me even moving those projects forward and bringing this to the developer ecosystem to begin with.
+
+---
+
+yes 1000%
+
+---
+
+I don't know if I'll use the Make example explicitly. I'm sure there are many ways to be creative about this, but I certainly agree with you on b and d. b as the primary diagnosis, and d as the reinforcing mechanism.
+
+---
+
+I always say where I work. That's really not a big deal. And I can add in one sentence or two about Qodo where it makes sense to in the talk. It's not that serious. I'm flexible here and my team has full trust in me.
+
+---
+
+I think it's fine. It makes sense to me. as long as people understand the overall vision of what I'm saying.
+
+---
+
+B, without a takeaway artifact, no need for C. (a) would be tough, unless people want to work on that with me, like a working group. And perhaps it could become a project adopted by Agentic AI Foundation. So it's good to keep in mind.
+
+---
+
+I love it. And yes that's extremely important. And ties well to the importance of engineering craftsmanship and high standards. And it's a real potential outcome that has probably already happened. This is similar to what I already say in talks and on podcasts. And it'd be great to share in a way that's now grounded in how I've engineered my projects.
+
+---
+
+I like A and D. They satisfy my own interests and would be great for the audience!
+
+---
+
+I take b and d and I think C would work well as a caption. It could probably make it even more profound and memorable as a result.
+
+---
+
+Yeah I don't want to completely avoid it and it's important to be technically sound. SO it's worth it do spend 45 seconds on this. I also don't have to be so harsh toward fan-out. I can simply say my work doesn't cover that condition and it's something I'm interested in looking into further.
+
+---
+
+I like a. It's strong, gets attention, strong start and I can lay out my claim the rest of the talk. I don't need to decide on the title today. I can work on that later. Remember underlying claim is what's important, the narrative I'll lead with, and the technical depth to pair leveraging my projects.
+
+---
+
+Writing up the working document alongside the coverage analysis and let's revisit what I need to work on next in my projects. We will not go over any remaining CFPs.
+
+---
+
+Give me the prompt I can use in plan mode to start building the probe.
+
+---
+
+I am conducting the pilot in another session. Don't worry about that.
+
+---
+
+I need you to extract my software build plan skill from codex and make sure it can be ported to use in claude or any other agent I need. Also, extract any other useful skills for building and implementation, review, etc. Find them.
+
+---
+
+1. yes 2. leave in codex for now. 3. leave those 4. leave those.
+
+---
+
+b
+
+---
+
+I just created a new skills repo I want to be public for developers to use. https://github.com/nnennandukwe/skills Which of the skills that I created would be best to be made available for devs to install and use?
+
+---
+
+I created software-build-plan, dx-audit, workflow-invariants, and failure-path-testing. I created readme-audit and readme-creation, tdd-bdd, etc. (all of tier 3). I did not create any from tier 2. That comes from Aaron Francis. I think I want software-build-plan, readme-creation, tdd-bdd, readme-audit, dx-audit, workflow-invariants, failure-path-testing to go live. Nothing else at the moment. But they still need to be cleaned up before going live with those. I have the Apache license in the repo already. does each skill need a license? This repo is the inspiration for doing this: https://github.com/mattpocock/skills/
+
+---
+
+Yes please. And don't mention anything about the code summit. And get rid of PolicyNIM naming in the repos. Make the model pins in software-build-plan more vague so it's better for the public. I think provenance footers is a fantastic idea. Use my skills to develop this please where necessary. Including my readme-creation skill for developing the readme with the thesis around my engineering principles.
+
+---
+
+show me the readme.
