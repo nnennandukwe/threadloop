@@ -1916,3 +1916,75 @@ describe('gate receipt result domain migration', { timeout: 20_000 }, () => {
     expect(migratedRun.data.receipt.result).toBe('setup_failed');
   });
 });
+
+describe('local and CI receipts describe setup identically', { timeout: 60_000 }, () => {
+  it('records the same setup for the same HEAD through both execution paths', async () => {
+    const repoDir = await makeCommittedRepo();
+    const sessionId = await startFramedSession(repoDir);
+    const setupStep = {
+      id: 'provision',
+      command: ['node', '-e', 'process.stdout.write("provisioned\\n")'],
+      working_directory: '.',
+      timeout_ms: 5_000,
+    };
+    const base = proofPlan();
+    const plan = { ...base, gates: [{ ...base.gates[0]!, setup: [setupStep] }] };
+    const recorded = await recordProofPlan(repoDir, sessionId, plan);
+    await forceVerifying(repoDir, sessionId);
+
+    const local = parseJson<{ data: { receipt: { setup: Record<string, unknown>[]; result: string } } }>(
+      (await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json'])).stdout,
+    );
+
+    // Drive the real CI sensor against the same HEAD and the same declared gate.
+    const head = (await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: repoDir })).stdout.trim();
+    const reportPath = path.join(await makeScratchDirectory(), 'gate-report.json');
+    await execFileAsync('npx', ['tsx', 'scripts/run-ci-gate-sensor.ts'], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        THREADLOOP_SESSION_ID: sessionId,
+        THREADLOOP_PLAN_SHA256: recorded.data.proof_plan.sha256,
+        THREADLOOP_GATE_ID: 'repository-check',
+        THREADLOOP_GATE_JSON: canonicalJson(plan.gates[0]),
+        THREADLOOP_SOURCE_ROOT: repoDir,
+        THREADLOOP_REPORT_PATH: reportPath,
+        GITHUB_SERVER_URL: 'https://github.com',
+        GITHUB_REPOSITORY: 'example/threadloop-fixture',
+        GITHUB_REF: `refs/heads/${fixtureBranch}`,
+        GITHUB_SHA: head,
+        GITHUB_RUN_ID: '123',
+        GITHUB_RUN_ATTEMPT: '1',
+        RUNNER_OS: 'Linux',
+        RUNNER_ARCH: 'X64',
+      },
+    });
+    const report = JSON.parse(await readFile(reportPath, 'utf8')) as {
+      schema_version: number;
+      result: string;
+      setup: Record<string, unknown>[];
+    };
+
+    // Timestamps and durations legitimately differ between two runs; everything describing *what ran* and how
+    // it turned out must not.
+    const describable = (step: Record<string, unknown>) => ({
+      id: step.id,
+      command: step.command,
+      working_directory: step.working_directory,
+      timeout_ms: step.timeout_ms,
+      result: step.result,
+      exit_status: step.exit_status,
+      signal: step.signal,
+      clean_before: step.clean_before,
+      clean_after: step.clean_after,
+      head_unchanged: step.head_before === step.head_after,
+    });
+
+    expect(report.schema_version).toBe(2);
+    expect(report.setup.map(describable)).toEqual(local.data.receipt.setup.map(describable));
+    expect(report.result).toBe(local.data.receipt.result);
+    expect(report.result).toBe('passed');
+    // The digests are of the same command's output, so they must agree byte for byte.
+    expect(report.setup[0]?.output).toEqual(local.data.receipt.setup[0]?.output);
+  });
+});

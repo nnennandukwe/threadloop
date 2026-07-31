@@ -127,7 +127,7 @@ Before appending evidence, ThreadLoop verifies:
 - a clean, unchanged, passing result for the checkout's current HEAD.
 
 Accepted packages are canonicalized under
-`.threadloop/artifacts/receipts/<session-id>/<receipt-id>/signed-receipt.json`. SQLite schema v7 stores an append-only
+`.threadloop/artifacts/receipts/<session-id>/<receipt-id>/signed-receipt.json`. SQLite schema v8 stores an append-only
 verified projection. Identical imports return the existing sequence; a receipt id reused for different content is a
 conflict. Import never changes lifecycle state or `state_version`.
 

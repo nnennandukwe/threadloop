@@ -35,7 +35,7 @@ on:
         required: true
         type: string
       plan_sha256:
-        description: Canonical proof-plan digest (proofPlan contract version 3)
+        description: Canonical proof-plan digest (proofPlan contract version 4)
         required: true
         type: string
       gate_id:
@@ -44,7 +44,9 @@ on:
         default: make-verify
         type: string
       gate_json:
-        description: Canonical declared gate JSON, for gate evidence
+        description: >-
+          Canonical declared gate JSON, for gate evidence. A gate whose command needs a language toolchain declares it
+          here as an ordered "setup" array; the sensor runs with only Node set up.
         required: false
         default: '{"command":["make","verify"],"id":"make-verify","timeout_ms":900000,"working_directory":"."}'
         type: string

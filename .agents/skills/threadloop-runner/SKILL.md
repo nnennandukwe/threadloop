@@ -125,7 +125,7 @@ Run session next again and require it to match the retained session and Git snap
 
 - lifecycle state/version match session status;
 - `lifecycle.phase` is `pre_pr` or `post_pr`;
-- schema is `7` and contract status is `current`;
+- schema is `8` and contract status is `current`;
 - candidate is null or has known source/target, matching source/version, and boolean `executable`;
 - repository branch, HEAD, and clean status exactly match the Git snapshot;
 - repair limit is `3` and status, counts, remaining count, and exhausted flag agree;
@@ -192,6 +192,7 @@ PROOF_BASELINE_DIRTY -> PREPARE_CLEAN_PROOF_BASELINE
 PROOF_BASELINE_MISMATCH -> RESTORE_PROOF_BASELINE
 PROOF_CHECKOUT_MISMATCH -> RESTORE_PROOF_CHECKOUT
 PROOF_GATES_MISSING -> RUN_MISSING_GATES
+PROOF_GATE_SETUP_FAILED -> CORRECT_GATE_SETUP
 PROOF_PLAN_REQUIRED -> RESTORE_PROOF_AUTHORITY
 PROOF_RECEIPTS_CORRUPT -> RERUN_CORRUPT_GATES
 PROOF_RECEIPTS_STALE -> RERUN_STALE_GATES
@@ -314,6 +315,7 @@ recognized but never autonomous:
 
 ```text
 RECORD_PRE_PR_REVIEW_OUTCOME
+CORRECT_GATE_SETUP
 MIGRATE_SESSION_SCHEMA
 IMPORT_SIGNED_CI_PROOF
 RERUN_AND_IMPORT_CI_PROOF

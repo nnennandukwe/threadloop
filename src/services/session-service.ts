@@ -662,7 +662,7 @@ export async function runSessionGate(input: RunSessionGateInput) {
 
   const declaredSetup = gate.setup ?? [];
   const setupDirectories = await Promise.all(
-    declaredSetup.map((step) => resolveProofWorkingDirectory(repoRoot, gate.id, step.working_directory)),
+    declaredSetup.map((step) => resolveProofWorkingDirectory(repoRoot, gate.id, step.working_directory, step.id)),
   );
   // The local path's notion of an unchanged repository includes the branch bound to the proof plan, which the
   // CI path replaces with the caller SHA. Everything downstream of this observer is shared with the sensor.
@@ -910,23 +910,29 @@ function assertSessionAuditVerified(repoRoot: string, sessionId: string) {
   }
 }
 
-async function resolveProofWorkingDirectory(repoRoot: string, gateId: string, workingDirectory: string) {
+/**
+ * `setupStepId` names a declared setup step when the directory being resolved belongs to one, so the error
+ * points at the step the operator has to correct rather than at the gate.
+ */
+async function resolveProofWorkingDirectory(
+  repoRoot: string,
+  gateId: string,
+  workingDirectory: string,
+  setupStepId?: string,
+) {
+  const field = setupStepId
+    ? `proof_plan.gates.${gateId}.setup.${setupStepId}.working_directory`
+    : `proof_plan.gates.${gateId}.working_directory`;
   const canonicalRepoRoot = await realpath(repoRoot);
   let gateDirectory: string;
   try {
     gateDirectory = await realpath(path.resolve(canonicalRepoRoot, workingDirectory));
   } catch {
-    throw new ProofValidationError(
-      `proof_plan.gates.${gateId}.working_directory`,
-      `proof_plan.gates.${gateId}.working_directory must name an existing directory.`,
-    );
+    throw new ProofValidationError(field, `${field} must name an existing directory.`);
   }
   const relative = path.relative(canonicalRepoRoot, gateDirectory);
   if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-    throw new ProofValidationError(
-      `proof_plan.gates.${gateId}.working_directory`,
-      `proof_plan.gates.${gateId}.working_directory resolves outside the repository.`,
-    );
+    throw new ProofValidationError(field, `${field} resolves outside the repository.`);
   }
   return gateDirectory;
 }

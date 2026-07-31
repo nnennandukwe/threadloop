@@ -248,30 +248,12 @@ export function validateProofPlan(
   const gateIds = new Set<string>();
   const gates = plan.gates.map((value, index) => {
     const field = `proof_plan.gates[${index}]`;
-    const record = requireObject(value, field);
-    // Only v4 admits `setup`, so a v3 gate carrying it fails the exact-field check rather than being ignored.
-    const declaresSetup = isVersionFour && 'setup' in record;
-    const gate = requireExactObject(
-      record,
-      field,
-      declaresSetup
-        ? ['id', 'setup', 'command', 'working_directory', 'timeout_ms']
-        : ['id', 'command', 'working_directory', 'timeout_ms'],
-    );
-    const id = requireGateIdentifier(gate.id, `${field}.id`);
-    if (gateIds.has(id)) {
-      throw invalid(`${field}.id`, `duplicates declared gate ${id}`);
+    const gate = validateDeclaredGate(value, { field, allowSetup: isVersionFour });
+    if (gateIds.has(gate.id)) {
+      throw invalid(`${field}.id`, `duplicates declared gate ${gate.id}`);
     }
-    gateIds.add(id);
-
-    const execution = validateExecutionSpec(gate, field);
-    const setup = declaresSetup ? validateSetupSteps(gate.setup, `${field}.setup`) : [];
-
-    return {
-      id,
-      ...(setup.length > 0 ? { setup } : {}),
-      ...execution,
-    };
+    gateIds.add(gate.id);
+    return gate;
   });
 
   if (!isVersionTwo && !isVersionThree && !isVersionFour) {
@@ -529,6 +511,39 @@ function aggregateProofStatus(gates: ProofGateEvidence[]): ProofEvidenceStatus {
     }
   }
   return 'missing';
+}
+
+/**
+ * Validates one declared gate. Exported because the CI sensor receives a single gate rather than a whole plan
+ * and must apply exactly these rules: wrapping the gate in a synthetic legacy plan would silently reject
+ * declared `setup`, since only contract_version 4 admits it.
+ *
+ * `allowSetup` is the version gate. When false, a gate carrying `setup` fails the exact-field check rather
+ * than having the field ignored.
+ */
+export function validateDeclaredGate(
+  value: unknown,
+  options: { field?: string; allowSetup?: boolean } = {},
+): ProofGate {
+  const field = options.field ?? 'gate';
+  const record = requireObject(value, field);
+  const declaresSetup = (options.allowSetup ?? true) && 'setup' in record;
+  const gate = requireExactObject(
+    record,
+    field,
+    declaresSetup
+      ? ['id', 'setup', 'command', 'working_directory', 'timeout_ms']
+      : ['id', 'command', 'working_directory', 'timeout_ms'],
+  );
+  const id = requireGateIdentifier(gate.id, `${field}.id`);
+  const execution = validateExecutionSpec(gate, field);
+  const setup = declaresSetup ? validateSetupSteps(gate.setup, `${field}.setup`) : [];
+
+  return {
+    id,
+    ...(setup.length > 0 ? { setup } : {}),
+    ...execution,
+  };
 }
 
 /**

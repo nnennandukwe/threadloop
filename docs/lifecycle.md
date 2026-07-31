@@ -121,12 +121,12 @@ pre-PR review, and signed-review evidence stale unless the evidence contract bin
 and timeout stored in the plan. It uses no shell, records stdout/stderr digests and a manifest, appends the receipt
 after the child closes, and never advances lifecycle state. A new commit makes old receipts stale without mutating them.
 
-`threadloop session gate import <package-path> --session <id>` verifies the immutable v2/v3 GitHub/Sigstore CI policy,
-appends one accepted signed-CI projection, and likewise never advances lifecycle state. See
+`threadloop session gate import <package-path> --session <id>` verifies the immutable v2/v3/v4 GitHub/Sigstore CI
+policy, appends one accepted signed-CI projection, and likewise never advances lifecycle state. See
 [Signed gate receipt v2](attestations/receipt-v2.md).
 
-`threadloop session review import <package-path> --session <id>` verifies the independent v3 review policy and appends
-one current-HEAD review projection without advancing lifecycle state. The latest valid receipt controls blocker,
+`threadloop session review import <package-path> --session <id>` verifies the independent v3/v4 review policy and
+appends one current-HEAD review projection without advancing lifecycle state. The latest valid receipt controls blocker,
 approval, and merge projections. See [Signed review receipt v1](attestations/review-v1.md).
 
 Re-entering verification after post-PR gate or signed-review repair requires a clean committed change after the exact

@@ -6,7 +6,7 @@ import { observeProofRepository } from '../src/adapters/git/client.js';
 import { classifyGateOutcome, runGateWithSetup, toRecordedSetupStep } from '../src/adapters/process/gate-runner.js';
 import { canonicalizeSignedGateReceiptArtifact, type SignedGateReceiptArtifact } from '../src/domain/attestation.js';
 import { canonicalJson } from '../src/domain/canonical-json.js';
-import { canonicalizeProofPlan, type GateReceiptResult } from '../src/domain/proof.js';
+import { validateDeclaredGate, type GateReceiptResult } from '../src/domain/proof.js';
 import { requiredEnvironment } from './sensor-environment.js';
 
 /** sha256 of the empty string, recorded when a blocked gate produced no output stream at all. */
@@ -47,11 +47,10 @@ if (!/^[a-f0-9]{40}$/.test(sourceHead)) {
 }
 
 const parsedGate = JSON.parse(gateJson) as unknown;
-const gate = canonicalizeProofPlan(
-  { acceptance_criteria: ['Execute the caller-declared CI gate'], gates: [parsedGate] },
-  sha256,
-).plan.gates[0];
-if (!gate || gate.id !== gateId || canonicalJson(gate) !== canonicalJson(parsedGate)) {
+// Validated as a v4 gate, so a declared `setup` array is admitted under exactly the plan's own rules. Wrapping
+// this in a synthetic legacy plan would reject every gate that declares setup.
+const gate = validateDeclaredGate(parsedGate, { field: 'THREADLOOP_GATE_JSON', allowSetup: true });
+if (gate.id !== gateId || canonicalJson(gate) !== canonicalJson(parsedGate)) {
   throw new Error('THREADLOOP_GATE_JSON must be the exact declared gate identified by THREADLOOP_GATE_ID.');
 }
 
@@ -78,7 +77,12 @@ const stderrPath = path.join(reportDirectory, 'gate.stderr');
 const declaredSetup = gate.setup ?? [];
 const setupDirectories = await Promise.all(
   declaredSetup.map(async (step) => {
-    const resolved = await realpath(path.resolve(canonicalSourceRoot, step.working_directory));
+    let resolved: string;
+    try {
+      resolved = await realpath(path.resolve(canonicalSourceRoot, step.working_directory));
+    } catch {
+      throw new Error(`Declared setup step ${step.id} names a working directory that does not exist.`);
+    }
     const relative = path.relative(canonicalSourceRoot, resolved);
     if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
       throw new Error(`Declared setup step ${step.id} resolves outside the caller repository.`);

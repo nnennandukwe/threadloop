@@ -154,17 +154,22 @@ Proof-plan input:
 
 All gates are required. Gate ids must be unique, commands are exact argv arrays, working directories must exist and
 resolve inside the repository, and timeouts must be positive integers no greater than one day. New proof plans require
-contract v3 with independent immutable CI and review policies. Both policies must match the checkout's GitHub origin and
-named branch. Stored v1/v2 plans remain readable but cannot authorize review transitions.
+contract v4 with independent immutable CI and review policies. Both policies must match the checkout's GitHub origin and
+named branch. A v4 gate may declare ordered `setup` steps that provision the toolchain before the gate command; each
+step is validated exactly as the gate command is. Stored v1/v2/v3 plans remain readable, and v1/v2 cannot authorize
+review transitions.
 
 ### `threadloop session gate run <gate-id> --session <id> [--json]`
 
 Runs one gate declared by the session's immutable proof plan. The command accepts no executable, argument, directory,
 timeout, or shell override. It is available only in `verifying` on a clean committed worktree.
 
-The runner captures stdout and stderr separately, waits for process and stream closure, records non-zero, timeout,
-abort, spawn, cleanup, and repository-drift outcomes, then appends an immutable receipt. Gate execution never changes
-lifecycle state. A later receipt for the same gate supersedes an earlier receipt by database sequence.
+The runner executes each declared `setup` step in order and then the gate command, capturing stdout and stderr
+separately for every one of them, waiting for process and stream closure, and recording non-zero, timeout, abort, spawn,
+cleanup, and repository-drift outcomes before appending an immutable receipt. A setup step that does not pass stops the
+run: no later step executes, the gate command does not run, and the receipt records `setup_failed`, which is an operator
+handoff rather than code repair and consumes no repair budget. Gate execution never changes lifecycle state. A later
+receipt for the same gate supersedes an earlier receipt by database sequence.
 
 ### `threadloop session gate import <package-path> --session <id> [--json]`
 
@@ -197,10 +202,11 @@ threadloop audit export --session <id> --output <path> [--json]
 canonical JSON, event hashes, and an optional retained root. `export` verifies first and atomically publishes canonical
 JSONL without overwriting an existing path. The export records are shaped as `{"event":{...},"event_sha256":"..."}`.
 
-On schema v6 or v7, `show` and `verify` do not apply lifecycle transitions. Run `threadloop init` explicitly to migrate
-schema v6 to v7; migrated sessions retain their existing forward-only audit coverage and repair counts. The migration is
-one-way: pre-v7 binaries reject schema v7, and ThreadLoop has no downgrade command. Before migration, stop other
-ThreadLoop processes and retain a backup of `.threadloop/state/` if binary rollback may be required.
+On schema v6 or newer, `show` and `verify` do not apply lifecycle transitions. Run `threadloop init` explicitly to
+migrate to the current schema; migrated sessions retain their existing forward-only audit coverage and repair counts.
+The migration is one-way: older binaries reject a newer schema, and ThreadLoop has no downgrade command. Before
+migration, stop other ThreadLoop processes and retain a backup of `.threadloop/state/` if binary rollback may be
+required.
 
 Local verification detects mutation; an externally retained `--root`, prior handoff, or prior export root is required to
 detect tail truncation. See [Audit export and OpenTelemetry](observability.md) for the supported JSONL `filelog` recipe
@@ -284,11 +290,13 @@ ThreadLoop stores state locally in the repo:
 If an older repo still has `.threadloop/state/state.json`, ThreadLoop migrates that data into SQLite on first access and
 intentionally leaves the JSON file in place as a safety backup. After migration, ThreadLoop reads from SQLite.
 
-SQLite schema v7 stores transition/idempotency records, one immutable proof plan per session, append-only local gate,
+SQLite schema v8 stores transition/idempotency records, one immutable proof plan per session, append-only local gate,
 signed gate, and signed review receipts, plus a hash-linked append-only audit ledger. New sessions begin with
 `session_started`; migrated sessions begin honest forward-only coverage with `audit_activated`. Migration is atomic,
 schema metadata accepts canonical unsigned decimal text only, and persistent triggers reject update, delete, or
-replacement of immutable evidence. Schema v6 to v7 migration is one-way; pre-v7 binaries reject the resulting database.
+replacement of immutable evidence. Schema migration is one-way; older binaries reject the resulting database. Schema v8
+widened the recorded gate result domain to admit `setup_failed`, rebuilding the gate-receipt table in place while
+preserving every stored receipt and its ordering.
 
 Recommended default:
 

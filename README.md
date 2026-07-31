@@ -309,7 +309,7 @@ supported environment variables, and the published branch/rebase/PR workflow gui
 The optional daemon only performs mechanical refresh work. It does not create semantic notes or replace explicit
 capture.
 
-The governed task lifecycle and schema-v7 contract are documented in [`docs/lifecycle.md`](docs/lifecycle.md). The
+The governed task lifecycle and schema-v8 contract are documented in [`docs/lifecycle.md`](docs/lifecycle.md). The
 signed package and reusable workflow are specified in
 [`docs/attestations/receipt-v2.md`](docs/attestations/receipt-v2.md) and
 [`docs/attestations/review-v1.md`](docs/attestations/review-v1.md). `session transition` revalidates local, CI, and
