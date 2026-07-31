@@ -397,7 +397,7 @@ function parseAndValidateReceipt(
     parsed.working_directory !== gate.working_directory ||
     parsed.timeout_ms !== gate.timeout_ms ||
     JSON.stringify(parsed.command) !== JSON.stringify(gate.command) ||
-    !recordedSetupMatchesDeclared(parsed.setup, gate.setup)
+    !recordedSetupMatchesDeclared(parsed.setup, gate.setup, parsed.result)
   ) {
     return null;
   }
@@ -413,16 +413,22 @@ function parseAndValidateReceipt(
 export function recordedSetupMatchesDeclared(
   recorded: readonly RecordedSetupStep[] | undefined,
   declared: readonly ProofSetupStep[] | undefined,
+  result: GateReceiptResult,
 ): boolean {
   const recordedSteps = recorded ?? [];
   const declaredSteps = declared ?? [];
-  if (recordedSteps.length > declaredSteps.length) {
+  const requiresCompleteSetup = result !== 'setup_failed' && result !== 'invalidated';
+  if (
+    recordedSteps.length > declaredSteps.length ||
+    (requiresCompleteSetup && recordedSteps.length !== declaredSteps.length)
+  ) {
     return false;
   }
   return recordedSteps.every((step, index) => {
     const expected = declaredSteps[index];
     return (
       expected !== undefined &&
+      (!requiresCompleteSetup || step.result === 'passed') &&
       step.id === expected.id &&
       step.working_directory === expected.working_directory &&
       step.timeout_ms === expected.timeout_ms &&

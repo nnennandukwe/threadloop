@@ -360,6 +360,13 @@ describe('signed gate receipt versioning', () => {
     expect(parsed.statement.predicate.schema_version).toBe(2);
   });
 
+  it('rejects a passed v2 artifact that omits declared setup evidence', () => {
+    const incomplete = v2WithSetup();
+    incomplete.setup = [];
+
+    expect(() => canonicalizeSignedGateReceiptArtifact(incomplete, sha256)).toThrow(AttestationValidationError);
+  });
+
   it('rejects a v2 artifact presented under the v1 media type', () => {
     expect(() => parseSignedReceiptPackage(packageFor(v2WithSetup(), SIGNED_RECEIPT_MEDIA_TYPE_V1), sha256)).toThrow(
       AttestationValidationError,

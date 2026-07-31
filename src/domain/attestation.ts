@@ -412,7 +412,7 @@ export function evaluateCiProofEvidence(input: {
       parsed.artifact.head_before !== receipt.subjectHeadSha ||
       parsed.artifact.head_after !== receipt.subjectHeadSha ||
       canonicalJson(parsed.artifact.gate) !== canonicalJson(gate) ||
-      !recordedSetupMatchesDeclared(parsed.artifact.setup, gate.setup) ||
+      !recordedSetupMatchesDeclared(parsed.artifact.setup, gate.setup, parsed.artifact.result) ||
       receipt.issuer !== policy.issuer ||
       receipt.certificateIdentity !== policy.certificate_identity ||
       receipt.buildSignerUri !== policy.build_signer_uri ||
@@ -502,7 +502,7 @@ function validateSignedGateReceiptArtifact(value: unknown): SignedGateReceiptArt
     throw invalid(`${field}.result`, `must be one of: ${GATE_RECEIPT_RESULTS.join(', ')}`);
   }
   const result = artifact.result as GateReceiptResult;
-  const setup = schemaVersion === 2 ? validateRecordedSetup(artifact.setup, `${field}.setup`, gate) : undefined;
+  const setup = schemaVersion === 2 ? validateRecordedSetup(artifact.setup, `${field}.setup`, gate, result) : undefined;
   const startedAt = requireTimestamp(artifact.started_at, `${field}.started_at`);
   const endedAt = requireTimestamp(artifact.ended_at, `${field}.ended_at`);
   const durationMs = requireSafeInteger(artifact.duration_ms, `${field}.duration_ms`, 0, 86_400_000);
@@ -743,13 +743,22 @@ function validateGateExecution(record: Record<string, unknown>, field: string) {
  * Recorded setup must correspond to the gate's own declaration, step for step. A short sequence is legitimate
  * because a failing step stops the run, but a recorded step the gate never declared is not.
  */
-function validateRecordedSetup(value: unknown, field: string, gate: ProofGate): RecordedSetupStep[] {
+function validateRecordedSetup(
+  value: unknown,
+  field: string,
+  gate: ProofGate,
+  result: GateReceiptResult,
+): RecordedSetupStep[] {
   if (!Array.isArray(value)) {
     throw invalid(field, 'must be an array of recorded setup steps');
   }
   const declared = gate.setup ?? [];
+  const requiresCompleteSetup = result !== 'setup_failed' && result !== 'invalidated';
   if (value.length > declared.length) {
     throw invalid(field, 'must not record more steps than the gate declares');
+  }
+  if (requiresCompleteSetup && value.length !== declared.length) {
+    throw invalid(field, 'must record every declared setup step for this receipt result');
   }
   return value.map((step, index) => {
     const stepField = `${field}[${index}]`;
@@ -785,6 +794,10 @@ function validateRecordedSetup(value: unknown, field: string, gate: ProofGate): 
     if (!GATE_RECEIPT_RESULTS.includes(record.result as GateReceiptResult)) {
       throw invalid(`${stepField}.result`, `must be one of: ${GATE_RECEIPT_RESULTS.join(', ')}`);
     }
+    const stepResult = record.result as GateReceiptResult;
+    if (requiresCompleteSetup && stepResult !== 'passed') {
+      throw invalid(`${stepField}.result`, 'must be passed when the gate command ran');
+    }
     if (typeof record.clean_before !== 'boolean' || typeof record.clean_after !== 'boolean') {
       throw invalid(stepField, 'must record clean_before and clean_after as booleans');
     }
@@ -792,7 +805,7 @@ function validateRecordedSetup(value: unknown, field: string, gate: ProofGate): 
     return {
       id,
       ...execution,
-      result: record.result as GateReceiptResult,
+      result: stepResult,
       started_at: requireTimestamp(record.started_at, `${stepField}.started_at`),
       ended_at: requireTimestamp(record.ended_at, `${stepField}.ended_at`),
       duration_ms: requireSafeInteger(record.duration_ms, `${stepField}.duration_ms`, 0, 86_400_000),

@@ -349,6 +349,16 @@ describe('local proof evidence for recorded setup', () => {
     expect(evidence.failedReceiptIds).toEqual([]);
   });
 
+  it('treats a passed receipt that omits declared setup as corrupt', () => {
+    const evidence = evidenceFor(boundPlan([syncStep]), {
+      result: 'passed',
+      setup: [],
+      exit_status: 0,
+    });
+
+    expect(evidence.status).toBe('corrupt');
+  });
+
   it('treats a recorded setup step the plan never declared as corrupt', () => {
     const evidence = evidenceFor(boundPlan([syncStep]), {
       setup: [recordedStep({ command: ['uv', 'sync', '--all-extras'] })],
