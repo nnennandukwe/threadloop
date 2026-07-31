@@ -129,6 +129,9 @@ const invalidated =
   observationFailed ||
   !before.clean ||
   !after.clean ||
+  !execution.observedAfter ||
+  !execution.observedAfter.clean ||
+  execution.observedAfter.headSha !== before.headSha ||
   before.headSha !== after.headSha ||
   before.headSha !== sourceHead;
 const result: GateReceiptResult = classifyGateOutcome({ setup: execution.setup, gate: execution.gate, invalidated });

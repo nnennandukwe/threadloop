@@ -692,7 +692,14 @@ export async function runSessionGate(input: RunSessionGateInput) {
     observe: observeLocal,
   });
   const after = await observeProofRepository(repoRoot).catch(() => null);
-  const invalidated = !after || !after.clean || after.headSha !== before.headSha || after.branch !== before.branch;
+  const invalidated =
+    !after ||
+    !after.clean ||
+    !gateExecution.observedAfter ||
+    !gateExecution.observedAfter.clean ||
+    gateExecution.observedAfter.headSha !== before.headSha ||
+    after.headSha !== before.headSha ||
+    after.branch !== before.branch;
   const recordedSetup = gateExecution.setup.map(toRecordedSetupStep);
   // The local artifact additionally names each setup log on disk, so artifact validation can prove every
   // referenced output exists. The receipt itself carries digests only, matching the signed receipt, which must
