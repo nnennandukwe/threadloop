@@ -44,7 +44,11 @@ branch. The pinned review signer URI and SHA must identify the reusable review w
 
 ## Reusable workflow
 
-A caller invokes `.github/workflows/threadloop-review-sensor.yml` by a full ThreadLoop commit SHA:
+A caller invokes `.github/workflows/threadloop-review-sensor.yml` by a full ThreadLoop commit SHA. The snippet below
+hardcodes its inputs to show the contract. For a caller an operator can actually dispatch, copy
+[`examples/threadloop-caller-workflow.yml`](../../examples/threadloop-caller-workflow.yml), which supplies these values
+at dispatch time and casts the numeric input as `workflow_dispatch` requires. See
+[consumer onboarding](../consumer-onboarding.md).
 
 ```yaml
 permissions:

@@ -1,0 +1,80 @@
+# Operable caller workflow for the ThreadLoop signed-evidence sensors.
+#
+# Copy this into a consumer repository as `.github/workflows/threadloop.yml`,
+# replace both `@FULL_COMMIT_SHA` pins with one reviewed ThreadLoop commit, and
+# commit it to the repository's DEFAULT BRANCH before starting a governed
+# session. GitHub resolves `workflow_dispatch` targets from the default branch
+# only, so a caller that exists solely on a feature branch cannot be dispatched.
+#
+# The inputs are supplied at dispatch time because an operator only knows the
+# session id, proof-plan digest, and pull-request number once a session is
+# running. Note `fromJSON` on `pull_request_number`: `workflow_dispatch`
+# delivers every input as a string, including one declared `type: number`, and
+# passing that string straight into the sensor's numeric input fails validation
+# before any job is created. That failure appears as a missing job with no log.
+
+name: ThreadLoop evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      evidence:
+        description: Signed evidence package to produce
+        required: true
+        type: choice
+        options:
+          - gate
+          - review
+      session_id:
+        description: Exact ThreadLoop session id
+        required: true
+        type: string
+      plan_sha256:
+        description: Canonical proof-plan digest (proofPlan contract version 3)
+        required: true
+        type: string
+      gate_id:
+        description: Declared gate id, for gate evidence
+        required: false
+        default: make-verify
+        type: string
+      gate_json:
+        description: Canonical declared gate JSON, for gate evidence
+        required: false
+        default: '{"command":["make","verify"],"id":"make-verify","timeout_ms":900000,"working_directory":"."}'
+        type: string
+      pull_request_number:
+        description: Pull request number, for review evidence
+        required: false
+        default: '0'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    if: ${{ inputs.evidence == 'gate' }}
+    permissions:
+      contents: read
+      id-token: write
+    uses: OWNER/threadloop/.github/workflows/threadloop-gate-sensor.yml@FULL_COMMIT_SHA
+    with:
+      session_id: ${{ inputs.session_id }}
+      plan_sha256: ${{ inputs.plan_sha256 }}
+      gate_id: ${{ inputs.gate_id }}
+      gate_json: ${{ inputs.gate_json }}
+
+  review:
+    if: ${{ inputs.evidence == 'review' }}
+    permissions:
+      contents: read
+      pull-requests: read
+      id-token: write
+    uses: OWNER/threadloop/.github/workflows/threadloop-review-sensor.yml@FULL_COMMIT_SHA
+    with:
+      session_id: ${{ inputs.session_id }}
+      plan_sha256: ${{ inputs.plan_sha256 }}
+      # `workflow_dispatch` inputs arrive as strings. The sensor input is
+      # `type: number`, so the string must be cast or the job is never created.
+      pull_request_number: ${{ fromJSON(inputs.pull_request_number) }}

@@ -51,7 +51,11 @@ transitions. Immutable legacy plans are never upgraded in place.
 
 ## Reusable workflow
 
-A caller invokes `.github/workflows/threadloop-gate-sensor.yml` by a full ThreadLoop commit SHA:
+A caller invokes `.github/workflows/threadloop-gate-sensor.yml` by a full ThreadLoop commit SHA. The snippet below
+hardcodes its inputs to show the contract. For a caller an operator can actually dispatch, copy
+[`examples/threadloop-caller-workflow.yml`](../../examples/threadloop-caller-workflow.yml), which supplies these values
+at dispatch time. Note that the declared gate must provision its own toolchain, because this workflow runs the command
+with only Node set up. See [consumer onboarding](../consumer-onboarding.md).
 
 ```yaml
 permissions:
