@@ -3,7 +3,12 @@ import { mkdir, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { sha256 } from '../src/adapters/crypto/sha256.js';
 import { observeProofRepository } from '../src/adapters/git/client.js';
-import { classifyGateOutcome, runGateWithSetup, toRecordedSetupStep } from '../src/adapters/process/gate-runner.js';
+import {
+  classifyGateOutcome,
+  gateExecutionWasInvalidated,
+  runGateWithSetup,
+  toRecordedSetupStep,
+} from '../src/adapters/process/gate-runner.js';
 import { canonicalizeSignedGateReceiptArtifact, type SignedGateReceiptArtifact } from '../src/domain/attestation.js';
 import { canonicalJson } from '../src/domain/canonical-json.js';
 import { validateDeclaredGate, type GateReceiptResult } from '../src/domain/proof.js';
@@ -129,6 +134,7 @@ const invalidated =
   observationFailed ||
   !before.clean ||
   !after.clean ||
+  gateExecutionWasInvalidated(execution, before) ||
   before.headSha !== after.headSha ||
   before.headSha !== sourceHead;
 const result: GateReceiptResult = classifyGateOutcome({ setup: execution.setup, gate: execution.gate, invalidated });

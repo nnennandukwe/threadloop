@@ -123,6 +123,29 @@ export async function runGateWithSetup(input: GateWithSetupInput): Promise<GateW
   return { setup, gate, observedAfter: await input.observe(), window: executionWindow(setup, gate) };
 }
 
+/**
+ * Preserves any compromised observation from the shared execution window, even if a caller's later final
+ * observation succeeds.
+ */
+export function gateExecutionWasInvalidated(
+  execution: Pick<GateWithSetupResult, 'setup' | 'observedAfter'>,
+  observedBefore: GateRepositoryObservation,
+): boolean {
+  const observedAfter = execution.observedAfter;
+  return (
+    !observedAfter ||
+    !observedAfter.clean ||
+    observedAfter.headSha !== observedBefore.headSha ||
+    execution.setup.some(
+      (step) =>
+        !step.cleanBefore ||
+        !step.cleanAfter ||
+        step.headBefore !== observedBefore.headSha ||
+        step.headAfter !== observedBefore.headSha,
+    )
+  );
+}
+
 function executionWindow(setup: readonly SetupStepExecution[], gate: GateProcessResult | null) {
   // Either the gate ran, or at least one setup step ran to have blocked it, so this is never empty.
   const processes = [...setup.map((step) => step.process), ...(gate ? [gate] : [])];

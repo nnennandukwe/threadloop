@@ -3,6 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  classifyGateOutcome,
+  gateExecutionWasInvalidated,
   runGateProcess,
   runGateWithSetup,
   type GateRepositoryObservation,
@@ -215,8 +217,9 @@ describe('gate runner with declared setup', () => {
     expect(result.gate).toBeNull();
   });
 
-  it('treats a failed observation as a compromised repository and records it as unclean', async () => {
+  it('keeps a failed mid-run observation invalidated when a later observation succeeds', async () => {
     const directory = await makeDirectory();
+    const observedBefore = { headSha: head, clean: true };
 
     const result = await runGateWithSetup({
       setup: [stepInput(directory, 'sync', ['node', '-e', 'process.exit(0)'])],
@@ -227,13 +230,21 @@ describe('gate runner with declared setup', () => {
         stdoutPath: path.join(directory, 'gate.stdout.log'),
         stderrPath: path.join(directory, 'gate.stderr.log'),
       },
-      observedBefore: { headSha: head, clean: true },
+      observedBefore,
       observe: () => Promise.resolve(null),
     });
 
     expect(result.setup[0]).toMatchObject({ headAfter: head, cleanAfter: false });
     expect(result.gate).toBeNull();
     expect(result.observedAfter).toBeNull();
+
+    const finalObservation = { headSha: head, clean: true };
+    const invalidated =
+      gateExecutionWasInvalidated(result, observedBefore) ||
+      !finalObservation.clean ||
+      finalObservation.headSha !== observedBefore.headSha;
+
+    expect(classifyGateOutcome({ setup: result.setup, gate: result.gate, invalidated })).toBe('invalidated');
   });
 
   it('runs the gate directly when no setup is declared', async () => {
