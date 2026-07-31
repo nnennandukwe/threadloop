@@ -88,7 +88,7 @@ async function makeVerifyingSession() {
     '--json',
   ]);
   const proofPlan = {
-    contract_version: 3,
+    contract_version: 4,
     acceptance_criteria: ['All checks pass locally and in CI'],
     ci: {
       provider: 'github-actions',

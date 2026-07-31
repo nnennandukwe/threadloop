@@ -108,7 +108,7 @@ async function makeReviewingSession(
     '--json',
   ]);
   const proofPlan = {
-    contract_version: 3,
+    contract_version: 4,
     acceptance_criteria: ['All proof and review requirements pass'],
     ci: trustPolicy(gateSignerUri, gateSignerSha),
     review: trustPolicy(reviewSignerUri, reviewSignerSha),

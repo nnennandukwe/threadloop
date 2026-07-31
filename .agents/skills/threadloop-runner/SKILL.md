@@ -86,7 +86,7 @@ Run `threadloop protocol --json` from exactly `repo_root`. Require:
 ok = true
 command = "protocol"
 data.contractVersions.protocol = 4
-data.contractVersions.proofPlan = 3
+data.contractVersions.proofPlan = 4
 data.contractVersions.sessionNext = 4
 data.contractVersions.handoff = 3
 ```

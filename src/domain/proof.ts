@@ -13,8 +13,28 @@ export const GATE_RECEIPT_RESULTS = [
 
 export type GateReceiptResult = (typeof GATE_RECEIPT_RESULTS)[number];
 
+/** Bounds the declared provisioning sequence so a plan cannot describe unbounded pre-gate work. */
+const MAXIMUM_SETUP_STEPS = 32;
+
+/**
+ * A declared provisioning step. Shares the gate's own execution shape so validation and execution reuse one
+ * code path, and so a receipt describes a setup step exactly as it describes the gate command.
+ */
+export interface ProofSetupStep {
+  id: string;
+  command: string[];
+  working_directory: string;
+  timeout_ms: number;
+}
+
 export interface ProofGate {
   id: string;
+  /**
+   * Ordered provisioning steps run before `command`, declarable only by contract_version 4 plans. Absent
+   * rather than empty when a gate needs no provisioning, so one canonical form means "no setup" and a
+   * setup-free v4 gate canonicalizes identically to the same v3 gate.
+   */
+  setup?: ProofSetupStep[];
   command: string[];
   working_directory: string;
   timeout_ms: number;
@@ -49,7 +69,15 @@ export interface ReviewProofPlan {
   gates: ProofGate[];
 }
 
-export type ProofPlan = LegacyProofPlan | CiProofPlan | ReviewProofPlan;
+export interface SetupProofPlan {
+  contract_version: 4;
+  acceptance_criteria: string[];
+  ci: GitHubActionsTrustPolicy;
+  review: GitHubActionsTrustPolicy;
+  gates: ProofGate[];
+}
+
+export type ProofPlan = LegacyProofPlan | CiProofPlan | ReviewProofPlan | SetupProofPlan;
 
 export interface CanonicalProofPlan {
   plan: ProofPlan;
@@ -156,16 +184,17 @@ export function validateProofPlan(
   const candidate = requireObject(value, 'proof_plan');
   const isVersionTwo = candidate.contract_version === 2;
   const isVersionThree = candidate.contract_version === 3;
-  if (!isVersionTwo && !isVersionThree && options.requireCiPolicy) {
-    throw invalid('proof_plan.contract_version', 'must be 2 or 3 for newly recorded proof plans');
+  const isVersionFour = candidate.contract_version === 4;
+  if (!isVersionTwo && !isVersionThree && !isVersionFour && options.requireCiPolicy) {
+    throw invalid('proof_plan.contract_version', 'must be 2, 3, or 4 for newly recorded proof plans');
   }
-  if (!isVersionThree && options.requireReviewPolicy) {
-    throw invalid('proof_plan.contract_version', 'must be 3 for newly recorded proof plans');
+  if (!isVersionFour && options.requireReviewPolicy) {
+    throw invalid('proof_plan.contract_version', 'must be 4 for newly recorded proof plans');
   }
   const plan = requireExactObject(
     candidate,
     'proof_plan',
-    isVersionThree
+    isVersionThree || isVersionFour
       ? ['contract_version', 'acceptance_criteria', 'ci', 'review', 'gates']
       : isVersionTwo
         ? ['contract_version', 'acceptance_criteria', 'ci', 'gates']
@@ -186,60 +215,39 @@ export function validateProofPlan(
   const gateIds = new Set<string>();
   const gates = plan.gates.map((value, index) => {
     const field = `proof_plan.gates[${index}]`;
-    const gate = requireExactObject(value, field, ['id', 'command', 'working_directory', 'timeout_ms']);
-    const id = requireNonEmptyText(gate.id, `${field}.id`, 128);
-    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)) {
-      throw invalid(`${field}.id`, 'must match [A-Za-z0-9][A-Za-z0-9._-]*');
-    }
+    const record = requireObject(value, field);
+    // Only v4 admits `setup`, so a v3 gate carrying it fails the exact-field check rather than being ignored.
+    const declaresSetup = isVersionFour && 'setup' in record;
+    const gate = requireExactObject(
+      record,
+      field,
+      declaresSetup
+        ? ['id', 'setup', 'command', 'working_directory', 'timeout_ms']
+        : ['id', 'command', 'working_directory', 'timeout_ms'],
+    );
+    const id = requireGateIdentifier(gate.id, `${field}.id`);
     if (gateIds.has(id)) {
       throw invalid(`${field}.id`, `duplicates declared gate ${id}`);
     }
     gateIds.add(id);
 
-    if (!Array.isArray(gate.command) || gate.command.length === 0 || gate.command.length > 128) {
-      throw invalid(`${field}.command`, 'must contain 1-128 exact argv strings');
-    }
-    const command = gate.command.map((argument, argumentIndex) =>
-      requireNonEmptyText(argument, `${field}.command[${argumentIndex}]`, 32_768),
-    );
-
-    const workingDirectory = requireNonEmptyText(gate.working_directory, `${field}.working_directory`, 4_096);
-    if (workingDirectory.includes('\0') || path.isAbsolute(workingDirectory)) {
-      throw invalid(`${field}.working_directory`, 'must be a repository-relative path');
-    }
-    const normalizedDirectory = path.normalize(workingDirectory);
-    if (
-      normalizedDirectory === '..' ||
-      normalizedDirectory.startsWith(`..${path.sep}`) ||
-      path.isAbsolute(normalizedDirectory)
-    ) {
-      throw invalid(`${field}.working_directory`, 'must not escape the repository');
-    }
-
-    if (
-      typeof gate.timeout_ms !== 'number' ||
-      !Number.isSafeInteger(gate.timeout_ms) ||
-      gate.timeout_ms < 1 ||
-      gate.timeout_ms > 86_400_000
-    ) {
-      throw invalid(`${field}.timeout_ms`, 'must be an integer from 1 through 86400000');
-    }
+    const execution = validateExecutionSpec(gate, field);
+    const setup = declaresSetup ? validateSetupSteps(gate.setup, `${field}.setup`) : [];
 
     return {
       id,
-      command,
-      working_directory: workingDirectory,
-      timeout_ms: gate.timeout_ms,
+      ...(setup.length > 0 ? { setup } : {}),
+      ...execution,
     };
   });
 
-  if (!isVersionTwo && !isVersionThree) {
+  if (!isVersionTwo && !isVersionThree && !isVersionFour) {
     return { acceptance_criteria: normalizedCriteria, gates };
   }
 
-  if (isVersionThree) {
+  if (isVersionThree || isVersionFour) {
     return {
-      contract_version: 3,
+      contract_version: isVersionFour ? 4 : 3,
       acceptance_criteria: normalizedCriteria,
       ci: validateTrustPolicy(plan.ci, 'proof_plan.ci', 'threadloop-gate-sensor.yml'),
       review: validateTrustPolicy(plan.review, 'proof_plan.review', 'threadloop-review-sensor.yml'),
@@ -255,12 +263,15 @@ export function validateProofPlan(
   };
 }
 
-export function hasCiTrustPolicy(plan: ProofPlan): plan is CiProofPlan | ReviewProofPlan {
-  return 'contract_version' in plan && (plan.contract_version === 2 || plan.contract_version === 3);
+export function hasCiTrustPolicy(plan: ProofPlan): plan is CiProofPlan | ReviewProofPlan | SetupProofPlan {
+  return (
+    'contract_version' in plan &&
+    (plan.contract_version === 2 || plan.contract_version === 3 || plan.contract_version === 4)
+  );
 }
 
-export function hasReviewTrustPolicy(plan: ProofPlan): plan is ReviewProofPlan {
-  return 'contract_version' in plan && plan.contract_version === 3;
+export function hasReviewTrustPolicy(plan: ProofPlan): plan is ReviewProofPlan | SetupProofPlan {
+  return 'contract_version' in plan && (plan.contract_version === 3 || plan.contract_version === 4);
 }
 
 export function evaluateProofEvidence(input: {
@@ -414,6 +425,77 @@ function aggregateProofStatus(gates: ProofGateEvidence[]): ProofEvidenceStatus {
     }
   }
   return 'missing';
+}
+
+/**
+ * The execution shape shared by a gate command and every declared setup step. Extracted so a setup step can
+ * never be validated more loosely than the gate command it provisions for.
+ */
+function validateExecutionSpec(record: Record<string, unknown>, field: string) {
+  if (!Array.isArray(record.command) || record.command.length === 0 || record.command.length > 128) {
+    throw invalid(`${field}.command`, 'must contain 1-128 exact argv strings');
+  }
+  const command = record.command.map((argument, argumentIndex) =>
+    requireNonEmptyText(argument, `${field}.command[${argumentIndex}]`, 32_768),
+  );
+
+  const workingDirectory = requireNonEmptyText(record.working_directory, `${field}.working_directory`, 4_096);
+  if (path.isAbsolute(workingDirectory)) {
+    throw invalid(`${field}.working_directory`, 'must be a repository-relative path');
+  }
+  const normalizedDirectory = path.normalize(workingDirectory);
+  if (
+    normalizedDirectory === '..' ||
+    normalizedDirectory.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(normalizedDirectory)
+  ) {
+    throw invalid(`${field}.working_directory`, 'must not escape the repository');
+  }
+
+  if (
+    typeof record.timeout_ms !== 'number' ||
+    !Number.isSafeInteger(record.timeout_ms) ||
+    record.timeout_ms < 1 ||
+    record.timeout_ms > 86_400_000
+  ) {
+    throw invalid(`${field}.timeout_ms`, 'must be an integer from 1 through 86400000');
+  }
+
+  return {
+    command,
+    working_directory: workingDirectory,
+    timeout_ms: record.timeout_ms,
+  };
+}
+
+function validateSetupSteps(value: unknown, field: string): ProofSetupStep[] {
+  if (!Array.isArray(value)) {
+    throw invalid(field, 'must be an array of declared setup steps');
+  }
+  if (value.length > MAXIMUM_SETUP_STEPS) {
+    throw invalid(field, `must declare no more than ${MAXIMUM_SETUP_STEPS} setup steps`);
+  }
+
+  const stepIds = new Set<string>();
+  return value.map((step, index) => {
+    const stepField = `${field}[${index}]`;
+    const record = requireExactObject(step, stepField, ['id', 'command', 'working_directory', 'timeout_ms']);
+    const id = requireGateIdentifier(record.id, `${stepField}.id`);
+    if (stepIds.has(id)) {
+      throw invalid(`${stepField}.id`, `duplicates declared setup step ${id}`);
+    }
+    stepIds.add(id);
+
+    return { id, ...validateExecutionSpec(record, stepField) };
+  });
+}
+
+function requireGateIdentifier(value: unknown, field: string) {
+  const id = requireNonEmptyText(value, field, 128);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)) {
+    throw invalid(field, 'must match [A-Za-z0-9][A-Za-z0-9._-]*');
+  }
+  return id;
 }
 
 function requireExactObject(value: unknown, field: string, expectedKeys: string[]) {

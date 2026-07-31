@@ -73,7 +73,7 @@ function proofPlan(
   workingDirectory = '.',
 ) {
   return {
-    contract_version: 3,
+    contract_version: 4,
     acceptance_criteria: ['All repository checks pass'],
     ci: {
       provider: 'github-actions',
@@ -232,7 +232,7 @@ describe('proof plan persistence', { timeout: 20_000 }, () => {
           .get(),
       ).toMatchObject({
         session_id: sessionId,
-        plan_json: `{"acceptance_criteria":["All repository checks pass"],"ci":{"build_signer_sha":"${sensorSha}","build_signer_uri":"https://github.com/nnennandukwe/threadloop/.github/workflows/threadloop-gate-sensor.yml@${sensorSha}","certificate_identity":"${fixtureRepository}/.github/workflows/threadloop.yml@refs/heads/${fixtureBranch}","issuer":"https://token.actions.githubusercontent.com","provider":"github-actions","source_repository":"${fixtureRepository}"},"contract_version":3,"gates":[{"command":["node","-e","process.stdout.write(\\"ok\\\\n\\")"],"id":"repository-check","timeout_ms":5000,"working_directory":"."}],"review":{"build_signer_sha":"${sensorSha}","build_signer_uri":"https://github.com/nnennandukwe/threadloop/.github/workflows/threadloop-review-sensor.yml@${sensorSha}","certificate_identity":"${fixtureRepository}/.github/workflows/threadloop.yml@refs/heads/${fixtureBranch}","issuer":"https://token.actions.githubusercontent.com","provider":"github-actions","source_repository":"${fixtureRepository}"}}`,
+        plan_json: `{"acceptance_criteria":["All repository checks pass"],"ci":{"build_signer_sha":"${sensorSha}","build_signer_uri":"https://github.com/nnennandukwe/threadloop/.github/workflows/threadloop-gate-sensor.yml@${sensorSha}","certificate_identity":"${fixtureRepository}/.github/workflows/threadloop.yml@refs/heads/${fixtureBranch}","issuer":"https://token.actions.githubusercontent.com","provider":"github-actions","source_repository":"${fixtureRepository}"},"contract_version":4,"gates":[{"command":["node","-e","process.stdout.write(\\"ok\\\\n\\")"],"id":"repository-check","timeout_ms":5000,"working_directory":"."}],"review":{"build_signer_sha":"${sensorSha}","build_signer_uri":"https://github.com/nnennandukwe/threadloop/.github/workflows/threadloop-review-sensor.yml@${sensorSha}","certificate_identity":"${fixtureRepository}/.github/workflows/threadloop.yml@refs/heads/${fixtureBranch}","issuer":"https://token.actions.githubusercontent.com","provider":"github-actions","source_repository":"${fixtureRepository}"}}`,
         plan_sha256: result.data.proof_plan.sha256,
         baseline_branch: branch,
         baseline_head_sha: head,

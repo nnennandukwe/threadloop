@@ -11,7 +11,7 @@ describe('protocol contract', () => {
     expect(Object.keys(contract.commands)).toEqual(leafCommands.map((command) => getCommandPath(command)));
     expect(contract.contractVersions).toEqual({
       protocol: 4,
-      proofPlan: 3,
+      proofPlan: 4,
       sessionNext: 4,
       signedReviewReceipt: 1,
       auditEvent: 1,
