@@ -325,6 +325,7 @@ installation. See the [contribution guide](CONTRIBUTING.md) for hook behavior an
 ## Docs
 
 - [CLI reference](docs/cli.md)
+- [Consumer onboarding](docs/consumer-onboarding.md)
 - [Autonomous agent mode](docs/agent-mode.md)
 - [Governed lifecycle](docs/lifecycle.md)
 - [Audit export and OpenTelemetry](docs/observability.md)

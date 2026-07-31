@@ -41,6 +41,10 @@
     "productivity"
   ],
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nnennandukwe/threadloop.git"
+  },
   "dependencies": {
     "@sigstore/bundle": "4.0.0",
     "@sigstore/sign": "4.1.1",
