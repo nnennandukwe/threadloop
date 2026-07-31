@@ -1,0 +1,28 @@
+{
+  "cli_version": "0.7.6",
+  "checkpoint_id": "094b86a49e97",
+  "strategy": "manual-commit",
+  "branch": "feat/gate-setup-steps",
+  "checkpoints_count": 6,
+  "files_touched": [
+    "scripts/run-ci-gate-sensor.ts",
+    "src/adapters/process/gate-runner.ts",
+    "src/services/session-service.ts",
+    "tests/unit/gate-runner.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/09/4b86a49e97/0/metadata.json",
+      "transcript": "/09/4b86a49e97/0/full.jsonl",
+      "content_hash": "/09/4b86a49e97/0/content_hash.txt",
+      "prompt": "/09/4b86a49e97/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 624,
+    "cache_creation_tokens": 558402,
+    "cache_read_tokens": 91812187,
+    "output_tokens": 232496,
+    "api_call_count": 335
+  }
+}

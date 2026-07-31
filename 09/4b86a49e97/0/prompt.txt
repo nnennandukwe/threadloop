@@ -1,0 +1,57 @@
+proceed with remaining slices. we need to get to attempt 3 as quickly as possiblw.
+
+---
+
+I am waiving reviewer B process.
+
+---
+
+so once this pr is merged I can do attempt 3?
+
+---
+
+<task-notification>
+<task-id>a713e7c051942b8a2</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-nnennandukwe-Code-threadloop/39b4ea3b-165e-438e-8eea-917d6798fb44/tasks/a713e7c051942b8a2.output</output-file>
+<status>completed</status>
+<summary>Agent "Standards axis review" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>Read both standards files, the full source/script/docs diff, and grepped for stale contract references.
+
+## (a) Documented-standard violations — CONTRIBUTING.md "Implementation expectations" (parity across every affected contract)
+
+**Hard — stale CLI reference (docs/cli.md).** The proof-plan example was bumped to `contract_version: 4`, but the prose immediately above it was not: line ~157 still reads *"New proof plans require contract v3 … Stored v1/v2 plans remain readable but cannot authorize review transitions."* `protocol.ts` now says v4 / v1–v3. Also `session gate run` (docs/cli.md ~160-168) still describes only "captures stdout and stderr" with no mention of declared `setup`, which it now executes.
+
+**Hard — persisted-state parity (`CURRENT_SCHEMA_VERSION = 7 → 8`).** Every doc describing storage still says v7:
+- `docs/cli.md:200-202` ("migrate schema v6 to v7 … pre-v7 binaries reject schema v7") and `:287,291`
+- `docs/attestations/receipt-v2.md:130` ("SQLite schema v7 stores an append-only …") — in the file this branch rewrote
+- `README.md:312` ("schema-v7 contract"), `docs/lifecycle.md:59`, `docs/agent-mode.md:31`, `docs/observability.md:27`
+
+**Hard — docs/lifecycle.md:123-127** still says gate import verifies the "v2/v3 CI policy" and review import "the independent v3 review policy"; protocol.ts now states v2/v3/v4 and v4.
+
+**Hard — generated artifacts and their examples.** `examples/threadloop-caller-workflow.yml:38` still documents `plan_sha256` as *"proofPlan contract version 3"*, and its default `gate_json` shows no `setup`, though consumer-onboarding now tells operators to declare setup in `gate_json`.
+
+**Parity gap — `.agents/skills/threadloop-runner/SKILL.md`.** Status allowlists gained `setup_failed`, but the guard/work list (`:167-193`) never gained `PROOF_GATE_SETUP_FAILED -&gt; CORRECT_GATE_SETUP`, the pair the diff added in `session-transition.ts:1083-1090` and asserted in `session-gate.test.ts:1739`.
+
+Migration regression coverage is present and good (`session-gate.test.ts:1849-1915`: v7 downgrade → `migration_required` → `init` → rows/sequence/triggers preserved → widened domain exercised).
+
+## (b) Baseline smells (all judgement calls)
+
+**Duplicated Code — the strongest.** The same validator was extracted twice, once per file, with divergent rules: `proof.ts` `validateExecutionSpec` uses `requireNonEmptyText` + `path.isAbsolute`; `attestation.ts` `validateGateExecution` uses `requireText` + `workingDirectory.startsWith('/')`. Same for the positional match: `recordedSetupMatchesDeclared` (`JSON.stringify`) vs `validateRecordedSetup`'s inline check (`canonicalJson`) — *"must match the setup step the gate declares at the same position"* implemented twice.
+
+**Duplicated Code — setup input assembly** is copied between `session-service.ts:328-337` and `run-ci-gate-sensor.ts:46-57` (`{id, command, workingDirectory, cwd, timeoutMs, stdoutPath, stderrPath}`), the very drift `runGateWithSetup` was created to prevent.
+
+**Data Clumps / parallel arrays.** `declaredSetup`, `setupDirectories`, `setupLogPaths`, `gateExecution.setup` are four arrays joined only by `index`, forcing casts: `setupDirectories[index] as string`, `setupLogPaths[index] as { stdoutPath: string }`. One resolved-step type would remove all four casts. Relatedly `{command, working_directory, timeout_ms}` is a type wanting to be born (`ProofSetupStep`/`ProofGate` both spell it out).
+
+**Repeated Switches on `SignedReceiptSchemaVersion`.** `schemaVersion === 1 ? … : …` recurs in `signedReceiptMediaType`, `threadloopReceiptPredicateType`, plus `schemaVersion === 2 ? ['setup'] : []` and `candidate.schema_version === 2 ? 2 : 1` — one version table both sites read would collapse these.
+
+**Feature Envy / misplaced module.** `classifyGateOutcome` and `toRecordedSetupStep` are pure domain rules ("evidence integrity outranks classification") living in `src/adapters/process/gate-runner.ts`; they envy `domain/proof.ts`, which owns `GATE_RECEIPT_RESULTS` and `RecordedSetupStep`.
+
+**Divergence the diff claims to have removed.** `gate-runner.ts` comments promise both paths "describe setup identically", yet blocked-gate output is `null` locally (`session-service.ts` `stdout: gateExecution.gate ? … : null`) and a fabricated `EMPTY_SHA256` in the sensor. Both are defensible individually; consumers now need two rules for one situation.</result>
+<usage><subagent_tokens>106370</subagent_tokens><tool_uses>27</tool_uses><duration_ms>195799</duration_ms></usage>
+</task-notification>
+
+---
+
+Keep the readme rewrite. it should be added in. and make the pr.
