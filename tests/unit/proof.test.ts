@@ -107,7 +107,7 @@ describe('proof plan domain', () => {
     );
   });
 
-  it('canonicalizes an exact v3 plan with independent gate and review trust policies', () => {
+  it('keeps a stored v3 plan with independent gate and review trust policies readable', () => {
     const result = canonicalizeProofPlan(
       {
         contract_version: 3,
@@ -124,7 +124,6 @@ describe('proof plan domain', () => {
         ],
       },
       sha256,
-      { requireReviewPolicy: true },
     );
 
     expect(result.plan).toMatchObject({ contract_version: 3 });

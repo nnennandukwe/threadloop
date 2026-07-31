@@ -8,7 +8,7 @@ import {
   buildInTotoReceiptStatement,
   canonicalizeSignedGateReceiptArtifact,
   IN_TOTO_PAYLOAD_TYPE,
-  SIGNED_RECEIPT_MEDIA_TYPE,
+  signedReceiptMediaType,
   type GitHubGateJobResult,
 } from '../src/domain/attestation.js';
 import { canonicalJson } from '../src/domain/canonical-json.js';
@@ -97,7 +97,9 @@ await mkdir(path.dirname(outputPath), { recursive: true });
 await writeFile(
   outputPath,
   canonicalJson({
-    media_type: SIGNED_RECEIPT_MEDIA_TYPE,
+    // Derived from the artifact rather than pinned, because the reader enforces that the media type and the
+    // artifact's schema_version agree. Hardcoding it would make a v1 report sign into an unimportable package.
+    media_type: signedReceiptMediaType(canonicalArtifact.artifact.schema_version),
     artifact: canonicalArtifact.artifact,
     bundle,
   }),

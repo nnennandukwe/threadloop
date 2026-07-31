@@ -13,15 +13,34 @@ advancement to remain explicit, inspectable, and evidence-bound.
 
 For the orchestrated v2 workflow, see [docs/agent-mode.md](docs/agent-mode.md).
 
-## Graph and loop engineering
+## Three layers: harness, loop, graph
 
-ThreadLoop applies graph engineering by encoding lifecycle states as nodes, permitted transitions as edges, and
-repository and proof requirements as transition guards. It applies loop engineering by making verification, bounded
-repair, re-entry, blocking, and recovery explicit parts of the lifecycle.
+An agent system that touches production separates three concerns that are easy to conflate:
+
+- **Harness engineering** builds the environment the model operates in: context, action surfaces, permission,
+  persistence, and observability.
+- **Loop engineering** designs the work-and-feedback cycle, and above all its stop rule.
+- **Graph engineering** makes topology explicit: which step is allowed to happen next, and on whose authority.
+
+ThreadLoop is the graph layer plus the outer loop's stop rule. It encodes lifecycle states as nodes, permitted
+transitions as edges, and repository, proof, review, and repair-budget requirements as transition guards. Verification,
+bounded repair, re-entry, blocking, and recovery are explicit parts of that graph rather than ad hoc retry logic.
+
+The "loop" in ThreadLoop is the outer verify -> repair -> re-enter cycle whose stop condition is a guard decision. It is
+not the inner tool-use loop of an agent turn.
 
 ```mermaid
 flowchart LR
-  subgraph TL["ThreadLoop: governed software-delivery graph"]
+  subgraph HARNESS["Harness layer: Governed Agent Autonomy Patterns"]
+    G1["planning"] --> G2["permission"] --> G3["tool trust"] --> W["agent executes work"]
+    W -. "observed by" .-> G5["runtime accountability"]
+  end
+
+  subgraph LOOP["Loop layer: stop on evidence, not confidence"]
+    G4["independent verification"] --> E["content-addressed evidence"]
+  end
+
+  subgraph TL["Graph layer: ThreadLoop governed lifecycle"]
     Q["queued"] --> F["framed"] --> P["proof_ready"] --> I["implementing"] --> V["verifying"]
     V -- "pre-PR proof fails" --> I
     V -- "pre-PR proof passes" --> L["pre_pr_reviewing"]
@@ -37,14 +56,9 @@ flowchart LR
     B -. "human-approved recovery to recorded prior state" .-> A
   end
 
-  subgraph GAA["Governed Agent Autonomy Patterns: inner agent loop"]
-    G1["plan"] --> G2["permission"] --> G3["tool trust"] --> W["agent executes work"]
-    W --> G4["independent verification"] --> E["content-addressed evidence"]
-    W -. "observed by" .-> G5["runtime accountability"]
-    G4 -. "reported through" .-> G5
-  end
-
   I -. "bounded execution" .-> G1
+  W --> G4
+  G4 -. "reported through" .-> G5
   E -. "potential evidence adapter" .-> V
 ```
 
@@ -55,11 +69,45 @@ review-owned edges remain fail-closed until ThreadLoop has authoritative signed 
 The post-PR repair loop is limited to three entries. Entering `blocked` requires complete block evidence, and recovery
 requires explicit human approval to return to the recorded prior state.
 
+### Node boundaries are authority boundaries
+
+The lifecycle graph is not a diagram of imagined workflow steps. Each node exists because the right to advance changes
+hands there, which is why the topology is knowable before any work runs:
+
+| Boundary                        | Authority that must act                                      |
+| ------------------------------- | ------------------------------------------------------------ |
+| `implementing -> verifying`     | The agent, by producing one clean descendant commit          |
+| `verifying -> pre_pr_reviewing` | Local gates and independently signed CI, at the current HEAD |
+| `pre_pr_reviewing -> reviewing` | A reviewer, by recording a current-HEAD clean outcome        |
+| `reviewing -> ready_for_human`  | Verified signed-review evidence without blockers             |
+| `ready_for_human -> completed`  | A human `User` approval plus an observed merge at that HEAD  |
+| any active state `-> blocked`   | Complete block evidence, with human-approved recovery only   |
+
+What is deliberately not fixed in advance is iteration count. The number of implement/verify/review cycles is unbounded
+before the PR boundary; only the post-PR repair budget is capped.
+
+### Evidence must be current, not merely present
+
+A stop rule that accepts "the tests passed" accepts a stale claim. ThreadLoop binds every guard to an exact commit:
+receipts record stdout, stderr, and output-artifact digests, signed CI and review packages are verified against an
+immutable policy, and any new commit stales earlier local, signed-CI, pre-PR review, and signed-review evidence unless
+the evidence contract binds the new HEAD. Guard decisions and applied transitions land in a hash-linked, append-only
+audit ledger with a verified no-overwrite export.
+
+### Harness engineering is an explicit non-goal
+
+ThreadLoop supplies no tools, no context injection, no model routing, and no permission enforcement. It consumes a
+harness instead of being one, and refuses to advance when that harness cannot produce current evidence. Two harness
+concerns are hardened as a byproduct: persistence, through repo-local SQLite, append-only receipts, and the audit
+ledger; and observability, through verified JSONL export documented in [docs/observability.md](docs/observability.md). A
+gate whose provisioning fails is reported as a distinct `setup_failed` result precisely so a harness problem cannot
+consume loop-layer repair budget.
+
 [Governed Agent Autonomy Patterns](https://github.com/nnennandukwe/governed-agent-autonomy-patterns) defines the
-complementary controls around an agent run: planning, permission, tool trust, independent verification, and runtime
-accountability. Those inner-loop controls can produce work and evidence; ThreadLoop governs whether a software-delivery
-task may traverse its next outer lifecycle edge. This is an architectural relationship, not a runtime dependency:
-ThreadLoop does not currently ingest BoundaryBench receipts.
+harness-layer controls around an agent run: planning, permission, tool trust, independent verification, and runtime
+accountability. Four of those five are harness concerns. Independent verification is the seam where a harness produces
+the evidence a graph can consume, which is where the two projects meet. This is an architectural relationship, not a
+runtime dependency: ThreadLoop does not currently ingest BoundaryBench receipts.
 
 ### Primary interfaces and outputs
 
@@ -261,9 +309,9 @@ supported environment variables, and the published branch/rebase/PR workflow gui
 The optional daemon only performs mechanical refresh work. It does not create semantic notes or replace explicit
 capture.
 
-The governed task lifecycle and schema-v7 contract are documented in [`docs/lifecycle.md`](docs/lifecycle.md). The
+The governed task lifecycle and schema-v8 contract are documented in [`docs/lifecycle.md`](docs/lifecycle.md). The
 signed package and reusable workflow are specified in
-[`docs/attestations/receipt-v1.md`](docs/attestations/receipt-v1.md) and
+[`docs/attestations/receipt-v2.md`](docs/attestations/receipt-v2.md) and
 [`docs/attestations/review-v1.md`](docs/attestations/review-v1.md). `session transition` revalidates local, CI, and
 review evidence and records every unique guard decision in the audit ledger.
 

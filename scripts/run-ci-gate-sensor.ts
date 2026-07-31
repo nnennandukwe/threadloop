@@ -3,11 +3,19 @@ import { mkdir, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { sha256 } from '../src/adapters/crypto/sha256.js';
 import { observeProofRepository } from '../src/adapters/git/client.js';
-import { runGateProcess } from '../src/adapters/process/gate-runner.js';
+import {
+  classifyGateOutcome,
+  gateExecutionWasInvalidated,
+  runGateWithSetup,
+  toRecordedSetupStep,
+} from '../src/adapters/process/gate-runner.js';
 import { canonicalizeSignedGateReceiptArtifact, type SignedGateReceiptArtifact } from '../src/domain/attestation.js';
 import { canonicalJson } from '../src/domain/canonical-json.js';
-import { canonicalizeProofPlan, type GateReceiptResult } from '../src/domain/proof.js';
+import { validateDeclaredGate, type GateReceiptResult } from '../src/domain/proof.js';
 import { requiredEnvironment } from './sensor-environment.js';
+
+/** sha256 of the empty string, recorded when a blocked gate produced no output stream at all. */
+const EMPTY_SHA256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 
 const sessionId = requiredEnvironment('THREADLOOP_SESSION_ID');
 const planSha256 = requiredEnvironment('THREADLOOP_PLAN_SHA256');
@@ -44,11 +52,10 @@ if (!/^[a-f0-9]{40}$/.test(sourceHead)) {
 }
 
 const parsedGate = JSON.parse(gateJson) as unknown;
-const gate = canonicalizeProofPlan(
-  { acceptance_criteria: ['Execute the caller-declared CI gate'], gates: [parsedGate] },
-  sha256,
-).plan.gates[0];
-if (!gate || gate.id !== gateId || canonicalJson(gate) !== canonicalJson(parsedGate)) {
+// Validated as a v4 gate, so a declared `setup` array is admitted under exactly the plan's own rules. Wrapping
+// this in a synthetic legacy plan would reject every gate that declares setup.
+const gate = validateDeclaredGate(parsedGate, { field: 'THREADLOOP_GATE_JSON', allowSetup: true });
+if (gate.id !== gateId || canonicalJson(gate) !== canonicalJson(parsedGate)) {
   throw new Error('THREADLOOP_GATE_JSON must be the exact declared gate identified by THREADLOOP_GATE_ID.');
 }
 
@@ -71,46 +78,88 @@ const reportDirectory = path.dirname(reportPath);
 await mkdir(reportDirectory, { recursive: true });
 const stdoutPath = path.join(reportDirectory, 'gate.stdout');
 const stderrPath = path.join(reportDirectory, 'gate.stderr');
-const processResult = await runGateProcess({
-  command: gate.command,
-  cwd: gateWorkingDirectory,
-  timeoutMs: gate.timeout_ms,
-  stdoutPath,
-  stderrPath,
-  env: gateEnvironment(),
+
+const declaredSetup = gate.setup ?? [];
+const setupDirectories = await Promise.all(
+  declaredSetup.map(async (step) => {
+    let resolved: string;
+    try {
+      resolved = await realpath(path.resolve(canonicalSourceRoot, step.working_directory));
+    } catch {
+      throw new Error(`Declared setup step ${step.id} names a working directory that does not exist.`);
+    }
+    const relative = path.relative(canonicalSourceRoot, resolved);
+    if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      throw new Error(`Declared setup step ${step.id} resolves outside the caller repository.`);
+    }
+    return resolved;
+  }),
+);
+// The same routine and classifier the local path uses, so both receipts describe setup identically.
+const execution = await runGateWithSetup({
+  setup: declaredSetup.map((step, index) => ({
+    id: step.id,
+    command: step.command,
+    workingDirectory: step.working_directory,
+    cwd: setupDirectories[index] as string,
+    timeoutMs: step.timeout_ms,
+    stdoutPath: path.join(reportDirectory, `setup-${index}-${step.id}.stdout`),
+    stderrPath: path.join(reportDirectory, `setup-${index}-${step.id}.stderr`),
+    // Declared setup is caller-controlled too, so it runs with the same sanitized environment as the gate.
+    env: gateEnvironment(),
+  })),
+  gate: {
+    command: gate.command,
+    cwd: gateWorkingDirectory,
+    timeoutMs: gate.timeout_ms,
+    stdoutPath,
+    stderrPath,
+    env: gateEnvironment(),
+  },
+  observedBefore: before,
+  observe: () => observeProofRepository(sourceRoot).catch(() => null),
 });
 
 let after: Awaited<ReturnType<typeof observeProofRepository>>;
-let result: GateReceiptResult = processResult.result;
+let observationFailed = false;
 try {
   after = await observeProofRepository(sourceRoot);
 } catch {
   after = { ...before, clean: false };
-  result = 'invalidated';
+  observationFailed = true;
 }
-if (!before.clean || !after.clean || before.headSha !== after.headSha || before.headSha !== sourceHead) {
-  result = 'invalidated';
-}
+// The CI path's notion of an unchanged repository pins the caller SHA, where the local path pins the bound
+// branch. Everything after this point is shared.
+const invalidated =
+  observationFailed ||
+  !before.clean ||
+  !after.clean ||
+  gateExecutionWasInvalidated(execution, before) ||
+  before.headSha !== after.headSha ||
+  before.headSha !== sourceHead;
+const result: GateReceiptResult = classifyGateOutcome({ setup: execution.setup, gate: execution.gate, invalidated });
 
 const artifact: SignedGateReceiptArtifact = {
-  schema_version: 1,
+  schema_version: 2,
   receipt_id: `report_${randomUUID()}`,
   session_id: sessionId,
   plan_sha256: planSha256,
   gate,
   result,
-  started_at: processResult.startedAt,
-  ended_at: processResult.endedAt,
-  duration_ms: processResult.durationMs,
-  exit_status: processResult.exitStatus,
-  signal: processResult.signal,
+  setup: execution.setup.map(toRecordedSetupStep),
+  started_at: execution.window.startedAt,
+  ended_at: execution.window.endedAt,
+  duration_ms: execution.window.durationMs,
+  exit_status: execution.gate?.exitStatus ?? null,
+  signal: execution.gate?.signal ?? null,
   head_before: before.headSha,
   head_after: after.headSha,
   clean_before: before.clean,
   clean_after: after.clean,
   output: {
-    stdout_sha256: processResult.stdout.sha256,
-    stderr_sha256: processResult.stderr.sha256,
+    // Empty digests when failing setup blocked the gate, so nothing claims output the gate never produced.
+    stdout_sha256: execution.gate?.stdout.sha256 ?? EMPTY_SHA256,
+    stderr_sha256: execution.gate?.stderr.sha256 ?? EMPTY_SHA256,
   },
   source: {
     repository: sourceRepository,
@@ -126,14 +175,16 @@ const artifact: SignedGateReceiptArtifact = {
   },
   sensor: {
     name: 'threadloop-github-actions-gate',
-    contract_version: 1,
+    contract_version: 2,
   },
 };
 const canonicalArtifact = canonicalizeSignedGateReceiptArtifact(artifact, sha256);
 await writeFile(reportPath, canonicalArtifact.json, { encoding: 'utf8', flag: 'wx' });
 
 if (result !== 'passed') {
-  process.exitCode = processResult.exitStatus && processResult.exitStatus > 0 ? processResult.exitStatus : 1;
+  const exitStatus =
+    execution.gate?.exitStatus ?? execution.setup.find((step) => step.process.exitStatus)?.process.exitStatus;
+  process.exitCode = exitStatus && exitStatus > 0 ? exitStatus : 1;
 }
 
 function gateEnvironment() {

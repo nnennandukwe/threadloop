@@ -86,7 +86,7 @@ Run `threadloop protocol --json` from exactly `repo_root`. Require:
 ok = true
 command = "protocol"
 data.contractVersions.protocol = 4
-data.contractVersions.proofPlan = 3
+data.contractVersions.proofPlan = 4
 data.contractVersions.sessionNext = 4
 data.contractVersions.handoff = 3
 ```
@@ -105,7 +105,7 @@ Require `ok: true`, `command: "session next"`, `data.contract_version: 4`, and a
 session read, require:
 
 ```text
-data.lifecycle.storage_schema_version = 7
+data.lifecycle.storage_schema_version = 8
 data.lifecycle.contract_status = "current"
 ```
 
@@ -125,7 +125,7 @@ Run session next again and require it to match the retained session and Git snap
 
 - lifecycle state/version match session status;
 - `lifecycle.phase` is `pre_pr` or `post_pr`;
-- schema is `7` and contract status is `current`;
+- schema is `8` and contract status is `current`;
 - candidate is null or has known source/target, matching source/version, and boolean `executable`;
 - repository branch, HEAD, and clean status exactly match the Git snapshot;
 - repair limit is `3` and status, counts, remaining count, and exhausted flag agree;
@@ -151,8 +151,9 @@ completed
 
 Status allowlists:
 
-- `proof.status` and gate statuses: `missing`, `passed`, `failed`, `stale`, `corrupt`; top-level proof also permits
-  `migration_required`;
+- `proof.status` and gate statuses: `missing`, `passed`, `failed`, `setup_failed`, `stale`, `corrupt`; top-level proof
+  also permits `migration_required`. `setup_failed` means declared gate setup could not provision the toolchain, so the
+  gate command never ran; it is an operator handoff, not code repair, and consumes no repair budget;
 - `ci_proof.status`: `policy_missing`, `missing`, `passed`, `stale`, `corrupt`;
 - `review.status`: `policy_missing`, `missing`, `current`, `stale`, `corrupt`;
 - `pre_pr_review.status`: `not_started`, `review_required`, `changes_required`, `cleared`, `stale`,
@@ -191,6 +192,7 @@ PROOF_BASELINE_DIRTY -> PREPARE_CLEAN_PROOF_BASELINE
 PROOF_BASELINE_MISMATCH -> RESTORE_PROOF_BASELINE
 PROOF_CHECKOUT_MISMATCH -> RESTORE_PROOF_CHECKOUT
 PROOF_GATES_MISSING -> RUN_MISSING_GATES
+PROOF_GATE_SETUP_FAILED -> CORRECT_GATE_SETUP
 PROOF_PLAN_REQUIRED -> RESTORE_PROOF_AUTHORITY
 PROOF_RECEIPTS_CORRUPT -> RERUN_CORRUPT_GATES
 PROOF_RECEIPTS_STALE -> RERUN_STALE_GATES
@@ -313,6 +315,7 @@ recognized but never autonomous:
 
 ```text
 RECORD_PRE_PR_REVIEW_OUTCOME
+CORRECT_GATE_SETUP
 MIGRATE_SESSION_SCHEMA
 IMPORT_SIGNED_CI_PROOF
 RERUN_AND_IMPORT_CI_PROOF

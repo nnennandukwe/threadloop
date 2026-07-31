@@ -16,10 +16,11 @@ import {
   buildInTotoReceiptStatement,
   canonicalizeSignedGateReceiptArtifact,
   IN_TOTO_PAYLOAD_TYPE,
-  SIGNED_RECEIPT_MEDIA_TYPE,
+  SIGNED_RECEIPT_MEDIA_TYPE_V2,
   type SignedGateReceiptArtifact,
 } from '../../src/domain/attestation.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
+import type { ProofSetupStep } from '../../src/domain/proof.js';
 import { canonicalizeTransitionRequest, type TransitionRequest } from '../../src/domain/session-transition.js';
 import {
   getNextSessionAction,
@@ -42,7 +43,7 @@ function importSessionGateReceipt(input: Omit<ImportSessionGateReceiptInput, 're
   });
 }
 
-async function makeVerifyingSession() {
+async function makeVerifyingSession(options: { gateSetup?: ProofSetupStep[] } = {}) {
   const repoDir = await mkdtemp(path.join(os.tmpdir(), 'threadloop-signed-import-'));
   const inputDir = await mkdtemp(path.join(os.tmpdir(), 'threadloop-signed-input-'));
   temporaryDirectories.push(repoDir, inputDir);
@@ -88,7 +89,7 @@ async function makeVerifyingSession() {
     '--json',
   ]);
   const proofPlan = {
-    contract_version: 3,
+    contract_version: 4,
     acceptance_criteria: ['All checks pass locally and in CI'],
     ci: {
       provider: 'github-actions',
@@ -109,6 +110,7 @@ async function makeVerifyingSession() {
     gates: [
       {
         id: 'check',
+        ...(options.gateSetup ? { setup: options.gateSetup } : {}),
         command: ['node', '-e', 'process.exit(0)'],
         working_directory: '.',
         timeout_ms: 5_000,
@@ -176,12 +178,13 @@ function signedArtifact(
   overrides: Partial<SignedGateReceiptArtifact> = {},
 ): SignedGateReceiptArtifact {
   return {
-    schema_version: 1,
+    schema_version: 2,
     receipt_id: 'receipt_signed_123',
     session_id: fixture.sessionId,
     plan_sha256: fixture.planSha256,
     gate: fixture.gate,
     result: 'passed',
+    setup: [],
     started_at: '2026-07-23T18:00:00.000Z',
     ended_at: '2026-07-23T18:00:01.000Z',
     duration_ms: 1_000,
@@ -204,7 +207,7 @@ function signedArtifact(
       runner_arch: 'X64',
       node_version: 'v22.13.0',
     },
-    sensor: { name: 'threadloop-github-actions-gate', contract_version: 1 },
+    sensor: { name: 'threadloop-github-actions-gate', contract_version: 2 },
     ...overrides,
   };
 }
@@ -219,7 +222,7 @@ async function writePackage(
   await writeFile(
     packagePath,
     `${canonicalJson({
-      media_type: SIGNED_RECEIPT_MEDIA_TYPE,
+      media_type: SIGNED_RECEIPT_MEDIA_TYPE_V2,
       artifact: receiptArtifact,
       bundle: {
         mediaType: 'application/vnd.dev.sigstore.bundle.v0.3+json',
@@ -499,7 +502,7 @@ describe('signed gate receipt import', { timeout: 20_000 }, () => {
     await resetSqliteConnections(fixture.repoDir);
     const db = new DatabaseSync(path.join(fixture.repoDir, '.threadloop/state/state.db'), { readOnly: true });
     try {
-      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '7' });
+      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '8' });
       expect(db.prepare(`SELECT COUNT(*) AS count FROM signed_gate_receipts`).get()).toEqual({ count: 1 });
       expect(db.prepare(`SELECT status, state_version FROM tasks`).get()).toEqual({
         status: 'verifying',
@@ -602,6 +605,58 @@ describe('signed gate receipt import', { timeout: 20_000 }, () => {
       expect(db.prepare(`SELECT COUNT(*) AS count FROM signed_gate_receipts`).get()).toEqual({ count: 0 });
     } finally {
       db.close();
+    }
+  });
+
+  it('rejects a setup failure distinctly from a code failure, so an operator sees a broken environment', async () => {
+    const syncStep = {
+      id: 'sync',
+      command: ['uv', 'sync', '--all-groups', '--frozen'],
+      working_directory: '.',
+      timeout_ms: 600_000,
+    };
+    const fixture = await makeVerifyingSession({ gateSetup: [syncStep] });
+    const setupFailed = signedArtifact(fixture, {
+      receipt_id: 'receipt_signed_setup_failed',
+      result: 'setup_failed',
+      exit_status: null,
+      setup: [
+        {
+          ...syncStep,
+          result: 'failed',
+          started_at: '2026-07-23T18:00:00.000Z',
+          ended_at: '2026-07-23T18:00:05.000Z',
+          duration_ms: 5_000,
+          exit_status: 127,
+          signal: null,
+          head_before: fixture.head,
+          head_after: fixture.head,
+          clean_before: true,
+          clean_after: true,
+          output: { stdout_sha256: 'e'.repeat(64), stderr_sha256: 'f'.repeat(64) },
+        },
+      ],
+    });
+    const packagePath = await writePackage(fixture, setupFailed);
+
+    await expect(
+      importSessionGateReceipt({
+        cwd: fixture.repoDir,
+        sessionId: fixture.sessionId,
+        packagePath,
+        verifyReceipt: verifier(fixture, setupFailed),
+      }),
+    ).rejects.toMatchObject({
+      code: 'SIGNED_RECEIPT_SETUP_FAILED',
+      details: { setup_step_id: 'sync', setup_step_exit_status: 127 },
+    });
+
+    // Nothing enters session state: only a passing receipt is ever authoritative.
+    const setupDb = new DatabaseSync(path.join(fixture.repoDir, '.threadloop/state/state.db'), { readOnly: true });
+    try {
+      expect(setupDb.prepare(`SELECT COUNT(*) AS count FROM signed_gate_receipts`).get()).toEqual({ count: 0 });
+    } finally {
+      setupDb.close();
     }
   });
 

@@ -28,10 +28,11 @@ Semantic vs mechanical operations:
 `session reconcile` and the daemon do not create semantic notes. They only refresh branch, head SHA, changed file scope,
 diff stats, and commit range.
 
-On a schema-v7 repository, `audit show` and `audit verify` are storage-read-only and never apply a lifecycle transition.
-On a repository older than schema v6, their first migration-aware call may append the honest `audit_activated` event
-that begins forward-only coverage. A schema-v6 repository instead stops with `SESSION_SCHEMA_MIGRATION_REQUIRED`; run
-`threadloop init` explicitly in a writable checkout before retrying audit inspection.
+On a current-schema repository, `audit show` and `audit verify` are storage-read-only and never apply a lifecycle
+transition. On a repository older than schema v6, their first migration-aware call may append the honest
+`audit_activated` event that begins forward-only coverage. A repository on schema v6 or any schema older than the
+current one instead stops with `SESSION_SCHEMA_MIGRATION_REQUIRED`; run `threadloop init` explicitly in a writable
+checkout before retrying audit inspection.
 
 ## Recommended orchestrator flow
 

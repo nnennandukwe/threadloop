@@ -124,6 +124,26 @@ export async function importSignedGateReceiptPackage(
     gate,
     policy: prepared.plan.plan.ci,
   });
+  // Reported separately from a code failure, so an operator reading the error sees a broken environment rather
+  // than broken code. Nothing is persisted either way; the signed package stays on disk as evidence.
+  if (artifact.result === 'setup_failed') {
+    const failingStep = artifact.setup?.find((step) => step.result !== 'passed');
+    throw new ThreadloopError(
+      'SIGNED_RECEIPT_SETUP_FAILED',
+      'The signed gate receipt records failing declared setup, so the gate command never ran.',
+      {
+        details: {
+          receipt_id: artifact.receipt_id,
+          gate_id: artifact.gate.id,
+          setup_step_id: failingStep?.id ?? null,
+          setup_step_command: failingStep?.command ?? null,
+          setup_step_result: failingStep?.result ?? null,
+          setup_step_exit_status: failingStep?.exit_status ?? null,
+          hint: 'Correct the declared setup steps. A bound proof plan is immutable, so start a new session to adopt the corrected declaration.',
+        },
+      },
+    );
+  }
   if (
     artifact.result !== 'passed' ||
     artifact.exit_status !== 0 ||

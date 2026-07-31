@@ -24,7 +24,7 @@ export interface WorkflowContract {
 export interface ProtocolContract {
   contractVersions: {
     protocol: 4;
-    proofPlan: 3;
+    proofPlan: 4;
     sessionNext: 4;
     signedReviewReceipt: 1;
     auditEvent: 1;
@@ -52,7 +52,7 @@ export function buildProtocolContract(): ProtocolContract {
   return {
     contractVersions: {
       protocol: 4,
-      proofPlan: 3,
+      proofPlan: 4,
       sessionNext: 4,
       signedReviewReceipt: 1,
       auditEvent: 1,
@@ -85,10 +85,13 @@ export function buildProtocolContract(): ProtocolContract {
       'Session status, capture, heartbeat, transition, next, gate run, gate import, and review import require --session <id>; session reconcile requires either --session <id> or --all.',
       'Session next is read-only; lifecycle completion is available only through an evidence-authorized session transition.',
       'Session next v4 separates repeatable pre-PR implementing work from bounded post-PR signed-review repair.',
-      'Schema-v6 sessions report migration_required until threadloop init applies the schema-v7 semantic migration.',
+      'Schema-v6 and earlier sessions report migration_required until threadloop init applies the current semantic migration.',
+      'Schema v8 widens the recorded gate result domain to admit setup_failed; threadloop init rebuilds gate_receipts in place and preserves every stored receipt.',
+      'A gate whose declared setup fails records setup_failed, which is an operator handoff rather than code repair and consumes no repair budget.',
       'Gate run executes only stored proof-plan argv, working directory, and timeout values; it never advances lifecycle state.',
-      'New proof plans require contract_version 3 with independent immutable CI and review trust policies; stored v1/v2 plans remain readable for local gate execution.',
-      'Gate import verifies the immutable GitHub Actions and Sigstore policy from the stored v2/v3 proof plan; no trust override is accepted.',
+      'New proof plans require contract_version 4 with independent immutable CI and review trust policies; stored v1/v2/v3 plans remain readable for local gate execution.',
+      'Proof-plan v4 gates may declare ordered setup steps that provision the toolchain before the gate command; each step is validated exactly as the gate command is.',
+      'Gate import verifies the immutable GitHub Actions and Sigstore policy from the stored v2/v3/v4 proof plan; no trust override is accepted.',
       'Review receipt import verifies the current PR HEAD, canonical provider-neutral snapshot, in-toto subject, Sigstore signature, transparency log, workflow invocation identity, repository, session, and proof-plan bindings before persistence.',
       'Entering pre_pr_reviewing requires current-HEAD local proof and verified signed CI proof for every gate; post-PR human readiness additionally requires a current verified signed review receipt.',
       'Audit export verifies the hash-linked ledger and refuses to overwrite an existing output path.',

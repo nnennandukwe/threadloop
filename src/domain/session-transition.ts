@@ -1077,6 +1077,15 @@ function planVerifyingTransition(
       workCode: 'RERUN_CORRUPT_GATES',
       description: 'Restore trusted receipt artifacts or rerun every corrupt declared gate.',
     },
+    // Deliberately not routed through the `failed` branch above: a toolchain that would not provision is a
+    // configuration problem, so it produces an operator handoff and consumes no repair budget.
+    setup_failed: {
+      code: 'PROOF_GATE_SETUP_FAILED',
+      message: 'One or more declared gates could not provision their toolchain, so the gate command never ran.',
+      workCode: 'CORRECT_GATE_SETUP',
+      description:
+        'Correct the declared setup steps for every failing gate. A bound proof plan is immutable, so start a new session to adopt the corrected declaration.',
+    },
   }[proof.status];
   return {
     candidate: null,

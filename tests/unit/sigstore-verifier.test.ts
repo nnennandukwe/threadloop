@@ -12,7 +12,7 @@ import {
   canonicalizeSignedGateReceiptArtifact,
   IN_TOTO_PAYLOAD_TYPE,
   parseSignedReceiptPackage,
-  SIGNED_RECEIPT_MEDIA_TYPE,
+  SIGNED_RECEIPT_MEDIA_TYPE_V2,
   type SignedGateReceiptArtifact,
 } from '../../src/domain/attestation.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
@@ -37,12 +37,13 @@ const policy: GitHubActionsTrustPolicy = {
 
 function artifact(): SignedGateReceiptArtifact {
   return {
-    schema_version: 1,
+    schema_version: 2,
     receipt_id: 'receipt_123',
     session_id: 'session_123',
     plan_sha256: 'c'.repeat(64),
     gate: { id: 'check', command: ['npm', 'test'], working_directory: '.', timeout_ms: 5_000 },
     result: 'passed',
+    setup: [],
     started_at: '2026-07-23T18:00:00.000Z',
     ended_at: '2026-07-23T18:00:01.000Z',
     duration_ms: 1_000,
@@ -65,7 +66,7 @@ function artifact(): SignedGateReceiptArtifact {
       runner_arch: 'X64',
       node_version: 'v22.13.0',
     },
-    sensor: { name: 'threadloop-github-actions-gate', contract_version: 1 },
+    sensor: { name: 'threadloop-github-actions-gate', contract_version: 2 },
   };
 }
 
@@ -74,7 +75,7 @@ function parsedReceipt(options: { transparency?: boolean } = {}) {
   const statement = buildInTotoReceiptStatement(canonicalArtifact.artifact, canonicalArtifact.sha256);
   return parseSignedReceiptPackage(
     {
-      media_type: SIGNED_RECEIPT_MEDIA_TYPE,
+      media_type: SIGNED_RECEIPT_MEDIA_TYPE_V2,
       artifact: artifact(),
       bundle: {
         mediaType: 'application/vnd.dev.sigstore.bundle.v0.3+json',

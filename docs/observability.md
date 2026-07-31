@@ -24,7 +24,8 @@ The command publishes with an exclusive sibling temporary file and refuses to ov
 reported audit root outside the local database if you need to detect later tail truncation.
 
 `audit show` and `audit verify` do not apply lifecycle transitions once schema v6 is active. Use `threadloop init` for
-the explicit schema-v7 semantic migration; prior audit events and honest forward-only coverage remain unchanged.
+the explicit semantic migration to the current schema; prior audit events and honest forward-only coverage remain
+unchanged.
 
 ## Collector recipe
 

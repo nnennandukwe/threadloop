@@ -9,15 +9,61 @@ export const GATE_RECEIPT_RESULTS = [
   'invalidated',
   'execution_error',
   'cleanup_failed',
+  'setup_failed',
 ] as const;
 
 export type GateReceiptResult = (typeof GATE_RECEIPT_RESULTS)[number];
 
-export interface ProofGate {
+/** Bounds the declared provisioning sequence so a plan cannot describe unbounded pre-gate work. */
+const MAXIMUM_SETUP_STEPS = 32;
+
+/**
+ * A declared provisioning step. Shares the gate's own execution shape so validation and execution reuse one
+ * code path, and so a receipt describes a setup step exactly as it describes the gate command.
+ */
+export interface ProofSetupStep {
   id: string;
   command: string[];
   working_directory: string;
   timeout_ms: number;
+}
+
+export interface ProofGate {
+  id: string;
+  /**
+   * Ordered provisioning steps run before `command`, declarable only by contract_version 4 plans. Absent
+   * rather than empty when a gate needs no provisioning, so one canonical form means "no setup" and a
+   * setup-free v4 gate canonicalizes identically to the same v3 gate.
+   */
+  setup?: ProofSetupStep[];
+  command: string[];
+  working_directory: string;
+  timeout_ms: number;
+}
+
+/**
+ * One declared setup step as it actually ran. Recorded identically by the local and CI execution paths, so a
+ * local receipt and a signed receipt for the same HEAD describe provisioning the same way.
+ */
+export interface RecordedSetupStep {
+  id: string;
+  command: string[];
+  working_directory: string;
+  timeout_ms: number;
+  result: GateReceiptResult;
+  started_at: string;
+  ended_at: string;
+  duration_ms: number;
+  exit_status: number | null;
+  signal: string | null;
+  head_before: string;
+  head_after: string;
+  clean_before: boolean;
+  clean_after: boolean;
+  output: {
+    stdout_sha256: string;
+    stderr_sha256: string;
+  };
 }
 
 export interface LegacyProofPlan {
@@ -49,7 +95,15 @@ export interface ReviewProofPlan {
   gates: ProofGate[];
 }
 
-export type ProofPlan = LegacyProofPlan | CiProofPlan | ReviewProofPlan;
+export interface SetupProofPlan {
+  contract_version: 4;
+  acceptance_criteria: string[];
+  ci: GitHubActionsTrustPolicy;
+  review: GitHubActionsTrustPolicy;
+  gates: ProofGate[];
+}
+
+export type ProofPlan = LegacyProofPlan | CiProofPlan | ReviewProofPlan | SetupProofPlan;
 
 export interface CanonicalProofPlan {
   plan: ProofPlan;
@@ -69,6 +123,8 @@ export interface GateReceiptPayload {
   gate_id: string;
   plan_sha256: string;
   result: GateReceiptResult;
+  /** Present on sensor contract_version 2 receipts; absent on stored v1 receipts, which predate setup. */
+  setup?: RecordedSetupStep[];
   command: string[];
   working_directory: string;
   timeout_ms: number;
@@ -87,7 +143,7 @@ export interface GateReceiptPayload {
   };
   sensor: {
     name: 'threadloop-local-gate';
-    contract_version: 1;
+    contract_version: 1 | 2;
   };
 }
 
@@ -108,7 +164,11 @@ export interface StoredGateReceipt {
   createdAt: string;
 }
 
-export type ProofGateEvidenceStatus = 'missing' | 'passed' | 'failed' | 'stale' | 'corrupt';
+/**
+ * `setup_failed` is deliberately distinct from `failed`. A missing toolchain is a configuration problem, so
+ * it must not select repair or consume post-PR repair budget the way a code failure does.
+ */
+export type ProofGateEvidenceStatus = 'missing' | 'passed' | 'failed' | 'setup_failed' | 'stale' | 'corrupt';
 export type ProofEvidenceStatus = ProofGateEvidenceStatus;
 
 export interface ProofGateEvidence {
@@ -124,6 +184,7 @@ export interface ProofEvidence {
   gates: ProofGateEvidence[];
   staleReceiptIds: string[];
   failedReceiptIds: string[];
+  setupFailedReceiptIds: string[];
   corruptReceiptIds: string[];
 }
 
@@ -156,16 +217,17 @@ export function validateProofPlan(
   const candidate = requireObject(value, 'proof_plan');
   const isVersionTwo = candidate.contract_version === 2;
   const isVersionThree = candidate.contract_version === 3;
-  if (!isVersionTwo && !isVersionThree && options.requireCiPolicy) {
-    throw invalid('proof_plan.contract_version', 'must be 2 or 3 for newly recorded proof plans');
+  const isVersionFour = candidate.contract_version === 4;
+  if (!isVersionTwo && !isVersionThree && !isVersionFour && options.requireCiPolicy) {
+    throw invalid('proof_plan.contract_version', 'must be 2, 3, or 4 for newly recorded proof plans');
   }
-  if (!isVersionThree && options.requireReviewPolicy) {
-    throw invalid('proof_plan.contract_version', 'must be 3 for newly recorded proof plans');
+  if (!isVersionFour && options.requireReviewPolicy) {
+    throw invalid('proof_plan.contract_version', 'must be 4 for newly recorded proof plans');
   }
   const plan = requireExactObject(
     candidate,
     'proof_plan',
-    isVersionThree
+    isVersionThree || isVersionFour
       ? ['contract_version', 'acceptance_criteria', 'ci', 'review', 'gates']
       : isVersionTwo
         ? ['contract_version', 'acceptance_criteria', 'ci', 'gates']
@@ -186,60 +248,21 @@ export function validateProofPlan(
   const gateIds = new Set<string>();
   const gates = plan.gates.map((value, index) => {
     const field = `proof_plan.gates[${index}]`;
-    const gate = requireExactObject(value, field, ['id', 'command', 'working_directory', 'timeout_ms']);
-    const id = requireNonEmptyText(gate.id, `${field}.id`, 128);
-    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)) {
-      throw invalid(`${field}.id`, 'must match [A-Za-z0-9][A-Za-z0-9._-]*');
+    const gate = validateDeclaredGate(value, { field, allowSetup: isVersionFour });
+    if (gateIds.has(gate.id)) {
+      throw invalid(`${field}.id`, `duplicates declared gate ${gate.id}`);
     }
-    if (gateIds.has(id)) {
-      throw invalid(`${field}.id`, `duplicates declared gate ${id}`);
-    }
-    gateIds.add(id);
-
-    if (!Array.isArray(gate.command) || gate.command.length === 0 || gate.command.length > 128) {
-      throw invalid(`${field}.command`, 'must contain 1-128 exact argv strings');
-    }
-    const command = gate.command.map((argument, argumentIndex) =>
-      requireNonEmptyText(argument, `${field}.command[${argumentIndex}]`, 32_768),
-    );
-
-    const workingDirectory = requireNonEmptyText(gate.working_directory, `${field}.working_directory`, 4_096);
-    if (workingDirectory.includes('\0') || path.isAbsolute(workingDirectory)) {
-      throw invalid(`${field}.working_directory`, 'must be a repository-relative path');
-    }
-    const normalizedDirectory = path.normalize(workingDirectory);
-    if (
-      normalizedDirectory === '..' ||
-      normalizedDirectory.startsWith(`..${path.sep}`) ||
-      path.isAbsolute(normalizedDirectory)
-    ) {
-      throw invalid(`${field}.working_directory`, 'must not escape the repository');
-    }
-
-    if (
-      typeof gate.timeout_ms !== 'number' ||
-      !Number.isSafeInteger(gate.timeout_ms) ||
-      gate.timeout_ms < 1 ||
-      gate.timeout_ms > 86_400_000
-    ) {
-      throw invalid(`${field}.timeout_ms`, 'must be an integer from 1 through 86400000');
-    }
-
-    return {
-      id,
-      command,
-      working_directory: workingDirectory,
-      timeout_ms: gate.timeout_ms,
-    };
+    gateIds.add(gate.id);
+    return gate;
   });
 
-  if (!isVersionTwo && !isVersionThree) {
+  if (!isVersionTwo && !isVersionThree && !isVersionFour) {
     return { acceptance_criteria: normalizedCriteria, gates };
   }
 
-  if (isVersionThree) {
+  if (isVersionThree || isVersionFour) {
     return {
-      contract_version: 3,
+      contract_version: isVersionFour ? 4 : 3,
       acceptance_criteria: normalizedCriteria,
       ci: validateTrustPolicy(plan.ci, 'proof_plan.ci', 'threadloop-gate-sensor.yml'),
       review: validateTrustPolicy(plan.review, 'proof_plan.review', 'threadloop-review-sensor.yml'),
@@ -255,12 +278,15 @@ export function validateProofPlan(
   };
 }
 
-export function hasCiTrustPolicy(plan: ProofPlan): plan is CiProofPlan | ReviewProofPlan {
-  return 'contract_version' in plan && (plan.contract_version === 2 || plan.contract_version === 3);
+export function hasCiTrustPolicy(plan: ProofPlan): plan is CiProofPlan | ReviewProofPlan | SetupProofPlan {
+  return (
+    'contract_version' in plan &&
+    (plan.contract_version === 2 || plan.contract_version === 3 || plan.contract_version === 4)
+  );
 }
 
-export function hasReviewTrustPolicy(plan: ProofPlan): plan is ReviewProofPlan {
-  return 'contract_version' in plan && plan.contract_version === 3;
+export function hasReviewTrustPolicy(plan: ProofPlan): plan is ReviewProofPlan | SetupProofPlan {
+  return 'contract_version' in plan && (plan.contract_version === 3 || plan.contract_version === 4);
 }
 
 export function evaluateProofEvidence(input: {
@@ -309,6 +335,9 @@ export function evaluateProofEvidence(input: {
     if (receipt.result === 'passed' && payload.result === 'passed' && payload.clean_before && payload.clean_after) {
       return { ...common, status: 'passed' };
     }
+    if (receipt.result === 'setup_failed' && payload.result === 'setup_failed') {
+      return { ...common, status: 'setup_failed' };
+    }
     return { ...common, status: 'failed' };
   });
 
@@ -321,6 +350,9 @@ export function evaluateProofEvidence(input: {
       .map((gate) => gate.receipt_id as string),
     failedReceiptIds: gates
       .filter((gate) => gate.status === 'failed' && gate.receipt_id)
+      .map((gate) => gate.receipt_id as string),
+    setupFailedReceiptIds: gates
+      .filter((gate) => gate.status === 'setup_failed' && gate.receipt_id)
       .map((gate) => gate.receipt_id as string),
     corruptReceiptIds: gates
       .filter((gate) => gate.status === 'corrupt' && gate.receipt_id)
@@ -364,11 +396,45 @@ function parseAndValidateReceipt(
     artifactDigest !== receipt.artifactSha256 ||
     parsed.working_directory !== gate.working_directory ||
     parsed.timeout_ms !== gate.timeout_ms ||
-    JSON.stringify(parsed.command) !== JSON.stringify(gate.command)
+    JSON.stringify(parsed.command) !== JSON.stringify(gate.command) ||
+    !recordedSetupMatchesDeclared(parsed.setup, gate.setup, parsed.result)
   ) {
     return null;
   }
   return parsed;
+}
+
+/**
+ * A receipt describes everything that ran, so recorded setup must correspond to declared setup step for step.
+ * A short recorded sequence is legitimate: a failing step stops the run, so later steps never execute. What is
+ * never legitimate is a recorded step the plan did not declare, or one whose argv, directory, or timeout
+ * differs from the declaration.
+ */
+export function recordedSetupMatchesDeclared(
+  recorded: readonly RecordedSetupStep[] | undefined,
+  declared: readonly ProofSetupStep[] | undefined,
+  result: GateReceiptResult,
+): boolean {
+  const recordedSteps = recorded ?? [];
+  const declaredSteps = declared ?? [];
+  const requiresCompleteSetup = result !== 'setup_failed' && result !== 'invalidated';
+  if (
+    recordedSteps.length > declaredSteps.length ||
+    (requiresCompleteSetup && recordedSteps.length !== declaredSteps.length)
+  ) {
+    return false;
+  }
+  return recordedSteps.every((step, index) => {
+    const expected = declaredSteps[index];
+    return (
+      expected !== undefined &&
+      (!requiresCompleteSetup || step.result === 'passed') &&
+      step.id === expected.id &&
+      step.working_directory === expected.working_directory &&
+      step.timeout_ms === expected.timeout_ms &&
+      JSON.stringify(step.command) === JSON.stringify(expected.command)
+    );
+  });
 }
 
 function isGateReceiptPayload(value: unknown): value is GateReceiptPayload {
@@ -400,7 +466,42 @@ function isGateReceiptPayload(value: unknown): value is GateReceiptPayload {
     typeof payload.artifact.path === 'string' &&
     typeof payload.artifact.sha256 === 'string' &&
     payload.sensor?.name === 'threadloop-local-gate' &&
-    payload.sensor.contract_version === 1
+    // v1 receipts predate setup and carry no `setup` key; v2 always carries one, possibly empty.
+    ((payload.sensor.contract_version === 1 && payload.setup === undefined) ||
+      (payload.sensor.contract_version === 2 && isRecordedSetupStepArray(payload.setup)))
+  );
+}
+
+function isRecordedSetupStepArray(value: unknown): value is RecordedSetupStep[] {
+  return (
+    Array.isArray(value) &&
+    value.every((step: unknown) => {
+      if (typeof step !== 'object' || step === null || Array.isArray(step)) {
+        return false;
+      }
+      const candidate = step as Partial<RecordedSetupStep>;
+      return (
+        typeof candidate.id === 'string' &&
+        Array.isArray(candidate.command) &&
+        candidate.command.every((argument) => typeof argument === 'string') &&
+        typeof candidate.working_directory === 'string' &&
+        typeof candidate.timeout_ms === 'number' &&
+        GATE_RECEIPT_RESULTS.includes(candidate.result as GateReceiptResult) &&
+        typeof candidate.started_at === 'string' &&
+        typeof candidate.ended_at === 'string' &&
+        typeof candidate.duration_ms === 'number' &&
+        (typeof candidate.exit_status === 'number' || candidate.exit_status === null) &&
+        (typeof candidate.signal === 'string' || candidate.signal === null) &&
+        typeof candidate.head_before === 'string' &&
+        typeof candidate.head_after === 'string' &&
+        typeof candidate.clean_before === 'boolean' &&
+        typeof candidate.clean_after === 'boolean' &&
+        typeof candidate.output === 'object' &&
+        candidate.output !== null &&
+        typeof candidate.output.stdout_sha256 === 'string' &&
+        typeof candidate.output.stderr_sha256 === 'string'
+      );
+    })
   );
 }
 
@@ -408,12 +509,118 @@ function aggregateProofStatus(gates: ProofGateEvidence[]): ProofEvidenceStatus {
   if (gates.every((gate) => gate.status === 'passed')) {
     return 'passed';
   }
-  for (const status of ['corrupt', 'failed', 'stale', 'missing'] as const) {
+  // `setup_failed` outranks `failed` because a broken environment is the actionable root cause: a gate that
+  // never ran its command tells you nothing about the code.
+  for (const status of ['corrupt', 'setup_failed', 'failed', 'stale', 'missing'] as const) {
     if (gates.some((gate) => gate.status === status)) {
       return status;
     }
   }
   return 'missing';
+}
+
+/**
+ * Validates one declared gate. Exported because the CI sensor receives a single gate rather than a whole plan
+ * and must apply exactly these rules: wrapping the gate in a synthetic legacy plan would silently reject
+ * declared `setup`, since only contract_version 4 admits it.
+ *
+ * `allowSetup` is the version gate. When false, a gate carrying `setup` fails the exact-field check rather
+ * than having the field ignored.
+ */
+export function validateDeclaredGate(
+  value: unknown,
+  options: { field?: string; allowSetup?: boolean } = {},
+): ProofGate {
+  const field = options.field ?? 'gate';
+  const record = requireObject(value, field);
+  const declaresSetup = (options.allowSetup ?? true) && 'setup' in record;
+  const gate = requireExactObject(
+    record,
+    field,
+    declaresSetup
+      ? ['id', 'setup', 'command', 'working_directory', 'timeout_ms']
+      : ['id', 'command', 'working_directory', 'timeout_ms'],
+  );
+  const id = requireGateIdentifier(gate.id, `${field}.id`);
+  const execution = validateExecutionSpec(gate, field);
+  const setup = declaresSetup ? validateSetupSteps(gate.setup, `${field}.setup`) : [];
+
+  return {
+    id,
+    ...(setup.length > 0 ? { setup } : {}),
+    ...execution,
+  };
+}
+
+/**
+ * The execution shape shared by a gate command and every declared setup step. Extracted so a setup step can
+ * never be validated more loosely than the gate command it provisions for.
+ */
+function validateExecutionSpec(record: Record<string, unknown>, field: string) {
+  if (!Array.isArray(record.command) || record.command.length === 0 || record.command.length > 128) {
+    throw invalid(`${field}.command`, 'must contain 1-128 exact argv strings');
+  }
+  const command = record.command.map((argument, argumentIndex) =>
+    requireNonEmptyText(argument, `${field}.command[${argumentIndex}]`, 32_768),
+  );
+
+  const workingDirectory = requireNonEmptyText(record.working_directory, `${field}.working_directory`, 4_096);
+  if (path.isAbsolute(workingDirectory)) {
+    throw invalid(`${field}.working_directory`, 'must be a repository-relative path');
+  }
+  const normalizedDirectory = path.normalize(workingDirectory);
+  if (
+    normalizedDirectory === '..' ||
+    normalizedDirectory.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(normalizedDirectory)
+  ) {
+    throw invalid(`${field}.working_directory`, 'must not escape the repository');
+  }
+
+  if (
+    typeof record.timeout_ms !== 'number' ||
+    !Number.isSafeInteger(record.timeout_ms) ||
+    record.timeout_ms < 1 ||
+    record.timeout_ms > 86_400_000
+  ) {
+    throw invalid(`${field}.timeout_ms`, 'must be an integer from 1 through 86400000');
+  }
+
+  return {
+    command,
+    working_directory: workingDirectory,
+    timeout_ms: record.timeout_ms,
+  };
+}
+
+function validateSetupSteps(value: unknown, field: string): ProofSetupStep[] {
+  if (!Array.isArray(value)) {
+    throw invalid(field, 'must be an array of declared setup steps');
+  }
+  if (value.length > MAXIMUM_SETUP_STEPS) {
+    throw invalid(field, `must declare no more than ${MAXIMUM_SETUP_STEPS} setup steps`);
+  }
+
+  const stepIds = new Set<string>();
+  return value.map((step, index) => {
+    const stepField = `${field}[${index}]`;
+    const record = requireExactObject(step, stepField, ['id', 'command', 'working_directory', 'timeout_ms']);
+    const id = requireGateIdentifier(record.id, `${stepField}.id`);
+    if (stepIds.has(id)) {
+      throw invalid(`${stepField}.id`, `duplicates declared setup step ${id}`);
+    }
+    stepIds.add(id);
+
+    return { id, ...validateExecutionSpec(record, stepField) };
+  });
+}
+
+function requireGateIdentifier(value: unknown, field: string) {
+  const id = requireNonEmptyText(value, field, 128);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)) {
+    throw invalid(field, 'must match [A-Za-z0-9][A-Za-z0-9._-]*');
+  }
+  return id;
 }
 
 function requireExactObject(value: unknown, field: string, expectedKeys: string[]) {

@@ -8,7 +8,9 @@ import {
   evaluateCiProofEvidence,
   IN_TOTO_PAYLOAD_TYPE,
   parseSignedReceiptPackage,
-  SIGNED_RECEIPT_MEDIA_TYPE,
+  SIGNED_RECEIPT_MEDIA_TYPE_V1,
+  SIGNED_RECEIPT_MEDIA_TYPE_V2,
+  signedReceiptMediaType,
   type SignedGateReceiptArtifact,
 } from '../../src/domain/attestation.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
@@ -18,7 +20,7 @@ const planSha = 'b'.repeat(64);
 
 function artifact(): SignedGateReceiptArtifact {
   return {
-    schema_version: 1,
+    schema_version: 2,
     receipt_id: 'receipt_123',
     session_id: 'session_123',
     plan_sha256: planSha,
@@ -29,6 +31,7 @@ function artifact(): SignedGateReceiptArtifact {
       timeout_ms: 900_000,
     },
     result: 'passed',
+    setup: [],
     started_at: '2026-07-23T18:00:00.000Z',
     ended_at: '2026-07-23T18:00:10.000Z',
     duration_ms: 10_000,
@@ -56,17 +59,17 @@ function artifact(): SignedGateReceiptArtifact {
     },
     sensor: {
       name: 'threadloop-github-actions-gate',
-      contract_version: 1,
+      contract_version: 2,
     },
   };
 }
 
-function packageFor(receiptArtifact = artifact()) {
+function packageFor(receiptArtifact = artifact(), mediaType?: string) {
   const canonicalArtifact = canonicalizeSignedGateReceiptArtifact(receiptArtifact, sha256);
   const statement = buildInTotoReceiptStatement(canonicalArtifact.artifact, canonicalArtifact.sha256);
   const statementJson = canonicalJson(statement);
   return {
-    media_type: SIGNED_RECEIPT_MEDIA_TYPE,
+    media_type: mediaType ?? signedReceiptMediaType(canonicalArtifact.artifact.schema_version),
     artifact: receiptArtifact,
     bundle: {
       mediaType: 'application/vnd.dev.sigstore.bundle.v0.3+json',
@@ -240,9 +243,9 @@ describe('signed receipt attestation domain', () => {
           digest: { sha256: canonicalArtifact.sha256 },
         },
       ],
-      predicateType: 'https://threadloop.dev/attestations/receipt/v1',
+      predicateType: 'https://threadloop.dev/attestations/receipt/v2',
       predicate: {
-        schema_version: 1,
+        schema_version: 2,
         receipt_type: 'gate',
         session_id: 'session_123',
         plan_sha256: planSha,
@@ -255,7 +258,7 @@ describe('signed receipt attestation domain', () => {
         },
         sensor: {
           name: 'threadloop-github-actions-gate',
-          contract_version: 1,
+          contract_version: 2,
         },
       },
     });
@@ -294,5 +297,173 @@ describe('signed receipt attestation domain', () => {
     ],
   ])('rejects %s', (_name, value, field) => {
     expect(captureAttestationError(() => canonicalizeSignedGateReceiptArtifact(value, sha256)).field).toBe(field);
+  });
+});
+
+describe('signed gate receipt versioning', () => {
+  const syncStep = {
+    id: 'sync',
+    command: ['uv', 'sync', '--all-groups', '--frozen'],
+    working_directory: '.',
+    timeout_ms: 600_000,
+  };
+
+  function recordedStep(overrides: Record<string, unknown> = {}) {
+    return {
+      ...syncStep,
+      result: 'passed' as const,
+      started_at: '2026-07-23T18:00:00.000Z',
+      ended_at: '2026-07-23T18:00:05.000Z',
+      duration_ms: 5_000,
+      exit_status: 0,
+      signal: null,
+      head_before: headSha,
+      head_after: headSha,
+      clean_before: true,
+      clean_after: true,
+      output: { stdout_sha256: 'e'.repeat(64), stderr_sha256: 'f'.repeat(64) },
+      ...overrides,
+    };
+  }
+
+  /** A v1 artifact predates declared setup: no `setup` key, sensor contract_version 1. */
+  function v1Artifact(): SignedGateReceiptArtifact {
+    const rest = { ...artifact() };
+    delete rest.setup;
+    return { ...rest, schema_version: 1, sensor: { name: 'threadloop-github-actions-gate', contract_version: 1 } };
+  }
+
+  function v2WithSetup(): SignedGateReceiptArtifact {
+    const base = artifact();
+    return {
+      ...base,
+      gate: { ...base.gate, setup: [syncStep] },
+      setup: [recordedStep()],
+    };
+  }
+
+  it('keeps a stored v1 package readable, so existing sessions do not become corrupt', () => {
+    const parsed = parseSignedReceiptPackage(packageFor(v1Artifact()), sha256);
+
+    expect(parsed.artifact.schema_version).toBe(1);
+    expect(parsed.artifact).not.toHaveProperty('setup');
+    expect(parsed.statement.predicateType).toBe('https://threadloop.dev/attestations/receipt/v1');
+    expect(parsed.statement.predicate.schema_version).toBe(1);
+  });
+
+  it('round-trips a v2 package carrying recorded setup', () => {
+    const parsed = parseSignedReceiptPackage(packageFor(v2WithSetup()), sha256);
+
+    expect(parsed.artifact.schema_version).toBe(2);
+    expect(parsed.artifact.setup).toEqual([recordedStep()]);
+    expect(parsed.statement.predicateType).toBe('https://threadloop.dev/attestations/receipt/v2');
+    expect(parsed.statement.predicate.schema_version).toBe(2);
+  });
+
+  it('rejects a passed v2 artifact that omits declared setup evidence', () => {
+    const incomplete = v2WithSetup();
+    incomplete.setup = [];
+
+    expect(() => canonicalizeSignedGateReceiptArtifact(incomplete, sha256)).toThrow(AttestationValidationError);
+  });
+
+  it('rejects a v2 artifact presented under the v1 media type', () => {
+    expect(() => parseSignedReceiptPackage(packageFor(v2WithSetup(), SIGNED_RECEIPT_MEDIA_TYPE_V1), sha256)).toThrow(
+      AttestationValidationError,
+    );
+  });
+
+  it('rejects a v1 artifact presented under the v2 media type', () => {
+    expect(() => parseSignedReceiptPackage(packageFor(v1Artifact(), SIGNED_RECEIPT_MEDIA_TYPE_V2), sha256)).toThrow(
+      AttestationValidationError,
+    );
+  });
+
+  it('rejects a v1 artifact that smuggles in a setup key', () => {
+    expect(() => canonicalizeSignedGateReceiptArtifact({ ...v1Artifact(), setup: [recordedStep()] }, sha256)).toThrow(
+      AttestationValidationError,
+    );
+  });
+
+  it('rejects a v2 artifact whose sensor still claims contract_version 1', () => {
+    expect(() =>
+      canonicalizeSignedGateReceiptArtifact(
+        { ...v2WithSetup(), sensor: { name: 'threadloop-github-actions-gate', contract_version: 1 } },
+        sha256,
+      ),
+    ).toThrow(AttestationValidationError);
+  });
+
+  it('rejects recorded setup the gate never declared', () => {
+    const base = artifact();
+    expect(() => canonicalizeSignedGateReceiptArtifact({ ...base, setup: [recordedStep()] }, sha256)).toThrow(
+      AttestationValidationError,
+    );
+  });
+
+  it('rejects recorded setup whose argv differs from the declaration', () => {
+    const drifted = v2WithSetup();
+    expect(() =>
+      canonicalizeSignedGateReceiptArtifact(
+        { ...drifted, setup: [recordedStep({ command: ['uv', 'sync', '--all-extras'] })] },
+        sha256,
+      ),
+    ).toThrow(AttestationValidationError);
+  });
+
+  it('rejects setup_failed when the gate declares no setup', () => {
+    const withoutDeclaredSetup = { ...artifact(), result: 'setup_failed' as const };
+
+    expect(
+      captureAttestationError(() => canonicalizeSignedGateReceiptArtifact(withoutDeclaredSetup, sha256)).field,
+    ).toBe('package.artifact.setup');
+  });
+
+  it('rejects setup_failed when no setup execution was recorded', () => {
+    const withoutRecordedSetup = { ...v2WithSetup(), result: 'setup_failed' as const, setup: [] };
+
+    expect(
+      captureAttestationError(() => canonicalizeSignedGateReceiptArtifact(withoutRecordedSetup, sha256)).field,
+    ).toBe('package.artifact.setup');
+  });
+
+  it('rejects setup_failed when every recorded setup step passed', () => {
+    const allPassed = { ...v2WithSetup(), result: 'setup_failed' as const };
+
+    expect(captureAttestationError(() => canonicalizeSignedGateReceiptArtifact(allPassed, sha256)).field).toBe(
+      'package.artifact.setup',
+    );
+  });
+
+  it('rejects recorded setup that continues after the first non-passing step', () => {
+    const base = artifact();
+    const secondStep = { ...syncStep, id: 'second' };
+    const continuedAfterFailure = {
+      ...base,
+      gate: { ...base.gate, setup: [syncStep, secondStep] },
+      result: 'setup_failed' as const,
+      setup: [recordedStep({ result: 'failed', exit_status: 1 }), recordedStep({ id: 'second' })],
+    };
+
+    expect(
+      captureAttestationError(() => canonicalizeSignedGateReceiptArtifact(continuedAfterFailure, sha256)).field,
+    ).toBe('package.artifact.setup[0].result');
+  });
+
+  it('accepts a short recorded sequence, because a failing step stops the run', () => {
+    const base = artifact();
+    const twoSteps = { ...syncStep, id: 'second' };
+    const parsed = canonicalizeSignedGateReceiptArtifact(
+      {
+        ...base,
+        gate: { ...base.gate, setup: [syncStep, twoSteps] },
+        result: 'setup_failed',
+        setup: [recordedStep({ result: 'failed', exit_status: 1 })],
+      },
+      sha256,
+    );
+
+    expect(parsed.artifact.setup).toHaveLength(1);
+    expect(parsed.artifact.result).toBe('setup_failed');
   });
 });

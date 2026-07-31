@@ -1,4 +1,4 @@
-# Signed gate receipt v1
+# Signed gate receipt v2
 
 ThreadLoop requires two independent kinds of evidence before `verifying -> reviewing`:
 
@@ -10,13 +10,13 @@ as authoritative passing proof.
 
 ## Immutable trust policy
 
-New sessions record proof-plan contract v3. The `ci` object binds the GitHub OIDC issuer, exact caller workflow
+New sessions record proof-plan contract v4. The `ci` object binds the GitHub OIDC issuer, exact caller workflow
 identity, source repository, and the commit-pinned ThreadLoop gate workflow. The required sibling `review` policy uses
 the same shape and pins `threadloop-review-sensor.yml` independently:
 
 ```json
 {
-  "contract_version": 3,
+  "contract_version": 4,
   "acceptance_criteria": ["All repository checks pass locally and in CI"],
   "ci": {
     "provider": "github-actions",
@@ -46,16 +46,16 @@ the same shape and pins `threadloop-review-sensor.yml` independently:
 ```
 
 The source repository must match the checkout's GitHub `origin`, and the caller workflow identity must bind the current
-named branch. Stored v1/v2 plans remain readable and their local gates remain runnable, but they cannot authorize review
-transitions. Immutable legacy plans are never upgraded in place.
+named branch. Stored v1/v2/v3 plans remain readable and their local gates remain runnable; v1 and v2 cannot authorize
+review transitions. Immutable legacy plans are never upgraded in place.
 
 ## Reusable workflow
 
 A caller invokes `.github/workflows/threadloop-gate-sensor.yml` by a full ThreadLoop commit SHA. The snippet below
 hardcodes its inputs to show the contract. For a caller an operator can actually dispatch, copy
 [`examples/threadloop-caller-workflow.yml`](../../examples/threadloop-caller-workflow.yml), which supplies these values
-at dispatch time. Note that the declared gate must provision its own toolchain, because this workflow runs the command
-with only Node set up. See [consumer onboarding](../consumer-onboarding.md).
+at dispatch time. This workflow runs with only Node set up, so a gate whose command needs a language toolchain declares
+it as `setup` steps inside `gate_json`. See [consumer onboarding](../consumer-onboarding.md).
 
 ```yaml
 permissions:
@@ -76,9 +76,9 @@ jobs:
 
 The caller must run from a branch ref. The reusable workflow uses two fresh GitHub-hosted jobs:
 
-1. `execute_gate` checks out the caller HEAD and the pinned sensor, runs the exact argv without a shell, and observes
-   Git before and after execution. This job has only `contents: read`; it cannot request an OIDC token and never sees
-   the signed-package output path.
+1. `execute_gate` checks out the caller HEAD and the pinned sensor, runs each declared setup step and then the gate
+   command as exact argv without a shell, and observes Git before and after every one of them. This job has only
+   `contents: read`; it cannot request an OIDC token and never sees the signed-package output path.
 2. `sign_receipt` runs only after `execute_gate` has ended. It receives `id-token: write`, checks out only the pinned
    sensor, downloads the captured report as untrusted data, binds it to the caller inputs and
    `needs.execute_gate.result`, and signs through GitHub OIDC.
@@ -127,7 +127,7 @@ Before appending evidence, ThreadLoop verifies:
 - a clean, unchanged, passing result for the checkout's current HEAD.
 
 Accepted packages are canonicalized under
-`.threadloop/artifacts/receipts/<session-id>/<receipt-id>/signed-receipt.json`. SQLite schema v7 stores an append-only
+`.threadloop/artifacts/receipts/<session-id>/<receipt-id>/signed-receipt.json`. SQLite schema v8 stores an append-only
 verified projection. Identical imports return the existing sequence; a receipt id reused for different content is a
 conflict. Import never changes lifecycle state or `state_version`.
 
@@ -140,3 +140,64 @@ network calls or repeating Sigstore verification. It reports `policy_missing`, `
 Malformed, oversized, tampered, transparency-free, wrong-identity, wrong-source, wrong-ref, wrong-plan, wrong-gate,
 wrong-HEAD, dirty, changed-HEAD, or nonpassing packages create no accepted row and no lifecycle mutation. Sigstore
 trust-root or service unavailability fails closed and can be retried later.
+
+## Recorded setup
+
+A v2 artifact records every declared setup step that ran, so the signed receipt continues to describe everything that
+happened rather than only the gate command:
+
+```json
+{
+  "schema_version": 2,
+  "result": "setup_failed",
+  "setup": [
+    {
+      "id": "sync",
+      "command": ["uv", "sync", "--all-groups", "--frozen"],
+      "working_directory": ".",
+      "timeout_ms": 600000,
+      "result": "failed",
+      "started_at": "2026-07-31T11:00:00.000Z",
+      "ended_at": "2026-07-31T11:00:41.000Z",
+      "duration_ms": 41000,
+      "exit_status": 127,
+      "signal": null,
+      "head_before": "FULL_SHA",
+      "head_after": "FULL_SHA",
+      "clean_before": true,
+      "clean_after": true,
+      "output": { "stdout_sha256": "...", "stderr_sha256": "..." }
+    }
+  ]
+}
+```
+
+`started_at`, `ended_at`, and `duration_ms` on the artifact span everything that ran, so a gate blocked by failing setup
+still reports the real duration of the provisioning that was attempted. `exit_status` and `signal` describe the gate
+command and are null when it never ran.
+
+Recorded setup is bound positionally to the gate's declaration: each step's argv, working directory, and timeout must
+match the step declared at the same index. A recorded sequence shorter than the declaration is legitimate, because a
+failing step stops the run. A recorded step the gate never declared is rejected.
+
+## Version compatibility
+
+|                           | v1                                                  | v2                                                  |
+| ------------------------- | --------------------------------------------------- | --------------------------------------------------- |
+| Media type                | `application/vnd.threadloop.signed-receipt.v1+json` | `application/vnd.threadloop.signed-receipt.v2+json` |
+| Predicate type            | `https://threadloop.dev/attestations/receipt/v1`    | `https://threadloop.dev/attestations/receipt/v2`    |
+| `schema_version`          | `1`                                                 | `2`                                                 |
+| `sensor.contract_version` | `1`                                                 | `2`                                                 |
+| `setup` key               | absent                                              | always present, possibly empty                      |
+
+The four version markers are pinned to each other. A v2 artifact cannot be presented under the v1 media type or
+predicate type, and a v1 artifact cannot carry a `setup` key. Newly signed receipts are always v2. Stored v1 packages
+remain readable and keep evaluating exactly as before, because signed evidence is re-verified on every read and
+invalidating it retroactively would corrupt existing sessions.
+
+## Setup failure is not a code failure
+
+A signed receipt recording `setup_failed` is never imported as authoritative proof, like any other non-passing result.
+It is rejected distinctly, as `SIGNED_RECEIPT_SETUP_FAILED`, naming the failing step and its argv, because a missing
+toolchain is a configuration problem rather than evidence about the code. The rejection consumes no repair budget and
+the signed package remains on disk for diagnosis.

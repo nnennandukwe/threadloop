@@ -117,7 +117,7 @@ describe('threadloop runner v4 contract', () => {
 
     expect(protocol.data.contractVersions).toMatchObject({
       protocol: 4,
-      proofPlan: 3,
+      proofPlan: 4,
       sessionNext: 4,
       handoff: 3,
     });
