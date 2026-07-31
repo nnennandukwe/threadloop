@@ -164,3 +164,679 @@ Okay I merged in #70. Proceed with getting those latest updates from main and co
 <status>completed</status>
 <summary>Background command "Watch CI on the fix PR" completed (exit code 0)</summary>
 </task-notification>
+
+---
+
+I merged it in. Now pull down latest and work on the stale bundle todo. we will not do #2.
+
+---
+
+<task-notification>
+<task-id>bvadlkikq</task-id>
+<tool-use-id>toolu_01FtcBCqpspMt7K2ZMr2zvbK</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-nnennandukwe-Code-threadloop/f2a34ada-9ad1-4089-884a-672a29924305/tasks/bvadlkikq.output</output-file>
+<status>completed</status>
+<summary>Background command "Watch CI on the guard PR" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+I merged it in, we're good for now. Now let's focus on this pilot I started but had to stop because we uncovered major bugs that are now fixed. I think this pilot is worth running so we can over threadloop's validity. Please rebase main then take a look at what we should do about this. # Plan ThreadLoop pilot build
+
+> # ThreadLoop Consumer-Repository Feature Pilot Build Plan
+>
+> ## Summary
+>
+> The next ThreadLoop acceptance target is a supervised, real consumer-repository feature run:
+>
+> > Can Codex use the ThreadLoop runner skill while implementing a fresh feature in SignalPay, continue across separate wakes, preserve lifecycle and proof state, respond to current review evidence, and stop at `ready_for_human`?
+>
+> The pilot needs the runner skill and the existing ThreadLoop CLI. It does **not** need `runner-replay.test.ts`, a controller extracted from that test, or a new scheduler product.
+>
+> The role of each existing artifact is:
+>
+> - `.agents/skills/threadloop-runner/SKILL.md`: the procedure Codex follows for one explicit wake.
+> - ThreadLoop CLI: lifecycle, proof, review, audit, and guarded-transition authority.
+> - `tests/integration/runner-replay.test.ts`: ThreadLoop-internal regression coverage only; it is not installed, copied, imported, or executed by SignalPay.
+> - The operator or a simple scheduled task: supplies the four wake inputs, retains the wake handoff, and starts the next Codex wake.
+> - The human: retains approval, merge, recovery, and policy authority.
+>
+> This is intentionally a supervised pilot. A manually retained wake record and explicit invocations are sufficient to test whether the skill is usable. If the pilot later demonstrates that manual wake delivery is the dominant friction, that evidence can justify a separate controller or scheduler build.
+>
+> Current state on 2026-07-30:
+>
+> - ThreadLoop `origin/main` is `1312105dc860fe67c32eb207763fd262ff28282a`.
+> - The runner skill is on `feat/issue-43-runner-contract@dce6d423bd790258ec09f84e3115b38632da8d6d`.
+> - ThreadLoop PR #68 and issue #43 are closed, but the live consumer-repository pilot was not run.
+> - SignalPay `main` is `a6e832cd8a5e031a3ea65729e04f1406ccf59b88`.
+> - SignalPay PR #4 remains an open refund PR and is not the pilot target.
+> - The current SignalPay checkout contains unrelated untracked local artifacts, so the pilot must use a fresh worktree.
+>
+> The intended review unit is the SignalPay pilot feature pull request. The runner skill must first be available from a reviewed, immutable ThreadLoop commit, but the pilot does not add ThreadLoop runtime code.
+>
+> ## Skills To Use
+>
+> - `software-build-plan`: keep the consumer pilot implementation-ready and separate from future automation.
+> - `threadloop-runner`: govern each explicit Codex wake and enforce the one-action and human-authority boundaries.
+> - `tdd-bdd`: require failing SignalPay behavior tests before production code.
+> - `failure-path-testing`: prove idempotency, state-transition rejection, and no-mutation failure paths.
+> - `workflow-invariants`: verify the wake, lifecycle, evidence, and authority boundaries throughout the run.
+> - `dx-audit`: record setup burden, manual handoffs, unclear stops, and context-restart usability.
+> - `code-review`: perform the mandatory final Standards and Spec review against the SignalPay feature fixed point.
+>
+> ## Scope
+>
+> ### In scope
+>
+> - Make the reviewed runner skill available in the fresh SignalPay worktree.
+> - Use an immutable ThreadLoop package and signer commit SHA.
+> - Create a dedicated SignalPay worktree and feature branch from current `origin/main`.
+> - Start one explicit ThreadLoop session for one bounded feature.
+> - Retain the four runner inputs and each wake result in a pilot handoff record.
+> - Invoke Codex separately for each wake using the runner skill.
+> - Have Codex write tests, implement one bounded feature, run focused checks, and create one scoped implementation commit when ThreadLoop authorizes `COMMIT_IMPLEMENTATION`.
+> - Run SignalPay’s immutable `make verify` gate through ThreadLoop.
+> - Collect and import current signed CI and review evidence outside the runner wake.
+> - Enter a bounded `COMMIT_REPAIR` wake only if the current review contains a legitimate blocking finding.
+> - Start at least one later wake in a fresh Codex context to test continuity without transcript memory.
+> - Stop at `ready_for_human` and export the verified audit trail.
+> - Record technical success and developer-experience friction.
+>
+> The default fresh feature is **capture-state safety and retry semantics**:
+>
+> - Only an `authorized` payment can begin a new capture.
+> - An exact idempotent retry of a successful capture returns the original response and emits no duplicate event.
+> - A new idempotency key against a `captured` or `pending` payment fails without mutation or a new event.
+> - Existing auth, scope, camelCase response, and event contracts remain stable.
+>
+> ### Out of scope
+>
+> - Extracting any code from `runner-replay.test.ts`.
+> - Copying `runner-replay.test.ts` or a replay fixture into SignalPay.
+> - Making the historical SignalPay PR #4 replay the pilot result.
+> - Building a controller, scheduler, queue, lease service, agent launcher, provider abstraction, dashboard, or hosted service.
+> - Changing ThreadLoop lifecycle, schema, protocol, CLI, or runtime packages.
+> - Using the runner to push, open or merge a PR, approve, deploy, publish, rotate secrets, activate policy, or recover a blocked session.
+> - Manufacturing a review defect solely to force a repair cycle.
+> - Modifying, merging, or closing SignalPay PR #4.
+> - Same-checkout multi-agent execution.
+>
+> ## Package Layout / File-to-Task Mapping
+>
+> ### ThreadLoop source
+>
+> - `.agents/skills/threadloop-runner/SKILL.md`: existing runner procedure copied or installed into SignalPay from the reviewed immutable ThreadLoop SHA.
+> - `tests/integration/runner-replay.test.ts`: existing ThreadLoop-only regression. It remains where it is and is not a pilot dependency.
+> - `.github/workflows/threadloop-gate-sensor.yml`: existing reusable signed gate sensor, pinned by full ThreadLoop commit SHA.
+> - `.github/workflows/threadloop-review-sensor.yml`: existing reusable signed review sensor, pinned by the same full ThreadLoop commit SHA.
+>
+> No ThreadLoop source file is added or extracted for this pilot.
+>
+> ### SignalPay pilot
+>
+> - `.agents/skills/threadloop-runner/SKILL.md` **(new in the pilot worktree):** exact reviewed skill snapshot. Record its ThreadLoop source SHA in the file handoff or PR description.
+> - `.github/workflows/threadloop.yml` **(new):** minimal caller workflow for the pinned ThreadLoop gate and review sensors.
+> - `.threadloop/config.json` **(new):** visible repo-local ThreadLoop configuration. Commit it before the first runner wake.
+> - `.plan/threadloop-capture-state-pilot/plan.md` **(new):** feature behavior, selected `PAY-*` rules, proof plan, and authority boundary.
+> - `.plan/threadloop-capture-state-pilot/build-session-execution-plan.md` **(new):** ordered TDD and wake sequence.
+> - `tests/test_payments_api.py` **(current):** capture-state and retry behavior tests.
+> - `src/signalpay_api/app.py` **(current):** smallest production change that satisfies those tests.
+>
+> ### Pilot evidence outside the worktree
+>
+> - `wake-handoffs.jsonl` **(new, local-only):** one operator-retained record per wake containing the exact inputs, preflight facts, selected action, outcome, stop reason, and next authority.
+> - Signed gate/review packages **(local-only):** downloaded and imported receipts, never treated as source code.
+> - `threadloop-audit.jsonl` **(local-only unless deliberately attached to the pilot report):** verified ThreadLoop audit export.
+> - `pilot-report.md` **(new, local-only during the run):** setup time, wake count, manual interventions, context-restart result, evidence friction, and final outcome.
+>
+> The handoff record is an operating artifact, not a new controller or product schema. The operator can append it manually after each wake.
+>
+> ## Dependencies And Settings
+>
+> - No new ThreadLoop runtime or development dependency.
+> - No SignalPay package dependency, database, or Node project metadata.
+> - Build the ThreadLoop CLI tarball from the reviewed full SHA and install it in a tool directory outside SignalPay, or invoke an already verified binary from that SHA.
+> - Pin both reusable sensor workflows to the same reviewed full ThreadLoop SHA.
+> - SignalPay remains Python 3.11+ with `uv`.
+> - SignalPay’s immutable local gate is `make verify`.
+> - ThreadLoop protocol, proof plan, and `session next` remain version `3`; SQLite schema remains version `6`.
+> - The runner receives only:
+>
+>   ```text
+>   repo_root
+>   session_id
+>   wake_id
+>   mode: normal
+>   ```
+>
+> - Use one unique `wake_id` per scheduled delivery. Reuse it only for an ambiguous duplicate delivery of that same wake.
+> - Keep `.threadloop/state/`, receipt packages, wake handoffs, and the pilot report out of the feature diff unless explicitly selected as review evidence.
+>
+> ## Canonical Contracts
+>
+> ### Runner skill contract
+>
+> Each Codex wake:
+>
+> 1. Receives the four explicit inputs.
+> 2. Validates the canonical repository root, named branch, HEAD, clean worktree, protocol version, explicit session, audit status, and repair budget.
+> 3. Reads `session next`.
+> 4. Performs at most one authorized action:
+>    - one executable lifecycle transition;
+>    - one bounded `COMMIT_IMPLEMENTATION` or `COMMIT_REPAIR` action;
+>    - one stored local gate; or
+>    - no mutation and a handoff.
+> 5. Stops after that action or handoff.
+>
+> The skill is the runner. No extracted TypeScript controller sits between Codex and the existing ThreadLoop CLI in this pilot.
+>
+> ### Operator-retained wake handoff
+>
+> Before a transition or other side effect, the operator retains the fields the skill requires:
+>
+> ```text
+> repo_root
+> session_id
+> wake_id
+> mode
+> branch
+> head_sha
+> worktree_clean
+> lifecycle_state
+> lifecycle_state_version
+> selected_action
+> action_started
+> action_outcome
+> action_result
+> transition_request
+> stop_reason
+> next_authority
+> ```
+>
+> The record may be maintained as one append-only local JSONL file. It is needed for honest duplicate/crash handling, but it does not require new runtime code.
+>
+> ### Coding-agent action
+>
+> During `COMMIT_IMPLEMENTATION`, Codex may:
+>
+> - Read the task, rules, and plan.
+> - Write failing behavior tests.
+> - Implement the smallest feature.
+> - Run focused non-ThreadLoop checks.
+> - Create at most one scoped commit.
+>
+> It must leave a clean worktree and stop. It must not run a ThreadLoop gate, transition, evidence import, push, or PR action in the same wake.
+>
+> `COMMIT_REPAIR` follows the same boundary and is limited to the complete current blocking finding set.
+>
+> ### External evidence handoff
+>
+> The runner stops when signed CI or review evidence is required. The operator:
+>
+> 1. Invokes the exact pinned caller workflow.
+> 2. Downloads the exact package for the current feature HEAD.
+> 3. Imports it using the explicit session.
+> 4. Records the result in the wake handoff.
+> 5. Starts a later wake with a new `wake_id`.
+>
+> These are supervised pilot operations, not runner behavior.
+>
+> ### Human stop
+>
+> At `ready_for_human`, `blocked`, `completed`, or exhausted repair budget, Codex starts no new action. The pilot ends at `ready_for_human` without approval or merge.
+>
+> ## TDD And BDD Implementation Strategy
+>
+> The feature wake begins with these red scenarios:
+>
+> 1. Authorized payment + new key -> one capture and one event.
+> 2. Same key retry -> identical response and no second event.
+> 3. Captured payment + new key -> conflict, no mutation, no event.
+> 4. Pending payment + new key -> conflict, no mutation, no event.
+> 5. Missing scope or idempotency key -> existing fail-closed behavior remains.
+>
+> Only after the targeted tests demonstrate the gap does Codex modify `src/signalpay_api/app.py`. It then reruns the focused tests and creates one feature commit.
+>
+> Full `make verify` is not bundled into the implementation action. ThreadLoop runs it later as the stored local gate while the repository is clean and committed.
+>
+> If review produces a legitimate blocker, a later repair wake begins from a test or reproduction for that finding, applies the smallest correction, and creates one repair commit. All local and signed evidence must then be refreshed for the repair HEAD.
+>
+> The pilot deliberately starts at least one verification, review, or repair wake in a fresh Codex context. The new context receives only the repository, the runner skill, and the four explicit inputs.
+>
+> ## Component Design
+>
+> The pilot uses the existing architecture:
+>
+> ```text
+> operator or scheduled task
+>   -> four explicit wake inputs
+>   -> Codex reads runner skill
+>   -> existing ThreadLoop CLI projection
+>   -> one Codex action or one handoff
+>   -> operator records outcome
+>   -> later independent wake
+> ```
+>
+> ThreadLoop owns lifecycle truth, proof plans, receipts, review evidence, repair budget, guarded transitions, and audit persistence.
+>
+> The runner skill owns the procedure for one wake. Codex owns the bounded code change. The operator owns wake delivery and the local handoff record. GitHub Actions owns signed sensor execution. The human owns irreversible authority.
+>
+> The pilot is testing whether this division is usable. Adding a software controller before running the pilot would hide the coordination friction the experiment needs to reveal.
+>
+> ## Failure And Recovery Rules
+>
+> - Missing or invalid wake input -> run no ThreadLoop command; operator corrects the invocation.
+> - Dirty worktree before a wake -> preserve it exactly and stop; never clean, reset, stash, or repeat work automatically.
+> - Branch, HEAD, repository, session, or protocol mismatch -> stop and record the observed facts.
+> - Ambiguous transition response -> reuse the same wake ID and exact retained request only after revalidating the Git snapshot.
+> - `STATE_VERSION_CONFLICT` or `IDEMPOTENCY_CONFLICT` -> stop; do not mint a new key in the same wake.
+> - Crash during repository work -> preserve the worktree and mark the handoff outcome unknown; a human inspects before any later action.
+> - Uncertain local gate outcome -> do not replay it as a duplicate.
+> - Missing, stale, or corrupt proof -> remain in the current state and follow the exact required-work handoff.
+> - Signed package collection/import failure -> retain the current lifecycle state and exact error; retry only under operator supervision.
+> - Blocking review finding -> enter repair only through the executable reviewing-to-repairing transition and within budget.
+> - Clean review -> do not invent a defect to exercise repair.
+> - Fresh Codex context cannot continue -> record a failed usability criterion; do not compensate with hidden transcript context.
+> - Unknown required-work code -> fail closed and hand it to the operator.
+> - `ready_for_human`, blocked state, exhausted budget, approval, or merge requirement -> stop for human authority.
+>
+> ## Commit Plan
+>
+> ### ThreadLoop skill prerequisite
+>
+> 1. `feat(runner): add one-action wake contract and transition proof`
+>    - Review the existing branch’s skill and its small ThreadLoop regression test together.
+>    - The test remains internal and is not promoted to pilot code.
+> 2. `docs(runner): document supervised consumer pilot boundary`
+>    - Make explicit that the npm package contains the CLI, the skill is a repository procedure, and no scheduler/controller is included.
+>
+> If those commits are not merged before the pilot, pin the exact reviewed `dce6d423bd790258ec09f84e3115b38632da8d6d` snapshot and describe the pilot as pre-merge validation.
+>
+> ### SignalPay pilot
+>
+> 1. `chore(threadloop): add pinned supervised pilot enablement`
+>    - Add the exact skill snapshot, pinned sensor caller workflow, ThreadLoop config, and pilot plan.
+> 2. `feat(payments): enforce safe capture transitions`
+>    - Keep the red tests and smallest implementation in one behavior-closed commit.
+> 3. `fix(payments): address current review findings`
+>    - Add only when a legitimate current blocking review requires repair.
+>
+> ## Branch And PR Flow
+>
+> 1. Review the exact ThreadLoop runner-skill branch against current `origin/main`.
+> 2. Either merge a new/reopened runner-skill PR or explicitly pin the reviewed branch SHA for a pre-merge pilot. Do not imply the closed PR is merged.
+> 3. Build and verify the ThreadLoop CLI tarball from that exact SHA.
+> 4. Create a fresh SignalPay worktree and feature branch from `a6e832cd8a5e031a3ea65729e04f1406ccf59b88`.
+> 5. Add and commit the minimal pilot enablement.
+> 6. Start the explicit ThreadLoop session and retain its `session_id`.
+> 7. Invoke serialized Codex wakes manually or through a simple scheduled task, using the skill and four explicit inputs.
+> 8. After the implementation commit, let ThreadLoop run `make verify` in a later wake.
+> 9. Under explicit pilot execution authority, the operator may push and open the SignalPay feature PR, invoke the signed sensors, and import their packages. The runner never performs those operations.
+> 10. Follow current review evidence through optional repair and fresh proof.
+> 11. Stop at `ready_for_human`, verify/export the audit, and write the pilot report.
+> 12. Decide from measured friction whether a separate controller/scheduler ticket is warranted.
+>
+> Before either PR, pin one fixed point and review the complete change set, including untracked files:
+>
+> - Run the Codex `code-review` skill on separate Standards and Spec axes.
+> - Run this independent read-only review against the same fixed point:
+>
+>   ```bash
+>   claude -p \
+>     --model claude-sonnet-5 \
+>     --effort high \
+>     --permission-mode plan \
+>     "<focused prompt forbidding edits, network, subagents, and a full test run; require confirmed P0-P3 findings with file, line, evidence, and correction, or CLEAN>"
+>   ```
+>
+> Reproduce and deduplicate findings, resolve every confirmed actionable issue, rerun affected and full checks, then rerun both reviews before opening the PR. Do not silently substitute another Claude model.
+>
+> ## Test Plan
+>
+> ### ThreadLoop prerequisite verification
+>
+> ```bash
+> npx vitest run tests/integration/runner-replay.test.ts
+> npm run check
+> npm run security:dependencies
+> git diff --check origin/main...HEAD
+> ```
+>
+> This verifies the existing runner-skill change inside ThreadLoop. It does not make the test part of SignalPay or the live pilot runtime.
+>
+> ### SignalPay feature verification
+>
+> ```bash
+> uv run pytest tests/test_payments_api.py -q
+> make verify
+> git diff --check <pilot-fixed-point>...HEAD
+> ```
+>
+> Required live acceptance:
+>
+> - The feature tests pass at the feature HEAD.
+> - The ThreadLoop local gate receipt is current.
+> - The signed CI package is produced by the pinned workflow and imported.
+> - The current signed review package is imported.
+> - Any legitimate repair produces a descendant commit and fresh proof.
+> - A fresh Codex context completes at least one later wake.
+> - Final state is `ready_for_human`.
+> - Audit verification and export pass.
+> - No runner-owned push, PR, approval, merge, deployment, publication, secret rotation, or policy activation occurs.
+>
+> ### Review commands
+>
+> Use the same fixed point for Codex and Claude:
+>
+> ```bash
+> claude -p \
+>   --model claude-sonnet-5 \
+>   --effort high \
+>   --permission-mode plan \
+>   "<read the applicable AGENTS.md, rules, feature specification, and complete fixed-point diff; do not edit, use network, spawn subagents, or run the full suite; report confirmed P0-P3 findings with file, line, evidence, and correction, or CLEAN>"
+> ```
+>
+> After remediation, rerun the focused tests, `make verify`, both reviews, and the fixed-point diff check.
+>
+> ### Usability measurements
+>
+> Record:
+>
+> - Setup time before the first Codex wake.
+> - Total wake count.
+> - Operator and human interventions.
+> - Time spent retaining handoffs and collecting/importing evidence.
+> - Ambiguous or unknown stops.
+> - Dirty-worktree or crash recovery.
+> - Fresh-context continuation success.
+> - Whether one implementation wake and commit was natural for the feature.
+> - Any attempted authority violation or duplicate effect.
+>
+> ## Definition Of Done
+>
+> - The reviewed runner skill is available in the fresh SignalPay worktree.
+> - No replay test, fixture, or extracted controller code is a SignalPay dependency.
+> - The pilot uses the existing ThreadLoop CLI and explicit four-input wakes.
+> - Every wake has a retained handoff with no more than one started action.
+> - Codex implements the capture-state feature from red tests to one clean, scoped feature commit.
+> - Existing capture, auth, idempotency, response, and event contracts remain passing.
+> - A fresh Codex context continues at least one later wake without transcript reconstruction.
+> - Current local, signed CI, and signed review evidence is imported for the actual feature HEAD.
+> - Any real blocking review finding is repaired within budget and reverified.
+> - ThreadLoop reaches and stops at `ready_for_human`.
+> - Audit verification/export reconstructs the lifecycle and authority handoffs.
+> - The pilot report records technical evidence and manual coordination cost.
+> - No scheduler, controller, queue, lease, provider abstraction, dashboard, or hosted service is added.
+> - Any future automation build is justified by observed pilot friction rather than assumed need.
+>
+> ## Assumptions And Defaults
+>
+> - The runner skill is sufficient for a supervised pilot because Codex and the operator can execute its documented procedure directly.
+> - “Sufficient” does not mean self-scheduling: a human or simple scheduled task still supplies the next wake.
+> - The operator-retained JSONL handoff is operational evidence, not product code.
+> - SignalPay is the default consumer because it has repo-local rules, TDD guidance, `make verify`, GitHub CI, and a bounded payment mutation surface.
+> - Capture-state safety is the default fresh feature because it is absent from SignalPay `main` and does not duplicate the open refund PR.
+> - The exact feature behavior should be approved before binding the immutable proof plan.
+> - The current `runner-replay.test.ts` may remain as ThreadLoop regression coverage. The historical large replay is irrelevant to this plan.
+> - One session owns one dedicated worktree.
+> - GitHub is the first signed-evidence provider.
+> - Issue #43 and PR #68 are not evidence that the live pilot ran merely because they are closed.
+>
+> Primary evidence:
+>
+> - [ThreadLoop issue #43](https://github.com/nnennandukwe/threadloop/issues/43)
+> - [ThreadLoop PR #68](https://github.com/nnennandukwe/threadloop/pull/68)
+> - [SignalPay PR #4](https://github.com/nnennandukwe/qodo-quality-workshop-signalpay/pull/4)
+> - ThreadLoop runner skill snapshot: `dce6d423bd790258ec09f84e3115b38632da8d6d`
+> - SignalPay pilot baseline: `a6e832cd8a5e031a3ea65729e04f1406ccf59b88`
+
+I have the plan, but it doesn’t explicitly authorize execution. Should I:
+
+- execute the supervised pilot,
+- review and refine this plan only, or
+- save it as a repository planning artifact?
+
+I won’t create branches, worktrees, commits, or external GitHub state until you confirm. Also, `threadloop-runner` is not currently available as an installed skill; execution would first need to load the reviewed snapshot from the specified immutable ThreadLoop commit.
+
+> implement it.
+
+<details><summary>24 previous messages</summary>
+
+> I’m implementing the supervised pilot as specified. I’ll first load the named skills and verify the live ThreadLoop/SignalPay fixed points, then isolate all SignalPay work in a fresh worktree. The runner contract will govern each explicit wake; commits, pushes, PR creation, and evidence imports will remain separate authorities.
+>
+> The skill pass confirms one important boundary: the Software Build Plan is already sufficiently implementation-ready, so I’m treating it as the governing spec rather than rewriting it. I’m also using the runner snapshot itself as the missing `threadloop-runner` skill once its commit and contents are verified.
+>
+> Live verification found ThreadLoop `origin/main` advanced to `55fc5d2` after the plan was written; the runner snapshot remains the unmerged `dce6d42` head of closed PR #68. I’m preserving the plan’s pre-merge-validation path: verify and package that immutable snapshot without changing ThreadLoop runtime source.
+>
+> The immutable runner checkout built, but its first verification attempt exposed an environment mismatch: `npm ci` omitted dev dependencies, so Vitest and Prettier were unavailable. The dependency-security gate itself passed at its configured `high` threshold. I’m correcting only the tool installation mode and will rerun the exact prerequisite commands.
+>
+> SignalPay’s live baseline still matches `a6e832c`, and PR #4 is open on a separate refund branch. The original checkout’s untracked artifacts are untouched. I’m now creating the dedicated capture-pilot worktree from the verified `origin/main` SHA and will establish a clean baseline before adding pilot enablement.
+>
+> The runner prerequisite is now proven at `dce6d42`: targeted replay tests passed, the full ThreadLoop check passed, the dependency gate passed at its configured threshold, and the packaged CLI reports protocol/proof/session-next version 3. The `threadloop-runner` skill now causes the next concrete action: install its exact snapshot and visible configuration before any wake is allowed.
+>
+> <details><summary>Created 3 files</summary>
+>
+> - Wrote `~/Code/qodo-quality-workshop-signalpay-threadloop-capture-pilot/.github/workflows/threadloop.yml` (+63 -0)
+> - Wrote `~/Code/qodo-quality-workshop-signalpay-threadloop-capture-pilot/.plan/threadloop-capture-state-pilot/build-session-execution-plan.md` (+97 -0)
+> - Wrote `~/Code/qodo-quality-workshop-signalpay-threadloop-capture-pilot/.plan/threadloop-capture-state-pilot/plan.md` (+141 -0)
+>
+> </details>
+>
+> Pilot enablement is committed cleanly at SignalPay `d0fc72e`; the original checkout remains untouched. I’m starting the single explicit ThreadLoop session now. From this point, every runner wake will be retained separately and will start no more than one action.
+>
+> <details><summary>Created 3 files, edited a file, deleted a file</summary>
+>
+> - Wrote `~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/pilot-report.md` (+53 -0)
+> - Wrote `~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/wake-handoffs.jsonl` (+1 -0)
+> - Deleted `~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/wake-handoffs.jsonl` (+0 -1)
+> - Wrote `~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/retained-wake-requests/pilot-wake-001.json` (+32 -0)
+> - Wrote `~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/retained-wake-requests/pilot-wake-001.json` (+2 -2)
+> - Wrote `~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/retained-wake-requests/pilot-wake-001.json` (+32 -4)
+> - Wrote `~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/wake-handoffs.jsonl` (+1 -0)
+>
+> </details>
+>
+> Wake `pilot-wake-001` passed full preflight and performed only `queued → framed`; its exact request and response are retained. Per the runner contract, I stopped that wake. The external-controller step now binds the immutable proof plan—the one lifecycle transition that requires non-empty input and therefore is intentionally outside the four-input runner wake.
+>
+> <details><summary>Created 2 files, edited 3 files</summary>
+>
+> - Wrote `~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/proof-plan-transition.json` (+49 -0)
+> - Wrote `~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/proof-plan-transition.json` (+2 -2)
+> - Wrote `~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/proof-plan-transition.json` (+9 -2)
+> - Wrote `~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/retained-wake-requests/pilot-wake-002.json` (+32 -0)
+> - Wrote `~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/retained-wake-requests/pilot-wake-002.json` (+13 -4)
+> - Wrote `~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/wake-handoffs.jsonl` (+1 -0)
+>
+> </details>
+>
+> Wake `pilot-wake-002` performed only `proof_ready → implementing` and stopped. The next wake is the bounded coding-agent action. It will use TDD: prove the missing capture-state behavior red, make the smallest production change, run focused non-ThreadLoop checks, create one commit, and stop without running the ThreadLoop gate.
+>
+> <details><summary>Created a file</summary>
+>
+> - Wrote `~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/retained-wake-requests/pilot-wake-003.json` (+25 -0)
+>
+> </details>
+>
+> The implementation wake is authorized by `COMMIT_IMPLEMENTATION`. The current handler already satisfies exact-key replay, but it captures any existing payment on a new key. I’m adding two API-level red cases: a new key against `captured`, and a new key against `pending`, both proving no event or idempotency-result side effect.
+>
+> <details><summary>Edited 2 files</summary>
+>
+> - Wrote `~/Code/qodo-quality-workshop-signalpay-threadloop-capture-pilot/tests/test_payments_api.py` (+36 -1)
+> - Wrote `~/Code/qodo-quality-workshop-signalpay-threadloop-capture-pilot/src/signalpay_api/app.py` (+3 -0)
+>
+> </details>
+>
+> The red phase failed exactly at the intended gap (`200` instead of `409` for both captured/new-key and pending/new-key). The minimal guard now runs after exact-key replay and before mutation, so retries still work while new invalid transitions fail closed. Targeted tests are green; one ad hoc file-scoped Pyright invocation ignored the project’s normal discovery behavior and produced the same untyped TestClient noise across existing tests, so I’m verifying with the repository’s configured `pyright` entrypoint before committing.
+>
+> <details><summary>Created a file, edited 3 files</summary>
+>
+> - Wrote `~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/retained-wake-requests/pilot-wake-003.json` (+12 -4)
+> - Wrote `~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/wake-handoffs.jsonl` (+1 -0)
+> - Wrote `~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/retained-wake-requests/pilot-wake-004.json` (+32 -0)
+> - Wrote `~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/retained-wake-requests/pilot-wake-004.json` (+13 -4)
+> - Wrote `~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/wake-handoffs.jsonl` (+1 -0)
+> - Wrote `~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/wake-handoffs.jsonl` (+1 -1)
+>
+> </details>
+>
+> The implementation wake ended in one clean commit, and wake `pilot-wake-004` performed only `implementing → verifying`. To satisfy the usability criterion, the next wake will run in a genuinely fresh Codex context with no transcript inheritance. I’m serializing it exclusively on the same dedicated worktree; the main context will not touch that checkout until the fresh wake returns.
+>
+> The fresh-context wake is still running its preflight and projected gate action. I’m continuing to hold the worktree exclusively for it; no state has been inferred from the delay.
+>
+> Fresh-context continuation succeeded. Wake `pilot-wake-005` independently rediscovered the `make-verify` gate, ran exactly that one immutable action, retained receipt `receipt_fc711340-bc15-40c6-ba11-d7f5386a1707`, and stopped cleanly. I’m moving to the mandatory pre-PR review gate now; these reviews are read-only and do not advance ThreadLoop lifecycle state.
+>
+> The `code-review` skill now drives two independent, read-only reviews against fixed point `a6e832c`: Standards (repo rules plus the smell baseline) and Spec (the pilot plan). The repo lacks the skill’s optional issue-tracker helper, so the committed pilot plan and the user-approved build plan are the explicit spec sources.
+>
+> The first Claude invocation exposed a CLI quirk: in `plan` mode it emitted a read-only diff tool call but no final review text. I’m keeping the exact required model/effort/mode and removing that ambiguity by piping the complete standards, spec, and fixed-point diff into a tool-disabled read-only pass—no model fallback or substituted reviewer.
+>
+> The pre-PR gate found one real P2 on both independent axes: the capture mutation’s existing `403` test does not prove state/event/idempotency immutability, and invalid-audience coverage exercises `GET`, not `POST /capture`. Spec review is clean. I’m preserving the clean verified HEAD while I record this finding; changing it now would be outside any runner-authorized repository-work wake.
+>
+> <details><summary>Created a file, edited a file</summary>
+>
+> - Wrote `~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/pilot-report.md` (+16 -9)
+> - Wrote `~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/review-ledger.md` (+58 -0)
+>
+> </details>
+</details>
+
+Implementation is safely paused at ThreadLoop `verifying`, not pushed or opened as a PR.
+
+Completed:
+
+- Isolated branch/worktree with two commits: `d0fc72e` enablement and `2efaa06` feature.
+- Five serialized wakes; fresh-context wake succeeded.
+- Capture tests are green; immutable `make verify` gate passed.
+- Local receipt: `receipt_fc711340-bc15-40c6-ba11-d7f5386a1707`.
+- [Pilot report](~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/pilot-report.md)
+- [Wake handoffs](~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/wake-handoffs.jsonl)
+
+The pre-PR reviews found one confirmed P2: capture `401/403` tests do not fully prove no payment, event, or idempotency mutation. [Review ledger](~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/review-ledger.md)
+
+There is now a genuine sequencing conflict:
+
+- ThreadLoop authorizes only signed-CI collection at the current state.
+- Repository repair requires later signed PR-review evidence.
+- The plan forbids opening the PR until this P2 is repaired.
+
+May I relax the ordering by opening a draft PR with the known P2 recorded, import signed review evidence, and then repair it through the authorized `COMMIT_REPAIR` wake? This preserves ThreadLoop’s repository-work authority but deliberately relaxes the “resolve before PR” requirement.
+
+<details><summary>2 previous messages</summary>
+
+> Context compaction
+>
+> Source: automatic
+> Status: completed
+>
+> Why would you want to relax it?
+</details>
+
+I don’t want to relax it. I proposed that only because the pilot reached a genuine sequencing deadlock:
+
+- The pre-PR review found a confirmed P2 test-coverage gap.
+- ThreadLoop is already in `verifying`, where repository edits are forbidden.
+- `COMMIT_REPAIR` becomes available only after signed review evidence—normally from a PR.
+- Yet the plan requires all confirmed findings fixed before opening that PR.
+
+A draft PR would preserve ThreadLoop’s action authority, but it would knowingly violate the pre-PR quality gate. That is the wrong default.
+
+The stricter response is to record this as pilot friction, stop the current session for human recovery, and restart from a clean worktree/session with the missing auth failure-path tests included in the single implementation commit. That preserves every stated invariant, at the cost of restarting the pilot. I recommend that route.
+
+> Now when people are using thread loop, they should be able to make as many modifications as necessary locally before opening a PR. We need to account for that and document this because perhaps we need to change the flow of the possible states. Let's not override this. We just need to document it.
+
+<details><summary>3 previous messages</summary>
+
+> Agreed. I’m treating this as a lifecycle/DX finding, not permission to bypass the current flow. I’ll document the missing “local iteration before PR” capability in the pilot evidence and leave both the SignalPay worktree and ThreadLoop state machine unchanged. I’m using the DX-audit and workflow-invariants guidance to capture the boundary precisely.
+>
+> The finding is broader than this one P2: the lifecycle currently treats the first implementation commit as the fixed point, while normal pre-PR work needs a governed local iteration loop. I’m recording the requirement, the invariant it exposes, and candidate state-flow questions without selecting or implementing a redesign.
+>
+> <details><summary>Created a file, edited 2 files</summary>
+>
+> - Wrote `~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/lifecycle-observation.md` (+93 -0)
+> - Wrote `~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/pilot-report.md` (+45 -3)
+> - Wrote `~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/review-ledger.md` (+14 -0)
+>
+> </details>
+</details>
+
+Documented. The key distinction is now explicit: one scoped commit per wake can remain an invariant, but users need multiple authorized local iteration wakes before opening a PR.
+
+Updated:
+
+- [Lifecycle observation](~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/lifecycle-observation.md)
+- [Pilot report](~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/pilot-report.md:63)
+- [Review ledger](~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/review-ledger.md:56)
+
+The documentation records candidate state-flow approaches without selecting one. No override, draft PR, runtime change, or out-of-band commit occurred. SignalPay remains clean at `2efaa068`, and the session remains in `verifying` version 4.
+
+> Now how do we continue the pilot?
+
+<details><summary>2 previous messages</summary>
+
+> I’ll map the continuation against the actual v3 transitions and recovery commands before recommending a path. The requirement is to preserve the current pilot evidence, avoid an unauthorized commit, and still reach a clean pre-PR fixed point. I’m using the build-plan and workflow-invariants guidance for that decision; this is not a runner wake.
+>
+> The existing graph confirms one useful distinction: `verifying -> repairing` already handles a failing local gate, but there is no transition for a passing gate plus a pre-PR review finding. That means the current session cannot be repaired honestly. I’m checking the live projection once more, then I’ll give you the strict continuation sequence.
+</details>
+
+We continue by preserving the current run as Attempt 1 evidence and restarting the execution as Attempt 2. The current session cannot honestly continue: its live projection authorizes only `IMPORT_SIGNED_CI_PROOF` for a HEAD with a known unresolved finding.
+
+Recommended sequence:
+
+1. Verify and export Attempt 1’s partial audit. Leave its session, branch, and worktree untouched.
+2. Create a fresh SignalPay worktree, branch, and ThreadLoop session from the same baseline and immutable ThreadLoop SHA.
+3. Recreate the enablement commit.
+4. During the new `COMMIT_IMPLEMENTATION` wake:
+   - Add all behavior and failure-path tests, including the known auth no-mutation coverage.
+   - Implement the feature.
+   - Iterate locally as many times as necessary.
+   - Run both pre-PR reviews against the complete working-tree diff.
+   - Resolve findings and rerun reviews until clean.
+   - Record the reviewed tree hash and create the single implementation commit.
+5. Transition to `verifying` and run `make verify`.
+   - A gate failure can use the existing `verifying -> repairing` path.
+6. Push the reviewed branch without opening a PR, collect/import signed CI, and transition to `reviewing`.
+7. Open the PR only after the pre-PR fixed point is clean.
+8. Import current signed review evidence. Use `reviewing -> repairing` for any genuine post-PR findings.
+9. Complete a later wake in a fresh Codex context, reach `ready_for_human`, verify/export the audit, and stop.
+
+This lets the supervised pilot continue without overriding ThreadLoop. It does not claim the lifecycle problem is solved: repeated local iteration works only inside the implementation action, not across independently authorized pre-PR iteration wakes. That limitation remains documented in the [lifecycle observation](~/Code/threadloop-pilot-artifacts/signalpay-capture-state-2026-07-30/lifecycle-observation.md).
+
+> nah we need to address this clear bug in the system. take the lifecycle-observation, pilot report and review ledger and start a new thread/session here in this same project with that context, in plan mode, to start planning out the fix.
+
+<details><summary>1 previous message</summary>
+
+> I’ll start a separate task in the ThreadLoop project, attach the three pilot artifacts as its source context, and set its mandate to planning only—no lifecycle or runtime edits.
+</details>
+
+Started a new planning-only task, **“Plan pre-PR lifecycle re-entry,”** in an isolated ThreadLoop worktree. It is reading the lifecycle observation, pilot report, and review ledger, then producing an implementation-ready Software Build Plan. No runtime or pilot-session mutation is authorized.
+
+::created-thread{threadId="019fb3ce-b92f-7742-9baf-3ead73a1e861"}
+
+---
+
+I'd rather us validate the signed chain against a private throwaway consumer
+
+---
+
+Add an optional token input to both sensor workflows and pass it to that one checkout. Two files, one with: line each, plus a documented secret in the consumer.
+  That's the only remedy that preserves ThreadLoop's privacy — the other two (publish the repo, or install the CLI from a published package) both require publishing
+  something. How do we do this?
+
+---
+
+if I make threadloop public, could I make it private again after?
+
+---
+
+No one is gonna know about threadloop if I make it temporarily public. It should be totally fine. It won't get forked or anything.
+
+---
+
+flip Threadloop to public.
+
+---
+
+I want to focus on fixing the DX issues. Show me all of them first.
+
+---
+
+yeah lets create the issues and defer 5 and 6 for now. let's fix the others.
