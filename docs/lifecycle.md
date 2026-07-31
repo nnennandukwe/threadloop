@@ -123,7 +123,7 @@ after the child closes, and never advances lifecycle state. A new commit makes o
 
 `threadloop session gate import <package-path> --session <id>` verifies the immutable v2/v3 GitHub/Sigstore CI policy,
 appends one accepted signed-CI projection, and likewise never advances lifecycle state. See
-[Signed gate receipt v1](attestations/receipt-v1.md).
+[Signed gate receipt v2](attestations/receipt-v2.md).
 
 `threadloop session review import <package-path> --session <id>` verifies the independent v3 review policy and appends
 one current-HEAD review projection without advancing lifecycle state. The latest valid receipt controls blocker,

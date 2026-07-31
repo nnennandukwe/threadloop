@@ -122,7 +122,7 @@ Proof-plan input:
 ```json
 {
   "proof_plan": {
-    "contract_version": 3,
+    "contract_version": 4,
     "acceptance_criteria": ["All repository checks pass locally, in CI, and in review"],
     "ci": {
       "provider": "github-actions",
@@ -172,7 +172,7 @@ Verifies and appends one signed GitHub Actions gate receipt. The input is limite
 trust-policy override. Identical reimports are no-ops; conflicting receipt ids fail closed. Successful import appends
 proof only and does not change lifecycle state or `state_version`.
 
-See [Signed gate receipt v1](attestations/receipt-v1.md) for the package, Sigstore verification, reusable workflow, and
+See [Signed gate receipt v2](attestations/receipt-v2.md) for the package, Sigstore verification, reusable workflow, and
 failure contracts.
 
 ### `threadloop session review import <package-path> --session <id> [--json]`

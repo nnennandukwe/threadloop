@@ -311,7 +311,7 @@ capture.
 
 The governed task lifecycle and schema-v7 contract are documented in [`docs/lifecycle.md`](docs/lifecycle.md). The
 signed package and reusable workflow are specified in
-[`docs/attestations/receipt-v1.md`](docs/attestations/receipt-v1.md) and
+[`docs/attestations/receipt-v2.md`](docs/attestations/receipt-v2.md) and
 [`docs/attestations/review-v1.md`](docs/attestations/review-v1.md). `session transition` revalidates local, CI, and
 review evidence and records every unique guard decision in the audit ledger.
 

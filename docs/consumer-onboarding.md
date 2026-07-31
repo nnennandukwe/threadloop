@@ -45,27 +45,78 @@ reports failure with the review job absent. The template casts it:
 pull_request_number: ${{ fromJSON(inputs.pull_request_number) }}
 ```
 
-## 3. Make the declared gate self-provisioning
+## 3. Declare the setup your gate needs
 
-The signed gate sensor runs exactly the command your proof plan declares, on a runner where only Node is set up. It does
-not install your language toolchain.
+The signed gate sensor runs exactly what your proof plan declares, on a runner where only Node is set up. It does not
+guess at your language toolchain. Declare the provisioning steps as part of the gate, and keep your developer-facing
+verify target exactly as it is.
 
 Most repositories' verify targets assume the surrounding CI workflow already provisioned the environment:
 
 ```yaml
-# typical consumer CI, which ThreadLoop's sensor does not replicate
+# typical consumer CI
 - uses: astral-sh/setup-uv@v5
 - uses: actions/setup-python@v5
 - run: uv sync --all-groups
 - run: make verify
 ```
 
-A gate declared as `make verify` against that repository fails in the sensor, because the toolchain is missing. Declare
-a gate target that provisions what it needs, and keep it distinct from the developer-facing verify target if that target
-assumes a prepared environment.
+A proof-plan v4 gate expresses the same thing as ordered `setup` steps followed by the gate command:
 
-The proof plan is immutable once bound, so a gate command cannot be corrected mid-session. Getting this wrong means
-starting a new session.
+```json
+{
+  "id": "check",
+  "setup": [
+    {
+      "id": "sync",
+      "command": ["uv", "sync", "--all-groups", "--frozen"],
+      "working_directory": ".",
+      "timeout_ms": 600000
+    }
+  ],
+  "command": ["make", "verify"],
+  "working_directory": ".",
+  "timeout_ms": 900000
+}
+```
+
+Each step is validated exactly as the gate command is: 1-128 exact argv strings, a repository-relative working
+directory, and an explicit timeout. Nothing runs through a shell, so there is no `&&`, no pipes, and no variable
+expansion. Express a sequence as separate steps rather than as one shell string.
+
+Steps run in declared order. The first step that does not pass stops the run: no later step executes, and the gate
+command does not run at all. That outcome is recorded as `setup_failed`, which is deliberately not a code failure. It
+produces an operator handoff, consumes no repair budget, and never selects `repairing`.
+
+`setup` is optional. A gate that needs no provisioning omits it, and canonicalizes identically to the same gate under
+contract v3.
+
+### Two constraints that decide whether your setup works
+
+**Provisioning must not change tracked files.** A gate requires a clean working tree at both ends, and the check counts
+modified tracked files. `uv sync` refreshes `uv.lock` when it is stale, which makes the tree dirty and records
+`invalidated` rather than a pass. Use the frozen or locked form of your installer:
+
+| Ecosystem | Use                               | Not                        |
+| --------- | --------------------------------- | -------------------------- |
+| uv        | `uv sync --all-groups --frozen`   | `uv sync --all-groups`     |
+| npm       | `npm ci`                          | `npm install`              |
+| Bundler   | `bundle install --frozen`         | `bundle install`           |
+| Poetry    | `poetry install --sync --no-root` | `poetry lock` then install |
+
+**Provisioning output must be gitignored.** Cleanliness is measured with `--untracked-files=all`, so a new untracked
+path counts as dirty. `.venv/`, `node_modules/`, and equivalents must already be in `.gitignore`, which for most
+repositories they are. Confirm it before the first session rather than after a gate reports `invalidated`.
+
+[Issue #84](https://github.com/nnennandukwe/threadloop/issues/84) tracks distinguishing a setup-caused tree change from
+a gate that mutated the repository, so this failure names the offending step directly. Until then, `invalidated` on a
+gate with setup usually means one of the two constraints above.
+
+### Getting it wrong mid-session
+
+The proof plan is immutable once bound, so a declaration cannot be corrected in place. A `setup_failed` receipt tells
+you which step failed and with what exit status, but adopting the fix means starting a new session. Both constraints
+above are worth checking against your repository before the first one.
 
 ## 4. Know where the CLI lives
 
@@ -93,5 +144,16 @@ lifecycle enforces came from the projection.
 bootstraps and migrates a repository, and it is an operator action rather than part of the agent protocol. The runner
 contract explicitly forbids a wake from invoking it, and surfaces
 `SESSION_SCHEMA_MIGRATION_REQUIRED -> MIGRATE_SESSION_SCHEMA` as an operator handoff instead.
+
+### Already-enabled repositories need one migration
+
+Declared setup required widening the recorded gate result domain, which moved storage schema v7 to v8. A repository
+enabled before that reports `migration_required` on every read until an operator runs `threadloop init` once. The
+migration rebuilds the gate-receipt table in place, preserving every stored receipt and its ordering; it does not
+reinterpret or discard prior evidence.
+
+Consumers also pin the sensor by commit SHA in `build_signer_sha`, so declaring `setup` requires re-pinning
+`build_signer_uri` and `build_signer_sha` to a ThreadLoop commit that supports it. Because those live in the immutable
+trust policy, an existing session cannot adopt the new pin.
 
 Scripted setup should treat `init` as a human or operator step and read its exit status rather than parse its output.
