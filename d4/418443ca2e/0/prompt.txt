@@ -1,0 +1,13 @@
+Hey we need to rebase main and focus on solving for #78 github issue to unblock us and start attempt 3 of the pilot run.
+
+---
+
+I think this is a separate issue worth creating a github issue for and returning to later.
+
+---
+
+All sounds good.
+
+---
+
+Are you asking me to make a decision about something?
