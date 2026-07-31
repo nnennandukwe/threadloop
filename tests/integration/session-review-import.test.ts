@@ -15,7 +15,7 @@ import {
   buildInTotoReceiptStatement,
   canonicalizeSignedGateReceiptArtifact,
   IN_TOTO_PAYLOAD_TYPE,
-  SIGNED_RECEIPT_MEDIA_TYPE,
+  SIGNED_RECEIPT_MEDIA_TYPE_V2,
   type SignedGateReceiptArtifact,
 } from '../../src/domain/attestation.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
@@ -293,12 +293,13 @@ type ReviewFixture = Awaited<ReturnType<typeof makeReviewingSession>>;
 
 function signedGateArtifact(fixture: ReviewFixture, receiptId: string): SignedGateReceiptArtifact {
   return {
-    schema_version: 1,
+    schema_version: 2,
     receipt_id: receiptId,
     session_id: fixture.sessionId,
     plan_sha256: fixture.planSha256,
     gate: fixture.gate,
     result: 'passed',
+    setup: [],
     started_at: '2026-07-26T10:00:00.000Z',
     ended_at: '2026-07-26T10:00:01.000Z',
     duration_ms: 1_000,
@@ -321,7 +322,7 @@ function signedGateArtifact(fixture: ReviewFixture, receiptId: string): SignedGa
       runner_arch: 'X64',
       node_version: 'v22.13.0',
     },
-    sensor: { name: 'threadloop-github-actions-gate', contract_version: 1 },
+    sensor: { name: 'threadloop-github-actions-gate', contract_version: 2 },
   };
 }
 
@@ -332,7 +333,7 @@ async function writeGatePackage(fixture: ReviewFixture, artifact: SignedGateRece
   await writeFile(
     packagePath,
     canonicalJson({
-      media_type: SIGNED_RECEIPT_MEDIA_TYPE,
+      media_type: SIGNED_RECEIPT_MEDIA_TYPE_V2,
       artifact,
       bundle: {
         mediaType: 'application/vnd.dev.sigstore.bundle.v0.3+json',

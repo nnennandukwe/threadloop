@@ -73,7 +73,8 @@ describe('signed gate reusable workflow', () => {
 
     expect(executionSource).not.toContain('signSigstoreStatement');
     expect(executionSource).not.toContain('THREADLOOP_OUTPUT_PATH');
-    expect(executionSource).toContain('env: gateEnvironment()');
+    // Both the gate command and every declared setup step must run with the sanitized environment.
+    expect(executionSource.match(/env: gateEnvironment\(\)/g)).toHaveLength(2);
     expect(signingSource).not.toContain('runGateProcess');
     expect(signingSource).not.toContain('THREADLOOP_SOURCE_ROOT');
   });

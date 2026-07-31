@@ -2,25 +2,46 @@ import { canonicalJson } from './canonical-json.js';
 import {
   GATE_RECEIPT_RESULTS,
   hasCiTrustPolicy,
+  recordedSetupMatchesDeclared,
   type BoundProofPlan,
   type GitHubActionsTrustPolicy,
   type GateReceiptResult,
   type ProofDigest,
   type ProofGate,
+  type RecordedSetupStep,
 } from './proof.js';
 
-export const SIGNED_RECEIPT_MEDIA_TYPE = 'application/vnd.threadloop.signed-receipt.v1+json';
+export const SIGNED_RECEIPT_MEDIA_TYPE_V1 = 'application/vnd.threadloop.signed-receipt.v1+json';
+/** The version newly signed receipts use. Stored v1 packages stay readable. */
+export const SIGNED_RECEIPT_MEDIA_TYPE_V2 = 'application/vnd.threadloop.signed-receipt.v2+json';
 export const IN_TOTO_STATEMENT_TYPE = 'https://in-toto.io/Statement/v1';
 export const IN_TOTO_PAYLOAD_TYPE = 'application/vnd.in-toto+json';
-export const THREADLOOP_RECEIPT_PREDICATE_TYPE = 'https://threadloop.dev/attestations/receipt/v1';
+export const THREADLOOP_RECEIPT_PREDICATE_TYPE_V1 = 'https://threadloop.dev/attestations/receipt/v1';
+export const THREADLOOP_RECEIPT_PREDICATE_TYPE_V2 = 'https://threadloop.dev/attestations/receipt/v2';
+
+export type SignedReceiptSchemaVersion = 1 | 2;
+
+/**
+ * The media type, predicate type, and artifact schema_version move together. Pairing them explicitly stops a
+ * v2 artifact carrying recorded setup from being presented under a v1 media type that predates it.
+ */
+export function signedReceiptMediaType(schemaVersion: SignedReceiptSchemaVersion) {
+  return schemaVersion === 1 ? SIGNED_RECEIPT_MEDIA_TYPE_V1 : SIGNED_RECEIPT_MEDIA_TYPE_V2;
+}
+
+export function threadloopReceiptPredicateType(schemaVersion: SignedReceiptSchemaVersion) {
+  return schemaVersion === 1 ? THREADLOOP_RECEIPT_PREDICATE_TYPE_V1 : THREADLOOP_RECEIPT_PREDICATE_TYPE_V2;
+}
 
 export interface SignedGateReceiptArtifact {
-  schema_version: 1;
+  /** 1 predates declared setup and carries no `setup` key; 2 always carries one, possibly empty. */
+  schema_version: SignedReceiptSchemaVersion;
   receipt_id: string;
   session_id: string;
   plan_sha256: string;
   gate: ProofGate;
   result: GateReceiptResult;
+  setup?: RecordedSetupStep[];
   started_at: string;
   ended_at: string;
   duration_ms: number;
@@ -48,7 +69,7 @@ export interface SignedGateReceiptArtifact {
   };
   sensor: {
     name: 'threadloop-github-actions-gate';
-    contract_version: 1;
+    contract_version: SignedReceiptSchemaVersion;
   };
 }
 
@@ -58,9 +79,9 @@ export interface InTotoReceiptStatement {
     { name: string; digest: { gitCommit: string } },
     { name: 'threadloop-gate-receipt.json'; digest: { sha256: string } },
   ];
-  predicateType: typeof THREADLOOP_RECEIPT_PREDICATE_TYPE;
+  predicateType: typeof THREADLOOP_RECEIPT_PREDICATE_TYPE_V1 | typeof THREADLOOP_RECEIPT_PREDICATE_TYPE_V2;
   predicate: {
-    schema_version: 1;
+    schema_version: SignedReceiptSchemaVersion;
     receipt_type: 'gate';
     session_id: string;
     plan_sha256: string;
@@ -73,7 +94,7 @@ export interface InTotoReceiptStatement {
     };
     sensor: {
       name: 'threadloop-github-actions-gate';
-      contract_version: 1;
+      contract_version: SignedReceiptSchemaVersion;
     };
   };
 }
@@ -214,6 +235,8 @@ export function authorizeGateReportForSigning(
 
   const result = authoritativeGateResult(report, context.jobResult);
   return {
+    // Spreading `report` carries recorded setup through signing unchanged, so the signed artifact keeps
+    // describing exactly what the sensor observed.
     ...report,
     receipt_id: requireIdentifier(context.receiptId, 'signing.receipt_id', 160),
     result,
@@ -246,9 +269,9 @@ export function buildInTotoReceiptStatement(
         digest: { sha256: artifactSha256 },
       },
     ],
-    predicateType: THREADLOOP_RECEIPT_PREDICATE_TYPE,
+    predicateType: threadloopReceiptPredicateType(artifact.schema_version),
     predicate: {
-      schema_version: 1,
+      schema_version: artifact.schema_version,
       receipt_type: 'gate',
       session_id: artifact.session_id,
       plan_sha256: artifact.plan_sha256,
@@ -261,7 +284,7 @@ export function buildInTotoReceiptStatement(
       },
       sensor: {
         name: 'threadloop-github-actions-gate',
-        contract_version: 1,
+        contract_version: artifact.schema_version,
       },
     },
   };
@@ -273,10 +296,12 @@ export function parseSignedReceiptPackage(value: unknown, digest: ProofDigest): 
 
 export function parseSignedReceiptEnvelope(value: unknown, digest: ProofDigest): SignedReceiptEnvelope {
   const receiptPackage = requireExactObject(value, 'package', ['media_type', 'artifact', 'bundle']);
-  if (receiptPackage.media_type !== SIGNED_RECEIPT_MEDIA_TYPE) {
-    throw invalid('package.media_type', `must be ${SIGNED_RECEIPT_MEDIA_TYPE}`);
-  }
   const canonicalArtifact = canonicalizeSignedGateReceiptArtifact(receiptPackage.artifact, digest);
+  // Pinned to the artifact's own version, so a v2 artifact cannot arrive under the v1 media type.
+  const expectedMediaType = signedReceiptMediaType(canonicalArtifact.artifact.schema_version);
+  if (receiptPackage.media_type !== expectedMediaType) {
+    throw invalid('package.media_type', `must be ${expectedMediaType}`);
+  }
   const bundle = requireObject(receiptPackage.bundle, 'package.bundle');
   const envelope = requireObject(bundle.dsseEnvelope, 'package.bundle.dsseEnvelope');
   if (envelope.payloadType !== IN_TOTO_PAYLOAD_TYPE) {
@@ -288,7 +313,7 @@ export function parseSignedReceiptEnvelope(value: unknown, digest: ProofDigest):
   }
   const statementJson = Buffer.from(payload, 'base64').toString('utf8');
   const packageValue = {
-    media_type: SIGNED_RECEIPT_MEDIA_TYPE,
+    media_type: expectedMediaType,
     artifact: canonicalArtifact.artifact,
     bundle,
   };
@@ -387,6 +412,7 @@ export function evaluateCiProofEvidence(input: {
       parsed.artifact.head_before !== receipt.subjectHeadSha ||
       parsed.artifact.head_after !== receipt.subjectHeadSha ||
       canonicalJson(parsed.artifact.gate) !== canonicalJson(gate) ||
+      !recordedSetupMatchesDeclared(parsed.artifact.setup, gate.setup) ||
       receipt.issuer !== policy.issuer ||
       receipt.certificateIdentity !== policy.certificate_identity ||
       receipt.buildSignerUri !== policy.build_signer_uri ||
@@ -441,13 +467,19 @@ function aggregateCiProofStatus(gates: CiProofGateEvidence[]): CiProofStatus {
 
 function validateSignedGateReceiptArtifact(value: unknown): SignedGateReceiptArtifact {
   const field = 'package.artifact';
-  const artifact = requireExactObject(value, field, [
+  const candidate = requireObject(value, field);
+  if (candidate.schema_version !== 1 && candidate.schema_version !== 2) {
+    throw invalid(`${field}.schema_version`, 'must be 1 or 2');
+  }
+  const schemaVersion: SignedReceiptSchemaVersion = candidate.schema_version === 2 ? 2 : 1;
+  const artifact = requireExactObject(candidate, field, [
     'schema_version',
     'receipt_id',
     'session_id',
     'plan_sha256',
     'gate',
     'result',
+    ...(schemaVersion === 2 ? ['setup'] : []),
     'started_at',
     'ended_at',
     'duration_ms',
@@ -462,9 +494,6 @@ function validateSignedGateReceiptArtifact(value: unknown): SignedGateReceiptArt
     'environment',
     'sensor',
   ]);
-  if (artifact.schema_version !== 1) {
-    throw invalid(`${field}.schema_version`, 'must be 1');
-  }
   const receiptId = requireIdentifier(artifact.receipt_id, `${field}.receipt_id`, 160);
   const sessionId = requireIdentifier(artifact.session_id, `${field}.session_id`, 160);
   const planSha256 = requireSha256(artifact.plan_sha256, `${field}.plan_sha256`);
@@ -473,6 +502,7 @@ function validateSignedGateReceiptArtifact(value: unknown): SignedGateReceiptArt
     throw invalid(`${field}.result`, `must be one of: ${GATE_RECEIPT_RESULTS.join(', ')}`);
   }
   const result = artifact.result as GateReceiptResult;
+  const setup = schemaVersion === 2 ? validateRecordedSetup(artifact.setup, `${field}.setup`, gate) : undefined;
   const startedAt = requireTimestamp(artifact.started_at, `${field}.started_at`);
   const endedAt = requireTimestamp(artifact.ended_at, `${field}.ended_at`);
   const durationMs = requireSafeInteger(artifact.duration_ms, `${field}.duration_ms`, 0, 86_400_000);
@@ -530,17 +560,19 @@ function validateSignedGateReceiptArtifact(value: unknown): SignedGateReceiptArt
   if (sensor.name !== 'threadloop-github-actions-gate') {
     throw invalid(`${field}.sensor.name`, 'must be threadloop-github-actions-gate');
   }
-  if (sensor.contract_version !== 1) {
-    throw invalid(`${field}.sensor.contract_version`, 'must be 1');
+  // The sensor contract and the artifact schema move together, so a v2 artifact cannot claim a v1 sensor.
+  if (sensor.contract_version !== schemaVersion) {
+    throw invalid(`${field}.sensor.contract_version`, `must be ${schemaVersion}`);
   }
 
   return {
-    schema_version: 1,
+    schema_version: schemaVersion,
     receipt_id: receiptId,
     session_id: sessionId,
     plan_sha256: planSha256,
     gate,
     result,
+    ...(setup ? { setup } : {}),
     started_at: startedAt,
     ended_at: endedAt,
     duration_ms: durationMs,
@@ -568,7 +600,7 @@ function validateSignedGateReceiptArtifact(value: unknown): SignedGateReceiptArt
     },
     sensor: {
       name: 'threadloop-github-actions-gate',
-      contract_version: 1,
+      contract_version: schemaVersion,
     },
   };
 }
@@ -602,8 +634,10 @@ function validateInTotoReceiptStatement(
   if (statement._type !== IN_TOTO_STATEMENT_TYPE) {
     throw invalid('statement._type', `must be ${IN_TOTO_STATEMENT_TYPE}`);
   }
-  if (statement.predicateType !== THREADLOOP_RECEIPT_PREDICATE_TYPE) {
-    throw invalid('statement.predicateType', `must be ${THREADLOOP_RECEIPT_PREDICATE_TYPE}`);
+  // Pinned to the artifact's version, so the statement cannot describe a v2 receipt as a v1 predicate.
+  const expectedPredicateType = threadloopReceiptPredicateType(artifact.artifact.schema_version);
+  if (statement.predicateType !== expectedPredicateType) {
+    throw invalid('statement.predicateType', `must be ${expectedPredicateType}`);
   }
   if (!Array.isArray(statement.subject) || statement.subject.length !== 2) {
     throw invalid('statement.subject', 'must contain exactly the repository HEAD and receipt artifact');
@@ -636,8 +670,8 @@ function validateInTotoReceiptStatement(
     'artifact',
     'sensor',
   ]);
-  if (predicate.schema_version !== 1) {
-    throw invalid('statement.predicate.schema_version', 'must be 1');
+  if (predicate.schema_version !== artifact.artifact.schema_version) {
+    throw invalid('statement.predicate.schema_version', `must be ${artifact.artifact.schema_version}`);
   }
   if (predicate.receipt_type !== 'gate') {
     throw invalid('statement.predicate.receipt_type', 'must be gate');
@@ -653,19 +687,46 @@ function validateInTotoReceiptStatement(
   assertEqual(predicateArtifact.sha256, artifact.sha256, 'statement.predicate.artifact.sha256');
   const sensor = requireExactObject(predicate.sensor, 'statement.predicate.sensor', ['name', 'contract_version']);
   assertEqual(sensor.name, 'threadloop-github-actions-gate', 'statement.predicate.sensor.name');
-  assertEqual(sensor.contract_version, 1, 'statement.predicate.sensor.contract_version');
+  assertEqual(sensor.contract_version, artifact.artifact.schema_version, 'statement.predicate.sensor.contract_version');
 
   return value as InTotoReceiptStatement;
 }
 
 function validateGate(value: unknown, field: string): ProofGate {
-  const gate = requireExactObject(value, field, ['id', 'command', 'working_directory', 'timeout_ms']);
+  const record = requireObject(value, field);
+  const declaresSetup = 'setup' in record;
+  const gate = requireExactObject(
+    record,
+    field,
+    declaresSetup
+      ? ['id', 'setup', 'command', 'working_directory', 'timeout_ms']
+      : ['id', 'command', 'working_directory', 'timeout_ms'],
+  );
   const id = requireIdentifier(gate.id, `${field}.id`, 128);
-  if (!Array.isArray(gate.command) || gate.command.length === 0 || gate.command.length > 128) {
+  const execution = validateGateExecution(gate, field);
+  if (!declaresSetup) {
+    return { id, ...execution };
+  }
+  if (!Array.isArray(gate.setup) || gate.setup.length === 0 || gate.setup.length > 32) {
+    throw invalid(`${field}.setup`, 'must contain 1-32 declared setup steps when present');
+  }
+  const setup = gate.setup.map((step, index) => {
+    const stepField = `${field}.setup[${index}]`;
+    const stepRecord = requireExactObject(step, stepField, ['id', 'command', 'working_directory', 'timeout_ms']);
+    return {
+      id: requireIdentifier(stepRecord.id, `${stepField}.id`, 128),
+      ...validateGateExecution(stepRecord, stepField),
+    };
+  });
+  return { id, setup, ...execution };
+}
+
+function validateGateExecution(record: Record<string, unknown>, field: string) {
+  if (!Array.isArray(record.command) || record.command.length === 0 || record.command.length > 128) {
     throw invalid(`${field}.command`, 'must contain 1-128 exact argv strings');
   }
-  const command = gate.command.map((argument, index) => requireText(argument, `${field}.command[${index}]`, 32_768));
-  const workingDirectory = requireText(gate.working_directory, `${field}.working_directory`, 4_096);
+  const command = record.command.map((argument, index) => requireText(argument, `${field}.command[${index}]`, 32_768));
+  const workingDirectory = requireText(record.working_directory, `${field}.working_directory`, 4_096);
   if (
     workingDirectory.startsWith('/') ||
     workingDirectory === '..' ||
@@ -674,8 +735,82 @@ function validateGate(value: unknown, field: string): ProofGate {
   ) {
     throw invalid(`${field}.working_directory`, 'must be repository-relative and must not escape the repository');
   }
-  const timeoutMs = requireSafeInteger(gate.timeout_ms, `${field}.timeout_ms`, 1, 86_400_000);
-  return { id, command, working_directory: workingDirectory, timeout_ms: timeoutMs };
+  const timeoutMs = requireSafeInteger(record.timeout_ms, `${field}.timeout_ms`, 1, 86_400_000);
+  return { command, working_directory: workingDirectory, timeout_ms: timeoutMs };
+}
+
+/**
+ * Recorded setup must correspond to the gate's own declaration, step for step. A short sequence is legitimate
+ * because a failing step stops the run, but a recorded step the gate never declared is not.
+ */
+function validateRecordedSetup(value: unknown, field: string, gate: ProofGate): RecordedSetupStep[] {
+  if (!Array.isArray(value)) {
+    throw invalid(field, 'must be an array of recorded setup steps');
+  }
+  const declared = gate.setup ?? [];
+  if (value.length > declared.length) {
+    throw invalid(field, 'must not record more steps than the gate declares');
+  }
+  return value.map((step, index) => {
+    const stepField = `${field}[${index}]`;
+    const record = requireExactObject(step, stepField, [
+      'id',
+      'command',
+      'working_directory',
+      'timeout_ms',
+      'result',
+      'started_at',
+      'ended_at',
+      'duration_ms',
+      'exit_status',
+      'signal',
+      'head_before',
+      'head_after',
+      'clean_before',
+      'clean_after',
+      'output',
+    ]);
+    const execution = validateGateExecution(record, stepField);
+    const id = requireIdentifier(record.id, `${stepField}.id`, 128);
+    const expected = declared[index];
+    if (
+      !expected ||
+      expected.id !== id ||
+      expected.working_directory !== execution.working_directory ||
+      expected.timeout_ms !== execution.timeout_ms ||
+      canonicalJson(expected.command) !== canonicalJson(execution.command)
+    ) {
+      throw invalid(stepField, 'must match the setup step the gate declares at the same position');
+    }
+    if (!GATE_RECEIPT_RESULTS.includes(record.result as GateReceiptResult)) {
+      throw invalid(`${stepField}.result`, `must be one of: ${GATE_RECEIPT_RESULTS.join(', ')}`);
+    }
+    if (typeof record.clean_before !== 'boolean' || typeof record.clean_after !== 'boolean') {
+      throw invalid(stepField, 'must record clean_before and clean_after as booleans');
+    }
+    const output = requireExactObject(record.output, `${stepField}.output`, ['stdout_sha256', 'stderr_sha256']);
+    return {
+      id,
+      ...execution,
+      result: record.result as GateReceiptResult,
+      started_at: requireTimestamp(record.started_at, `${stepField}.started_at`),
+      ended_at: requireTimestamp(record.ended_at, `${stepField}.ended_at`),
+      duration_ms: requireSafeInteger(record.duration_ms, `${stepField}.duration_ms`, 0, 86_400_000),
+      exit_status:
+        record.exit_status === null
+          ? null
+          : requireSafeInteger(record.exit_status, `${stepField}.exit_status`, -2_147_483_648, 2_147_483_647),
+      signal: record.signal === null ? null : requireText(record.signal, `${stepField}.signal`, 128),
+      head_before: requireCommitSha(record.head_before, `${stepField}.head_before`),
+      head_after: requireCommitSha(record.head_after, `${stepField}.head_after`),
+      clean_before: record.clean_before,
+      clean_after: record.clean_after,
+      output: {
+        stdout_sha256: requireSha256(output.stdout_sha256, `${stepField}.output.stdout_sha256`),
+        stderr_sha256: requireSha256(output.stderr_sha256, `${stepField}.output.stderr_sha256`),
+      },
+    };
+  });
 }
 
 function requireObject(value: unknown, field: string) {
