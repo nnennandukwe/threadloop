@@ -741,7 +741,7 @@ function validateGateExecution(record: Record<string, unknown>, field: string) {
 
 /**
  * Recorded setup must correspond to the gate's own declaration, step for step. A short sequence is legitimate
- * because a failing step stops the run, but a recorded step the gate never declared is not.
+ * because a failing step stops the run, but setup_failed must identify that failure as the last recorded step.
  */
 function validateRecordedSetup(
   value: unknown,
@@ -754,13 +754,19 @@ function validateRecordedSetup(
   }
   const declared = gate.setup ?? [];
   const requiresCompleteSetup = result !== 'setup_failed' && result !== 'invalidated';
+  if (result === 'setup_failed' && declared.length === 0) {
+    throw invalid(field, 'cannot be setup_failed when the gate declares no setup');
+  }
   if (value.length > declared.length) {
     throw invalid(field, 'must not record more steps than the gate declares');
+  }
+  if (result === 'setup_failed' && value.length === 0) {
+    throw invalid(field, 'must record the setup step that failed');
   }
   if (requiresCompleteSetup && value.length !== declared.length) {
     throw invalid(field, 'must record every declared setup step for this receipt result');
   }
-  return value.map((step, index) => {
+  const recorded = value.map((step, index) => {
     const stepField = `${field}[${index}]`;
     const record = requireExactObject(step, stepField, [
       'id',
@@ -824,6 +830,19 @@ function validateRecordedSetup(
       },
     };
   });
+  if (result === 'setup_failed') {
+    const firstNonPassingIndex = recorded.findIndex((step) => step.result !== 'passed');
+    if (firstNonPassingIndex === -1) {
+      throw invalid(field, 'must include a non-passing setup step');
+    }
+    if (firstNonPassingIndex !== recorded.length - 1) {
+      throw invalid(
+        `${field}[${firstNonPassingIndex}].result`,
+        'the first non-passing setup step must be the last recorded step',
+      );
+    }
+  }
+  return recorded;
 }
 
 function requireObject(value: unknown, field: string) {

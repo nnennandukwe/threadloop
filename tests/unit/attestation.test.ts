@@ -411,6 +411,45 @@ describe('signed gate receipt versioning', () => {
     ).toThrow(AttestationValidationError);
   });
 
+  it('rejects setup_failed when the gate declares no setup', () => {
+    const withoutDeclaredSetup = { ...artifact(), result: 'setup_failed' as const };
+
+    expect(
+      captureAttestationError(() => canonicalizeSignedGateReceiptArtifact(withoutDeclaredSetup, sha256)).field,
+    ).toBe('package.artifact.setup');
+  });
+
+  it('rejects setup_failed when no setup execution was recorded', () => {
+    const withoutRecordedSetup = { ...v2WithSetup(), result: 'setup_failed' as const, setup: [] };
+
+    expect(
+      captureAttestationError(() => canonicalizeSignedGateReceiptArtifact(withoutRecordedSetup, sha256)).field,
+    ).toBe('package.artifact.setup');
+  });
+
+  it('rejects setup_failed when every recorded setup step passed', () => {
+    const allPassed = { ...v2WithSetup(), result: 'setup_failed' as const };
+
+    expect(captureAttestationError(() => canonicalizeSignedGateReceiptArtifact(allPassed, sha256)).field).toBe(
+      'package.artifact.setup',
+    );
+  });
+
+  it('rejects recorded setup that continues after the first non-passing step', () => {
+    const base = artifact();
+    const secondStep = { ...syncStep, id: 'second' };
+    const continuedAfterFailure = {
+      ...base,
+      gate: { ...base.gate, setup: [syncStep, secondStep] },
+      result: 'setup_failed' as const,
+      setup: [recordedStep({ result: 'failed', exit_status: 1 }), recordedStep({ id: 'second' })],
+    };
+
+    expect(
+      captureAttestationError(() => canonicalizeSignedGateReceiptArtifact(continuedAfterFailure, sha256)).field,
+    ).toBe('package.artifact.setup[0].result');
+  });
+
   it('accepts a short recorded sequence, because a failing step stops the run', () => {
     const base = artifact();
     const twoSteps = { ...syncStep, id: 'second' };
