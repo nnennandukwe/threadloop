@@ -1,0 +1,166 @@
+I have everything except the baseline, which is still running. Here's my assessment so far — I'll confirm the attribution when it lands.
+
+  Verification result: not ready for a PR yet
+
+  The blocker is narrow and fixable, and the substance of the work looks sound.
+
+  The blocker: npm run check fails, both times I ran it
+
+  The session narrative reports a green gate at 10913ac. I could not reproduce that. Two full runs on a clean worktree at that exact SHA:
+
+  ┌─────┬────────────────────┬────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+  │ Run │       Result       │                                                              Failures                                                              │
+  ├─────┼────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ 1   │ 1 failed / 299     │ cli.test.ts › explicit session commands — timed out at 15s                                                                         │
+  │     │ passed             │                                                                                                                                    │
+  ├─────┼────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ 2   │ 3 failed / 297     │ runner-replay.test.ts › serialized-wake race — 5s; audit-cli.test.ts › hash-linked ledger — 20s; session-review-import.test.ts ›   │
+  │     │ passed             │ post-PR re-entry — 20s                                                                                                             │
+  └─────┴────────────────────┴────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+  All five failures are timeouts, not assertion failures. Every one passes in isolation — I re-ran the first in 3.9s against a 15s budget. So the lifecycle logic is
+  not what's broken.
+
+  I suspect the earlier "green" reading came from the same trap I hit: the gate was invoked as npm run check 2>&1 | tail -60, which returns tail's exit code, not
+  npm's. My first run was reported to me as "exit code 0" while the suite had actually failed. That's worth checking in however the earlier runs were invoked.
+
+  Root cause
+
+  The branch adds 31 new runCli subprocess spawns and 5 new 60-second tests. Total test CPU time is now 595–1105s. That contention pushes tight per-test budgets over
+  the edge:
+
+  - tests/integration/runner-replay.test.ts:227 (new in this branch) has no explicit timeout → inherits vitest's 5s default, while its sibling at line 202 was given
+  20_000. It spawns two concurrent CLI processes plus session setup. This one is straightforwardly under-budgeted.
+  - audit-cli.test.ts and cli.test.ts are unmodified by this branch — they flake only because of the added load.
+
+  Why this matters for CI
+
+  ci.yml runs npm test on a 4-job matrix (Ubuntu/macOS × Node 22.13.0/22) with a 15-minute cap. Those runners have 3–4 vCPUs versus my 12, so the timeouts will be
+  tighter there, not looser. Four independent chances to go red.
+
+  I'd also flag a pattern worth a human decision: eight timeouts were widened during this build. Raising a budget is the right fix for a genuinely slow test, but the
+  suite now takes ~4 minutes of wall clock and one file alone took 205s. At some point the answer is to make the tests cheaper rather than the clocks longer.
+
+  What verified clean
+
+  - Base is current — origin/main is still 55fc5d2; no rebase needed, merge-base is clean.
+  - Contracts match the plan exactly — schema 7, protocol 4, session-next 4, handoff 3.
+  - Repair-budget integrity is structurally sound. The budget is a COUNT(*) over immutable session_transitions rows (to_state='repairing' from the three legal entry
+  states), with no_update/no_delete/no_replace triggers on both the transition and idempotency tables. It can't be forged or refunded, and pre-PR paths never write a
+  repairing row — so the core invariant holds by construction, not by convention.
+  - Migration is genuinely atomic — bootstrap, migrations, four schema-shape assertions, history-authority check, and the version write all sit inside one BEGIN 
+  IMMEDIATE transaction; any throw rolls back to v6.
+  - The headline DoD is proven by a real test — the 4-cycle pre-PR test drives the actual CLI with real git commits and asserts against the live SQLite DB that zero
+  repairing rows exist and exactly 4 implementing re-entries occurred. Not vacuous.
+  - Pilot evidence untouched — artifacts last modified 12:04, session DB at qodo-quality-workshop-signalpay-threadloop-capture-pilot at 11:26, both before
+  implementation started.
+  - Docs, runner skill, and code agree; four wake inputs and all runner prohibitions intact; issue #69 open; branch unpushed; no skipped/.only tests, no TODOs added.
+
+  Recommendation
+
+  One commit before pushing: give runner-replay.test.ts:227 (and line 161, same situation) an explicit timeout consistent with its 20s sibling. Then get two
+  consecutive clean npm run check runs — invoked so the exit code is real (set -o pipefail, ${PIPESTATUS[0]}, or redirect to a file).
+
+  If the baseline shows main already flakes on this machine, this is a pre-existing condition the branch aggravates rather than one it created — that would make it
+  reasonable to push and let CI arbitrate, while still fixing the 5s test. I'll tell you which as soon as it finishes.
+
+  One correction to the record worth carrying forward: the external Sonnet/Opus reviews from the prior session were never confirmed complete at 10913ac — the last
+  status was "still running." Their CLEAN verdicts at that SHA are not established.
+
+✻ Crunched for 10m 54s · 1 shell, 1 monitor still running
+
+⏺ Background command "Run baseline suite on origin/main" completed (exit code 0)
+
+⏺ The baseline finished. Let me read the actual result.
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+⏺ Decisive. Let me clean up the temporary baseline worktree.
+
+⏺ Bash(cd /Users/nnennandukwe/.codex/worktrees/bac7/threadloop && rm -f /tmp/tl-baseline/node_modules && git worktree remove /tmp/tl-baseline --force 2>&1; git
+      worktre…)
+  ⎿  /Users/nnennandukwe/Code/threadloop                        55fc5d2 [main]
+     /private/tmp/threadloop-readme-pr.ZBkwLv/repo              b9f8eaa [agent/graph-loop-engineering-readme]
+     /Users/nnennandukwe/.codex/worktrees/bac7/threadloop       10913ac [issue-69/pre-pr-local-iteration]
+     … +6 lines (ctrl+o to expand)
+  ⎿  Shell cwd was reset to /Users/nnennandukwe/Code/software-standards-bootstrap
+  ⎿  Allowed by auto mode classifier
+
+⏺ Monitor event: "origin/main baseline suite result"
+  
+⏺ Monitor "origin/main baseline suite result" stream ended
+
+⏺ Baseline is in, and it settles the attribution.
+
+  Baseline comparison — the instability is introduced by this branch
+
+  ┌──────────────┬───────┬──────────┬────────┬────────────┐
+  │              │ Tests │ Test CPU │  Wall  │   Result   │
+  ├──────────────┼───────┼──────────┼────────┼────────────┤
+  │ origin/main  │ 263   │ 576.6s   │ 136.4s │ all passed │
+  ├──────────────┼───────┼──────────┼────────┼────────────┤
+  │ branch run 1 │ 300   │ 595.0s   │ 143.0s │ 1 failed   │
+  ├──────────────┼───────┼──────────┼────────┼────────────┤
+  │ branch run 2 │ 300   │ 1104.9s  │ 237.9s │ 3 failed   │
+  └──────────────┴───────┴──────────┴────────┴────────────┘
+
+  Run 1 is the fair comparison: +3% CPU, +5% wall against main — essentially identical load on the same quiet machine. main is clean; the branch is not. So this isn't
+  a pre-existing flake the branch merely aggravates. It's a regression in suite stability that this branch introduces, and I can't recommend pushing it to let CI
+  arbitrate.
+
+  Final verdict: hold the PR, one targeted fix away
+
+  The lifecycle work itself verified well — I found no correctness defect. Contracts match the plan (schema 7 / protocol 4 / session-next 4 / handoff 3), the repair
+  budget is a COUNT(*) over trigger-protected immutable transition rows so it can't be forged or refunded, the v6→v7 migration is atomic inside one BEGIN IMMEDIATE,
+  the headline "4 pre-PR cycles, zero repair budget" claim is proven by a real CLI-and-git integration test asserting against the live database, and the pilot session
+  and artifacts are untouched.
+
+  What's not ready is the test suite. Concretely:
+
+  1. tests/integration/runner-replay.test.ts:227 — new in this branch, spawns two concurrent CLI processes, and has no explicit timeout so it inherits vitest's 5s
+  default. Its sibling at line 202 was given 20_000. Line 161 has the same gap. This is the clearest defect.
+  2. Two unmodified tests (audit-cli.test.ts, cli.test.ts) now flake purely from the added subprocess load.
+
+  CI runs this on four jobs (Ubuntu/macOS × Node 22.13.0/22) on 3–4 vCPU runners — tighter than my 12 cores, four independent chances to go red.
+
+  Also worth flagging as a process issue, not a code one: the gate was being invoked as npm run check 2>&1 | tail -60, which returns tail's exit code. That's how a
+  red gate got read as green — my own first run was reported to me as "exit code 0" with a failing suite behind it. And the external Sonnet/Opus reviews were never
+  confirmed complete at 10913ac; the last observed status was "still running," so there is no established CLEAN verdict at this SHA.
+
+  Suggested next step
+
+  Give the two untimed runner-replay tests explicit budgets matching their 20s sibling, then get two consecutive clean runs invoked so the exit code is real — npm run
+  check > check.log 2>&1; echo $?.
+
+  The deeper question is yours to make: eight timeouts were widened during this build and one test file now takes 205s. Raising budgets is right for a genuinely slow
+  test, but at some point the fix is cheaper tests rather than longer clocks. That's a scope call beyond this PR.
+
+  Want me to make the timeout fix and re-run the gate twice to confirm? I think we need to seriously reduce all this test bloat. This is NOT good... /plan
+
+---
+
+fold in the timeout ratchet.
+
+---
+
+<task-notification>
+<task-id>bhj2n5tcg</task-id>
+<tool-use-id>toolu_01WY6ARoGw9R3GEw6tesEcmJ</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-nnennandukwe-Code-threadloop/f2a34ada-9ad1-4089-884a-672a29924305/tasks/bhj2n5tcg.output</output-file>
+<status>completed</status>
+<summary>Background command "Watch CI to completion" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+Okay I merged in #70. Proceed with getting those latest updates from main and continuing with your fixes.
+
+---
+
+<task-notification>
+<task-id>b7nbylzvr</task-id>
+<tool-use-id>toolu_01L9rViXifnvttXxZHQD9Hcy</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-nnennandukwe-Code-threadloop/f2a34ada-9ad1-4089-884a-672a29924305/tasks/b7nbylzvr.output</output-file>
+<status>completed</status>
+<summary>Background command "Watch CI on the fix PR" completed (exit code 0)</summary>
+</task-notification>
