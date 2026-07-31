@@ -329,3 +329,7 @@ installation. See the [contribution guide](CONTRIBUTING.md) for hook behavior an
 - [Governed lifecycle](docs/lifecycle.md)
 - [Audit export and OpenTelemetry](docs/observability.md)
 - [Contribution guide](CONTRIBUTING.md)
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE). See [NOTICE](NOTICE) for attribution.

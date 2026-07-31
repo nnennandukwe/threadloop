@@ -40,7 +40,7 @@
     "developer-tools",
     "productivity"
   ],
-  "license": "MIT",
+  "license": "Apache-2.0",
   "dependencies": {
     "@sigstore/bundle": "4.0.0",
     "@sigstore/sign": "4.1.1",
