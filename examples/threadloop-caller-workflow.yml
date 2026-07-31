@@ -6,6 +6,11 @@
 # session. GitHub resolves `workflow_dispatch` targets from the default branch
 # only, so a caller that exists solely on a feature branch cannot be dispatched.
 #
+# The `uses:` slug names the ThreadLoop repository that hosts the sensors, not
+# your own repository, so leave it as-is. Change it only if you consume a fork,
+# in which case point it at that fork and keep the SHA pinned to a commit you
+# have reviewed there.
+#
 # The inputs are supplied at dispatch time because an operator only knows the
 # session id, proof-plan digest, and pull-request number once a session is
 # running. Note `fromJSON` on `pull_request_number`: `workflow_dispatch`
@@ -58,7 +63,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: OWNER/threadloop/.github/workflows/threadloop-gate-sensor.yml@FULL_COMMIT_SHA
+    uses: nnennandukwe/threadloop/.github/workflows/threadloop-gate-sensor.yml@FULL_COMMIT_SHA
     with:
       session_id: ${{ inputs.session_id }}
       plan_sha256: ${{ inputs.plan_sha256 }}
@@ -71,7 +76,7 @@ jobs:
       contents: read
       pull-requests: read
       id-token: write
-    uses: OWNER/threadloop/.github/workflows/threadloop-review-sensor.yml@FULL_COMMIT_SHA
+    uses: nnennandukwe/threadloop/.github/workflows/threadloop-review-sensor.yml@FULL_COMMIT_SHA
     with:
       session_id: ${{ inputs.session_id }}
       plan_sha256: ${{ inputs.plan_sha256 }}

@@ -12,6 +12,9 @@ Copy [`examples/threadloop-caller-workflow.yml`](../examples/threadloop-caller-w
 `.github/workflows/threadloop.yml`, replace both `@FULL_COMMIT_SHA` pins with one reviewed ThreadLoop commit, and
 **commit it to the repository's default branch before starting a governed session**.
 
+The `uses:` slug names the ThreadLoop repository hosting the sensors, not your own, so leave it alone. Change it only if
+you consume a fork, and then pin a commit you have reviewed in that fork.
+
 GitHub resolves `workflow_dispatch` targets from the default branch only. A `--ref` chooses which ref gets checked out;
 it cannot introduce a workflow that the default branch lacks. Dispatching a caller that exists only on a feature branch
 fails with:

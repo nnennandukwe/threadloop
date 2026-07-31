@@ -23,6 +23,28 @@ function declaredInputs(workflow: Record<string, unknown>) {
 
 const TEMPLATE = 'examples/threadloop-caller-workflow.yml';
 
+/**
+ * The `owner/repo` slug this checkout publishes as, read from package.json.
+ *
+ * Derived rather than hardcoded so the slug has exactly one source of truth. A
+ * fork that updates `repository` is then told by this test to update the
+ * template too, instead of shipping consumers a caller that points at upstream.
+ */
+async function declaredRepositorySlug() {
+  const manifest = JSON.parse(await readFile(path.join(process.cwd(), 'package.json'), 'utf8')) as {
+    repository?: { url?: string };
+  };
+  const url = manifest.repository?.url;
+  if (!url) {
+    throw new Error('package.json must declare repository.url so the caller template slug has one source of truth.');
+  }
+  const slug = /github\.com[/:]([^/]+\/[^/]+?)(?:\.git)?$/.exec(url)?.[1];
+  if (!slug) {
+    throw new Error(`Could not read an owner/repo slug from repository.url: ${url}`);
+  }
+  return slug;
+}
+
 describe('consumer caller workflow template', () => {
   it('passes exactly the inputs each sensor declares as required', async () => {
     const { workflow } = await readWorkflow(TEMPLATE);
@@ -80,10 +102,16 @@ describe('consumer caller workflow template', () => {
     expect(object(jobs.gate).if).toBe("${{ inputs.evidence == 'gate' }}");
     expect(object(jobs.review).if).toBe("${{ inputs.evidence == 'review' }}");
 
+    const slug = await declaredRepositorySlug();
     for (const jobName of ['gate', 'review'] as const) {
       const uses = String(object(jobs[jobName]).uses);
-      expect(uses).toContain('/threadloop/.github/workflows/threadloop-');
-      // A placeholder rather than a live SHA, because consumers must pin their own
+      // The slug must resolve to a real repository, not a placeholder. Consumers
+      // are told to replace only the SHA, so an unreplaced owner placeholder
+      // would leave a copied template pointing at a repository that does not
+      // exist. Compared against package.json rather than a literal so a fork has
+      // one place to change.
+      expect(uses.startsWith(`${slug}/.github/workflows/threadloop-`)).toBe(true);
+      // The SHA stays a placeholder, because consumers must pin their own
       // reviewed commit. A branch or tag ref here would break commit pinning.
       expect(uses.endsWith('@FULL_COMMIT_SHA')).toBe(true);
     }
