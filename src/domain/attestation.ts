@@ -412,7 +412,7 @@ export function evaluateCiProofEvidence(input: {
       parsed.artifact.head_before !== receipt.subjectHeadSha ||
       parsed.artifact.head_after !== receipt.subjectHeadSha ||
       canonicalJson(parsed.artifact.gate) !== canonicalJson(gate) ||
-      !recordedSetupMatchesDeclared(parsed.artifact.setup, gate.setup) ||
+      !recordedSetupMatchesDeclared(parsed.artifact.setup, gate.setup, true) ||
       receipt.issuer !== policy.issuer ||
       receipt.certificateIdentity !== policy.certificate_identity ||
       receipt.buildSignerUri !== policy.build_signer_uri ||
