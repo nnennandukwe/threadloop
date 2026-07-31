@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.7.6",
+  "checkpoint_id": "832a0c2f8c43",
+  "strategy": "manual-commit",
+  "branch": "feat/gate-setup-steps",
+  "checkpoints_count": 6,
+  "files_touched": [
+    "src/domain/attestation.ts",
+    "src/domain/proof.ts",
+    "tests/unit/setup-steps.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/83/2a0c2f8c43/0/metadata.json",
+      "transcript": "/83/2a0c2f8c43/0/full.jsonl",
+      "content_hash": "/83/2a0c2f8c43/0/content_hash.txt",
+      "prompt": "/83/2a0c2f8c43/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 211,
+    "cache_creation_tokens": 153960,
+    "cache_read_tokens": 45296153,
+    "output_tokens": 80003,
+    "api_call_count": 113
+  }
+}
