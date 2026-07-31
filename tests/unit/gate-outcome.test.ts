@@ -24,6 +24,7 @@ function step(id: string, result: GateReceiptResult, clean = true): SetupStepExe
   return {
     id,
     command: ['uv', 'sync', '--frozen'],
+    workingDirectory: '.',
     timeoutMs: 600_000,
     process: processResult(result, result === 'passed' ? 0 : 1),
     headBefore: 'c'.repeat(40),

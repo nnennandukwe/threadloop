@@ -499,7 +499,7 @@ describe('signed gate receipt import', { timeout: 20_000 }, () => {
     await resetSqliteConnections(fixture.repoDir);
     const db = new DatabaseSync(path.join(fixture.repoDir, '.threadloop/state/state.db'), { readOnly: true });
     try {
-      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '7' });
+      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '8' });
       expect(db.prepare(`SELECT COUNT(*) AS count FROM signed_gate_receipts`).get()).toEqual({ count: 1 });
       expect(db.prepare(`SELECT status, state_version FROM tasks`).get()).toEqual({
         status: 'verifying',

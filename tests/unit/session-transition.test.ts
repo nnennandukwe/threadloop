@@ -31,6 +31,7 @@ function passedProofContext(repository: Partial<NonNullable<ProofGuardContext['r
       gates: [],
       staleReceiptIds: [],
       failedReceiptIds: [],
+      setupFailedReceiptIds: [],
       corruptReceiptIds: [],
     },
     ciEvidence: {
@@ -508,6 +509,7 @@ describe('session transition domain', () => {
       gates: [],
       staleReceiptIds: [],
       failedReceiptIds: ['receipt_1'],
+      setupFailedReceiptIds: [],
       corruptReceiptIds: [],
     };
     context.attemptsUsed = 3;
@@ -675,6 +677,7 @@ describe('session transition domain', () => {
       gates: [],
       staleReceiptIds: [],
       failedReceiptIds: ['receipt_post_pr'],
+      setupFailedReceiptIds: [],
       corruptReceiptIds: [],
     };
 

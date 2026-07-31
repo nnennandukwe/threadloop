@@ -41,6 +41,31 @@ export interface ProofGate {
   timeout_ms: number;
 }
 
+/**
+ * One declared setup step as it actually ran. Recorded identically by the local and CI execution paths, so a
+ * local receipt and a signed receipt for the same HEAD describe provisioning the same way.
+ */
+export interface RecordedSetupStep {
+  id: string;
+  command: string[];
+  working_directory: string;
+  timeout_ms: number;
+  result: GateReceiptResult;
+  started_at: string;
+  ended_at: string;
+  duration_ms: number;
+  exit_status: number | null;
+  signal: string | null;
+  head_before: string;
+  head_after: string;
+  clean_before: boolean;
+  clean_after: boolean;
+  output: {
+    stdout_sha256: string;
+    stderr_sha256: string;
+  };
+}
+
 export interface LegacyProofPlan {
   acceptance_criteria: string[];
   gates: ProofGate[];
@@ -98,6 +123,8 @@ export interface GateReceiptPayload {
   gate_id: string;
   plan_sha256: string;
   result: GateReceiptResult;
+  /** Present on sensor contract_version 2 receipts; absent on stored v1 receipts, which predate setup. */
+  setup?: RecordedSetupStep[];
   command: string[];
   working_directory: string;
   timeout_ms: number;
@@ -116,7 +143,7 @@ export interface GateReceiptPayload {
   };
   sensor: {
     name: 'threadloop-local-gate';
-    contract_version: 1;
+    contract_version: 1 | 2;
   };
 }
 
@@ -137,7 +164,11 @@ export interface StoredGateReceipt {
   createdAt: string;
 }
 
-export type ProofGateEvidenceStatus = 'missing' | 'passed' | 'failed' | 'stale' | 'corrupt';
+/**
+ * `setup_failed` is deliberately distinct from `failed`. A missing toolchain is a configuration problem, so
+ * it must not select repair or consume post-PR repair budget the way a code failure does.
+ */
+export type ProofGateEvidenceStatus = 'missing' | 'passed' | 'failed' | 'setup_failed' | 'stale' | 'corrupt';
 export type ProofEvidenceStatus = ProofGateEvidenceStatus;
 
 export interface ProofGateEvidence {
@@ -153,6 +184,7 @@ export interface ProofEvidence {
   gates: ProofGateEvidence[];
   staleReceiptIds: string[];
   failedReceiptIds: string[];
+  setupFailedReceiptIds: string[];
   corruptReceiptIds: string[];
 }
 
@@ -321,6 +353,9 @@ export function evaluateProofEvidence(input: {
     if (receipt.result === 'passed' && payload.result === 'passed' && payload.clean_before && payload.clean_after) {
       return { ...common, status: 'passed' };
     }
+    if (receipt.result === 'setup_failed' && payload.result === 'setup_failed') {
+      return { ...common, status: 'setup_failed' };
+    }
     return { ...common, status: 'failed' };
   });
 
@@ -333,6 +368,9 @@ export function evaluateProofEvidence(input: {
       .map((gate) => gate.receipt_id as string),
     failedReceiptIds: gates
       .filter((gate) => gate.status === 'failed' && gate.receipt_id)
+      .map((gate) => gate.receipt_id as string),
+    setupFailedReceiptIds: gates
+      .filter((gate) => gate.status === 'setup_failed' && gate.receipt_id)
       .map((gate) => gate.receipt_id as string),
     corruptReceiptIds: gates
       .filter((gate) => gate.status === 'corrupt' && gate.receipt_id)
@@ -376,11 +414,39 @@ function parseAndValidateReceipt(
     artifactDigest !== receipt.artifactSha256 ||
     parsed.working_directory !== gate.working_directory ||
     parsed.timeout_ms !== gate.timeout_ms ||
-    JSON.stringify(parsed.command) !== JSON.stringify(gate.command)
+    JSON.stringify(parsed.command) !== JSON.stringify(gate.command) ||
+    !recordedSetupMatchesDeclared(parsed.setup, gate.setup)
   ) {
     return null;
   }
   return parsed;
+}
+
+/**
+ * A receipt describes everything that ran, so recorded setup must correspond to declared setup step for step.
+ * A short recorded sequence is legitimate: a failing step stops the run, so later steps never execute. What is
+ * never legitimate is a recorded step the plan did not declare, or one whose argv, directory, or timeout
+ * differs from the declaration.
+ */
+export function recordedSetupMatchesDeclared(
+  recorded: readonly RecordedSetupStep[] | undefined,
+  declared: readonly ProofSetupStep[] | undefined,
+): boolean {
+  const recordedSteps = recorded ?? [];
+  const declaredSteps = declared ?? [];
+  if (recordedSteps.length > declaredSteps.length) {
+    return false;
+  }
+  return recordedSteps.every((step, index) => {
+    const expected = declaredSteps[index];
+    return (
+      expected !== undefined &&
+      step.id === expected.id &&
+      step.working_directory === expected.working_directory &&
+      step.timeout_ms === expected.timeout_ms &&
+      JSON.stringify(step.command) === JSON.stringify(expected.command)
+    );
+  });
 }
 
 function isGateReceiptPayload(value: unknown): value is GateReceiptPayload {
@@ -412,7 +478,42 @@ function isGateReceiptPayload(value: unknown): value is GateReceiptPayload {
     typeof payload.artifact.path === 'string' &&
     typeof payload.artifact.sha256 === 'string' &&
     payload.sensor?.name === 'threadloop-local-gate' &&
-    payload.sensor.contract_version === 1
+    // v1 receipts predate setup and carry no `setup` key; v2 always carries one, possibly empty.
+    ((payload.sensor.contract_version === 1 && payload.setup === undefined) ||
+      (payload.sensor.contract_version === 2 && isRecordedSetupStepArray(payload.setup)))
+  );
+}
+
+function isRecordedSetupStepArray(value: unknown): value is RecordedSetupStep[] {
+  return (
+    Array.isArray(value) &&
+    value.every((step: unknown) => {
+      if (typeof step !== 'object' || step === null || Array.isArray(step)) {
+        return false;
+      }
+      const candidate = step as Partial<RecordedSetupStep>;
+      return (
+        typeof candidate.id === 'string' &&
+        Array.isArray(candidate.command) &&
+        candidate.command.every((argument) => typeof argument === 'string') &&
+        typeof candidate.working_directory === 'string' &&
+        typeof candidate.timeout_ms === 'number' &&
+        GATE_RECEIPT_RESULTS.includes(candidate.result as GateReceiptResult) &&
+        typeof candidate.started_at === 'string' &&
+        typeof candidate.ended_at === 'string' &&
+        typeof candidate.duration_ms === 'number' &&
+        (typeof candidate.exit_status === 'number' || candidate.exit_status === null) &&
+        (typeof candidate.signal === 'string' || candidate.signal === null) &&
+        typeof candidate.head_before === 'string' &&
+        typeof candidate.head_after === 'string' &&
+        typeof candidate.clean_before === 'boolean' &&
+        typeof candidate.clean_after === 'boolean' &&
+        typeof candidate.output === 'object' &&
+        candidate.output !== null &&
+        typeof candidate.output.stdout_sha256 === 'string' &&
+        typeof candidate.output.stderr_sha256 === 'string'
+      );
+    })
   );
 }
 
@@ -420,7 +521,9 @@ function aggregateProofStatus(gates: ProofGateEvidence[]): ProofEvidenceStatus {
   if (gates.every((gate) => gate.status === 'passed')) {
     return 'passed';
   }
-  for (const status of ['corrupt', 'failed', 'stale', 'missing'] as const) {
+  // `setup_failed` outranks `failed` because a broken environment is the actionable root cause: a gate that
+  // never ran its command tells you nothing about the code.
+  for (const status of ['corrupt', 'setup_failed', 'failed', 'stale', 'missing'] as const) {
     if (gates.some((gate) => gate.status === status)) {
       return status;
     }

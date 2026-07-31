@@ -9,6 +9,7 @@ import { parseJson, runCli, runCliFailure } from '../helpers/cli.js';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
 import { applySessionTransition, resetSqliteConnections } from '../../src/adapters/fs/sqlite-store.js';
+import { canonicalJson } from '../../src/domain/canonical-json.js';
 import { canonicalizeTransitionRequest, type TransitionRequest } from '../../src/domain/session-transition.js';
 
 const execFileAsync = promisify(execFile);
@@ -16,6 +17,12 @@ const temporaryRepos: string[] = [];
 const fixtureRepository = 'https://github.com/example/threadloop-fixture';
 const fixtureBranch = 'issue-41/signed-receipts';
 const sensorSha = 'a'.repeat(40);
+
+async function makeScratchDirectory() {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'threadloop-gate-scratch-'));
+  temporaryRepos.push(directory);
+  return directory;
+}
 
 async function makeCommittedRepo() {
   const repoDir = await mkdtemp(path.join(os.tmpdir(), 'threadloop-gate-'));
@@ -31,7 +38,11 @@ async function makeCommittedRepo() {
   return repoDir;
 }
 
-async function startFramedSession(repoDir: string) {
+async function startFramedSession(
+  repoDir: string,
+  // A second session in the same repository has nothing new to commit, and needs its own idempotency key.
+  options: { commitConfig?: boolean; idempotencyKey?: string } = {},
+) {
   const started = parseJson<{ data: { session_id: string } }>(
     (
       await runCli(repoDir, [
@@ -46,8 +57,10 @@ async function startFramedSession(repoDir: string) {
       ])
     ).stdout,
   );
-  await execFileAsync('git', ['add', '.threadloop/config.json'], { cwd: repoDir });
-  await execFileAsync('git', ['commit', '-m', 'initialize ThreadLoop'], { cwd: repoDir });
+  if (options.commitConfig !== false) {
+    await execFileAsync('git', ['add', '.threadloop/config.json'], { cwd: repoDir });
+    await execFileAsync('git', ['commit', '-m', 'initialize ThreadLoop'], { cwd: repoDir });
+  }
   await runCli(repoDir, [
     'session',
     'transition',
@@ -57,7 +70,7 @@ async function startFramedSession(repoDir: string) {
     '--expected-state-version',
     '0',
     '--idempotency-key',
-    'frame:gate-task',
+    options.idempotencyKey ?? 'frame:gate-task',
     '--actor',
     'agent',
     '--input',
@@ -220,7 +233,7 @@ describe('proof plan persistence', { timeout: 20_000 }, () => {
     await resetSqliteConnections(repoDir);
     const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
     try {
-      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '7' });
+      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '8' });
       expect(
         db
           .prepare(
@@ -468,7 +481,7 @@ describe('session gate run', { timeout: 20_000 }, () => {
           signal: null,
           clean_before: true,
           clean_after: true,
-          sensor: { name: 'threadloop-local-gate', contract_version: 1 },
+          sensor: { name: 'threadloop-local-gate', contract_version: 2 },
         },
         lifecycle: { state: 'verifying', state_version: 4 },
       },
@@ -1607,5 +1620,299 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
     } finally {
       unchanged.close();
     }
+  });
+});
+
+describe('declared gate setup', { timeout: 20_000 }, () => {
+  function planWithSetup(setup: unknown[], gateCommand = ['node', '-e', 'process.exit(0)']) {
+    const base = proofPlan(gateCommand);
+    return { ...base, gates: [{ ...base.gates[0], setup }] };
+  }
+
+  async function runSetupGate(repoDir: string, sessionId: string, plan: unknown) {
+    await recordProofPlan(repoDir, sessionId, plan as ReturnType<typeof proofPlan>);
+    await forceVerifying(repoDir, sessionId);
+    return runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json']);
+  }
+
+  it('records every declared setup step that ran on a passing receipt', async () => {
+    const repoDir = await makeCommittedRepo();
+    const sessionId = await startFramedSession(repoDir);
+    // Provisioning output must land outside the repository, because a gate still requires a clean tree at
+    // both ends and `git status --untracked-files=all` counts a new untracked file as dirty.
+    const markerPath = path.join(await makeScratchDirectory(), 'provisioned.txt');
+
+    const gate = parseJson<{
+      data: {
+        receipt: {
+          result: string;
+          setup: Array<{ id: string; result: string; exit_status: number | null; clean_before: boolean }>;
+        };
+      };
+    }>(
+      (
+        await runSetupGate(
+          repoDir,
+          sessionId,
+          planWithSetup([
+            {
+              id: 'provision',
+              // Writes outside the repository so the tree stays clean, which the gate still requires.
+              command: ['node', '-e', `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "ok")`],
+              working_directory: '.',
+              timeout_ms: 5_000,
+            },
+          ]),
+        )
+      ).stdout,
+    );
+
+    expect(gate.data.receipt.result).toBe('passed');
+    expect(gate.data.receipt.setup).toHaveLength(1);
+    expect(gate.data.receipt.setup[0]).toMatchObject({
+      id: 'provision',
+      result: 'passed',
+      exit_status: 0,
+      clean_before: true,
+    });
+  });
+
+  it('records setup_failed without running the gate command when provisioning fails', async () => {
+    const repoDir = await makeCommittedRepo();
+    const sessionId = await startFramedSession(repoDir);
+    const gateMarker = path.join(repoDir, 'gate-ran.txt');
+
+    const gate = parseJson<{
+      data: { receipt: { result: string; exit_status: number | null; setup: Array<{ id: string; result: string }> } };
+    }>(
+      (
+        await runSetupGate(
+          repoDir,
+          sessionId,
+          planWithSetup(
+            [
+              { id: 'broken', command: ['node', '-e', 'process.exit(7)'], working_directory: '.', timeout_ms: 5_000 },
+              {
+                id: 'unreached',
+                command: ['node', '-e', 'process.exit(0)'],
+                working_directory: '.',
+                timeout_ms: 5_000,
+              },
+            ],
+            ['node', '-e', `require("node:fs").writeFileSync(${JSON.stringify(gateMarker)}, "ran")`],
+          ),
+        )
+      ).stdout,
+    );
+
+    expect(gate.data.receipt.result).toBe('setup_failed');
+    expect(gate.data.receipt.setup.map((step) => step.id)).toEqual(['broken']);
+    expect(gate.data.receipt.setup[0]?.result).toBe('failed');
+    expect(gate.data.receipt.exit_status).toBeNull();
+    await expect(readFile(gateMarker, 'utf8')).rejects.toThrow();
+  });
+
+  it('projects setup failure as an operator handoff that consumes no repair budget', async () => {
+    const repoDir = await makeCommittedRepo();
+    const sessionId = await startFramedSession(repoDir);
+    await runSetupGate(
+      repoDir,
+      sessionId,
+      planWithSetup([
+        { id: 'broken', command: ['node', '-e', 'process.exit(7)'], working_directory: '.', timeout_ms: 5_000 },
+      ]),
+    );
+
+    const next = parseJson<{
+      data: {
+        candidate: null;
+        proof: { status: string; gates: Array<{ status: string; result: string }> };
+        repair_budget: { attempts_used: number; remaining: number; exhausted: boolean };
+        guard_failures: Array<{ code: string }>;
+        required_work: Array<{ code: string }>;
+      };
+    }>((await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout);
+
+    expect(next.data).toMatchObject({
+      candidate: null,
+      proof: { status: 'setup_failed', gates: [{ status: 'setup_failed', result: 'setup_failed' }] },
+      guard_failures: [{ code: 'PROOF_GATE_SETUP_FAILED' }],
+      required_work: [{ code: 'CORRECT_GATE_SETUP' }],
+    });
+    // A broken toolchain is a configuration problem, so it must not spend the post-PR repair allowance.
+    expect(next.data.repair_budget).toMatchObject({ attempts_used: 0, exhausted: false });
+  });
+
+  it('treats a receipt whose recorded setup does not match the declared plan as corrupt', async () => {
+    const repoDir = await makeCommittedRepo();
+    const sessionId = await startFramedSession(repoDir);
+    await runSetupGate(
+      repoDir,
+      sessionId,
+      planWithSetup([
+        { id: 'provision', command: ['node', '-e', 'process.exit(0)'], working_directory: '.', timeout_ms: 5_000 },
+      ]),
+    );
+
+    await resetSqliteConnections(repoDir);
+    const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'));
+    try {
+      const stored = db.prepare(`SELECT receipt_json FROM gate_receipts`).get() as { receipt_json: string };
+      const payload = JSON.parse(stored.receipt_json) as { setup: Array<{ command: string[] }> };
+      payload.setup[0]!.command = ['node', '-e', 'process.exit(1)'];
+      db.exec(`DROP TRIGGER gate_receipts_no_update`);
+      db.prepare(`UPDATE gate_receipts SET receipt_json = ?`).run(canonicalJson(payload));
+      db.exec(`
+        CREATE TRIGGER gate_receipts_no_update
+        BEFORE UPDATE ON gate_receipts
+        BEGIN
+          SELECT RAISE(ABORT, 'gate receipts are immutable');
+        END
+      `);
+    } finally {
+      db.close();
+    }
+
+    const next = parseJson<{ data: { proof: { status: string } } }>(
+      (await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout,
+    );
+    expect(next.data.proof.status).toBe('corrupt');
+  });
+});
+
+describe('gate receipt result domain migration', { timeout: 20_000 }, () => {
+  it('widens a pre-v8 gate_receipts result domain while preserving every stored receipt', async () => {
+    const repoDir = await makeCommittedRepo();
+    const sessionId = await startFramedSession(repoDir);
+    await recordProofPlan(repoDir, sessionId);
+    await forceVerifying(repoDir, sessionId);
+    const first = parseJson<{ data: { receipt: { id: string; sequence: number } } }>(
+      (await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json'])).stdout,
+    );
+
+    // Rebuild the table with the pre-v8 narrow result domain and roll the recorded version back, so the next
+    // CLI invocation exercises the real migration path against real stored evidence.
+    await resetSqliteConnections(repoDir);
+    const downgrade = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'));
+    try {
+      downgrade.exec(`
+        DROP TRIGGER gate_receipts_no_update;
+        DROP TRIGGER gate_receipts_no_delete;
+        DROP TRIGGER gate_receipts_no_replace;
+        DROP INDEX gate_receipts_session_gate_sequence_idx;
+        ALTER TABLE gate_receipts RENAME TO gate_receipts_downgraded;
+        CREATE TABLE gate_receipts (
+          sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+          id TEXT NOT NULL UNIQUE,
+          session_id TEXT NOT NULL REFERENCES sessions(id),
+          gate_id TEXT NOT NULL,
+          plan_sha256 TEXT NOT NULL CHECK(length(plan_sha256) = 64),
+          head_before TEXT NOT NULL,
+          head_after TEXT NOT NULL,
+          result TEXT NOT NULL CHECK(
+            result IN (
+              'passed', 'failed', 'timed_out', 'aborted', 'invalidated',
+              'execution_error', 'cleanup_failed'
+            )
+          ),
+          artifact_path TEXT NOT NULL,
+          artifact_sha256 TEXT NOT NULL CHECK(length(artifact_sha256) = 64),
+          receipt_json TEXT NOT NULL,
+          receipt_sha256 TEXT NOT NULL CHECK(length(receipt_sha256) = 64),
+          state_version INTEGER NOT NULL CHECK(state_version >= 0),
+          created_at TEXT NOT NULL
+        );
+        INSERT INTO gate_receipts SELECT * FROM gate_receipts_downgraded;
+        DROP TABLE gate_receipts_downgraded;
+        CREATE INDEX gate_receipts_session_gate_sequence_idx
+          ON gate_receipts(session_id, gate_id, sequence DESC);
+        CREATE TRIGGER gate_receipts_no_update
+        BEFORE UPDATE ON gate_receipts
+        BEGIN
+          SELECT RAISE(ABORT, 'gate receipts are immutable');
+        END;
+        CREATE TRIGGER gate_receipts_no_delete
+        BEFORE DELETE ON gate_receipts
+        BEGIN
+          SELECT RAISE(ABORT, 'gate receipts are immutable');
+        END;
+        CREATE TRIGGER gate_receipts_no_replace
+        BEFORE INSERT ON gate_receipts
+        WHEN EXISTS (
+          SELECT 1 FROM gate_receipts
+          WHERE id = NEW.id OR (session_id = NEW.session_id AND gate_id = NEW.gate_id AND sequence = NEW.sequence)
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'gate receipts are immutable');
+        END;
+      `);
+      downgrade.prepare(`UPDATE metadata SET value = '7' WHERE key = 'schema_version'`).run();
+    } finally {
+      downgrade.close();
+    }
+    await resetSqliteConnections(repoDir);
+
+    // A schema at or above v6 but below current requires an explicit operator migration, so reads report
+    // migration_required rather than silently rewriting stored evidence.
+    const beforeMigration = parseJson<{ data: { lifecycle: { contract_status: string } } }>(
+      (await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout,
+    );
+    expect(beforeMigration.data.lifecycle.contract_status).toBe('migration_required');
+
+    await runCli(repoDir, ['init']);
+
+    await resetSqliteConnections(repoDir);
+    const migrated = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
+    try {
+      expect(migrated.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({
+        value: '8',
+      });
+      const definition = migrated
+        .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'gate_receipts'`)
+        .get() as { sql: string };
+      expect(definition.sql).toContain('setup_failed');
+      expect(
+        migrated.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'gate_receipts_%'`).all(),
+      ).toEqual([]);
+
+      const receipts = migrated.prepare(`SELECT sequence, id, result FROM gate_receipts ORDER BY sequence`).all();
+      expect(receipts).toEqual([
+        { sequence: first.data.receipt.sequence, id: first.data.receipt.id, result: 'passed' },
+      ]);
+      for (const trigger of ['gate_receipts_no_update', 'gate_receipts_no_delete', 'gate_receipts_no_replace']) {
+        expect(
+          migrated.prepare(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = ?`).get(trigger),
+        ).toEqual({ name: trigger });
+      }
+    } finally {
+      migrated.close();
+    }
+
+    // The widened domain must actually be usable after the migration, not merely present in the DDL.
+    const setupPlan = (() => {
+      const base = proofPlan();
+      return {
+        ...base,
+        gates: [
+          {
+            ...base.gates[0]!,
+            setup: [
+              { id: 'broken', command: ['node', '-e', 'process.exit(9)'], working_directory: '.', timeout_ms: 5_000 },
+            ],
+          },
+        ],
+      };
+    })();
+    const secondSession = await startFramedSession(repoDir, {
+      commitConfig: false,
+      idempotencyKey: 'frame:migrated-setup',
+    });
+    await recordProofPlan(repoDir, secondSession, setupPlan, 'proof-plan:migrated-setup');
+    await forceVerifying(repoDir, secondSession);
+    const migratedRun = parseJson<{ data: { receipt: { result: string } } }>(
+      (await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', secondSession, '--json']))
+        .stdout,
+    );
+    expect(migratedRun.data.receipt.result).toBe('setup_failed');
   });
 });

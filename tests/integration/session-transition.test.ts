@@ -206,7 +206,7 @@ describe('schema v7 lifecycle and audit persistence', { timeout: 20_000 }, () =>
 
     const db = new DatabaseSync(dbPath, { readOnly: true });
     try {
-      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '7' });
+      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '8' });
       expect(
         (db.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>).map((column) => column.name),
       ).toContain('blocked_from_state');
@@ -300,7 +300,7 @@ describe('schema v7 lifecycle and audit persistence', { timeout: 20_000 }, () =>
     const recovered = new DatabaseSync(dbPath, { readOnly: true });
     try {
       expect(recovered.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({
-        value: '7',
+        value: '8',
       });
       expect(recovered.prepare(`SELECT COUNT(*) AS count FROM sessions`).get()).toEqual({ count: 1 });
     } finally {
@@ -484,7 +484,7 @@ describe('schema v7 lifecycle and audit persistence', { timeout: 20_000 }, () =>
     const migrated = new DatabaseSync(dbPath, { readOnly: true });
     try {
       expect(migrated.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({
-        value: '7',
+        value: '8',
       });
       expect(
         (migrated.prepare(`SELECT COUNT(*) AS count FROM session_transitions`).get() as { count: number }).count,
@@ -1698,7 +1698,7 @@ describe('session next command', { timeout: 15_000 }, () => {
           state_version: 0,
           blocked_from_state: null,
           phase: 'pre_pr',
-          storage_schema_version: 7,
+          storage_schema_version: 8,
           contract_status: 'current',
           history: [],
         },

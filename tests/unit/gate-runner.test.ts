@@ -112,6 +112,7 @@ describe('gate runner with declared setup', () => {
     return {
       id,
       command,
+      workingDirectory: '.',
       cwd: directory,
       timeoutMs: 5_000,
       stdoutPath: path.join(directory, `${id}.stdout.log`),

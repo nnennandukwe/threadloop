@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { Transform } from 'node:stream';
-import type { GateReceiptResult } from '../../domain/proof.js';
+import type { GateReceiptResult, RecordedSetupStep } from '../../domain/proof.js';
 
 export interface GateProcessInput {
   command: string[];
@@ -40,12 +40,15 @@ export interface GateRepositoryObservation {
 
 export interface GateSetupStepInput extends GateProcessInput {
   id: string;
+  /** The declared repository-relative directory. Recorded on the receipt, unlike the resolved absolute `cwd`. */
+  workingDirectory: string;
 }
 
 /** One declared setup step as it actually ran, including the observations taken around it. */
 export interface SetupStepExecution {
   id: string;
   command: string[];
+  workingDirectory: string;
   timeoutMs: number;
   process: GateProcessResult;
   headBefore: string;
@@ -67,6 +70,15 @@ export interface GateWithSetupResult {
   /** Null when a setup step short-circuited the sequence, so the gate command never ran. */
   gate: GateProcessResult | null;
   observedAfter: GateRepositoryObservation | null;
+  /**
+   * Spans everything that actually ran, from the first process started to the last one that ended. A gate
+   * blocked by failing setup still reports the real duration of the setup that was attempted.
+   */
+  window: {
+    startedAt: string;
+    endedAt: string;
+    durationMs: number;
+  };
 }
 
 /**
@@ -85,13 +97,14 @@ export async function runGateWithSetup(input: GateWithSetupInput): Promise<GateW
   for (const step of input.setup) {
     const stepBefore = observed;
     if (!stepBefore) {
-      return { setup, gate: null, observedAfter: null };
+      return { setup, gate: null, observedAfter: null, window: executionWindow(setup, null) };
     }
     const process = await runGateProcess(step);
     const stepAfter = await input.observe();
     setup.push({
       id: step.id,
       command: step.command,
+      workingDirectory: step.workingDirectory,
       timeoutMs: step.timeoutMs,
       process,
       headBefore: stepBefore.headSha,
@@ -102,12 +115,54 @@ export async function runGateWithSetup(input: GateWithSetupInput): Promise<GateW
     observed = stepAfter;
 
     if (process.result !== 'passed' || !stepAfter || !stepAfter.clean || stepAfter.headSha !== stepBefore.headSha) {
-      return { setup, gate: null, observedAfter: stepAfter };
+      return { setup, gate: null, observedAfter: stepAfter, window: executionWindow(setup, null) };
     }
   }
 
   const gate = await runGateProcess(input.gate);
-  return { setup, gate, observedAfter: await input.observe() };
+  return { setup, gate, observedAfter: await input.observe(), window: executionWindow(setup, gate) };
+}
+
+function executionWindow(setup: readonly SetupStepExecution[], gate: GateProcessResult | null) {
+  // Either the gate ran, or at least one setup step ran to have blocked it, so this is never empty.
+  const processes = [...setup.map((step) => step.process), ...(gate ? [gate] : [])];
+  const first = processes[0];
+  const last = processes[processes.length - 1];
+  if (!first || !last) {
+    throw new Error('Gate execution produced no process to describe.');
+  }
+  return {
+    startedAt: first.startedAt,
+    endedAt: last.endedAt,
+    durationMs: Math.max(0, Date.parse(last.endedAt) - Date.parse(first.startedAt)),
+  };
+}
+
+/**
+ * Serializes an executed setup step into its receipt form. Shared by both execution paths so a local receipt
+ * and a signed receipt cannot describe the same step with different fields.
+ */
+export function toRecordedSetupStep(execution: SetupStepExecution): RecordedSetupStep {
+  return {
+    id: execution.id,
+    command: execution.command,
+    working_directory: execution.workingDirectory,
+    timeout_ms: execution.timeoutMs,
+    result: execution.process.result,
+    started_at: execution.process.startedAt,
+    ended_at: execution.process.endedAt,
+    duration_ms: execution.process.durationMs,
+    exit_status: execution.process.exitStatus,
+    signal: execution.process.signal,
+    head_before: execution.headBefore,
+    head_after: execution.headAfter,
+    clean_before: execution.cleanBefore,
+    clean_after: execution.cleanAfter,
+    output: {
+      stdout_sha256: execution.process.stdout.sha256,
+      stderr_sha256: execution.process.stderr.sha256,
+    },
+  };
 }
 
 /**

@@ -105,7 +105,7 @@ Require `ok: true`, `command: "session next"`, `data.contract_version: 4`, and a
 session read, require:
 
 ```text
-data.lifecycle.storage_schema_version = 7
+data.lifecycle.storage_schema_version = 8
 data.lifecycle.contract_status = "current"
 ```
 
@@ -151,8 +151,9 @@ completed
 
 Status allowlists:
 
-- `proof.status` and gate statuses: `missing`, `passed`, `failed`, `stale`, `corrupt`; top-level proof also permits
-  `migration_required`;
+- `proof.status` and gate statuses: `missing`, `passed`, `failed`, `setup_failed`, `stale`, `corrupt`; top-level proof
+  also permits `migration_required`. `setup_failed` means declared gate setup could not provision the toolchain, so the
+  gate command never ran; it is an operator handoff, not code repair, and consumes no repair budget;
 - `ci_proof.status`: `policy_missing`, `missing`, `passed`, `stale`, `corrupt`;
 - `review.status`: `policy_missing`, `missing`, `current`, `stale`, `corrupt`;
 - `pre_pr_review.status`: `not_started`, `review_required`, `changes_required`, `cleared`, `stale`,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
-import { canonicalizeProofPlan, ProofValidationError } from '../../src/domain/proof.js';
+import { canonicalizeProofPlan, evaluateProofEvidence, ProofValidationError } from '../../src/domain/proof.js';
+import { canonicalJson } from '../../src/domain/canonical-json.js';
 
 const workflowSha = 'a'.repeat(40);
 
@@ -247,5 +248,136 @@ describe('proof plan v4 declared setup steps', () => {
         canonicalizeProofPlan(planV4([{ ...verifyGate, setup }]), sha256, { requireReviewPolicy: true }),
       ).field,
     ).toBe('proof_plan.gates[0].setup');
+  });
+});
+
+describe('local proof evidence for recorded setup', () => {
+  const head = 'e'.repeat(40);
+  const sessionId = 'session_setup_fixture';
+  const artifactSha256 = 'f'.repeat(64);
+
+  function boundPlan(setup: unknown[]) {
+    const canonical = canonicalizeProofPlan(planV4([{ ...verifyGate, setup }]), sha256, {
+      requireReviewPolicy: true,
+    });
+    return {
+      ...canonical,
+      baselineBranch: 'issue-78/setup',
+      baselineHeadSha: head,
+      createdAt: '2026-07-31T00:00:00.000Z',
+    };
+  }
+
+  function recordedStep(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 'sync',
+      command: syncStep.command,
+      working_directory: '.',
+      timeout_ms: syncStep.timeout_ms,
+      result: 'failed',
+      started_at: '2026-07-31T00:00:00.000Z',
+      ended_at: '2026-07-31T00:00:01.000Z',
+      duration_ms: 1_000,
+      exit_status: 1,
+      signal: null,
+      head_before: head,
+      head_after: head,
+      clean_before: true,
+      clean_after: true,
+      output: { stdout_sha256: 'a'.repeat(64), stderr_sha256: 'b'.repeat(64) },
+      ...overrides,
+    };
+  }
+
+  function evidenceFor(plan: ReturnType<typeof boundPlan>, payloadOverrides: Record<string, unknown>) {
+    const payload = {
+      id: 'receipt_setup_1',
+      session_id: sessionId,
+      gate_id: 'check',
+      plan_sha256: plan.sha256,
+      result: 'setup_failed',
+      command: verifyGate.command,
+      working_directory: '.',
+      timeout_ms: verifyGate.timeout_ms,
+      started_at: '2026-07-31T00:00:00.000Z',
+      ended_at: '2026-07-31T00:00:01.000Z',
+      duration_ms: 1_000,
+      exit_status: null,
+      signal: null,
+      head_before: head,
+      head_after: head,
+      clean_before: true,
+      clean_after: true,
+      artifact: { path: '.threadloop/artifacts/execution.json', sha256: artifactSha256 },
+      sensor: { name: 'threadloop-local-gate', contract_version: 2 },
+      ...payloadOverrides,
+    };
+    const receiptJson = canonicalJson(payload);
+    return evaluateProofEvidence({
+      sessionId,
+      plan,
+      receipts: [
+        {
+          sequence: 1,
+          id: 'receipt_setup_1',
+          sessionId,
+          gateId: 'check',
+          planSha256: plan.sha256,
+          headBefore: head,
+          headAfter: head,
+          result: payload.result as 'setup_failed',
+          artifactPath: '.threadloop/artifacts/execution.json',
+          artifactSha256,
+          receiptJson,
+          receiptSha256: sha256(receiptJson),
+          stateVersion: 1,
+          createdAt: '2026-07-31T00:00:01.000Z',
+        },
+      ],
+      currentHead: head,
+      artifactDigests: new Map([['receipt_setup_1', artifactSha256]]),
+      digest: sha256,
+    });
+  }
+
+  it('projects a recorded setup failure as setup_failed', () => {
+    const evidence = evidenceFor(boundPlan([syncStep]), { setup: [recordedStep()] });
+
+    expect(evidence.status).toBe('setup_failed');
+    expect(evidence.gates[0]).toMatchObject({ status: 'setup_failed', result: 'setup_failed' });
+    expect(evidence.setupFailedReceiptIds).toEqual(['receipt_setup_1']);
+    expect(evidence.failedReceiptIds).toEqual([]);
+  });
+
+  it('treats a recorded setup step the plan never declared as corrupt', () => {
+    const evidence = evidenceFor(boundPlan([syncStep]), {
+      setup: [recordedStep({ command: ['uv', 'sync', '--all-extras'] })],
+    });
+
+    expect(evidence.status).toBe('corrupt');
+  });
+
+  it('treats more recorded steps than declared as corrupt', () => {
+    const evidence = evidenceFor(boundPlan([syncStep]), {
+      setup: [recordedStep(), recordedStep({ id: 'extra' })],
+    });
+
+    expect(evidence.status).toBe('corrupt');
+  });
+
+  it('keeps a stored v1 receipt without setup valid against a gate that declares none', () => {
+    const canonical = canonicalizeProofPlan(planV4([verifyGate]), sha256, { requireReviewPolicy: true });
+    const plan = {
+      ...canonical,
+      baselineBranch: 'issue-78/setup',
+      baselineHeadSha: head,
+      createdAt: '2026-07-31T00:00:00.000Z',
+    };
+    const evidence = evidenceFor(plan, {
+      result: 'passed',
+      sensor: { name: 'threadloop-local-gate', contract_version: 1 },
+    });
+
+    expect(evidence.status).toBe('passed');
   });
 });

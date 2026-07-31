@@ -47,7 +47,7 @@ import type { ThreadloopErrorCode } from '../../contracts/errors.js';
 import { threadloopPaths } from './repo.js';
 import { DatabaseSync } from './sqlite-driver.js';
 
-export const CURRENT_SCHEMA_VERSION = 7;
+export const CURRENT_SCHEMA_VERSION = 8;
 export const EXPLICIT_INIT_MIGRATION_MIN_SCHEMA_VERSION = 6;
 const INVALID_CONFIG_ERROR = 'Invalid .threadloop/config.json';
 const INVALID_STATE_JSON_ERROR = 'Invalid .threadloop/state/state.json';
@@ -1811,7 +1811,11 @@ function ensureDatabaseReady(db: DatabaseSync, state: RepoConnectionState, repoR
 
     db.exec('PRAGMA journal_mode = WAL');
     runInImmediateTransaction(db, () => {
+      // Detaches a pre-v8 gate_receipts so bootstrapDatabase can recreate it with the widened result domain
+      // from the one authoritative DDL; rows are copied back immediately after.
+      const legacyResultDomain = detachLegacyGateReceiptResultDomain(db);
       bootstrapDatabase(db);
+      restoreLegacyGateReceipts(db, legacyResultDomain);
       assertSupportedSchemaVersion(db);
       runPendingMigrations(db, repoRoot);
       assertTransitionSchemaShape(db, true);
@@ -2073,7 +2077,7 @@ function bootstrapDatabase(db: DatabaseSync) {
       result TEXT NOT NULL CHECK(
         result IN (
           'passed', 'failed', 'timed_out', 'aborted', 'invalidated',
-          'execution_error', 'cleanup_failed'
+          'execution_error', 'cleanup_failed', 'setup_failed'
         )
       ),
       artifact_path TEXT NOT NULL,
@@ -2723,6 +2727,69 @@ function triggerExists(db: DatabaseSync, triggerName: string) {
   const row = db.prepare(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = ?`).get(triggerName) as
     { name: string } | undefined;
   return row?.name === triggerName;
+}
+
+const LEGACY_GATE_RECEIPTS_TABLE = 'gate_receipts_pre_setup_result_domain';
+
+/**
+ * Schema v8 widened the gate_receipts result domain to admit `setup_failed`. SQLite cannot alter a CHECK
+ * constraint, so the table has to be rebuilt. Rather than duplicate the table DDL here and risk it drifting
+ * from bootstrapDatabase, this renames the old table out of the way and lets bootstrapDatabase create the
+ * current one; restoreLegacyGateReceipts then copies the rows back.
+ *
+ * Returns whether a legacy table was detached. Idempotent: a table that already admits `setup_failed`, or a
+ * database with no gate_receipts at all, is left untouched.
+ */
+function detachLegacyGateReceiptResultDomain(db: DatabaseSync) {
+  if (!tableExists(db, 'gate_receipts')) {
+    return false;
+  }
+  const definition = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'gate_receipts'`)
+    .get() as { sql: string } | undefined;
+  if (!definition?.sql || definition.sql.includes('setup_failed')) {
+    return false;
+  }
+  if (tableExists(db, LEGACY_GATE_RECEIPTS_TABLE)) {
+    throw new Error(`A previous gate-receipt migration left ${LEGACY_GATE_RECEIPTS_TABLE} behind.`);
+  }
+
+  // The append-only triggers and the covering index carry the table name, so they must go before the rename;
+  // bootstrapDatabase recreates all of them against the rebuilt table.
+  for (const trigger of PROOF_SCHEMA_TRIGGERS.filter((name) => name.startsWith('gate_receipts_'))) {
+    db.exec(`DROP TRIGGER IF EXISTS ${trigger}`);
+  }
+  db.exec(`DROP INDEX IF EXISTS gate_receipts_session_gate_sequence_idx`);
+  db.exec(`ALTER TABLE gate_receipts RENAME TO ${LEGACY_GATE_RECEIPTS_TABLE}`);
+  return true;
+}
+
+function restoreLegacyGateReceipts(db: DatabaseSync, detached: boolean) {
+  if (!detached) {
+    return;
+  }
+  if (!tableExists(db, LEGACY_GATE_RECEIPTS_TABLE)) {
+    throw new Error(`Expected ${LEGACY_GATE_RECEIPTS_TABLE} to exist while widening the gate result domain.`);
+  }
+
+  const expected = readNumericValue(db, `SELECT COUNT(*) AS count FROM ${LEGACY_GATE_RECEIPTS_TABLE}`, 'count');
+  // Explicit sequence values preserve receipt ordering, which the proof projection depends on.
+  db.exec(`
+    INSERT INTO gate_receipts (
+      sequence, id, session_id, gate_id, plan_sha256, head_before, head_after, result,
+      artifact_path, artifact_sha256, receipt_json, receipt_sha256, state_version, created_at
+    )
+    SELECT
+      sequence, id, session_id, gate_id, plan_sha256, head_before, head_after, result,
+      artifact_path, artifact_sha256, receipt_json, receipt_sha256, state_version, created_at
+    FROM ${LEGACY_GATE_RECEIPTS_TABLE}
+    ORDER BY sequence
+  `);
+  const copied = readNumericValue(db, `SELECT COUNT(*) AS count FROM gate_receipts`, 'count');
+  if (copied !== expected) {
+    throw new Error(`Gate-receipt migration copied ${copied} of ${expected} receipts.`);
+  }
+  db.exec(`DROP TABLE ${LEGACY_GATE_RECEIPTS_TABLE}`);
 }
 
 function writeSchemaVersion(db: DatabaseSync) {

@@ -44,7 +44,7 @@ import {
   resolveRepoRoot,
   snapshotRepo,
 } from '../adapters/git/client.js';
-import { runGateProcess } from '../adapters/process/gate-runner.js';
+import { classifyGateOutcome, runGateWithSetup, toRecordedSetupStep } from '../adapters/process/gate-runner.js';
 import { ThreadloopError } from '../contracts/errors.js';
 import {
   canonicalizeTransitionRequest,
@@ -660,51 +660,94 @@ export async function runSessionGate(input: RunSessionGateInput) {
   const relativeStderrPath = relativeArtifactPath(repoRoot, stderrPath);
   const relativeExecutionPath = relativeArtifactPath(repoRoot, executionPath);
 
-  const processResult = await runGateProcess({
-    command: gate.command,
-    cwd: workingDirectory,
-    timeoutMs: gate.timeout_ms,
-    stdoutPath,
-    stderrPath,
+  const declaredSetup = gate.setup ?? [];
+  const setupDirectories = await Promise.all(
+    declaredSetup.map((step) => resolveProofWorkingDirectory(repoRoot, gate.id, step.working_directory)),
+  );
+  // The local path's notion of an unchanged repository includes the branch bound to the proof plan, which the
+  // CI path replaces with the caller SHA. Everything downstream of this observer is shared with the sensor.
+  const observeLocal = () => observeProofRepository(repoRoot).catch(() => null);
+  const setupLogPaths = declaredSetup.map((step, index) => ({
+    stdoutPath: path.join(receiptDirectory, `setup-${index}-${step.id}.stdout.log`),
+    stderrPath: path.join(receiptDirectory, `setup-${index}-${step.id}.stderr.log`),
+  }));
+  const gateExecution = await runGateWithSetup({
+    setup: declaredSetup.map((step, index) => ({
+      id: step.id,
+      command: step.command,
+      workingDirectory: step.working_directory,
+      cwd: setupDirectories[index] as string,
+      timeoutMs: step.timeout_ms,
+      stdoutPath: (setupLogPaths[index] as { stdoutPath: string }).stdoutPath,
+      stderrPath: (setupLogPaths[index] as { stderrPath: string }).stderrPath,
+    })),
+    gate: {
+      command: gate.command,
+      cwd: workingDirectory,
+      timeoutMs: gate.timeout_ms,
+      stdoutPath,
+      stderrPath,
+    },
+    observedBefore: before,
+    observe: observeLocal,
   });
   const after = await observeProofRepository(repoRoot).catch(() => null);
   const invalidated = !after || !after.clean || after.headSha !== before.headSha || after.branch !== before.branch;
-  const result = invalidated ? 'invalidated' : processResult.result;
+  const recordedSetup = gateExecution.setup.map(toRecordedSetupStep);
+  // The local artifact additionally names each setup log on disk, so artifact validation can prove every
+  // referenced output exists. The receipt itself carries digests only, matching the signed receipt, which must
+  // not embed local paths.
+  const recordedSetupArtifacts = recordedSetup.map((step, index) => {
+    const logs = setupLogPaths[index] as { stdoutPath: string; stderrPath: string };
+    const execution = gateExecution.setup[index] as (typeof gateExecution.setup)[number];
+    return {
+      ...step,
+      stdout: {
+        path: relativeArtifactPath(repoRoot, logs.stdoutPath),
+        sha256: execution.process.stdout.sha256,
+        bytes: execution.process.stdout.bytes,
+      },
+      stderr: {
+        path: relativeArtifactPath(repoRoot, logs.stderrPath),
+        sha256: execution.process.stderr.sha256,
+        bytes: execution.process.stderr.bytes,
+      },
+    };
+  });
+  const result = classifyGateOutcome({ setup: gateExecution.setup, gate: gateExecution.gate, invalidated });
   const headAfter = after?.headSha ?? before.headSha;
   const cleanAfter = after?.clean ?? false;
   const execution = {
-    contract_version: 1,
+    contract_version: 2,
     receipt_id: receiptId,
     session_id: input.sessionId,
     gate_id: gate.id,
     plan_sha256: context.plan.sha256,
     result,
+    setup: recordedSetupArtifacts,
     command: gate.command,
     working_directory: gate.working_directory,
     timeout_ms: gate.timeout_ms,
-    started_at: processResult.startedAt,
-    ended_at: processResult.endedAt,
-    duration_ms: processResult.durationMs,
-    exit_status: processResult.exitStatus,
-    signal: processResult.signal,
+    started_at: gateExecution.window.startedAt,
+    ended_at: gateExecution.window.endedAt,
+    duration_ms: gateExecution.window.durationMs,
+    exit_status: gateExecution.gate?.exitStatus ?? null,
+    signal: gateExecution.gate?.signal ?? null,
     head_before: before.headSha,
     head_after: headAfter,
     clean_before: before.clean,
     clean_after: cleanAfter,
-    stdout: {
-      path: relativeStdoutPath,
-      sha256: processResult.stdout.sha256,
-      bytes: processResult.stdout.bytes,
-    },
-    stderr: {
-      path: relativeStderrPath,
-      sha256: processResult.stderr.sha256,
-      bytes: processResult.stderr.bytes,
-    },
-    error: processResult.error,
+    // Null when failing setup blocked the gate command, so no gate output exists to describe.
+    stdout: gateExecution.gate
+      ? { path: relativeStdoutPath, sha256: gateExecution.gate.stdout.sha256, bytes: gateExecution.gate.stdout.bytes }
+      : null,
+    stderr: gateExecution.gate
+      ? { path: relativeStderrPath, sha256: gateExecution.gate.stderr.sha256, bytes: gateExecution.gate.stderr.bytes }
+      : null,
+    error: gateExecution.gate?.error ?? null,
     sensor: {
       name: 'threadloop-local-gate',
-      contract_version: 1,
+      contract_version: 2,
     },
   };
   const executionBytes = Buffer.from(`${canonicalJson(execution)}\n`, 'utf8');
@@ -715,14 +758,15 @@ export async function runSessionGate(input: RunSessionGateInput) {
     gate_id: gate.id,
     plan_sha256: context.plan.sha256,
     result,
+    setup: recordedSetup,
     command: gate.command,
     working_directory: gate.working_directory,
     timeout_ms: gate.timeout_ms,
-    started_at: processResult.startedAt,
-    ended_at: processResult.endedAt,
-    duration_ms: processResult.durationMs,
-    exit_status: processResult.exitStatus,
-    signal: processResult.signal,
+    started_at: gateExecution.window.startedAt,
+    ended_at: gateExecution.window.endedAt,
+    duration_ms: gateExecution.window.durationMs,
+    exit_status: gateExecution.gate?.exitStatus ?? null,
+    signal: gateExecution.gate?.signal ?? null,
     head_before: before.headSha,
     head_after: headAfter,
     clean_before: before.clean,
@@ -733,7 +777,7 @@ export async function runSessionGate(input: RunSessionGateInput) {
     },
     sensor: {
       name: 'threadloop-local-gate',
-      contract_version: 1,
+      contract_version: 2,
     },
   };
   const receiptJson = canonicalJson(receipt);
@@ -1453,6 +1497,7 @@ async function evaluateSessionProof(
         gates: [],
         staleReceiptIds: [],
         failedReceiptIds: [],
+        setupFailedReceiptIds: [],
         corruptReceiptIds: [],
       },
       ciEvidence: { status: 'policy_missing', policy: null, gates: [] },
@@ -1475,6 +1520,7 @@ async function evaluateSessionProof(
         gates: [],
         staleReceiptIds: [],
         failedReceiptIds: [],
+        setupFailedReceiptIds: [],
         corruptReceiptIds: [],
       },
       ciEvidence: { status: 'corrupt', policy: null, gates: [] },
@@ -1493,6 +1539,7 @@ async function evaluateSessionProof(
         gates: [],
         staleReceiptIds: [],
         failedReceiptIds: [],
+        setupFailedReceiptIds: [],
         corruptReceiptIds: [],
       },
       ciEvidence: { status: 'corrupt', policy: null, gates: [] },
@@ -1704,30 +1751,56 @@ async function executionOutputsAreValid(repoRoot: string, receiptDirectory: stri
     return false;
   }
   const record = execution as Record<string, unknown>;
-  for (const streamName of ['stdout', 'stderr']) {
-    const stream = record[streamName];
-    if (typeof stream !== 'object' || stream === null || Array.isArray(stream)) {
-      return false;
-    }
-    const output = stream as Record<string, unknown>;
-    if (typeof output.path !== 'string' || typeof output.sha256 !== 'string') {
-      return false;
-    }
-    const outputPath = path.resolve(repoRoot, output.path);
-    try {
-      const canonicalOutput = await realpath(outputPath);
-      const relative = path.relative(receiptDirectory, canonicalOutput);
-      if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+  // A gate blocked by failing setup produces no output, and records null rather than pointing at a file that
+  // was never created. Both streams must agree, so a half-null pair stays invalid.
+  const gateStreams = [record.stdout, record.stderr];
+  if (gateStreams.some((stream) => stream !== null) || record.setup === undefined) {
+    for (const stream of gateStreams) {
+      if (!(await outputReferenceIsValid(repoRoot, receiptDirectory, stream))) {
         return false;
       }
-      if ((await sha256File(canonicalOutput)) !== output.sha256) {
+    }
+  }
+
+  // Setup logs are referenced by the artifact too, so the same guarantee has to cover them.
+  if (record.setup !== undefined) {
+    if (!Array.isArray(record.setup)) {
+      return false;
+    }
+    for (const step of record.setup) {
+      if (typeof step !== 'object' || step === null || Array.isArray(step)) {
         return false;
       }
-    } catch {
-      return false;
+      const stepRecord = step as Record<string, unknown>;
+      for (const streamName of ['stdout', 'stderr']) {
+        if (!(await outputReferenceIsValid(repoRoot, receiptDirectory, stepRecord[streamName]))) {
+          return false;
+        }
+      }
     }
   }
   return true;
+}
+
+async function outputReferenceIsValid(repoRoot: string, receiptDirectory: string, stream: unknown) {
+  if (typeof stream !== 'object' || stream === null || Array.isArray(stream)) {
+    return false;
+  }
+  const output = stream as Record<string, unknown>;
+  if (typeof output.path !== 'string' || typeof output.sha256 !== 'string') {
+    return false;
+  }
+  const outputPath = path.resolve(repoRoot, output.path);
+  try {
+    const canonicalOutput = await realpath(outputPath);
+    const relative = path.relative(receiptDirectory, canonicalOutput);
+    if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      return false;
+    }
+    return (await sha256File(canonicalOutput)) === output.sha256;
+  } catch {
+    return false;
+  }
 }
 
 export interface ReconcileInput {
