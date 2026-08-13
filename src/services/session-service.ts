@@ -829,6 +829,7 @@ export async function runSessionGate(input: RunSessionGateInput) {
 
   return {
     receipt: { ...receipt, sequence },
+    diagnostic: gateExecution.diagnostic,
     lifecycle: {
       state: context.state,
       state_version: context.stateVersion,

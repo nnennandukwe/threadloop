@@ -182,6 +182,9 @@ const canonicalArtifact = canonicalizeSignedGateReceiptArtifact(artifact, sha256
 await writeFile(reportPath, canonicalArtifact.json, { encoding: 'utf8', flag: 'wx' });
 
 if (result !== 'passed') {
+  if (execution.diagnostic) {
+    process.stderr.write(`${execution.diagnostic.message}\nRecovery: ${execution.diagnostic.hint}\n`);
+  }
   const exitStatus =
     execution.gate?.exitStatus ?? execution.setup.find((step) => step.process.exitStatus)?.process.exitStatus;
   process.exitCode = exitStatus && exitStatus > 0 ? exitStatus : 1;

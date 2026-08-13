@@ -127,7 +127,7 @@ describe('gate runner with declared setup', () => {
     return {
       observe: () => {
         calls += 1;
-        return Promise.resolve({ headSha: head, clean: true });
+        return Promise.resolve({ headSha: head, clean: true, changedFiles: [] });
       },
       calls: () => calls,
     };
@@ -151,7 +151,7 @@ describe('gate runner with declared setup', () => {
         stdoutPath: path.join(directory, 'gate.stdout.log'),
         stderrPath: path.join(directory, 'gate.stderr.log'),
       },
-      observedBefore: { headSha: head, clean: true },
+      observedBefore: { headSha: head, clean: true, changedFiles: [] },
       observe: observer.observe,
     });
 
@@ -180,7 +180,7 @@ describe('gate runner with declared setup', () => {
         stdoutPath: path.join(directory, 'gate.stdout.log'),
         stderrPath: path.join(directory, 'gate.stderr.log'),
       },
-      observedBefore: { headSha: head, clean: true },
+      observedBefore: { headSha: head, clean: true, changedFiles: [] },
       observe: observer.observe,
     });
 
@@ -193,7 +193,7 @@ describe('gate runner with declared setup', () => {
   it('stops the sequence when a setup step leaves the repository dirty', async () => {
     const directory = await makeDirectory();
     const observer = {
-      observe: () => Promise.resolve({ headSha: head, clean: false }),
+      observe: () => Promise.resolve({ headSha: head, clean: false, changedFiles: ['package-lock.json'] }),
     };
 
     const result = await runGateWithSetup({
@@ -208,7 +208,7 @@ describe('gate runner with declared setup', () => {
         stdoutPath: path.join(directory, 'gate.stdout.log'),
         stderrPath: path.join(directory, 'gate.stderr.log'),
       },
-      observedBefore: { headSha: head, clean: true },
+      observedBefore: { headSha: head, clean: true, changedFiles: [] },
       observe: observer.observe,
     });
 
@@ -219,7 +219,7 @@ describe('gate runner with declared setup', () => {
 
   it('keeps a failed mid-run observation invalidated when a later observation succeeds', async () => {
     const directory = await makeDirectory();
-    const observedBefore = { headSha: head, clean: true };
+    const observedBefore = { headSha: head, clean: true, changedFiles: [] };
 
     const result = await runGateWithSetup({
       setup: [stepInput(directory, 'sync', ['node', '-e', 'process.exit(0)'])],
@@ -237,8 +237,9 @@ describe('gate runner with declared setup', () => {
     expect(result.setup[0]).toMatchObject({ headAfter: head, cleanAfter: false });
     expect(result.gate).toBeNull();
     expect(result.observedAfter).toBeNull();
+    expect(result.diagnostic).toBeNull();
 
-    const finalObservation = { headSha: head, clean: true };
+    const finalObservation = { headSha: head, clean: true, changedFiles: [] };
     const invalidated =
       gateExecutionWasInvalidated(result, observedBefore) ||
       !finalObservation.clean ||
@@ -260,7 +261,7 @@ describe('gate runner with declared setup', () => {
         stdoutPath: path.join(directory, 'gate.stdout.log'),
         stderrPath: path.join(directory, 'gate.stderr.log'),
       },
-      observedBefore: { headSha: head, clean: true },
+      observedBefore: { headSha: head, clean: true, changedFiles: [] },
       observe: observer.observe,
     });
 
