@@ -36,6 +36,15 @@ export interface GateProcessResult {
 export interface GateRepositoryObservation {
   headSha: string;
   clean: boolean;
+  changedFiles: string[];
+}
+
+export interface RepositoryMutationDiagnostic {
+  code: 'SETUP_MUTATED_REPOSITORY' | 'GATE_MUTATED_REPOSITORY';
+  message: string;
+  step_id: string | null;
+  changed_files: string[];
+  hint: string;
 }
 
 export interface GateSetupStepInput extends GateProcessInput {
@@ -70,6 +79,8 @@ export interface GateWithSetupResult {
   /** Null when a setup step short-circuited the sequence, so the gate command never ran. */
   gate: GateProcessResult | null;
   observedAfter: GateRepositoryObservation | null;
+  /** Transient operator guidance. It is deliberately not part of the persisted receipt contract. */
+  diagnostic: RepositoryMutationDiagnostic | null;
   /**
    * Spans everything that actually ran, from the first process started to the last one that ended. A gate
    * blocked by failing setup still reports the real duration of the setup that was attempted.
@@ -97,7 +108,7 @@ export async function runGateWithSetup(input: GateWithSetupInput): Promise<GateW
   for (const step of input.setup) {
     const stepBefore = observed;
     if (!stepBefore) {
-      return { setup, gate: null, observedAfter: null, window: executionWindow(setup, null) };
+      return { setup, gate: null, observedAfter: null, diagnostic: null, window: executionWindow(setup, null) };
     }
     const process = await runGateProcess(step);
     const stepAfter = await input.observe();
@@ -113,14 +124,66 @@ export async function runGateWithSetup(input: GateWithSetupInput): Promise<GateW
       cleanAfter: stepAfter?.clean ?? false,
     });
     observed = stepAfter;
+    const diagnostic = repositoryMutationDiagnostic('setup', step.id, stepBefore, stepAfter);
 
     if (process.result !== 'passed' || !stepAfter || !stepAfter.clean || stepAfter.headSha !== stepBefore.headSha) {
-      return { setup, gate: null, observedAfter: stepAfter, window: executionWindow(setup, null) };
+      return { setup, gate: null, observedAfter: stepAfter, diagnostic, window: executionWindow(setup, null) };
     }
   }
 
+  if (!observed) {
+    throw new Error('Gate execution lost its repository observation before the gate started.');
+  }
   const gate = await runGateProcess(input.gate);
-  return { setup, gate, observedAfter: await input.observe(), window: executionWindow(setup, gate) };
+  const observedAfter = await input.observe();
+  return {
+    setup,
+    gate,
+    observedAfter,
+    diagnostic: repositoryMutationDiagnostic('gate', null, observed, observedAfter),
+    window: executionWindow(setup, gate),
+  };
+}
+
+function repositoryMutationDiagnostic(
+  actor: 'setup' | 'gate',
+  stepId: string | null,
+  before: GateRepositoryObservation,
+  after: GateRepositoryObservation | null,
+): RepositoryMutationDiagnostic | null {
+  if (!after || repositoryObservationIsUnchanged(before, after)) {
+    return null;
+  }
+
+  const changedFiles = [...after.changedFiles].sort();
+  const subject = actor === 'setup' ? `Setup step ${stepId}` : 'Gate command';
+  const timing = actor === 'setup' ? 'before the gate ran' : 'while it ran';
+  const detail = changedFiles.length > 0 ? `: ${changedFiles.join(', ')}` : ' (HEAD changed)';
+
+  return {
+    code: actor === 'setup' ? 'SETUP_MUTATED_REPOSITORY' : 'GATE_MUTATED_REPOSITORY',
+    message: `${subject} changed the repository ${timing}${detail}.`,
+    step_id: stepId,
+    changed_files: changedFiles,
+    hint:
+      actor === 'setup'
+        ? 'Restore or commit the listed paths, change the setup declaration to use a frozen installer and gitignored output, then start a new session.'
+        : 'Restore or commit the listed paths, change the gate to write generated output outside the repository or to gitignored paths, then start a new session.',
+  };
+}
+
+function repositoryObservationIsUnchanged(
+  before: GateRepositoryObservation,
+  after: GateRepositoryObservation,
+): boolean {
+  const beforeChangedFiles = [...before.changedFiles].sort();
+  const afterChangedFiles = [...after.changedFiles].sort();
+  return (
+    before.headSha === after.headSha &&
+    before.clean === after.clean &&
+    beforeChangedFiles.length === afterChangedFiles.length &&
+    beforeChangedFiles.every((file, index) => file === afterChangedFiles[index])
+  );
 }
 
 /**

@@ -1712,6 +1712,125 @@ describe('declared gate setup', { timeout: 20_000 }, () => {
     await expect(readFile(gateMarker, 'utf8')).rejects.toThrow();
   });
 
+  it('names the setup step and changed paths when provisioning invalidates the repository', async () => {
+    const repoDir = await makeCommittedRepo();
+    const sessionId = await startFramedSession(repoDir);
+    const scratchDirectory = await makeScratchDirectory();
+    const laterSetupMarker = path.join(scratchDirectory, 'later-setup-ran.txt');
+    const gateMarker = path.join(scratchDirectory, 'gate-ran.txt');
+
+    const gate = parseJson<{
+      data: {
+        receipt: { result: string; setup: Array<{ id: string; clean_after: boolean }> };
+        diagnostic: {
+          code: string;
+          message: string;
+          step_id: string | null;
+          changed_files: string[];
+          hint: string;
+        } | null;
+      };
+    }>(
+      (
+        await runSetupGate(
+          repoDir,
+          sessionId,
+          planWithSetup(
+            [
+              {
+                id: 'sync',
+                command: ['node', '-e', 'require("node:fs").writeFileSync("package-lock.json", "changed\\n")'],
+                working_directory: '.',
+                timeout_ms: 5_000,
+              },
+              {
+                id: 'unreached',
+                command: ['node', '-e', `require("node:fs").writeFileSync(${JSON.stringify(laterSetupMarker)}, "ran")`],
+                working_directory: '.',
+                timeout_ms: 5_000,
+              },
+            ],
+            ['node', '-e', `require("node:fs").writeFileSync(${JSON.stringify(gateMarker)}, "ran")`],
+          ),
+        )
+      ).stdout,
+    );
+
+    expect(gate.data.receipt).toMatchObject({
+      result: 'invalidated',
+      setup: [{ id: 'sync', clean_after: false }],
+    });
+    expect(gate.data.diagnostic).toEqual({
+      code: 'SETUP_MUTATED_REPOSITORY',
+      message: 'Setup step sync changed the repository before the gate ran: package-lock.json.',
+      step_id: 'sync',
+      changed_files: ['package-lock.json'],
+      hint: 'Restore or commit the listed paths, change the setup declaration to use a frozen installer and gitignored output, then start a new session.',
+    });
+    await expect(readFile(laterSetupMarker, 'utf8')).rejects.toThrow();
+    await expect(readFile(gateMarker, 'utf8')).rejects.toThrow();
+  });
+
+  it('distinguishes a gate mutation from setup mutation and names the recovery path', async () => {
+    const repoDir = await makeCommittedRepo();
+    const sessionId = await startFramedSession(repoDir);
+
+    const gate = parseJson<{
+      data: {
+        receipt: { result: string; setup: unknown[] };
+        diagnostic: {
+          code: string;
+          message: string;
+          step_id: string | null;
+          changed_files: string[];
+          hint: string;
+        } | null;
+      };
+    }>(
+      (
+        await runSetupGate(
+          repoDir,
+          sessionId,
+          planWithSetup([], ['node', '-e', 'require("node:fs").writeFileSync("generated-report.json", "{}\\n")']),
+        )
+      ).stdout,
+    );
+
+    expect(gate.data.receipt).toMatchObject({ result: 'invalidated', setup: [] });
+    expect(gate.data.diagnostic).toEqual({
+      code: 'GATE_MUTATED_REPOSITORY',
+      message: 'Gate command changed the repository while it ran: generated-report.json.',
+      step_id: null,
+      changed_files: ['generated-report.json'],
+      hint: 'Restore or commit the listed paths, change the gate to write generated output outside the repository or to gitignored paths, then start a new session.',
+    });
+  });
+
+  it('prints the mutation cause and recovery action in text mode', async () => {
+    const repoDir = await makeCommittedRepo();
+    const sessionId = await startFramedSession(repoDir);
+    await recordProofPlan(
+      repoDir,
+      sessionId,
+      planWithSetup([
+        {
+          id: 'sync',
+          command: ['node', '-e', 'require("node:fs").writeFileSync("package-lock.json", "changed\\n")'],
+          working_directory: '.',
+          timeout_ms: 5_000,
+        },
+      ]) as ReturnType<typeof proofPlan>,
+    );
+    await forceVerifying(repoDir, sessionId);
+
+    const result = await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId]);
+
+    expect(result.stdout).toContain(
+      'Setup step sync changed the repository before the gate ran: package-lock.json.\n' +
+        'Recovery: Restore or commit the listed paths, change the setup declaration to use a frozen installer and gitignored output, then start a new session.\n',
+    );
+  });
+
   it('projects setup failure as an operator handoff that consumes no repair budget', async () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
@@ -1986,5 +2105,53 @@ describe('local and CI receipts describe setup identically', { timeout: 60_000 }
     expect(report.result).toBe('passed');
     // The digests are of the same command's output, so they must agree byte for byte.
     expect(report.setup[0]?.output).toEqual(local.data.receipt.setup[0]?.output);
+  });
+
+  it('emits the same setup-mutation diagnostic from the CI sensor', async () => {
+    const repoDir = await makeCommittedRepo();
+    const sessionId = await startFramedSession(repoDir);
+    const setupStep = {
+      id: 'sync',
+      command: ['node', '-e', 'require("node:fs").writeFileSync("package-lock.json", "changed\\n")'],
+      working_directory: '.',
+      timeout_ms: 5_000,
+    };
+    const base = proofPlan();
+    const plan = { ...base, gates: [{ ...base.gates[0]!, setup: [setupStep] }] };
+    const recorded = await recordProofPlan(repoDir, sessionId, plan);
+    const head = (await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: repoDir })).stdout.trim();
+    const reportPath = path.join(await makeScratchDirectory(), 'gate-report.json');
+
+    const failure = await execFileAsync('npx', ['tsx', 'scripts/run-ci-gate-sensor.ts'], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        THREADLOOP_SESSION_ID: sessionId,
+        THREADLOOP_PLAN_SHA256: recorded.data.proof_plan.sha256,
+        THREADLOOP_GATE_ID: 'repository-check',
+        THREADLOOP_GATE_JSON: canonicalJson(plan.gates[0]),
+        THREADLOOP_SOURCE_ROOT: repoDir,
+        THREADLOOP_REPORT_PATH: reportPath,
+        GITHUB_SERVER_URL: 'https://github.com',
+        GITHUB_REPOSITORY: 'example/threadloop-fixture',
+        GITHUB_REF: `refs/heads/${fixtureBranch}`,
+        GITHUB_SHA: head,
+        GITHUB_RUN_ID: '123',
+        GITHUB_RUN_ATTEMPT: '1',
+        RUNNER_OS: 'Linux',
+        RUNNER_ARCH: 'X64',
+      },
+    }).then(
+      () => null,
+      (error: Error & { stderr?: string }) => error,
+    );
+
+    expect(failure).not.toBeNull();
+    expect(failure?.stderr).toContain(
+      'Setup step sync changed the repository before the gate ran: package-lock.json.\n' +
+        'Recovery: Restore or commit the listed paths, change the setup declaration to use a frozen installer and gitignored output, then start a new session.\n',
+    );
+    const report = JSON.parse(await readFile(reportPath, 'utf8')) as { result: string };
+    expect(report.result).toBe('invalidated');
   });
 });

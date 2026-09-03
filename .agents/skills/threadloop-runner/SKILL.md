@@ -306,7 +306,10 @@ threadloop session gate run <gate_id> --session <session_id> --json
 ```
 
 Never override command, argv, working directory, timeout, or environment. A gate run is not idempotent. Stop after one
-invocation, whether it passes or fails.
+invocation, whether it passes or fails. If `data.diagnostic` is non-null, require one of the known
+`SETUP_MUTATED_REPOSITORY` or `GATE_MUTATED_REPOSITORY` codes, a string message, string-or-null `step_id`, a string
+array of `changed_files`, and a string recovery hint. Surface those fields exactly and stop. Do not restore, commit,
+clean, change the proof plan, or start a replacement session; those are operator actions.
 
 ## Stop-only handoffs
 
