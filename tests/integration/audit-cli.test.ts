@@ -51,7 +51,7 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
-describe('audit CLI', { timeout: 20_000 }, () => {
+describe('audit CLI', () => {
   it('shows, verifies, and exclusively exports the canonical hash-linked ledger', async () => {
     const fixture = await makeSession();
     const shown = parseJson<{
