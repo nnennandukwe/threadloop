@@ -2,6 +2,9 @@
 
 ThreadLoop stores lifecycle state on the task. A session remains the execution record attached to that task.
 
+For the current-state compatibility map from this fixed lifecycle to the planned Workflow Profile and Compiled Graph
+language, see [Current lifecycle graph mapping](current-lifecycle-graph-mapping.md).
+
 The ordered states are:
 
 ```text
@@ -43,11 +46,10 @@ Lifecycle phase is derived from append-only transition history plus the immutabl
 migrated history. A session is `pre_pr` until its first applied transition into `reviewing`; a migrated session whose
 audit coverage begins in `reviewing`, `ready_for_human`, or `completed` is already `post_pr`. A legacy `repairing` state
 or repair transition without evidence of entry into `reviewing` remains `pre_pr`, because older lifecycles allowed
-pre-PR repair. The phase is permanently `post_pr` afterward. SQLite schema version 7 retains all prior lifecycle, proof,
-signed receipt, audit, and repair records and adds this semantic interpretation without a second mutable phase flag.
-Persistent triggers reject update, delete, and replacement. Repair usage remains derived from applied transitions into
-`repairing`; historical entries remain counted, while new entries are allowed only for post-PR gate and signed-review
-repairs.
+pre-PR repair. The phase is permanently `post_pr` afterward. SQLite schema v8 retains all prior lifecycle, proof, signed
+receipt, audit, and repair records and adds this semantic interpretation without a second mutable phase flag. Persistent
+triggers reject update, delete, and replacement. Repair usage remains derived from applied transitions into `repairing`;
+historical entries remain counted, while new entries are allowed only for post-PR gate and signed-review repairs.
 
 `threadloop session next --session <id> --json` is read-only and returns one deterministic candidate or `null`. It
 reports live Git facts without refreshing persisted snapshots. It rehashes the latest receipt manifest and output
@@ -56,7 +58,7 @@ policy-missing/missing/passed/stale/corrupt. It also reports the three-cycle rep
 reports proof migration without writing newer objects. Contract v4 also reports lifecycle phase and schema status,
 pre-PR review evidence, the exact implementation basis, lifecycle history, current signed-review findings and
 approval/merge state, audit validity/root/coverage, and one next human action. Reading schema v6 returns
-`migration_required` without mutation; run `threadloop init` outside the runner to perform the transactional v7
+`migration_required` without mutation; run `threadloop init` outside the runner to perform the transactional v8
 migration.
 
 `threadloop session transition` requires the caller's expected state version and an idempotency key. State mutation,
