@@ -288,7 +288,7 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
-describe('signed gate receipt import', { timeout: 20_000 }, () => {
+describe('signed gate receipt import', () => {
   it('rejects an oversized input through the bounded reader before verification or persistence', async () => {
     const fixture = await makeVerifyingSession();
     const packagePath = await writePackage(fixture, signedArtifact(fixture));
