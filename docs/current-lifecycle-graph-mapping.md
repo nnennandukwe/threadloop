@@ -158,21 +158,28 @@ through `session transition` semantics.
 
 ## Command Surface Mapping
 
-The mapping preserves current public command families and their responsibilities:
+The mapping preserves the canonical session and audit command families and their responsibilities:
 
-| Public command family   | Current role                                                                                                                                      | Mapping constraint                                                |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `session next`          | Read-only deterministic candidate, guard failures, `requiredWork`, phase, schema status, proof and review projections.                            | Must remain projection-only and must not write audit events.      |
-| `session transition`    | Idempotent state mutation with expected state version, idempotency key, actor, input, guard decision, audit append, and active projection update. | Only accepted path for semantic lifecycle transition.             |
-| `session gate run`      | Runs declared local gate or setup command without shell expansion, records receipt and artifacts.                                                 | Produces local proof evidence only.                               |
-| `session gate import`   | Verifies and appends signed CI proof packages.                                                                                                    | Produces signed CI evidence only.                                 |
-| `session review import` | Verifies and appends signed review snapshots.                                                                                                     | Produces signed review evidence only.                             |
-| `audit verify`          | Verifies audit sequence, link, canonicalization, hash, and optional root.                                                                         | Detects ledger corruption before controllers trust history.       |
-| `audit export`          | Exports append-only audit JSONL with no overwrite.                                                                                                | Provides external observability without changing lifecycle state. |
+| Public command family   | Current role                                                                                                                                      | Mapping constraint                                                         |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `session start`         | Creates the task and session with its initial lifecycle state and repository binding.                                                             | Establishes the initial record; later semantic transitions require guards. |
+| `session list`          | Lists existing sessions.                                                                                                                          | Reports stored sessions without authorizing lifecycle advancement.         |
+| `session status`        | Projects the selected session, lifecycle state, repository observations, and context.                                                             | Reports current state without authorizing lifecycle advancement.           |
+| `session capture`       | Records notes, decisions, validation narratives, and other context entries.                                                                       | Captured narrative is not a proof receipt or transition authorization.     |
+| `session heartbeat`     | Records heartbeat time and source plus observed branch and head.                                                                                  | Updates mechanical observations without changing semantic lifecycle state. |
+| `session reconcile`     | Refreshes and persists Git-derived snapshots for one or all active sessions.                                                                      | Repository observations cannot invent semantic lifecycle entries.          |
+| `session next`          | Read-only deterministic candidate, guard failures, `requiredWork`, phase, schema status, proof and review projections.                            | Must remain projection-only and must not write audit events.               |
+| `session transition`    | Idempotent state mutation with expected state version, idempotency key, actor, input, guard decision, audit append, and active projection update. | Only accepted path for semantic lifecycle transition.                      |
+| `session gate run`      | Runs declared local gate or setup command without shell expansion, records receipt and artifacts.                                                 | Produces local proof evidence only.                                        |
+| `session gate import`   | Verifies and appends signed CI proof packages.                                                                                                    | Produces signed CI evidence only.                                          |
+| `session review import` | Verifies and appends signed review snapshots.                                                                                                     | Produces signed review evidence only.                                      |
+| `audit show`            | Reads audit events, root, coverage, and verification results.                                                                                     | Exposes ledger history without applying lifecycle transitions.             |
+| `audit verify`          | Verifies audit sequence, link, canonicalization, hash, and optional root.                                                                         | Detects ledger corruption before controllers trust history.                |
+| `audit export`          | Exports append-only audit JSONL with no overwrite.                                                                                                | Provides external observability without changing lifecycle state.          |
 
-This doc uses only commands that exist in `package.json`-backed project documentation. The local workflow remains Node
-`>=22.13.0` with npm scripts such as `npm run check`, `npm run lint:markdown`, `npm run check:community`, and
-`npm run security:dependencies`.
+This doc uses only commands that exist in `package.json`-backed project documentation. The current local workflow
+requires Node.js `^22.22.2 || ^24.15.0 || >=26.0.0` and uses npm scripts such as `npm run check`,
+`npm run lint:markdown`, `npm run check:community`, and `npm run security:dependencies`.
 
 ## Repair, Terminal, And Recovery Rules
 

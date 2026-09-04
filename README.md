@@ -13,9 +13,10 @@ advancement to remain explicit, inspectable, and evidence-bound.
 
 For the orchestrated v2 workflow, see [docs/agent-mode.md](docs/agent-mode.md).
 
-For the canonical SDLC graph vocabulary, see the [glossary](CONTEXT.md). The
-[authority-model ADR](docs/adr/0001-sdlc-graph-authority-model.md) records the boundaries between ThreadLoop, agent
-harnesses, conformance systems, executors, and delivery infrastructure.
+For the canonical SDLC graph vocabulary, see the
+[glossary](https://github.com/nnennandukwe/threadloop/blob/main/CONTEXT.md). The
+[authority-model ADR](https://github.com/nnennandukwe/threadloop/blob/main/docs/adr/0001-sdlc-graph-authority-model.md)
+records the boundaries between ThreadLoop, agent harnesses, conformance systems, executors, and delivery infrastructure.
 
 ## Three layers: harness, loop, graph
 
@@ -380,7 +381,7 @@ installation. See the [contribution guide](CONTRIBUTING.md) for hook behavior an
 - [Consumer onboarding](docs/consumer-onboarding.md)
 - [Autonomous agent mode](docs/agent-mode.md)
 - [Governed lifecycle](docs/lifecycle.md)
-- [Current lifecycle graph mapping](docs/current-lifecycle-graph-mapping.md)
+- [Current lifecycle graph mapping](https://github.com/nnennandukwe/threadloop/blob/main/docs/current-lifecycle-graph-mapping.md)
 - [Audit export and OpenTelemetry](docs/observability.md)
 - [Contribution guide](CONTRIBUTING.md)
 

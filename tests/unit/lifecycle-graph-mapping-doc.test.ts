@@ -63,22 +63,29 @@ describe('current lifecycle graph mapping documentation', () => {
     );
     expectDocumentToContainAllCodeTokens(
       document,
-      ['APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUIRED'],
+      ['APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUIRED', 'null'],
       'review decision',
     );
     expectDocumentToContainAllCodeTokens(document, AUDIT_EVENT_TYPES, 'audit event type');
     expectDocumentToContainAllCodeTokens(
       document,
       [
+        'session start',
+        'session list',
+        'session status',
+        'session capture',
+        'session heartbeat',
+        'session reconcile',
         'session next',
         'session transition',
         'session gate run',
         'session gate import',
         'session review import',
+        'audit show',
         'audit verify',
         'audit export',
       ],
-      'public command family',
+      'canonical session and audit command family',
     );
   });
 
