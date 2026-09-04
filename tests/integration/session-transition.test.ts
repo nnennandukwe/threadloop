@@ -196,7 +196,7 @@ afterEach(async () => {
   temporaryRepos.length = 0;
 });
 
-describe('schema v7 lifecycle and audit persistence', { timeout: 20_000 }, () => {
+describe('schema v7 lifecycle and audit persistence', () => {
   it('migrates a canonical schema-v2 database without changing lifecycle state', async () => {
     const repoDir = await makeRepo();
     const dbPath = createSchemaV2(repoDir);
@@ -1080,7 +1080,7 @@ describe('schema v7 lifecycle and audit persistence', { timeout: 20_000 }, () =>
   });
 });
 
-describe('session transition command', { timeout: 20_000 }, () => {
+describe('session transition command', () => {
   function transitionArgs(sessionId: string, target: string, version: string, key: string, input = '{}') {
     return [
       'session',

@@ -213,7 +213,7 @@ afterEach(async () => {
   temporaryRepos.length = 0;
 });
 
-describe('proof plan persistence', { timeout: 20_000 }, () => {
+describe('proof plan persistence', () => {
   it('atomically stores one canonical plan bound to a clean baseline', async () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
@@ -432,7 +432,7 @@ describe('proof plan persistence', { timeout: 20_000 }, () => {
   });
 });
 
-describe('session gate run', { timeout: 20_000 }, () => {
+describe('session gate run', () => {
   it('executes the stored argv and appends a digest-bound passing receipt without advancing state', async () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
@@ -885,7 +885,7 @@ describe('session gate run', { timeout: 20_000 }, () => {
   });
 });
 
-describe('proof-aware session next', { timeout: 20_000 }, () => {
+describe('proof-aware session next', () => {
   it('fails closed instead of throwing when a legacy receipt contains a non-commit head_after', async () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
@@ -1623,7 +1623,7 @@ describe('proof-aware session next', { timeout: 20_000 }, () => {
   });
 });
 
-describe('declared gate setup', { timeout: 20_000 }, () => {
+describe('declared gate setup', () => {
   function planWithSetup(setup: unknown[], gateCommand = ['node', '-e', 'process.exit(0)']) {
     const base = proofPlan(gateCommand);
     return { ...base, gates: [{ ...base.gates[0], setup }] };
@@ -1780,7 +1780,7 @@ describe('declared gate setup', { timeout: 20_000 }, () => {
   });
 });
 
-describe('gate receipt result domain migration', { timeout: 20_000 }, () => {
+describe('gate receipt result domain migration', () => {
   it('widens a pre-v8 gate_receipts result domain while preserving every stored receipt', async () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);

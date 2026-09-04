@@ -444,7 +444,7 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
-describe('signed review receipt import', { timeout: 20_000 }, () => {
+describe('signed review receipt import', () => {
   it('imports one verified current-HEAD package idempotently without advancing lifecycle state', async () => {
     const fixture = await makeReviewingSession();
     const artifact = reviewArtifact(fixture);
