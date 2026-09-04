@@ -10,7 +10,7 @@
     "dist"
   ],
   "engines": {
-    "node": ">=22.13.0"
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
   },
   "scripts": {
     "dev": "tsx src/cli.ts",
@@ -46,8 +46,8 @@
     "url": "git+https://github.com/nnennandukwe/threadloop.git"
   },
   "dependencies": {
-    "@sigstore/bundle": "4.0.0",
-    "@sigstore/sign": "4.1.1",
+    "@sigstore/bundle": "5.0.0",
+    "@sigstore/sign": "5.0.0",
     "commander": "^15.0.0",
     "gray-matter": "^4.0.3",
     "prompts": "^2.4.2",
@@ -56,7 +56,7 @@
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
-    "@types/node": "22.20.1",
+    "@types/node": "25.9.5",
     "@types/prompts": "2.4.9",
     "eslint": "10.9.0",
     "eslint-plugin-security": "4.0.1",
