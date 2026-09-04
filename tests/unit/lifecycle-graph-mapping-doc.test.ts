@@ -61,6 +61,11 @@ describe('current lifecycle graph mapping documentation', () => {
       ['policy_missing', 'missing', 'passed', 'current', 'failed', 'setup_failed', 'stale', 'corrupt'],
       'receipt status',
     );
+    expectDocumentToContainAllCodeTokens(
+      document,
+      ['APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUIRED'],
+      'review decision',
+    );
     expectDocumentToContainAllCodeTokens(document, AUDIT_EVENT_TYPES, 'audit event type');
     expectDocumentToContainAllCodeTokens(
       document,
