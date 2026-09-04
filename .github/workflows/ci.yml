@@ -75,6 +75,9 @@ jobs:
         run: npm ci
 
       - name: Run unit and integration tests
+        env:
+          # Integration suites spawn Git and CLI subprocesses; bound runner contention.
+          VITEST_MAX_WORKERS: '2'
         run: npm test
 
       - name: Build CLI
