@@ -10,7 +10,7 @@
     "dist"
   ],
   "engines": {
-    "node": ">=22.13.0"
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
   },
   "scripts": {
     "dev": "tsx src/cli.ts",
@@ -46,7 +46,7 @@
     "url": "git+https://github.com/nnennandukwe/threadloop.git"
   },
   "dependencies": {
-    "@sigstore/bundle": "4.0.0",
+    "@sigstore/bundle": "5.0.0",
     "@sigstore/sign": "5.0.0",
     "commander": "^15.0.0",
     "gray-matter": "^4.0.3",
