@@ -380,6 +380,7 @@ installation. See the [contribution guide](CONTRIBUTING.md) for hook behavior an
 - [Consumer onboarding](docs/consumer-onboarding.md)
 - [Autonomous agent mode](docs/agent-mode.md)
 - [Governed lifecycle](docs/lifecycle.md)
+- [Current lifecycle graph mapping](docs/current-lifecycle-graph-mapping.md)
 - [Audit export and OpenTelemetry](docs/observability.md)
 - [Contribution guide](CONTRIBUTING.md)
 
