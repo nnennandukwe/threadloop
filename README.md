@@ -13,6 +13,10 @@ advancement to remain explicit, inspectable, and evidence-bound.
 
 For the orchestrated v2 workflow, see [docs/agent-mode.md](docs/agent-mode.md).
 
+For the canonical SDLC graph vocabulary, see the [glossary](CONTEXT.md). The
+[authority-model ADR](docs/adr/0001-sdlc-graph-authority-model.md) records the boundaries between ThreadLoop, agent
+harnesses, conformance systems, executors, and delivery infrastructure.
+
 ## Three layers: harness, loop, graph
 
 An agent system that touches production separates three concerns that are easy to conflate:
