@@ -21,7 +21,7 @@ content, and other sensitive data from commands, logs, fixtures, and screenshots
 
 ThreadLoop requires:
 
-- Node.js 22.13.0 or newer
+- Node.js 22.22.2+ within Node 22, 24.15.0+ within Node 24, or Node 26+
 - npm
 - a Git repository
 
