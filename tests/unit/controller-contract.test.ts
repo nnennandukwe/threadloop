@@ -986,3 +986,84 @@ describe('Receipt stream identities', () => {
     }
   });
 });
+
+describe('Explicit repair admission', () => {
+  it('does not infer an active repair admission from an aggregate budget count', async () => {
+    const input = await controllerSnapshot();
+    input.binding.source_state = 'repairing';
+    if (input.history.status !== 'verified') throw new Error('Expected history');
+    input.history.budget_counts[0]!.used = 1;
+    const failure = receipt(input);
+    failure.payload = { type: 'review', outcome: 'changes_required', findings: [] };
+    failure.payload_digest = sha256(canonicalJson(failure.payload));
+    input.receipts = [failure];
+    const guard = input.compiled_graph.graph.guards.find(
+      (guard) => guard.required_actions.includes('repair') && guard.capability === 'repository',
+    )!;
+    const edge = input.compiled_graph.graph.transitions.find(
+      (edge) => edge.from === 'repairing' && edge.guard_refs.includes(guard.id),
+    )!;
+    const intent = {
+      ...localProofIntent(input),
+      action_id: 'repair',
+      transition_id: edge.id,
+      guard_ids: [guard.id],
+      evidence_ids: [failure.id],
+      evidence_requirements: [{ family: 'repository_observation', guard_id: guard.id, subject: input.binding.subject }],
+    };
+    expect(buildActionRequest(input, intent).ok).toBe(false);
+  });
+});
+
+describe('Repair recovery and executor-only claims', () => {
+  it('retains the final admitted repair through verified suspension and recovery without resetting counts', async () => {
+    const fixture = await readExample('admitted_repair');
+    const input = fixture.input;
+    if (input.history.status !== 'verified' || input.history.repair_admission === null)
+      throw new Error('Expected repair admission');
+    const history = input.history;
+    expect(buildActionRequest(input, fixture.intent).ok).toBe(true);
+    input.binding.source_state = 'blocked';
+    input.binding.state_version = 6;
+    input.observation.state_version = 6;
+    history.prior_state = 'repairing';
+    history.repair_admission!.bound_state_version = 6;
+    expect(validateControllerInput(input).ok).toBe(true);
+    expect(buildActionRequest(input, fixture.intent).ok).toBe(false);
+    input.binding.source_state = 'repairing';
+    input.binding.state_version = 7;
+    input.observation.state_version = 7;
+    history.prior_state = null;
+    history.repair_admission!.bound_state_version = 7;
+    expect(buildActionRequest(input, fixture.intent).ok).toBe(true);
+    expect(history.repair_admission!.entry_state_version).toBe(5);
+    expect(history.budget_counts[0]!.used).toBe(3);
+    history.repair_admission!.action_id = 'run_gates';
+    expect(validateControllerInput(input).ok).toBe(false);
+  });
+
+  it('keeps human handoffs out of both executor claim variants in typed and offline schemas', async () => {
+    const fixture = await readExample('human_approval');
+    const decision = fixture.expected.decision;
+    if (!('action_request' in decision)) throw new Error('Expected human request');
+    const request = decision.action_request;
+    const check = new Ajv2020({ strict: true, strictTypes: false, validateFormats: false }).compile(
+      publishedControllerSchemas()['controller-input']!,
+    );
+    for (const execution of [
+      {
+        status: 'in_flight',
+        request,
+        claim: { id: 'human_claim', version: 1, valid_until: '2026-09-05T12:00:00.000Z' },
+        attempt: { id: 'human_attempt', status: 'pending' },
+      },
+      { status: 'reconciliation_required', request, claim: null, attempt_id: null, reason: 'unknown_outcome' },
+    ]) {
+      const input = { ...fixture.input, execution, evaluation_time: '2026-09-05T11:00:00.000Z' };
+      expect(controllerInputSchema.safeParse(input).success).toBe(false);
+      expect(check(input)).toBe(false);
+      expect(validateControllerInput(input).ok).toBe(false);
+    }
+    expect(validateControllerDecision(fixture.input, fixture.expected).ok).toBe(true);
+  });
+});

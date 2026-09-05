@@ -51,7 +51,8 @@
       ],
       "prior_state": null,
       "implementation_basis": null,
-      "proof_plan_bound": true
+      "proof_plan_bound": true,
+      "repair_admission": null
     },
     "policy": {
       "id": "workflow_policy",
@@ -244,7 +245,7 @@
   "expected": {
     "decision": {
       "schema_version": "0.1",
-      "input_digest": "80bf514baf2d2d28169b01a2a090f617e39037049e1776662401d3d9f373ad59",
+      "input_digest": "481288426d251c5f0c5500ddb8ec82cea117f827afe4e7fd84bfda860ae65a4d",
       "binding": {
         "workflow_run_id": "workflow_1",
         "graph_schema_version": "0.1",
@@ -333,6 +334,6 @@
         "request_digest": "aed226b4db95fa491fa24be2cf4fe31987345ce3cfd0372aeacb3e456e54ae69"
       }
     },
-    "decision_digest": "bd7618d3c93d3eb7ec618cdd8c933856ee32c538e5151d21cee64a09495f15ca"
+    "decision_digest": "fdf2423f7df73274312ceea52af5ec0e8da383c45e036b83fe72827e1244b350"
   }
 }

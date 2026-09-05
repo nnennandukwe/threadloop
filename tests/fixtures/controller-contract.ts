@@ -70,6 +70,7 @@ export async function controllerSnapshot(
       budget_counts: compiled.graph.budgets.map((budget) => ({ budget_id: budget.id, used: 0 })),
       prior_state: null,
       implementation_basis: null,
+      repair_admission: null,
     },
     policy: { id: 'workflow_policy', digest: sha256(canonicalJson(rules)), rules },
     available_capabilities: compiled.graph.required_actions.map((action) => ({

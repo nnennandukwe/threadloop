@@ -140,6 +140,7 @@ const humanRequest = z.strictObject({
 });
 const requestPayloadSchema = z.discriminatedUnion('actor', [executorRequest, humanRequest]);
 export const actionRequestSchema = z.strictObject({ request: requestPayloadSchema, request_digest: digest });
+const executorActionRequest = z.strictObject({ request: executorRequest, request_digest: digest });
 export const actionIntentSchema = z.strictObject({
   action_id: identifier,
   transition_id: identifier,
@@ -155,13 +156,13 @@ const execution = z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('idle') }),
   z.strictObject({
     status: z.literal('in_flight'),
-    request: actionRequestSchema,
+    request: executorActionRequest,
     claim: activeClaim,
     attempt: activeAttempt,
   }),
   z.strictObject({
     status: z.literal('reconciliation_required'),
-    request: actionRequestSchema,
+    request: executorActionRequest,
     claim: claimReference.nullable(),
     attempt_id: text.nullable(),
     reason: z.enum(['expired', 'replaced', 'unknown_outcome', 'conflict', 'cancelled']),
@@ -196,6 +197,16 @@ export const controllerInputSchema = z.strictObject({
       budget_counts: z.array(z.strictObject({ budget_id: identifier, used: counter })),
       prior_state: identifier.nullable(),
       implementation_basis: subjectSchema.nullable(),
+      repair_admission: z
+        .strictObject({
+          action_id: identifier,
+          transition_id: identifier,
+          entry_state_version: counter.min(1),
+          bound_state_version: counter.min(1),
+          budget_id: identifier,
+          consumed: counter.min(1),
+        })
+        .nullable(),
     }),
     z.strictObject({ status: z.enum(['unavailable', 'corrupt']), reason: text }),
   ]),
@@ -239,7 +250,7 @@ const decisionPayloadSchema = z.discriminatedUnion('outcome', [
   z.strictObject({
     ...decisionFields,
     outcome: z.literal('engineering_action_required'),
-    action_request: z.strictObject({ request: executorRequest, request_digest: digest }),
+    action_request: executorActionRequest,
   }),
   z.strictObject({
     ...decisionFields,
@@ -305,6 +316,7 @@ export function publishedControllerSchemas() {
     ExecutorRequest: executorRequest,
     HumanRequest: humanRequest,
     ActionRequest: actionRequestSchema,
+    ExecutorActionRequest: executorActionRequest,
     CompiledGraph: compiledGraphSchema,
   };
   for (const [id, schema] of Object.entries(definitions)) metadata.add(schema, { id });

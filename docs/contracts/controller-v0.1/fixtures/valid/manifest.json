@@ -16,5 +16,6 @@
   "setup_failure_handoff",
   "repair_budget_handoff",
   "release_human_handoff",
-  "release_publication"
+  "release_publication",
+  "admitted_repair"
 ]

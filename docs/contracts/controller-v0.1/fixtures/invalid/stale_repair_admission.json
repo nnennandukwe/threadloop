@@ -1,0 +1,13 @@
+{
+  "id": "stale_repair_admission",
+  "base": "admitted_repair",
+  "mutations": [
+    {
+      "path": ["input", "history", "repair_admission", "bound_state_version"],
+      "value": 4
+    }
+  ],
+  "schema_valid": true,
+  "reseal": true,
+  "expected_code": "INVALID_REPAIR_ADMISSION"
+}

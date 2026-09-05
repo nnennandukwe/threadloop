@@ -62,6 +62,43 @@ export function validateControllerInput(input: unknown): ValidationResult<Contro
       reject('INVALID_HISTORY', '$.history.prior_state', 'Prior state must name an active state.');
     if (state?.kind === 'suspended' && history.prior_state === null)
       reject('INVALID_HISTORY', '$.history.prior_state', 'Suspension requires the recorded prior state.');
+    if (history.repair_admission !== null) {
+      const admission = history.repair_admission;
+      const edge = graph.value.graph.transitions.find((edge) => edge.id === admission.transition_id);
+      const budget = graph.value.graph.budgets.find((budget) => budget.id === admission.budget_id);
+      const action = graph.value.graph.required_actions.find((action) => action.id === admission.action_id);
+      const activeState = state?.kind === 'suspended' ? history.prior_state : value.binding.source_state;
+      if (
+        !edge ||
+        edge.to !== activeState ||
+        !budget ||
+        !budget.transition_refs.includes(edge.id) ||
+        !edge.guard_refs.some((id) =>
+          graph.value.graph.guards.some(
+            (guard) =>
+              guard.id === id && guard.capability === 'budget_available' && guard.parameters.budget === budget.id,
+          ),
+        ) ||
+        !action ||
+        action.capability !== 'repair_change' ||
+        !graph.value.graph.transitions.some(
+          (outgoing) =>
+            outgoing.from === activeState &&
+            outgoing.guard_refs.some((id) =>
+              graph.value.graph.guards.some((guard) => guard.id === id && guard.required_actions.includes(action.id)),
+            ),
+        ) ||
+        admission.bound_state_version !== value.binding.state_version ||
+        admission.entry_state_version > admission.bound_state_version ||
+        admission.consumed > budget.limit ||
+        history.budget_counts.find((count) => count.budget_id === budget.id)?.used !== admission.consumed
+      )
+        reject(
+          'INVALID_REPAIR_ADMISSION',
+          '$.history.repair_admission',
+          'Repair admission must bind the retained counted entry, repair action, budget consumption, and current state version.',
+        );
+    }
   }
   const times: (string | null)[] = [value.evaluation_time, value.observation.valid_until];
   for (const receipt of value.receipts) {
@@ -91,7 +128,6 @@ export function validateControllerInput(input: unknown): ValidationResult<Contro
     const request = value.execution.request;
     errors.push(...validateRequestStructure(value, request));
     if (
-      request.request.actor !== 'executor' ||
       request.request.binding.workflow_run_id !== value.binding.workflow_run_id ||
       request.request.binding.graph_digest !== value.binding.graph_digest
     )
@@ -505,18 +541,13 @@ function actionPrerequisites(input: ControllerInput, request: ActionRequest['req
         (receipt) => receipt.payload.type === 'local_proof' && receipt.payload.result === 'setup_failed',
       );
       const history = input.history;
+      const admission = history.status === 'verified' ? history.repair_admission : null;
       const admitted =
-        history.status === 'verified' &&
-        input.compiled_graph.graph.budgets.some((budget) => {
-          const used = history.budget_counts.find((count) => count.budget_id === budget.id)?.used ?? 0;
-          return (
-            used > 0 &&
-            used <= budget.limit &&
-            input.compiled_graph.graph.transitions.some(
-              (edge) => budget.transition_refs.includes(edge.id) && edge.to === input.binding.source_state,
-            )
-          );
-        });
+        admission !== null &&
+        admission.action_id === request.action_id &&
+        input.compiled_graph.graph.transitions.some(
+          (edge) => edge.id === admission.transition_id && edge.to === input.binding.source_state,
+        );
       return failure && !setupFailed && admitted;
     }
     default:

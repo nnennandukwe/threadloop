@@ -144,6 +144,48 @@
                   "type": "null"
                 }
               ]
+            },
+            "repair_admission": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "action_id": {
+                      "$ref": "#/$defs/Identifier"
+                    },
+                    "transition_id": {
+                      "$ref": "#/$defs/Identifier"
+                    },
+                    "entry_state_version": {
+                      "minimum": 1,
+                      "$ref": "#/$defs/Counter"
+                    },
+                    "bound_state_version": {
+                      "minimum": 1,
+                      "$ref": "#/$defs/Counter"
+                    },
+                    "budget_id": {
+                      "$ref": "#/$defs/Identifier"
+                    },
+                    "consumed": {
+                      "minimum": 1,
+                      "$ref": "#/$defs/Counter"
+                    }
+                  },
+                  "required": [
+                    "action_id",
+                    "transition_id",
+                    "entry_state_version",
+                    "bound_state_version",
+                    "budget_id",
+                    "consumed"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "required": [
@@ -153,7 +195,8 @@
             "phase",
             "budget_counts",
             "prior_state",
-            "implementation_basis"
+            "implementation_basis",
+            "repair_admission"
           ],
           "additionalProperties": false
         },
@@ -353,7 +396,7 @@
               "const": "in_flight"
             },
             "request": {
-              "$ref": "#/$defs/ActionRequest"
+              "$ref": "#/$defs/ExecutorActionRequest"
             },
             "claim": {
               "type": "object",
@@ -398,7 +441,7 @@
               "const": "reconciliation_required"
             },
             "request": {
-              "$ref": "#/$defs/ActionRequest"
+              "$ref": "#/$defs/ExecutorActionRequest"
             },
             "claim": {
               "anyOf": [
@@ -1832,18 +1875,11 @@
         }
       ]
     },
-    "ActionRequest": {
+    "ExecutorActionRequest": {
       "type": "object",
       "properties": {
         "request": {
-          "oneOf": [
-            {
-              "$ref": "#/$defs/ExecutorRequest"
-            },
-            {
-              "$ref": "#/$defs/HumanRequest"
-            }
-          ]
+          "$ref": "#/$defs/ExecutorRequest"
         },
         "request_digest": {
           "$ref": "#/$defs/Digest"
@@ -2025,131 +2061,6 @@
         "required": ["family", "guard_id", "subject"],
         "additionalProperties": false
       }
-    },
-    "HumanRequest": {
-      "type": "object",
-      "properties": {
-        "schema_version": {
-          "type": "string",
-          "const": "0.1"
-        },
-        "binding": {
-          "$ref": "#/$defs/RunBinding"
-        },
-        "capability_catalog": {
-          "type": "string",
-          "const": "threadloop.sdlc/0.1"
-        },
-        "action_id": {
-          "$ref": "#/$defs/Identifier"
-        },
-        "transition_id": {
-          "$ref": "#/$defs/Identifier"
-        },
-        "guard_ids": {
-          "minItems": 1,
-          "$ref": "#/$defs/IdentifierReferences"
-        },
-        "inputs": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/ArtifactInput"
-          }
-        },
-        "evidence_ids": {
-          "$ref": "#/$defs/IdentifierReferences"
-        },
-        "constraints": {
-          "type": "object",
-          "properties": {
-            "require_current_subject": {
-              "type": "boolean",
-              "const": true
-            },
-            "lifecycle_mutation": {
-              "type": "boolean",
-              "const": false
-            },
-            "valid_until": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/Timestamp"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          },
-          "required": ["require_current_subject", "lifecycle_mutation", "valid_until"],
-          "additionalProperties": false
-        },
-        "policy": {
-          "$ref": "#/$defs/Identity"
-        },
-        "authorities": {
-          "minItems": 1,
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/Authority"
-          }
-        },
-        "evidence_requirements": {
-          "minItems": 1,
-          "$ref": "#/$defs/EvidenceRequirements"
-        },
-        "idempotency_key": {
-          "$ref": "#/$defs/Digest"
-        },
-        "actor": {
-          "type": "string",
-          "const": "human"
-        },
-        "capability": {
-          "type": "string",
-          "enum": [
-            "frame_change",
-            "bind_proof_plan",
-            "implement_change",
-            "commit_change",
-            "run_local_gates",
-            "obtain_independent_proof",
-            "record_pre_pr_review",
-            "obtain_review_evidence",
-            "repair_change",
-            "correct_gate_setup",
-            "restore_proof_authority",
-            "restore_repository",
-            "restore_evidence",
-            "prepare_release",
-            "verify_release",
-            "publish_release",
-            "verify_publication",
-            "block_run",
-            "recover_run",
-            "approve_change",
-            "merge_change"
-          ]
-        }
-      },
-      "required": [
-        "schema_version",
-        "binding",
-        "capability_catalog",
-        "action_id",
-        "transition_id",
-        "guard_ids",
-        "inputs",
-        "evidence_ids",
-        "constraints",
-        "policy",
-        "authorities",
-        "evidence_requirements",
-        "idempotency_key",
-        "actor",
-        "capability"
-      ],
-      "additionalProperties": false
     }
   },
   "$id": "https://github.com/nnennandukwe/threadloop/contracts/controller/0.1/controller-input"

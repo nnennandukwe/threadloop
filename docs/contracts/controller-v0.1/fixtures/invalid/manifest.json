@@ -29,5 +29,11 @@
   "unknown_history_budget",
   "history_unavailable_action",
   "validity_without_time",
-  "guard_coverage_removed"
+  "guard_coverage_removed",
+  "missing_repair_admission",
+  "stale_repair_admission",
+  "mismatched_repair_consumption",
+  "wrong_repair_transition",
+  "future_repair_entry",
+  "wrong_repair_budget"
 ]

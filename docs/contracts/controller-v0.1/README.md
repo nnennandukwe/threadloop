@@ -56,10 +56,19 @@ decision: everything a selector needs must already be represented by normalized 
 content that a later authorized actor may consume; they do not embed shell commands or provider payloads.
 
 Verified history supplies phase, one count per graph budget, the active prior state before suspension, and
-implementation basis. Its digest identifies retained source history. An adapter must derive these projections from
-verified history, preserve monotonic phase, and count accepted budget entries once. A caller cannot create authority by
-labeling history `verified`. Missing/corrupt history is explicit and prevents actionable decisions. Counter derivation
-and durable audit verification remain runtime obligations.
+implementation basis, and an optional active `repair_admission`. Its digest identifies retained source history. An
+adapter must derive these projections from verified history, preserve monotonic phase, and count accepted budget entries
+once. A caller cannot create authority by labeling history `verified`. Missing/corrupt history is explicit and prevents
+actionable decisions. Counter derivation and durable audit verification remain runtime obligations.
+
+Repair admission records the exact repair action, counted entry transition and `entry_state_version`, budget ID and
+consumed count, plus the current `bound_state_version`. The entry must target the active state, use that budget's guard,
+and consume the recorded count within its limit. An aggregate budget count alone never grants repair authority. The
+adapter must retain the original entry through suspension and verified recovery to the same state, rebinding only
+`bound_state_version` to the current version. Normal progress out of that state clears the admission. It must never
+reuse a historical admission for a new repair episode. Verifying this history derivation remains an admission-boundary
+obligation; the candidate validator checks its explicit references and bindings. The final admitted repair remains
+usable at the budget limit.
 
 Receipts retain identity and authoritative sequence; run, graph, producer state version, subject; verification-policy
 and Workflow policy identities; acceptance-record identity; typed payload and digest; optional deadline; and, for
@@ -110,14 +119,19 @@ phase, budget, repository, or prior-state predicate is not missing evidence. `AM
 `SELECTION_PROOF_REQUIRED` for them: proving a tie or absence of remedies requires exhaustive selection, which is
 outside #105. A successful candidate check never proves precedence over alternatives.
 
-Healthy in-flight execution reports `waiting`. Stale subject/state binding, expired/invalidated claims, changed policy,
-cancellation, and uncertain effects require reconciliation. Waiting contains no new Action Request. The projection is
-limited to `idle`, `in_flight`, and `reconciliation_required`. Embedded requests must satisfy the graph's immutable
-action, actor, transition, guard, and evidence requirements even when awaiting reconciliation. Healthy waiting
+Healthy in-flight executor work reports `waiting`. Stale subject/state binding, expired/invalidated claims, changed
+policy, cancellation, and uncertain effects require reconciliation. Waiting contains no new Action Request. The
+projection is limited to `idle`, `in_flight`, and `reconciliation_required`. Embedded requests must satisfy the graph's
+immutable action, actor, transition, guard, and evidence requirements even when awaiting reconciliation. Healthy waiting
 additionally requires current request prerequisites, policy, capability support, evidence, and bindings. Historical
 bindings can be retained for reconciliation but cannot qualify as waiting.
 [#106](https://github.com/nnennandukwe/threadloop/issues/106) owns acquisition, renewal, replacement, cancellation,
 retry safety, receipt admission, and durable conflicts. This projection does not promise exactly-once execution.
+
+Execution Claim and Attempt projections accept only executor requests, as defined in #106. Human handoffs retain the
+shared Action Request envelope but never enter these executor claim states. Pending human work remains
+`human_action_required` until accepted human evidence changes the decision; stable request identity supports later
+handoff deduplication. Human notification, acknowledgement, and persistence are outside this projection.
 
 ## Action Request and human handoffs
 

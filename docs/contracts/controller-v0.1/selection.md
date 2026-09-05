@@ -9,9 +9,9 @@ Use only explicit input; never query environment, filesystem, clock, scheduler, 
 
 1. Validate versions, closed types, graph semantics/binding, policy digest, identities, and timestamp representation.
    Invalid input returns diagnostics without an actionable output.
-2. Resolve execution obligations first. Reconciliation, expired/fenced claims, or changed active-request bindings/policy
-   produce `blocked`. Healthy matching execution with current observation/history produces `waiting`, referencing the
-   existing request/claim/Attempt. Never invent replacement work.
+2. Resolve executor execution obligations first. Reconciliation, expired/fenced claims, or changed active-request
+   bindings/policy produce `blocked`. Healthy matching execution with current observation/history produces `waiting`,
+   referencing the existing request/claim/Attempt. Never invent replacement work.
 3. With no execution outstanding, an already terminal state produces `terminal` without a request or transition.
 4. Require a current verified observation, verified history, and required authority identities for actionable output.
    Missing facts produce `blocked` with a stable reason and recovery guidance.
@@ -76,6 +76,9 @@ capabilities cannot be dispatched implicitly.
 Preserve #104 budget semantics: accepted counted entry consumes once; replay consumes nothing; the final permitted
 repair may finish work and verification. Exhaustion prevents a new entry, not completion of an admitted repair. Setup
 failure, stale evidence, and recovery never reset counters. Pre-PR iteration remains distinct from post-PR repair.
+Repair work requires an explicit active repair-admission projection bound to the current version and the original
+counted entry; a positive historical budget count is insufficient. Verified recovery may retain that admission without
+consuming another repair entry.
 
 ## Failure outcomes and remaining proof
 

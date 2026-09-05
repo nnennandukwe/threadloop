@@ -73,17 +73,7 @@
               "const": "engineering_action_required"
             },
             "action_request": {
-              "type": "object",
-              "properties": {
-                "request": {
-                  "$ref": "#/$defs/ExecutorRequest"
-                },
-                "request_digest": {
-                  "$ref": "#/$defs/Digest"
-                }
-              },
-              "required": ["request", "request_digest"],
-              "additionalProperties": false
+              "$ref": "#/$defs/ExecutorActionRequest"
             }
           },
           "required": ["schema_version", "input_digest", "binding", "outcome", "action_request"],
@@ -496,6 +486,19 @@
       "items": {
         "$ref": "#/$defs/Identifier"
       }
+    },
+    "ExecutorActionRequest": {
+      "type": "object",
+      "properties": {
+        "request": {
+          "$ref": "#/$defs/ExecutorRequest"
+        },
+        "request_digest": {
+          "$ref": "#/$defs/Digest"
+        }
+      },
+      "required": ["request", "request_digest"],
+      "additionalProperties": false
     },
     "ExecutorRequest": {
       "type": "object",
