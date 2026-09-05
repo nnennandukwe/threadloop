@@ -36,7 +36,8 @@
           "revision": "commit_b",
           "content_digest": "46f155c90e515c97c0bf03967cb7e0be593e707a5054d1306da836cb99b51924"
         },
-        "relationship": "equal"
+        "relationship": "equal",
+        "change_scope": "unknown"
       }
     },
     "history": {
@@ -56,7 +57,7 @@
     },
     "policy": {
       "id": "workflow_policy",
-      "digest": "fe8247e8bd66057f47780e5d5f86e67762673d953905b546778b6ec7848f88ad",
+      "digest": "bb0fa886e09f2af7c187fd66844caee2cc6750258a7b9fef7fac827cca0d878a",
       "rules": {
         "selection": "threadloop.remedies/0.1",
         "proof_plan": {
@@ -96,7 +97,8 @@
               "digest": "9c5646b582f10531c791dd2372854409c96e8276f979c0aa4a505ec760e06100"
             }
           }
-        ]
+        ],
+        "proof_binding_transition_id": "bind_plan"
       }
     },
     "available_capabilities": [
@@ -212,7 +214,7 @@
           },
           "policy": {
             "id": "workflow_policy",
-            "digest": "fe8247e8bd66057f47780e5d5f86e67762673d953905b546778b6ec7848f88ad"
+            "digest": "bb0fa886e09f2af7c187fd66844caee2cc6750258a7b9fef7fac827cca0d878a"
           },
           "authorities": [
             {
@@ -244,7 +246,7 @@
           ],
           "idempotency_key": "47cd853e3793d3686567c379a7e8b911b9f7b66076383315457f017aef4ca2d3"
         },
-        "request_digest": "203dc07e6449f3a920c9e653d5c962b4fa642d77c6d7f7b521454c8b51723ff7"
+        "request_digest": "b516444bf29e9d380e43fd399af654f2ddbfa47e2a04a542d39561904e3c9f5a"
       },
       "claim": {
         "id": "claim_1",
@@ -260,7 +262,7 @@
   "expected": {
     "decision": {
       "schema_version": "0.1",
-      "input_digest": "07de825c174fe35bc00ba96ec33ee540f21d785b258bbca7478bcca70dcae695",
+      "input_digest": "2b818114b8c3792a1fc872f0a50a4c891e250d240b683e9a60eb79fa75d016aa",
       "binding": {
         "workflow_run_id": "workflow_1",
         "graph_schema_version": "0.1",
@@ -283,6 +285,6 @@
         }
       ]
     },
-    "decision_digest": "5baf58d89a1c2563a9c4f14f13bade08510d0eddcba06b8906b9ef197b7d5bcb"
+    "decision_digest": "2da56e364fbf2870663b5344909b1254cf3de8394107600056c9a8530733571d"
   }
 }

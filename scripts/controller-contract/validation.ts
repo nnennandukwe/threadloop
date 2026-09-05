@@ -3,7 +3,7 @@ import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import { actionRequestSchema, controllerInputSchema, type ActionRequest, type ControllerInput } from './contracts.js';
 import { diagnostic, validateShape, type Diagnostic, type ValidationResult } from '../workflow-graph/contracts.js';
 import { validateGraphBinding } from '../workflow-graph/compiler.js';
-import { hasRepairAdmission, supportsGuard } from './guards.js';
+import { hasBoundProofPlan, hasRepairAdmission, supportsGuard } from './guards.js';
 
 export function validateControllerInput(input: unknown): ValidationResult<ControllerInput> {
   const parsed = validateShape(controllerInputSchema, input);
@@ -20,6 +20,22 @@ export function validateControllerInput(input: unknown): ValidationResult<Contro
   if (!state) reject('UNKNOWN_STATE', '$.binding.source_state', 'The source state is not declared by the bound graph.');
   if (value.policy.digest !== sha256(canonicalJson(value.policy.rules)))
     reject('POLICY_DIGEST_MISMATCH', '$.policy', 'Policy contents differ from their claimed digest.');
+  if (value.policy.rules.proof_binding_transition_id !== null) {
+    const entry = graph.value.graph.transitions.find(
+      (edge) => edge.id === value.policy.rules.proof_binding_transition_id,
+    );
+    if (
+      !entry ||
+      !entry.guard_refs.some((id) =>
+        graph.value.graph.guards.some((guard) => guard.id === id && guard.capability === 'proof_plan_bound'),
+      )
+    )
+      reject(
+        'INVALID_PROOF_BINDING_ENTRY',
+        '$.policy.rules.proof_binding_transition_id',
+        'The configured binding entry must name a graph transition with a proof-plan binding guard.',
+      );
+  }
   for (const family of ['local_proof', 'independent_proof'] as const) {
     const required = graph.value.graph.guards.some(
       (guard) =>
@@ -450,6 +466,23 @@ export function validateRequestInSnapshot(
 
 function actionPrerequisites(input: ControllerInput, request: ActionRequest['request']): boolean {
   if (
+    input.binding.subject.kind === 'repository' &&
+    [
+      'implement_change',
+      'commit_change',
+      'run_local_gates',
+      'obtain_independent_proof',
+      'record_pre_pr_review',
+      'obtain_review_evidence',
+      'repair_change',
+      'correct_gate_setup',
+      'approve_change',
+      'merge_change',
+    ].includes(request.capability) &&
+    !hasBoundProofPlan(input)
+  )
+    return false;
+  if (
     input.compiled_graph.graph.guards.some(
       (guard) =>
         request.guard_ids.includes(guard.id) &&
@@ -462,6 +495,10 @@ function actionPrerequisites(input: ControllerInput, request: ActionRequest['req
   const receipts = input.receipts.filter(
     (receipt) => request.evidence_ids.includes(receipt.id) && currentReceipt(receipt, input),
   );
+  const localResults = receipts
+    .map((receipt) => receipt.payload)
+    .filter((payload) => payload.type === 'local_proof')
+    .filter((proof) => input.policy.rules.local_gate_ids.includes(proof.gate_id));
   const local = () =>
     supportsGuard(
       input,
@@ -503,6 +540,28 @@ function actionPrerequisites(input: ControllerInput, request: ActionRequest['req
       receipts,
     );
   switch (request.capability) {
+    case 'commit_change': {
+      const repository = input.observation.repository;
+      const basis = input.history.status === 'verified' ? input.history.implementation_basis : null;
+      return (
+        input.binding.subject.kind === 'repository' &&
+        basis?.kind === 'repository' &&
+        repository !== null &&
+        !repository.clean &&
+        repository.change_scope === 'within_plan' &&
+        repository.branch === input.policy.rules.repository_binding?.branch &&
+        same(repository.basis, basis) &&
+        ['equal', 'descendant'].includes(repository.relationship) &&
+        input.binding.subject.repository_id === basis.repository_id &&
+        input.binding.subject.content_digest !== basis.content_digest &&
+        request.inputs.some(
+          (item) =>
+            item.role === 'implementation_basis' &&
+            item.artifact.id === basis.revision &&
+            item.artifact.digest === basis.content_digest,
+        )
+      );
+    }
     case 'run_local_gates':
       return (
         input.policy.rules.local_gate_ids.length > 0 &&
@@ -536,20 +595,17 @@ function actionPrerequisites(input: ControllerInput, request: ActionRequest['req
         approval()
       );
     case 'correct_gate_setup':
-      return receipts.some(
-        (receipt) => receipt.payload.type === 'local_proof' && receipt.payload.result === 'setup_failed',
-      );
+      return localResults.some((proof) => proof.result === 'setup_failed');
     case 'repair_change': {
-      const failure = receipts.some(
-        (receipt) =>
-          (receipt.payload.type === 'local_proof' && receipt.payload.result === 'failed') ||
-          (receipt.payload.type === 'review' &&
+      const failure =
+        localResults.some((proof) => proof.result === 'failed') ||
+        receipts.some(
+          (receipt) =>
+            receipt.payload.type === 'review' &&
             (receipt.payload.outcome === 'changes_required' ||
-              receipt.payload.findings.some((finding) => finding.blocking && !finding.outdated))),
-      );
-      const setupFailed = receipts.some(
-        (receipt) => receipt.payload.type === 'local_proof' && receipt.payload.result === 'setup_failed',
-      );
+              receipt.payload.findings.some((finding) => finding.blocking && !finding.outdated)),
+        );
+      const setupFailed = localResults.some((proof) => proof.result === 'setup_failed');
       return failure && !setupFailed && hasRepairAdmission(input, request.action_id);
     }
     default:

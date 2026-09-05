@@ -36,7 +36,8 @@
           "revision": "commit_b",
           "content_digest": "46f155c90e515c97c0bf03967cb7e0be593e707a5054d1306da836cb99b51924"
         },
-        "relationship": "equal"
+        "relationship": "equal",
+        "change_scope": "unknown"
       }
     },
     "history": {
@@ -56,7 +57,7 @@
     },
     "policy": {
       "id": "workflow_policy",
-      "digest": "fe8247e8bd66057f47780e5d5f86e67762673d953905b546778b6ec7848f88ad",
+      "digest": "bb0fa886e09f2af7c187fd66844caee2cc6750258a7b9fef7fac827cca0d878a",
       "rules": {
         "selection": "threadloop.remedies/0.1",
         "proof_plan": {
@@ -96,7 +97,8 @@
               "digest": "9c5646b582f10531c791dd2372854409c96e8276f979c0aa4a505ec760e06100"
             }
           }
-        ]
+        ],
+        "proof_binding_transition_id": "bind_plan"
       }
     },
     "available_capabilities": [
@@ -181,7 +183,7 @@
   "expected": {
     "decision": {
       "schema_version": "0.1",
-      "input_digest": "f8f8fda364705d78b79d1a81b86d0b0bbbcc6e4b2d38a2304535f0ce274ff7f0",
+      "input_digest": "5248ad02fdf843ccd2cfe89b8a3ba657665af54de55aab2b0efa1ae1708e766a",
       "binding": {
         "workflow_run_id": "workflow_1",
         "graph_schema_version": "0.1",
@@ -204,6 +206,6 @@
         }
       ]
     },
-    "decision_digest": "4ec66c6fc55a769dabb0d103611e04ae1be73f68d6f99d477ca9b0c95c3fa4ee"
+    "decision_digest": "80f2d87e3ef8e024f28f630242f78eefd2c9e99532c760f38df126e52c1b864e"
   }
 }

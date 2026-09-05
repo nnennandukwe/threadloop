@@ -56,6 +56,10 @@
                 "clean": {
                   "type": "boolean"
                 },
+                "change_scope": {
+                  "type": "string",
+                  "enum": ["within_plan", "outside_plan", "unknown"]
+                },
                 "basis": {
                   "anyOf": [
                     {
@@ -71,7 +75,7 @@
                   "enum": ["equal", "descendant", "unrelated", "unknown"]
                 }
               },
-              "required": ["branch", "clean", "basis", "relationship"],
+              "required": ["branch", "clean", "change_scope", "basis", "relationship"],
               "additionalProperties": false
             },
             {
@@ -242,6 +246,16 @@
                 }
               ]
             },
+            "proof_binding_transition_id": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Identifier"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "repository_binding": {
               "anyOf": [
                 {
@@ -295,6 +309,7 @@
           "required": [
             "selection",
             "proof_plan",
+            "proof_binding_transition_id",
             "repository_binding",
             "publication_destination",
             "local_gate_ids",

@@ -1,5 +1,5 @@
 {
-  "id": "human_merge",
+  "id": "commit_admitted_repair",
   "graph_fixture": "governed-pr",
   "input": {
     "schema_version": "0.1",
@@ -7,13 +7,13 @@
       "workflow_run_id": "workflow_1",
       "graph_schema_version": "0.1",
       "graph_digest": "7df5f3b655e61bc872f83de08c6ce7b0c0c714de15256ada7b13127264bcd2dc",
-      "source_state": "ready_for_human",
+      "source_state": "repairing",
       "state_version": 5,
       "subject": {
         "kind": "repository",
         "repository_id": "sample_repository",
         "revision": "commit_b",
-        "content_digest": "46f155c90e515c97c0bf03967cb7e0be593e707a5054d1306da836cb99b51924"
+        "content_digest": "1bcf3902abf17e751cd6a52772148b9a6eea45ebc65ba83b9730b7b6e20c847b"
       }
     },
     "observation": {
@@ -22,14 +22,14 @@
         "kind": "repository",
         "repository_id": "sample_repository",
         "revision": "commit_b",
-        "content_digest": "46f155c90e515c97c0bf03967cb7e0be593e707a5054d1306da836cb99b51924"
+        "content_digest": "1bcf3902abf17e751cd6a52772148b9a6eea45ebc65ba83b9730b7b6e20c847b"
       },
       "state_version": 5,
       "status": "verified",
       "valid_until": null,
       "repository": {
         "branch": "feature",
-        "clean": true,
+        "clean": false,
         "basis": {
           "kind": "repository",
           "repository_id": "sample_repository",
@@ -37,7 +37,7 @@
           "content_digest": "46f155c90e515c97c0bf03967cb7e0be593e707a5054d1306da836cb99b51924"
         },
         "relationship": "equal",
-        "change_scope": "unknown"
+        "change_scope": "within_plan"
       }
     },
     "history": {
@@ -47,13 +47,25 @@
       "budget_counts": [
         {
           "budget_id": "repair_entries",
-          "used": 0
+          "used": 3
         }
       ],
       "prior_state": null,
-      "implementation_basis": null,
+      "implementation_basis": {
+        "kind": "repository",
+        "repository_id": "sample_repository",
+        "revision": "commit_b",
+        "content_digest": "46f155c90e515c97c0bf03967cb7e0be593e707a5054d1306da836cb99b51924"
+      },
       "proof_plan_bound": true,
-      "repair_admission": null
+      "repair_admission": {
+        "action_id": "repair",
+        "transition_id": "repair_review",
+        "entry_state_version": 5,
+        "bound_state_version": 5,
+        "budget_id": "repair_entries",
+        "consumed": 3
+      }
     },
     "policy": {
       "id": "workflow_policy",
@@ -203,119 +215,10 @@
         "payload": {
           "type": "local_proof",
           "gate_id": "check",
-          "result": "passed",
+          "result": "failed",
           "clean": true
         },
-        "payload_digest": "61e1d892f69bb3da8b2d72adf1f3944b259f25baabc0dcc94753b08c6684fdd2"
-      },
-      {
-        "id": "independent_b",
-        "workflow_run_id": "workflow_1",
-        "graph_digest": "7df5f3b655e61bc872f83de08c6ce7b0c0c714de15256ada7b13127264bcd2dc",
-        "source_state_version": 3,
-        "subject": {
-          "kind": "repository",
-          "repository_id": "sample_repository",
-          "revision": "commit_b",
-          "content_digest": "46f155c90e515c97c0bf03967cb7e0be593e707a5054d1306da836cb99b51924"
-        },
-        "sequence": 2,
-        "policy": {
-          "id": "trusted_evidence",
-          "digest": "997c333585c7d8794eed32314bb36f7b81037f58425b7a5cb0d51ca75cf9f392"
-        },
-        "workflow_policy": {
-          "id": "workflow_policy",
-          "digest": "bb0fa886e09f2af7c187fd66844caee2cc6750258a7b9fef7fac827cca0d878a"
-        },
-        "acceptance": {
-          "id": "acceptance_independent_b",
-          "digest": "21f5f2adf058217ad0ae04215bf648d4d169f1b830331bd426142e2d71861650"
-        },
-        "valid_until": null,
-        "origin": {
-          "kind": "observation"
-        },
-        "payload": {
-          "type": "independent_proof",
-          "gate_id": "check",
-          "result": "passed"
-        },
-        "payload_digest": "5bc753062eb695e21a3dd4b8f57006e7aa99b2c051b499ac7b7fe1bdd6c72b10"
-      },
-      {
-        "id": "review_b",
-        "workflow_run_id": "workflow_1",
-        "graph_digest": "7df5f3b655e61bc872f83de08c6ce7b0c0c714de15256ada7b13127264bcd2dc",
-        "source_state_version": 3,
-        "subject": {
-          "kind": "repository",
-          "repository_id": "sample_repository",
-          "revision": "commit_b",
-          "content_digest": "46f155c90e515c97c0bf03967cb7e0be593e707a5054d1306da836cb99b51924"
-        },
-        "sequence": 3,
-        "policy": {
-          "id": "trusted_evidence",
-          "digest": "997c333585c7d8794eed32314bb36f7b81037f58425b7a5cb0d51ca75cf9f392"
-        },
-        "workflow_policy": {
-          "id": "workflow_policy",
-          "digest": "bb0fa886e09f2af7c187fd66844caee2cc6750258a7b9fef7fac827cca0d878a"
-        },
-        "acceptance": {
-          "id": "acceptance_review_b",
-          "digest": "fb73b6a92a8fbebca7b46ef3838682dd38524bacb70f69e95f5de40949d8ddcc"
-        },
-        "valid_until": null,
-        "origin": {
-          "kind": "observation"
-        },
-        "payload": {
-          "type": "review",
-          "outcome": "clean",
-          "findings": []
-        },
-        "payload_digest": "c6c083edf07431878dab7005b95972d2e366490d8fdb41d861ddaf48b130ecd6"
-      },
-      {
-        "id": "approval_b",
-        "workflow_run_id": "workflow_1",
-        "graph_digest": "7df5f3b655e61bc872f83de08c6ce7b0c0c714de15256ada7b13127264bcd2dc",
-        "source_state_version": 3,
-        "subject": {
-          "kind": "repository",
-          "repository_id": "sample_repository",
-          "revision": "commit_b",
-          "content_digest": "46f155c90e515c97c0bf03967cb7e0be593e707a5054d1306da836cb99b51924"
-        },
-        "sequence": 4,
-        "policy": {
-          "id": "trusted_evidence",
-          "digest": "997c333585c7d8794eed32314bb36f7b81037f58425b7a5cb0d51ca75cf9f392"
-        },
-        "workflow_policy": {
-          "id": "workflow_policy",
-          "digest": "bb0fa886e09f2af7c187fd66844caee2cc6750258a7b9fef7fac827cca0d878a"
-        },
-        "acceptance": {
-          "id": "acceptance_approval_b",
-          "digest": "22cd9d002fb811fd3f2ffa51948b9f14bd44a1914ac677a5e0b5135ab201e307"
-        },
-        "valid_until": null,
-        "origin": {
-          "kind": "observation"
-        },
-        "payload": {
-          "type": "human_approval",
-          "scope": "current_subject",
-          "approver": {
-            "type": "human",
-            "id": "maintainer"
-          },
-          "reason": "Approve the current subject"
-        },
-        "payload_digest": "727fd231e240ccb65c8e64347abfddd688e391880110e225c8aa3059dc2a48ce"
+        "payload_digest": "74a666d3e5e4b36735f07beff274bb5f4bd1bfd3269c6b4ef8040cd87e536734"
       }
     ],
     "invalidated_claims": [],
@@ -326,10 +229,17 @@
     "evaluation_time": null
   },
   "intent": {
-    "action_id": "merge",
-    "transition_id": "complete",
-    "guard_ids": ["merged"],
+    "action_id": "commit",
+    "transition_id": "verify_repair",
+    "guard_ids": ["repair_committed"],
     "inputs": [
+      {
+        "role": "implementation_basis",
+        "artifact": {
+          "id": "commit_b",
+          "digest": "46f155c90e515c97c0bf03967cb7e0be593e707a5054d1306da836cb99b51924"
+        }
+      },
       {
         "role": "proof_plan",
         "artifact": {
@@ -338,16 +248,16 @@
         }
       }
     ],
-    "evidence_ids": ["local_b", "independent_b", "review_b", "approval_b"],
+    "evidence_ids": [],
     "evidence_requirements": [
       {
-        "family": "completion_observed",
-        "guard_id": "merged",
+        "family": "repository_observation",
+        "guard_id": "repair_committed",
         "subject": {
           "kind": "repository",
           "repository_id": "sample_repository",
           "revision": "commit_b",
-          "content_digest": "46f155c90e515c97c0bf03967cb7e0be593e707a5054d1306da836cb99b51924"
+          "content_digest": "1bcf3902abf17e751cd6a52772148b9a6eea45ebc65ba83b9730b7b6e20c847b"
         }
       }
     ],
@@ -356,44 +266,34 @@
   "expected": {
     "decision": {
       "schema_version": "0.1",
-      "input_digest": "c1054a22f131a233040a9cfcb35b237030d1bc4cb0f4fba2085826e10c1b09a6",
+      "input_digest": "365e6bbbf0aa447c2b6ebdb1d19062263d7635f022c500fe18faaea6c380cc35",
       "binding": {
         "workflow_run_id": "workflow_1",
         "graph_schema_version": "0.1",
         "graph_digest": "7df5f3b655e61bc872f83de08c6ce7b0c0c714de15256ada7b13127264bcd2dc",
-        "source_state": "ready_for_human",
+        "source_state": "repairing",
         "state_version": 5,
         "subject": {
           "kind": "repository",
           "repository_id": "sample_repository",
           "revision": "commit_b",
-          "content_digest": "46f155c90e515c97c0bf03967cb7e0be593e707a5054d1306da836cb99b51924"
+          "content_digest": "1bcf3902abf17e751cd6a52772148b9a6eea45ebc65ba83b9730b7b6e20c847b"
         }
       },
-      "outcome": "human_action_required",
+      "outcome": "engineering_action_required",
       "action_request": {
         "request": {
-          "schema_version": "0.1",
-          "binding": {
-            "workflow_run_id": "workflow_1",
-            "graph_schema_version": "0.1",
-            "graph_digest": "7df5f3b655e61bc872f83de08c6ce7b0c0c714de15256ada7b13127264bcd2dc",
-            "source_state": "ready_for_human",
-            "state_version": 5,
-            "subject": {
-              "kind": "repository",
-              "repository_id": "sample_repository",
-              "revision": "commit_b",
-              "content_digest": "46f155c90e515c97c0bf03967cb7e0be593e707a5054d1306da836cb99b51924"
-            }
-          },
-          "capability_catalog": "threadloop.sdlc/0.1",
-          "action_id": "merge",
-          "actor": "human",
-          "capability": "merge_change",
-          "transition_id": "complete",
-          "guard_ids": ["merged"],
+          "action_id": "commit",
+          "transition_id": "verify_repair",
+          "guard_ids": ["repair_committed"],
           "inputs": [
+            {
+              "role": "implementation_basis",
+              "artifact": {
+                "id": "commit_b",
+                "digest": "46f155c90e515c97c0bf03967cb7e0be593e707a5054d1306da836cb99b51924"
+              }
+            },
             {
               "role": "proof_plan",
               "artifact": {
@@ -402,7 +302,36 @@
               }
             }
           ],
-          "evidence_ids": ["approval_b", "independent_b", "local_b", "review_b"],
+          "evidence_ids": [],
+          "evidence_requirements": [
+            {
+              "family": "repository_observation",
+              "guard_id": "repair_committed",
+              "subject": {
+                "kind": "repository",
+                "repository_id": "sample_repository",
+                "revision": "commit_b",
+                "content_digest": "1bcf3902abf17e751cd6a52772148b9a6eea45ebc65ba83b9730b7b6e20c847b"
+              }
+            }
+          ],
+          "schema_version": "0.1",
+          "binding": {
+            "workflow_run_id": "workflow_1",
+            "graph_schema_version": "0.1",
+            "graph_digest": "7df5f3b655e61bc872f83de08c6ce7b0c0c714de15256ada7b13127264bcd2dc",
+            "source_state": "repairing",
+            "state_version": 5,
+            "subject": {
+              "kind": "repository",
+              "repository_id": "sample_repository",
+              "revision": "commit_b",
+              "content_digest": "1bcf3902abf17e751cd6a52772148b9a6eea45ebc65ba83b9730b7b6e20c847b"
+            }
+          },
+          "capability_catalog": "threadloop.sdlc/0.1",
+          "capability": "commit_change",
+          "actor": "executor",
           "constraints": {
             "require_current_subject": true,
             "lifecycle_mutation": false,
@@ -428,23 +357,11 @@
               }
             }
           ],
-          "evidence_requirements": [
-            {
-              "family": "completion_observed",
-              "guard_id": "merged",
-              "subject": {
-                "kind": "repository",
-                "repository_id": "sample_repository",
-                "revision": "commit_b",
-                "content_digest": "46f155c90e515c97c0bf03967cb7e0be593e707a5054d1306da836cb99b51924"
-              }
-            }
-          ],
-          "idempotency_key": "e15f4c7492d62f1e0d68a86c1fea1f98322e759ffa0364677ef5d2fd3b77d236"
+          "idempotency_key": "97fb136cb07ddff8c3ca9f6600813b6872aecdb4e257fee1d81e5923a551380a"
         },
-        "request_digest": "2bbba8cf5d10fe764394e9ea0e1088a9cc87d321e5f93ca7f43b0a8385be23d9"
+        "request_digest": "2b04102b79d3e71fdbd654d00e34b82f3e8e902458705a46768ca9bf7067a568"
       }
     },
-    "decision_digest": "11d96817dd5cd2f8c1b3ad23c927484a4086603ab2583b63e96de7e04dbb0617"
+    "decision_digest": "e94d2666f22f914d38c7dcdc9084abd0e4062cae4e870724b8c9664959c06960"
   }
 }

@@ -47,13 +47,22 @@ The binding contains `workflow_run_id`, `graph_schema_version`, `graph_digest`, 
 `subject`. A repository subject identifies the repository, revision, and exact content digest; the observation
 separately reports branch, cleanliness, and relationship to an explicit implementation basis. An artifact subject
 identifies the artifact and content digest. New commits, changed working trees, and edited artifacts change the subject.
-Core types contain no GitHub, CI-provider, model, tool-call, or executor implementation types.
+Repository observations also carry `change_scope`: `within_plan`, `outside_plan`, or `unknown`, derived by the admission
+adapter against the exact plan. A dirty tree alone does not prove a scoped change. Commit requests require a dirty,
+within-plan observation on the bound branch, a matching recorded implementation basis and ancestry, a changed content
+digest, and an `implementation_basis` input whose identity is the basis revision and content digest. Core types contain
+no GitHub, CI-provider, model, tool-call, or executor implementation types.
 
-Policy rules contain the immutable proof-plan identity, repository baseline and branch, required local/independent gate
-IDs, publication destination, accepted verification-policy identities, and authority identities. The policy digest
-hashes the exact canonical `rules` object. An artifact reference is not permission to fetch facts that change the
-decision: everything a selector needs must already be represented by normalized input. Request inputs name immutable
-content that a later authorized actor may consume; they do not embed shell commands or provider payloads.
+Policy rules contain the immutable proof-plan identity, explicit `proof_binding_transition_id`, repository baseline and
+branch, required local/independent gate IDs, publication destination, accepted verification-policy identities, and
+authority identities. The policy digest hashes the exact canonical `rules` object. An artifact reference is not
+permission to fetch facts that change the decision: everything a selector needs must already be represented by
+normalized input. Request inputs name immutable content that a later authorized actor may consume; they do not embed
+shell commands or provider payloads. The optional binding transition identifies the one entry where a clean named
+baseline may establish proof readiness. A null value disables that bootstrap path. All later proof guards, proof
+collection, and normal repository work require the retained `history.proof_plan_bound` fact; a policy plan or clean
+baseline is not a substitute. The candidate validator receives the selected transition identity explicitly when checking
+the bootstrap guard.
 
 Verified history supplies phase, one count per graph budget, the active prior state before suspension, and
 implementation basis, and an optional active `repair_admission`. Its digest identifies retained source history. An
@@ -172,7 +181,9 @@ reject every human request. Approval of B cannot approve a later subject C.
 Requests are authorization candidates: `lifecycle_mutation` is fixed to `false` and `require_current_subject` to `true`.
 Declaring a possible guard remedy does not establish its appropriateness now. Construction checks necessary
 prerequisites, including local proof before independent proof, both before review, and approval before
-merge/publication. The future selector must still enforce the full [decision rules](selection.md).
+merge/publication. The future selector must still enforce the full [decision rules](selection.md). Only local gates
+configured by policy may justify setup correction or local-failure repair. An unrelated gate neither triggers these
+interventions nor overrides the result of a configured gate.
 
 ## Canonical identity and validity
 

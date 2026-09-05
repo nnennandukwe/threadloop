@@ -36,7 +36,8 @@
           "revision": "commit_b",
           "content_digest": "46f155c90e515c97c0bf03967cb7e0be593e707a5054d1306da836cb99b51924"
         },
-        "relationship": "equal"
+        "relationship": "equal",
+        "change_scope": "unknown"
       }
     },
     "history": {
@@ -56,7 +57,7 @@
     },
     "policy": {
       "id": "workflow_policy",
-      "digest": "fe8247e8bd66057f47780e5d5f86e67762673d953905b546778b6ec7848f88ad",
+      "digest": "bb0fa886e09f2af7c187fd66844caee2cc6750258a7b9fef7fac827cca0d878a",
       "rules": {
         "selection": "threadloop.remedies/0.1",
         "proof_plan": {
@@ -96,7 +97,8 @@
               "digest": "9c5646b582f10531c791dd2372854409c96e8276f979c0aa4a505ec760e06100"
             }
           }
-        ]
+        ],
+        "proof_binding_transition_id": "bind_plan"
       }
     },
     "available_capabilities": [
@@ -188,7 +190,7 @@
         },
         "workflow_policy": {
           "id": "workflow_policy",
-          "digest": "fe8247e8bd66057f47780e5d5f86e67762673d953905b546778b6ec7848f88ad"
+          "digest": "bb0fa886e09f2af7c187fd66844caee2cc6750258a7b9fef7fac827cca0d878a"
         },
         "acceptance": {
           "id": "acceptance_local_b",
@@ -224,7 +226,7 @@
         },
         "workflow_policy": {
           "id": "workflow_policy",
-          "digest": "fe8247e8bd66057f47780e5d5f86e67762673d953905b546778b6ec7848f88ad"
+          "digest": "bb0fa886e09f2af7c187fd66844caee2cc6750258a7b9fef7fac827cca0d878a"
         },
         "acceptance": {
           "id": "acceptance_independent_b",
@@ -259,7 +261,7 @@
         },
         "workflow_policy": {
           "id": "workflow_policy",
-          "digest": "fe8247e8bd66057f47780e5d5f86e67762673d953905b546778b6ec7848f88ad"
+          "digest": "bb0fa886e09f2af7c187fd66844caee2cc6750258a7b9fef7fac827cca0d878a"
         },
         "acceptance": {
           "id": "acceptance_review_b",
@@ -315,7 +317,7 @@
   "expected": {
     "decision": {
       "schema_version": "0.1",
-      "input_digest": "88ae186af6f4935783fdfc7a901e00d9012b4fe8fb2726456076fed9c5d1fee4",
+      "input_digest": "dc17d19fd2b7ffca47bcee1402d1adef1206b09b48a4a626d9f8e505c65e597c",
       "binding": {
         "workflow_run_id": "workflow_1",
         "graph_schema_version": "0.1",
@@ -369,7 +371,7 @@
           },
           "policy": {
             "id": "workflow_policy",
-            "digest": "fe8247e8bd66057f47780e5d5f86e67762673d953905b546778b6ec7848f88ad"
+            "digest": "bb0fa886e09f2af7c187fd66844caee2cc6750258a7b9fef7fac827cca0d878a"
           },
           "authorities": [
             {
@@ -401,9 +403,9 @@
           ],
           "idempotency_key": "a08bf4fd570f5742182e3db0de94f7fcd37f8367eaff22d15e052af1dad9d7d8"
         },
-        "request_digest": "8a92dc273b13ef91d4037125fc2dc1776188da014ea9f112b26f6d08404955a5"
+        "request_digest": "7069a9e364528628ca5e297f91ffdbdb7bfce0de3f4ea2b8c28eda3f364a9eea"
       }
     },
-    "decision_digest": "7f15f94ed0a044825244a3bcdc38ecbe84d8ea1f4eb0135397c58308eb86ac91"
+    "decision_digest": "b35a29d7c6382fcedd871a6bc293500ecf5b6a5a180e11132734151a75f59a65"
   }
 }

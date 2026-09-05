@@ -71,7 +71,10 @@ graph resolution or a blocked decision.
 Several missing PR proofs resolve as local proof, independent proof, then review. Multiple gates within one proof
 capability belong to one Action Request. An executor cannot choose another lifecycle action. `frame_change` remains in
 the catalog; a guard-free framing transition takes precedence and does not invent an unguarded action. Unreferenced
-capabilities cannot be dispatched implicitly.
+capabilities cannot be dispatched implicitly. Proof-plan bootstrap is restricted to the policy's declared binding
+transition. Later proof operations require retained binding. Commit work additionally requires a scoped dirty-tree
+observation and the matching declared implementation basis; a clean failed snapshot calls for repair before commit.
+Unconfigured local gates do not trigger setup or repair.
 
 Preserve #104 budget semantics: accepted counted entry consumes once; replay consumes nothing; the final permitted
 repair may finish work and verification. Exhaustion prevents a new entry, not completion of an admitted repair. Setup

@@ -32,6 +32,7 @@ export async function controllerSnapshot(
   const rules = {
     selection: 'threadloop.remedies/0.1',
     proof_plan: profile === 'governed-pr' ? { id: 'proof_plan', digest: sha256('proof_plan') } : null,
+    proof_binding_transition_id: profile === 'governed-pr' ? 'bind_plan' : null,
     repository_binding: profile === 'governed-pr' ? { branch: 'feature', baseline: subject } : null,
     publication_destination: profile === 'release-to-publish' ? 'release_channel' : null,
     local_gate_ids: profile === 'governed-pr' ? ['check'] : [],
@@ -60,7 +61,9 @@ export async function controllerSnapshot(
       status: 'verified',
       valid_until: null,
       repository:
-        profile === 'governed-pr' ? { branch: 'feature', clean: true, basis: subject, relationship: 'equal' } : null,
+        profile === 'governed-pr'
+          ? { branch: 'feature', clean: true, change_scope: 'unknown', basis: subject, relationship: 'equal' }
+          : null,
     },
     history: {
       status: 'verified',

@@ -44,7 +44,7 @@
     },
     "policy": {
       "id": "workflow_policy",
-      "digest": "34991493666b6defe78070b6227d3538273ed4279d8abe402e65cb9be51c261e",
+      "digest": "419fba51ca9d338e94ed76027b163ed426d940ecd823ce18b1c257d08f5ae066",
       "rules": {
         "selection": "threadloop.remedies/0.1",
         "proof_plan": null,
@@ -73,7 +73,8 @@
               "digest": "9c5646b582f10531c791dd2372854409c96e8276f979c0aa4a505ec760e06100"
             }
           }
-        ]
+        ],
+        "proof_binding_transition_id": null
       }
     },
     "available_capabilities": [
@@ -124,7 +125,7 @@
         },
         "workflow_policy": {
           "id": "workflow_policy",
-          "digest": "34991493666b6defe78070b6227d3538273ed4279d8abe402e65cb9be51c261e"
+          "digest": "419fba51ca9d338e94ed76027b163ed426d940ecd823ce18b1c257d08f5ae066"
         },
         "acceptance": {
           "id": "acceptance_release_verified",
@@ -158,7 +159,7 @@
         },
         "workflow_policy": {
           "id": "workflow_policy",
-          "digest": "34991493666b6defe78070b6227d3538273ed4279d8abe402e65cb9be51c261e"
+          "digest": "419fba51ca9d338e94ed76027b163ed426d940ecd823ce18b1c257d08f5ae066"
         },
         "acceptance": {
           "id": "acceptance_approval_b",
@@ -209,7 +210,7 @@
   "expected": {
     "decision": {
       "schema_version": "0.1",
-      "input_digest": "ccd56c908950b092dfdc625135d3f0b6082d3df4183d6deb131a95c7911bbcf6",
+      "input_digest": "2c55df3ffad427a48e202b842715db54df08c8173ac944209035253d2cfd6974",
       "binding": {
         "workflow_run_id": "workflow_1",
         "graph_schema_version": "0.1",
@@ -253,7 +254,7 @@
           },
           "policy": {
             "id": "workflow_policy",
-            "digest": "34991493666b6defe78070b6227d3538273ed4279d8abe402e65cb9be51c261e"
+            "digest": "419fba51ca9d338e94ed76027b163ed426d940ecd823ce18b1c257d08f5ae066"
           },
           "authorities": [
             {
@@ -284,9 +285,9 @@
           ],
           "idempotency_key": "2a386b2da2f904f90645d96ffced95ee44c7598396db3e774d35e07996b51a1c"
         },
-        "request_digest": "037e91757c2c0da70b6ed733757d484dfa2d1e9a555f671ec2cf123f3e9b1edc"
+        "request_digest": "c82f15bb3be4ed70ae65c2932ec4f3b963967def4b2ce4c07d254637112ce8a4"
       }
     },
-    "decision_digest": "347b6b7398eeefa193c6081231d51782d0af8082cd7c65a6901fd9bf4b698b2f"
+    "decision_digest": "990d7a9e9b526d51fe83ee88bc2e33d1aa5c0863753da8eb916c12aaa95d5493"
   }
 }

@@ -36,7 +36,8 @@
           "revision": "commit_b",
           "content_digest": "46f155c90e515c97c0bf03967cb7e0be593e707a5054d1306da836cb99b51924"
         },
-        "relationship": "equal"
+        "relationship": "equal",
+        "change_scope": "unknown"
       }
     },
     "history": {
@@ -56,7 +57,7 @@
     },
     "policy": {
       "id": "workflow_policy",
-      "digest": "fe8247e8bd66057f47780e5d5f86e67762673d953905b546778b6ec7848f88ad",
+      "digest": "bb0fa886e09f2af7c187fd66844caee2cc6750258a7b9fef7fac827cca0d878a",
       "rules": {
         "selection": "threadloop.remedies/0.1",
         "proof_plan": {
@@ -96,7 +97,8 @@
               "digest": "9c5646b582f10531c791dd2372854409c96e8276f979c0aa4a505ec760e06100"
             }
           }
-        ]
+        ],
+        "proof_binding_transition_id": "bind_plan"
       }
     },
     "available_capabilities": [
@@ -188,7 +190,7 @@
         },
         "workflow_policy": {
           "id": "workflow_policy",
-          "digest": "fe8247e8bd66057f47780e5d5f86e67762673d953905b546778b6ec7848f88ad"
+          "digest": "bb0fa886e09f2af7c187fd66844caee2cc6750258a7b9fef7fac827cca0d878a"
         },
         "acceptance": {
           "id": "acceptance_local_b",
@@ -245,7 +247,7 @@
   "expected": {
     "decision": {
       "schema_version": "0.1",
-      "input_digest": "070c690f8bcff267485f7a192157adf2a9be4d3edef7acfcb0ed00afe99d3522",
+      "input_digest": "377bb73f16f25573384ea65ffc8bb0d21b4421c6d696b8bd162014ee9880dc2e",
       "binding": {
         "workflow_run_id": "workflow_1",
         "graph_schema_version": "0.1",
@@ -299,7 +301,7 @@
           },
           "policy": {
             "id": "workflow_policy",
-            "digest": "fe8247e8bd66057f47780e5d5f86e67762673d953905b546778b6ec7848f88ad"
+            "digest": "bb0fa886e09f2af7c187fd66844caee2cc6750258a7b9fef7fac827cca0d878a"
           },
           "authorities": [
             {
@@ -331,9 +333,9 @@
           ],
           "idempotency_key": "47cd853e3793d3686567c379a7e8b911b9f7b66076383315457f017aef4ca2d3"
         },
-        "request_digest": "203dc07e6449f3a920c9e653d5c962b4fa642d77c6d7f7b521454c8b51723ff7"
+        "request_digest": "b516444bf29e9d380e43fd399af654f2ddbfa47e2a04a542d39561904e3c9f5a"
       }
     },
-    "decision_digest": "598f41222e79fed64ed2e0f0e11d3a427b6bb4cd1a96c2f834220d6cc66cb354"
+    "decision_digest": "2d0d445300126f43231ad6225bdbe9c89f1e341e0882cb916ad9f02520e9bac1"
   }
 }

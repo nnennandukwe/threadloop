@@ -5,6 +5,15 @@ type Receipt = ControllerInput['receipts'][number];
 type Guard = ControllerInput['compiled_graph']['graph']['guards'][number];
 const same = (left: unknown, right: unknown) => canonicalJson(left) === canonicalJson(right);
 
+export function hasBoundProofPlan(input: ControllerInput): boolean {
+  return (
+    input.history.status === 'verified' &&
+    input.history.proof_plan_bound &&
+    input.policy.rules.proof_plan !== null &&
+    input.policy.rules.repository_binding !== null
+  );
+}
+
 export function hasRepairAdmission(input: ControllerInput, actionId: string): boolean {
   const admission = input.history.status === 'verified' ? input.history.repair_admission : null;
   return (
@@ -18,7 +27,12 @@ export function hasRepairAdmission(input: ControllerInput, actionId: string): bo
 }
 
 // Check required facts of an asserted transition. No outgoing-edge search or remedy selection occurs here.
-export function supportsGuard(input: ControllerInput, guard: Guard, receipts: Receipt[]): boolean {
+export function supportsGuard(
+  input: ControllerInput,
+  guard: Guard,
+  receipts: Receipt[],
+  transitionId?: string,
+): boolean {
   const history = input.history;
   const rules = input.policy.rules;
   const payloads = receipts.map((receipt) => receipt.payload);
@@ -28,8 +42,10 @@ export function supportsGuard(input: ControllerInput, guard: Guard, receipts: Re
         rules.proof_plan !== null &&
         rules.repository_binding !== null &&
         history.status === 'verified' &&
-        (history.proof_plan_bound ||
-          (input.observation.repository?.clean === true &&
+        (hasBoundProofPlan(input) ||
+          (transitionId !== undefined &&
+            rules.proof_binding_transition_id === transitionId &&
+            input.observation.repository?.clean === true &&
             input.observation.repository.branch === rules.repository_binding.branch &&
             same(input.binding.subject, rules.repository_binding.baseline)))
       );
@@ -68,7 +84,10 @@ export function supportsGuard(input: ControllerInput, guard: Guard, receipts: Re
       return used !== undefined && used < budget.limit;
     }
     case 'local_proof': {
-      const local = payloads.filter((payload) => payload.type === 'local_proof');
+      if (!hasBoundProofPlan(input)) return false;
+      const local = payloads
+        .filter((payload) => payload.type === 'local_proof')
+        .filter((proof) => rules.local_gate_ids.includes(proof.gate_id));
       const allPresent =
         rules.local_gate_ids.length > 0 &&
         rules.local_gate_ids.every((gate) => local.some((proof) => proof.gate_id === gate));
@@ -84,6 +103,7 @@ export function supportsGuard(input: ControllerInput, guard: Guard, receipts: Re
     }
     case 'independent_proof':
       return (
+        hasBoundProofPlan(input) &&
         rules.independent_gate_ids.length > 0 &&
         rules.independent_gate_ids.every((gate) =>
           payloads.some(
@@ -92,13 +112,17 @@ export function supportsGuard(input: ControllerInput, guard: Guard, receipts: Re
         )
       );
     case 'pre_pr_review':
-      return payloads.some(
-        (review) =>
-          review.type === 'pre_pr_review' &&
-          review.outcome === guard.parameters.outcome &&
-          (review.outcome !== 'clean' || review.findings.every((finding) => !finding.blocking)),
+      return (
+        hasBoundProofPlan(input) &&
+        payloads.some(
+          (review) =>
+            review.type === 'pre_pr_review' &&
+            review.outcome === guard.parameters.outcome &&
+            (review.outcome !== 'clean' || review.findings.every((finding) => !finding.blocking)),
+        )
       );
     case 'review': {
+      if (!hasBoundProofPlan(input)) return false;
       const review = payloads.find((payload) => payload.type === 'review');
       if (!review) return false;
       const blocking =

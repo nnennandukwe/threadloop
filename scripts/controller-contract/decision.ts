@@ -143,7 +143,7 @@ function validateTransition(input: ControllerInput, decision: TransitionDecision
           'Every referenced receipt must be current, intact, unexpired, and unfenced.',
         ),
       );
-    if (guard && !supportsGuard(input, guard, receipts))
+    if (guard && !supportsGuard(input, guard, receipts, edge.id))
       errors.push(
         issue('GUARD_EVIDENCE_MISMATCH', '$.decision.checks', `Explicit facts do not support guard ${guard.id}.`),
       );

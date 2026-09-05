@@ -44,7 +44,7 @@
     },
     "policy": {
       "id": "workflow_policy",
-      "digest": "34991493666b6defe78070b6227d3538273ed4279d8abe402e65cb9be51c261e",
+      "digest": "419fba51ca9d338e94ed76027b163ed426d940ecd823ce18b1c257d08f5ae066",
       "rules": {
         "selection": "threadloop.remedies/0.1",
         "proof_plan": null,
@@ -73,7 +73,8 @@
               "digest": "9c5646b582f10531c791dd2372854409c96e8276f979c0aa4a505ec760e06100"
             }
           }
-        ]
+        ],
+        "proof_binding_transition_id": null
       }
     },
     "available_capabilities": [
@@ -124,7 +125,7 @@
         },
         "workflow_policy": {
           "id": "workflow_policy",
-          "digest": "34991493666b6defe78070b6227d3538273ed4279d8abe402e65cb9be51c261e"
+          "digest": "419fba51ca9d338e94ed76027b163ed426d940ecd823ce18b1c257d08f5ae066"
         },
         "acceptance": {
           "id": "acceptance_release_verified",
@@ -171,7 +172,7 @@
   "expected": {
     "decision": {
       "schema_version": "0.1",
-      "input_digest": "58b5a4decacc508724f76505e30e988e2693ce725776ecf3626df8c4cd7d92cf",
+      "input_digest": "c5d7ebd2c7a8c99ac0a29e21a0f32f20fff7fef606b8c9ca757bacb07fdda6e9",
       "binding": {
         "workflow_run_id": "workflow_1",
         "graph_schema_version": "0.1",
@@ -215,7 +216,7 @@
           },
           "policy": {
             "id": "workflow_policy",
-            "digest": "34991493666b6defe78070b6227d3538273ed4279d8abe402e65cb9be51c261e"
+            "digest": "419fba51ca9d338e94ed76027b163ed426d940ecd823ce18b1c257d08f5ae066"
           },
           "authorities": [
             {
@@ -246,9 +247,9 @@
           ],
           "idempotency_key": "e25c15a7c5564217c78f8ee714a2af23682debd7ecd7bdbd5001a2793ea7773c"
         },
-        "request_digest": "72341d7afde52ca25a0c962177c1e21a7c6a48f342bbbbe884da3323b3762408"
+        "request_digest": "7716c4486f2742275ba972727378ae28203b0804daf0245792027d8ad8dbd819"
       }
     },
-    "decision_digest": "f90b5ec5b48edf3272dc4f9a635719a71b933f2ed2a27628f1a64cc092d5b538"
+    "decision_digest": "dd73a793e4dc4e136c1d4c1312c516bf8d884955fad09fa8c3f462b6b2278510"
   }
 }

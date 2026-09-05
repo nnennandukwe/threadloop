@@ -183,6 +183,7 @@ export const controllerInputSchema = z.strictObject({
       .strictObject({
         branch: text.nullable(),
         clean: z.boolean(),
+        change_scope: z.enum(['within_plan', 'outside_plan', 'unknown']),
         basis: repositorySubject.nullable(),
         relationship: z.enum(['equal', 'descendant', 'unrelated', 'unknown']),
       })
@@ -216,6 +217,7 @@ export const controllerInputSchema = z.strictObject({
     rules: z.strictObject({
       selection: z.literal('threadloop.remedies/0.1'),
       proof_plan: identity.nullable(),
+      proof_binding_transition_id: identifier.nullable(),
       repository_binding: z.strictObject({ branch: text, baseline: repositorySubject }).nullable(),
       publication_destination: text.nullable(),
       local_gate_ids: references,

@@ -1079,7 +1079,7 @@ describe('Repair recovery and executor-only claims', () => {
 
 describe('Repair commit authority', () => {
   it('requires the active repair admission for commit work on the committed-repair guard', async () => {
-    const fixture = await readExample('admitted_repair');
+    const fixture = await readExample('commit_admitted_repair');
     if (fixture.input.history.status !== 'verified' || fixture.intent === null)
       throw new Error('Expected repair fixture');
     const admission = fixture.input.history.repair_admission;
@@ -1088,5 +1088,98 @@ describe('Repair commit authority', () => {
     expect(buildActionRequest(fixture.input, intent).ok).toBe(false);
     fixture.input.history.repair_admission = admission;
     expect(buildActionRequest(fixture.input, intent).ok).toBe(true);
+  });
+});
+
+describe('Engineering prerequisites', () => {
+  it('rejects repair and setup interventions justified only by an unconfigured gate', async () => {
+    for (const name of ['admitted_repair', 'setup_failure_handoff']) {
+      const fixture = await readExample(name);
+      const local = fixture.input.receipts.find((receipt) => receipt.payload.type === 'local_proof')!;
+      if (local.payload.type !== 'local_proof') throw new Error('Expected local proof');
+      local.payload.gate_id = 'unconfigured_gate';
+      local.payload_digest = sha256(canonicalJson(local.payload));
+      expect(buildActionRequest(fixture.input, fixture.intent).ok, name).toBe(false);
+    }
+  });
+
+  it('does not offer commit work on a clean unchanged admitted repair', async () => {
+    const fixture = await readExample('admitted_repair');
+    if (fixture.intent === null) throw new Error('Expected repair intent');
+    expect(buildActionRequest(fixture.input, { ...fixture.intent, action_id: 'commit' }).ok).toBe(false);
+  });
+
+  it('requires retained proof-plan binding for local proof work and later review advancement', async () => {
+    const input = await controllerSnapshot();
+    if (input.history.status !== 'verified') throw new Error('Expected history');
+    input.history.proof_plan_bound = false;
+    expect(buildActionRequest(input, localProofIntent(input)).ok).toBe(false);
+    const fixture = await readExample('transition_available');
+    if (fixture.input.history.status !== 'verified') throw new Error('Expected history');
+    fixture.input.history.proof_plan_bound = false;
+    expect(
+      validateControllerDecision(fixture.input, decisionEnvelope(fixture.input, fixture.expected.decision)).ok,
+    ).toBe(false);
+  });
+});
+
+describe('Scoped commit and binding entry', () => {
+  it('requires commit scope, ancestry, changed content, and the declared basis input', async () => {
+    for (const drift of ['scope', 'basis', 'ancestry', 'content', 'input'] as const) {
+      const fixture = await readExample('commit_admitted_repair');
+      if (fixture.input.history.status !== 'verified' || !fixture.input.observation.repository || !fixture.intent)
+        throw new Error('Expected commit fixture');
+      if (drift === 'scope') fixture.input.observation.repository.change_scope = 'outside_plan';
+      if (drift === 'basis') fixture.input.history.implementation_basis = null;
+      if (drift === 'ancestry') fixture.input.observation.repository.relationship = 'unknown';
+      if (drift === 'content') {
+        fixture.input.binding.subject = fixture.input.history.implementation_basis!;
+        fixture.input.observation.subject = fixture.input.binding.subject;
+      }
+      if (drift === 'input')
+        fixture.intent.inputs = fixture.intent.inputs.filter((item) => item.role !== 'implementation_basis');
+      expect(buildActionRequest(fixture.input, fixture.intent).ok, drift).toBe(false);
+    }
+  });
+
+  it('limits clean-baseline bootstrap to the declared binding transition', async () => {
+    const fixture = await readExample('transition_available');
+    if (fixture.input.history.status !== 'verified') throw new Error('Expected history');
+    fixture.input.binding.source_state = 'verifying';
+    fixture.input.history.proof_plan_bound = false;
+    const edge = fixture.input.compiled_graph.graph.transitions.find((edge) => edge.id === 'return_to_review')!;
+    const checks = edge.guard_refs.map((guard_id) => ({
+      guard_id,
+      evidence_ids: guard_id === 'local_pass' ? ['local_b'] : guard_id === 'independent' ? ['independent_b'] : [],
+    }));
+    expect(
+      validateControllerDecision(
+        fixture.input,
+        decisionEnvelope(fixture.input, {
+          outcome: 'transition_available',
+          transition_id: edge.id,
+          target_state: edge.to,
+          checks,
+        }),
+      ).ok,
+    ).toBe(false);
+    fixture.input.policy.rules.proof_binding_transition_id = 'unknown_transition';
+    fixture.input.policy.digest = sha256(canonicalJson(fixture.input.policy.rules));
+    const result = validateControllerInput(fixture.input);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.diagnostics.map((item) => item.code)).toContain('INVALID_PROOF_BINDING_ENTRY');
+  });
+
+  it('does not let an unconfigured setup failure veto an admitted repair', async () => {
+    const fixture = await readExample('admitted_repair');
+    if (!fixture.intent) throw new Error('Expected repair fixture');
+    const unrelated = structuredClone(fixture.input.receipts[0]!);
+    unrelated.id = 'unrelated_setup';
+    unrelated.sequence = 2;
+    unrelated.payload = { type: 'local_proof', gate_id: 'unconfigured_gate', result: 'setup_failed', clean: true };
+    unrelated.payload_digest = sha256(canonicalJson(unrelated.payload));
+    fixture.input.receipts.push(unrelated);
+    fixture.intent.evidence_ids.push(unrelated.id);
+    expect(buildActionRequest(fixture.input, fixture.intent).ok).toBe(true);
   });
 });
