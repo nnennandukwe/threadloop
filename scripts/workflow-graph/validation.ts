@@ -34,17 +34,20 @@ export function validateTopology(profile: WorkflowProfile): Diagnostic[] {
   const guards = new Map(profile.guards.map((guard) => [guard.id, guard]));
   const actions = new Map(profile.required_actions.map((action) => [action.id, action]));
   const budgets = new Map((profile.budgets ?? []).map((budget) => [budget.id, budget]));
+  function ref(value: string, known: ReadonlyMap<string, unknown>, path: string) {
+    if (!known.has(value))
+      report(
+        'UNKNOWN_REFERENCE',
+        path,
+        value,
+        'Reference has no declaration.',
+        'Declare the referenced identifier or correct this reference.',
+      );
+  }
   function refs(values: readonly string[], known: ReadonlyMap<string, unknown>, path: string) {
     const seen = new Set<string>();
     values.forEach((value, index) => {
-      if (!known.has(value))
-        report(
-          'UNKNOWN_REFERENCE',
-          `${path}[${index}]`,
-          value,
-          'Reference has no declaration.',
-          'Declare the referenced identifier or correct this reference.',
-        );
+      ref(value, known, `${path}[${index}]`);
       if (seen.has(value))
         report(
           'DUPLICATE_REFERENCE',
@@ -56,13 +59,13 @@ export function validateTopology(profile: WorkflowProfile): Diagnostic[] {
       seen.add(value);
     });
   }
-  refs([profile.initial_state], states, '$.initial_state');
+  ref(profile.initial_state, states, '$.initial_state');
   profile.states.forEach((state, index) => {
-    if (state.kind === 'suspended') refs([state.handoff], actions, `$.states[${index}].handoff`);
+    if (state.kind === 'suspended') ref(state.handoff, actions, `$.states[${index}].handoff`);
   });
   profile.transitions.forEach((edge, index) => {
-    refs([edge.from], states, `$.transitions[${index}].from`);
-    refs([edge.to], states, `$.transitions[${index}].to`);
+    ref(edge.from, states, `$.transitions[${index}].from`);
+    ref(edge.to, states, `$.transitions[${index}].to`);
     refs(edge.guard_refs, guards, `$.transitions[${index}].guard_refs`);
     if (new Set(edge.authority).size !== edge.authority.length)
       report(
@@ -76,9 +79,9 @@ export function validateTopology(profile: WorkflowProfile): Diagnostic[] {
   profile.guards.forEach((guard, index) => {
     refs(guard.required_actions ?? [], actions, `$.guards[${index}].required_actions`);
     if (guard.capability === 'budget_available')
-      refs([guard.parameters.budget], budgets, `$.guards[${index}].parameters.budget`);
+      ref(guard.parameters.budget, budgets, `$.guards[${index}].parameters.budget`);
     if (guard.capability === 'recorded_prior_state')
-      refs([guard.parameters.state], states, `$.guards[${index}].parameters.state`);
+      ref(guard.parameters.state, states, `$.guards[${index}].parameters.state`);
     if (guard.capability === 'phase' && !profile.phase_policy)
       report(
         'PHASE_POLICY_REQUIRED',
@@ -96,11 +99,20 @@ export function validateTopology(profile: WorkflowProfile): Diagnostic[] {
     const path = `$.cycle_controls[${index}]`;
     refs(control.exit_transition_refs, edges, `${path}.exit_transition_refs`);
     if ('state_refs' in control) refs(control.state_refs, states, `${path}.state_refs`);
-    if (control.kind === 'budget') refs([control.budget], budgets, `${path}.budget`);
-    if (control.kind === 'guard_stop') refs([control.guard], guards, `${path}.guard`);
+    if (control.kind === 'budget') ref(control.budget, budgets, `${path}.budget`);
+    if (control.kind === 'guard_stop') ref(control.guard, guards, `${path}.guard`);
   });
   if (errors.length) return errors;
 
+  if (states.get(profile.initial_state)?.kind !== 'active') {
+    report(
+      'INVALID_INITIAL_STATE',
+      '$.initial_state',
+      profile.initial_state,
+      'A run must start in an active state.',
+      'Require a guarded transition before suspension or completion.',
+    );
+  }
   const reachable = reach([profile.initial_state], profile.transitions);
   const terminals = profile.states.filter((state) => state.kind === 'terminal').map((state) => state.id);
   const canFinish = reach(
@@ -201,7 +213,8 @@ export function validateTopology(profile: WorkflowProfile): Diagnostic[] {
       );
     if (
       states.get(edge.from)?.kind === 'suspended' &&
-      (!edge.authority.includes('human') ||
+      (states.get(edge.to)?.kind !== 'active' ||
+        !edge.authority.includes('human') ||
         !conditions.some((guard) => guard.capability === 'human_approval' && guard.parameters.scope === 'recovery') ||
         !conditions.some((guard) => guard.capability === 'recorded_prior_state' && guard.parameters.state === edge.to))
     ) {
@@ -209,8 +222,8 @@ export function validateTopology(profile: WorkflowProfile): Diagnostic[] {
         'RECOVERY_AUTHORITY_REQUIRED',
         path,
         edge.id,
-        'Recovery requires human approval and the recorded prior target.',
-        'Require recovery approval and a recorded_prior_state guard matching this target.',
+        'Recovery requires human approval and an active recorded prior target.',
+        'Target an active state and require recovery approval plus a matching recorded_prior_state guard.',
       );
     }
     for (const condition of conditions) {

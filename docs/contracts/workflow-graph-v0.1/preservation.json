@@ -1,0 +1,262 @@
+{
+  "inspected_commit": "134b9a58c652a05fd9e6fa5181d96b5d248a4cc1",
+  "requirements": [
+    {
+      "id": "all_states",
+      "guard_refs": [],
+      "transition_refs": [],
+      "budget_refs": [],
+      "runtime_obligation": "Preserve all eleven current state identifiers and existing session meanings.",
+      "future_conformance_issue": 108
+    },
+    {
+      "id": "monotonic_phase",
+      "guard_refs": ["pre", "post"],
+      "transition_refs": ["enter_review"],
+      "budget_refs": [],
+      "runtime_obligation": "Derive phase from history and audit genesis; blocked recovery never regresses post_pr.",
+      "future_conformance_issue": 108
+    },
+    {
+      "id": "pre_pr_review_boundary",
+      "guard_refs": ["pre", "review_clean", "local_pass", "independent"],
+      "transition_refs": ["enter_pre_pr_review", "enter_review"],
+      "budget_refs": [],
+      "runtime_obligation": "No pre-PR path directly enters reviewing from verifying.",
+      "future_conformance_issue": 108
+    },
+    {
+      "id": "post_pr_implementation_boundary",
+      "guard_refs": ["pre", "post"],
+      "transition_refs": ["retry_failed_proof", "retry_review_changes", "repair_failed_proof"],
+      "budget_refs": [],
+      "runtime_obligation": "Post-PR changes enter repairing rather than reentering implementing.",
+      "future_conformance_issue": 108
+    },
+    {
+      "id": "current_subject_evidence",
+      "guard_refs": [
+        "plan",
+        "baseline",
+        "checkout",
+        "work_committed",
+        "repair_committed",
+        "local_pass",
+        "local_fail",
+        "independent",
+        "review_clean",
+        "review_changes",
+        "review_current",
+        "review_set"
+      ],
+      "transition_refs": ["complete"],
+      "budget_refs": [],
+      "runtime_obligation": "Every relevant observation and receipt binds the current subject and immutable policy. New commits stale previous proof, review, and approval.",
+      "future_conformance_issue": 108
+    },
+    {
+      "id": "provider_boundary",
+      "guard_refs": ["independent", "review_current", "merged"],
+      "transition_refs": [],
+      "budget_refs": [],
+      "runtime_obligation": "Adapters validate Git, GitHub, GitHub Actions, Sigstore, and in-toto details before supplying provider-neutral evidence. Mechanical observations never invent semantic entries.",
+      "future_conformance_issue": 108
+    },
+    {
+      "id": "setup_failure",
+      "guard_refs": ["local_fail"],
+      "transition_refs": ["repair_failed_proof"],
+      "budget_refs": ["repair_entries"],
+      "runtime_obligation": "setup_failed is not failed proof, never authorizes code repair, and consumes no repair entry.",
+      "future_conformance_issue": 108
+    },
+    {
+      "id": "repair_budget",
+      "guard_refs": ["repair_available"],
+      "transition_refs": ["repair_failed_proof", "repair_review", "repair_late_review"],
+      "budget_refs": ["repair_entries"],
+      "runtime_obligation": "Count every accepted listed transition across run history, including legacy pre_pr entries. Three entries are allowed; the third may finish, but a fourth is denied. No reset on recovery.",
+      "future_conformance_issue": 108
+    },
+    {
+      "id": "blocked_recovery",
+      "guard_refs": ["block", "recovery"],
+      "transition_refs": ["block_verifying", "resume_verifying"],
+      "budget_refs": [],
+      "runtime_obligation": "Entering blocked requires explicit evidence and records the prior state. Recovery requires human evidence and exact prior-state equality.",
+      "future_conformance_issue": 108
+    },
+    {
+      "id": "completion_terminal",
+      "guard_refs": ["approval", "merged", "review_clear", "review_set"],
+      "transition_refs": ["complete"],
+      "budget_refs": [],
+      "runtime_obligation": "Same-subject non-bot human approval and observed merge are both required. Completed has no outgoing transitions.",
+      "future_conformance_issue": 108
+    },
+    {
+      "id": "audit_idempotency",
+      "guard_refs": [],
+      "transition_refs": [],
+      "budget_refs": [],
+      "runtime_obligation": "Retain expected-state-version checking and exact idempotent replay. Transition, history, active projection, outcome, and audit append remain atomic; guard rejection records one idempotent decision. Preserve genesis, append-only records, and fail-closed ledger verification.",
+      "future_conformance_issue": 108
+    },
+    {
+      "id": "existing_sessions",
+      "guard_refs": [],
+      "transition_refs": [],
+      "budget_refs": [],
+      "runtime_obligation": "No migration or reinterpretation of SQLite schema v8, legacy proof plans, or existing receipts. Storage evolution belongs to #85 and persisted run identity to #86. Workflow main/origin defaults and one task per worktree remain caller/profile policy, distinct from proof-plan baselineBranch.",
+      "future_conformance_issue": 108
+    }
+  ],
+  "required_work": [
+    {
+      "code": "RESTORE_PROOF_AUTHORITY",
+      "action": "restore_authority"
+    },
+    {
+      "code": "IMPLEMENT_ISSUE_40",
+      "action": "restore_authority"
+    },
+    {
+      "code": "RESTORE_PROOF_BASELINE",
+      "action": "restore_checkout"
+    },
+    {
+      "code": "COMMIT_IMPLEMENTATION",
+      "action": "commit"
+    },
+    {
+      "code": "RECORD_PRE_PR_REVIEW_OUTCOME",
+      "action": "pre_pr_review"
+    },
+    {
+      "code": "RESTORE_PROOF_CHECKOUT",
+      "action": "restore_checkout"
+    },
+    {
+      "code": "COMPLETE_CURRENT_PROOF",
+      "action": "run_gates"
+    },
+    {
+      "code": "RUN_MISSING_GATES",
+      "action": "run_gates"
+    },
+    {
+      "code": "RERUN_STALE_GATES",
+      "action": "run_gates"
+    },
+    {
+      "code": "RERUN_CORRUPT_GATES",
+      "action": "restore_evidence"
+    },
+    {
+      "code": "CORRECT_GATE_SETUP",
+      "action": "correct_setup"
+    },
+    {
+      "code": "START_SESSION_WITH_CI_POLICY",
+      "action": "bind_plan"
+    },
+    {
+      "code": "IMPORT_SIGNED_CI_PROOF",
+      "action": "independent_proof"
+    },
+    {
+      "code": "RERUN_AND_IMPORT_CI_PROOF",
+      "action": "independent_proof"
+    },
+    {
+      "code": "RESTORE_SIGNED_CI_PROOF",
+      "action": "restore_evidence"
+    },
+    {
+      "code": "TRANSITION_TO_BLOCKED",
+      "action": "block"
+    },
+    {
+      "code": "RUN_CURRENT_GATES",
+      "action": "run_gates"
+    },
+    {
+      "code": "COMMIT_REPAIR",
+      "action": "commit"
+    },
+    {
+      "code": "START_SESSION_WITH_REVIEW_POLICY",
+      "action": "bind_plan"
+    },
+    {
+      "code": "IMPORT_SIGNED_REVIEW_PROOF",
+      "action": "review_evidence"
+    },
+    {
+      "code": "REFRESH_SIGNED_REVIEW_PROOF",
+      "action": "review_evidence"
+    },
+    {
+      "code": "RESTORE_SIGNED_REVIEW_PROOF",
+      "action": "restore_evidence"
+    },
+    {
+      "code": "ENTER_REVIEW_REPAIR",
+      "action": "repair"
+    },
+    {
+      "code": "REFRESH_REVIEW_PROOF_SET",
+      "action": "review_evidence"
+    },
+    {
+      "code": "OBTAIN_CURRENT_HUMAN_APPROVAL",
+      "action": "approve"
+    },
+    {
+      "code": "MERGE_AND_REFRESH_REVIEW_PROOF",
+      "action": "merge"
+    },
+    {
+      "code": "PROVIDE_BLOCK_EVIDENCE",
+      "action": "block"
+    },
+    {
+      "code": "PROVIDE_RECOVERY_EVIDENCE",
+      "action": "recover"
+    },
+    {
+      "code": "RESTORE_BLOCKED_PRIOR_STATE",
+      "action": "recover"
+    }
+  ],
+  "receipt_families": [
+    {
+      "family": "proof_plan",
+      "guard_refs": ["plan"]
+    },
+    {
+      "family": "local_gate",
+      "guard_refs": ["local_pass", "local_fail"]
+    },
+    {
+      "family": "independent_proof",
+      "guard_refs": ["independent"]
+    },
+    {
+      "family": "pre_pr_review",
+      "guard_refs": ["review_clean", "review_changes"]
+    },
+    {
+      "family": "signed_review",
+      "guard_refs": ["review_current", "review_set", "approval", "merged"]
+    },
+    {
+      "family": "repository_observation",
+      "guard_refs": ["baseline", "checkout", "work_committed", "repair_committed"]
+    },
+    {
+      "family": "audit_event",
+      "guard_refs": []
+    }
+  ]
+}

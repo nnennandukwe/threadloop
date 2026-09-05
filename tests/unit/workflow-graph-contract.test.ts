@@ -1,14 +1,244 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { Ajv2020 } from 'ajv/dist/2020.js';
 import { describe, expect, it } from 'vitest';
-import { stringify } from 'yaml';
+import { parse, stringify } from 'yaml';
 import { parseWorkflowProfile } from '../../scripts/workflow-graph/parser.js';
 import { publishedSchemas, type WorkflowProfile } from '../../scripts/workflow-graph/contracts.js';
 import { compileWorkflowProfile, validateGraphBinding } from '../../scripts/workflow-graph/compiler.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
 import { z } from 'zod';
+import { TASK_STATUS_VALUES } from '../../src/domain/types.js';
+import { isForwardLifecycleTransition, REPAIR_ENTRY_STATES } from '../../src/domain/lifecycle.js';
 
 const bundle = new URL('../../docs/contracts/workflow-graph-v0.1/', import.meta.url);
+
+async function readProfile(name: string) {
+  const result = parseWorkflowProfile(await readFile(new URL(`fixtures/valid/${name}.yaml`, bundle), 'utf8'));
+  if (!result.ok) throw new Error(JSON.stringify(result.diagnostics));
+  return result.value;
+}
+
+describe('Governed PR preservation', () => {
+  it('keeps proof, phase, review, and human boundaries on every ordinary edge', async () => {
+    const profile = await readProfile('governed-pr');
+    const requirements: Record<string, string[]> = {
+      frame: [],
+      bind_plan: ['plan'],
+      begin_implementation: ['plan', 'baseline'],
+      verify_implementation: ['plan', 'work_committed'],
+      retry_failed_proof: ['plan', 'pre', 'checkout', 'local_fail'],
+      retry_review_changes: ['plan', 'pre', 'checkout', 'review_changes'],
+      enter_pre_pr_review: ['plan', 'pre', 'checkout', 'local_pass', 'independent'],
+      return_to_review: ['plan', 'post', 'checkout', 'local_pass', 'independent'],
+      repair_failed_proof: ['plan', 'post', 'local_fail', 'repair_available'],
+      address_pre_pr_review: ['plan', 'pre', 'checkout', 'review_changes'],
+      enter_review: ['plan', 'pre', 'checkout', 'review_clean', 'local_pass', 'independent'],
+      repair_review: ['review_current', 'review_blocking', 'repair_available'],
+      human_handoff: ['review_current', 'review_clear', 'review_set'],
+      verify_repair: ['plan', 'repair_committed'],
+      repair_late_review: ['review_current', 'review_blocking', 'repair_available'],
+      complete: ['review_current', 'review_clear', 'review_set', 'approval', 'merged'],
+    };
+    const ordinary = profile.transitions.filter((edge) => edge.from !== 'blocked' && edge.to !== 'blocked');
+    expect(ordinary.map((edge) => edge.id).sort()).toEqual(Object.keys(requirements).sort());
+    for (const edge of ordinary)
+      expect([...edge.guard_refs].sort(), edge.id).toEqual([...requirements[edge.id]!].sort());
+    const expectedParameters: Record<string, { capability: string; parameters: object }> = {
+      plan: { capability: 'proof_plan_bound', parameters: {} },
+      baseline: { capability: 'repository', parameters: { condition: 'baseline_matches' } },
+      work_committed: { capability: 'repository', parameters: { condition: 'clean_descendant' } },
+      checkout: { capability: 'repository', parameters: { condition: 'clean_plan_branch' } },
+      repair_committed: { capability: 'repository', parameters: { condition: 'committed_repair' } },
+      pre: { capability: 'phase', parameters: { value: 'pre_pr' } },
+      post: { capability: 'phase', parameters: { value: 'post_pr' } },
+      local_pass: { capability: 'local_proof', parameters: { result: 'passed' } },
+      local_fail: { capability: 'local_proof', parameters: { result: 'failed' } },
+      independent: { capability: 'independent_proof', parameters: {} },
+      review_changes: { capability: 'pre_pr_review', parameters: { outcome: 'changes_required' } },
+      review_clean: { capability: 'pre_pr_review', parameters: { outcome: 'clean' } },
+      review_current: { capability: 'review', parameters: { condition: 'current' } },
+      review_blocking: { capability: 'review', parameters: { condition: 'blocking' } },
+      review_clear: { capability: 'review', parameters: { condition: 'clear' } },
+      review_set: { capability: 'review', parameters: { condition: 'proof_set_current' } },
+      repair_available: { capability: 'budget_available', parameters: { budget: 'repair_entries' } },
+      approval: { capability: 'human_approval', parameters: { scope: 'current_subject' } },
+      merged: { capability: 'completion_observed', parameters: { kind: 'merge' } },
+    };
+    for (const [id, expected] of Object.entries(expectedParameters))
+      expect(
+        profile.guards.find((guard) => guard.id === id),
+        id,
+      ).toMatchObject(expected);
+  });
+
+  it('retains blocking and recorded-prior-state recovery for every active state', async () => {
+    const profile = await readProfile('governed-pr');
+    for (const state of profile.states.filter((candidate) => candidate.kind === 'active')) {
+      expect(profile.transitions.find((edge) => edge.from === state.id && edge.to === 'blocked')).toMatchObject({
+        guard_refs: ['block'],
+      });
+      expect(profile.transitions.find((edge) => edge.from === 'blocked' && edge.to === state.id)).toMatchObject({
+        guard_refs: ['recovery', `prior_${state.id}`],
+        authority: ['threadloop', 'human'],
+      });
+      expect(profile.guards.find((guard) => guard.id === `prior_${state.id}`)).toMatchObject({
+        capability: 'recorded_prior_state',
+        parameters: { state: state.id },
+      });
+    }
+    expect(profile.transitions.filter((edge) => edge.from === 'completed')).toEqual([]);
+    expect(profile.cycle_controls).toContainEqual({
+      id: 'pre_pr_escape',
+      kind: 'human_escape',
+      state_refs: ['implementing', 'verifying', 'pre_pr_reviewing'],
+      exit_transition_refs: ['block_implementing', 'block_verifying', 'block_pre_pr_reviewing'],
+    });
+  });
+
+  it('maps every preservation requirement, required-work code, and receipt family to an explicit contract', async () => {
+    const profile = await readProfile('governed-pr');
+    const manifestSchema = z.strictObject({
+      inspected_commit: z.string().regex(/^[a-f0-9]{40}$/),
+      requirements: z.array(
+        z.strictObject({
+          id: z.string(),
+          guard_refs: z.array(z.string()),
+          transition_refs: z.array(z.string()),
+          budget_refs: z.array(z.string()),
+          runtime_obligation: z.string().min(1),
+          future_conformance_issue: z.literal(108),
+        }),
+      ),
+      required_work: z.array(z.strictObject({ code: z.string(), action: z.string() })),
+      receipt_families: z.array(z.strictObject({ family: z.string(), guard_refs: z.array(z.string()) })),
+    });
+    const raw: unknown = JSON.parse(await readFile(new URL('preservation.json', bundle), 'utf8'));
+    const manifest = manifestSchema.parse(raw);
+    expect(manifest.requirements.map((item) => item.id)).toEqual([
+      'all_states',
+      'monotonic_phase',
+      'pre_pr_review_boundary',
+      'post_pr_implementation_boundary',
+      'current_subject_evidence',
+      'provider_boundary',
+      'setup_failure',
+      'repair_budget',
+      'blocked_recovery',
+      'completion_terminal',
+      'audit_idempotency',
+      'existing_sessions',
+    ]);
+    for (const item of manifest.requirements) {
+      for (const ref of item.guard_refs)
+        expect(
+          profile.guards.some((guard) => guard.id === ref),
+          item.id,
+        ).toBe(true);
+      for (const ref of item.transition_refs)
+        expect(
+          profile.transitions.some((edge) => edge.id === ref),
+          item.id,
+        ).toBe(true);
+      for (const ref of item.budget_refs)
+        expect(
+          profile.budgets?.some((budget) => budget.id === ref),
+          item.id,
+        ).toBe(true);
+    }
+    const mapping = await readFile(new URL('../../docs/current-lifecycle-graph-mapping.md', import.meta.url), 'utf8');
+    const table =
+      mapping.split('## Guard And Required Work Mapping')[1]?.split('## Receipt And Observation Mapping')[0] ?? '';
+    const mappedCodes = [
+      ...new Set(
+        table
+          .split('\n')
+          .filter((line) => line.startsWith('|'))
+          .flatMap((line) => [...(line.split('|')[3] ?? '').matchAll(/`([A-Z][A-Z0-9_]+)`/g)].map((match) => match[1])),
+      ),
+    ].sort();
+    expect(mappedCodes.length).toBeGreaterThan(20);
+    expect(manifest.required_work.map((item) => item.code).sort()).toEqual(mappedCodes);
+    for (const item of manifest.required_work)
+      expect(
+        profile.required_actions.some((action) => action.id === item.action),
+        item.code,
+      ).toBe(true);
+    expect(manifest.receipt_families.map((item) => item.family)).toEqual([
+      'proof_plan',
+      'local_gate',
+      'independent_proof',
+      'pre_pr_review',
+      'signed_review',
+      'repository_observation',
+      'audit_event',
+    ]);
+    for (const item of manifest.receipt_families)
+      for (const ref of item.guard_refs)
+        expect(
+          profile.guards.some((guard) => guard.id === ref),
+          item.family,
+        ).toBe(true);
+  });
+  it('maps all current states and structural forward transitions', async () => {
+    const profile = await readProfile('governed-pr');
+    expect(profile.states.map((state) => state.id).sort()).toEqual([...TASK_STATUS_VALUES].sort());
+    const expected = TASK_STATUS_VALUES.flatMap((from) =>
+      TASK_STATUS_VALUES.filter((to) => isForwardLifecycleTransition(from, to)).map((to) => `${from}:${to}`),
+    ).sort();
+    const mapped = [
+      ...new Set(
+        profile.transitions
+          .filter((edge) => edge.from !== 'blocked' && edge.to !== 'blocked')
+          .map((edge) => `${edge.from}:${edge.to}`),
+      ),
+    ].sort();
+    expect(mapped).toEqual(expected);
+  });
+
+  it('retains monotonic history phases and the exact counted repair entries', async () => {
+    const profile = await readProfile('governed-pr');
+    expect(profile.phase_policy).toEqual({
+      kind: 'entered_state',
+      initial: 'pre_pr',
+      advanced: 'post_pr',
+      monotonic: true,
+      include_audit_genesis: true,
+      state_refs: ['reviewing', 'ready_for_human', 'completed'],
+    });
+    expect(profile.budgets).toHaveLength(1);
+    const budget = profile.budgets?.[0];
+    expect(budget?.limit).toBe(3);
+    expect(
+      profile.transitions
+        .filter((edge) => budget?.transition_refs.includes(edge.id))
+        .map((edge) => `${edge.from}:${edge.to}`)
+        .sort(),
+    ).toEqual(REPAIR_ENTRY_STATES.map((state) => `${state}:repairing`).sort());
+  });
+
+  it('represents a distinct release and publication lifecycle without PR-specific capabilities', async () => {
+    const profile = await readProfile('release-to-publish');
+    expect(profile.states.map((state) => state.id)).toEqual([
+      'preparing',
+      'verifying',
+      'awaiting_approval',
+      'publishing',
+      'publication_check',
+      'blocked',
+      'completed',
+    ]);
+    expect(profile.phase_policy).toBeUndefined();
+    expect(
+      profile.guards.some(
+        (guard) =>
+          guard.capability === 'pre_pr_review' || guard.capability === 'phase' || guard.capability === 'review',
+      ),
+    ).toBe(false);
+    expect(profile.required_actions.map((action) => action.capability)).toEqual(
+      expect.arrayContaining(['prepare_release', 'verify_release', 'publish_release', 'verify_publication']),
+    );
+  });
+});
 
 describe('Published fixture corpus', () => {
   it('checks every valid YAML profile against fixed canonical bytes, schemas, digests, and binding', async () => {
@@ -41,6 +271,7 @@ describe('Published fixture corpus', () => {
   });
 
   it('checks every invalid YAML file for its specified rejection, without returning a graph', async () => {
+    const validator = new Ajv2020({ strict: true }).compile(publishedSchemas()['workflow-profile']!);
     const expectedSchema = z.array(z.strictObject({ file: z.string(), expected_code: z.string() }));
     const manifest: unknown = JSON.parse(await readFile(new URL('fixtures/invalid/expected.json', bundle), 'utf8'));
     const expected = expectedSchema.parse(manifest);
@@ -48,6 +279,12 @@ describe('Published fixture corpus', () => {
     expect(expected.map((item) => item.file).sort()).toEqual(files);
     for (const item of expected) {
       const source = await readFile(new URL(`fixtures/invalid/${item.file}`, bundle), 'utf8');
+      if (item.expected_code !== 'YAML_INVALID') {
+        const raw: unknown = parse(source);
+        const structurallyInvalid =
+          item.expected_code === 'SCHEMA_INVALID' || item.expected_code === 'UNSUPPORTED_VERSION';
+        expect(validator(raw), item.file).toBe(!structurallyInvalid);
+      }
       const result = compileWorkflowProfile(source);
       expect(result.ok, item.file).toBe(false);
       expect(result).not.toHaveProperty('value');
@@ -172,6 +409,28 @@ function cyclicProfile(): WorkflowProfile {
 }
 
 describe('Cycle control contracts', () => {
+  it('requires a run to begin in an active state', () => {
+    const profile = minimalProfile();
+    profile.initial_state = 'completed';
+    profile.states = [{ id: 'completed', kind: 'terminal' }];
+    profile.transitions = [];
+    expect(compile(profile).ok).toBe(false);
+  });
+
+  it('rejects recovery to another suspension rather than an active prior state', () => {
+    const profile = cyclicProfile();
+    profile.guards.push({ id: 'prior_block', capability: 'recorded_prior_state', parameters: { state: 'blocked' } });
+    profile.transitions.find((edge) => edge.id === 'resume')!.priority = 0;
+    profile.transitions.push({
+      id: 'resume_block',
+      from: 'blocked',
+      to: 'blocked',
+      priority: 1,
+      authority: ['threadloop', 'human'],
+      guard_refs: ['recovery', 'prior_block', 'block'],
+    });
+    expect(compile(profile).ok).toBe(false);
+  });
   it('allows repeated engineering work with an explicit human escape and guarded recovery', () => {
     expect(compile(cyclicProfile()).ok).toBe(true);
   });
@@ -280,6 +539,14 @@ describe('Graph identity', () => {
 });
 
 describe('Workflow graph static validation', () => {
+  it('locates a broken scalar reference at its actual document path', () => {
+    const profile = minimalProfile();
+    profile.transitions[0]!.to = 'absent';
+    expect(compile(profile)).toMatchObject({
+      ok: false,
+      diagnostics: [{ code: 'UNKNOWN_REFERENCE', path: '$.transitions[0].to', identifier: 'absent' }],
+    });
+  });
   it('compiles a complete profile without executing its capabilities', () => {
     expect(compileWorkflowProfile(stringify(minimalProfile())).ok).toBe(true);
   });

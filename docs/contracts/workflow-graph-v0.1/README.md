@@ -8,6 +8,7 @@ contracts do not enable graph execution in the shipped ThreadLoop CLI.
 - [Workflow Profile](schemas/workflow-profile.schema.json) describes the JSON-compatible data authored in YAML.
 - [Compiled Graph](schemas/compiled-graph.schema.json) describes the normalized graph and its separate SHA-256 digest.
 - [Graph binding](schemas/graph-binding.schema.json) describes the immutable graph identity required by a future run.
+- [Capability catalog](capabilities.md) defines the meaning of every registered guard and action.
 
 Strict Zod definitions in the development tooling produce Draft 2020-12 JSON schemas. Tests compare the checked-in
 schemas to those definitions and validate them with Ajv. Schema identifiers are stable identifiers, not network
@@ -79,8 +80,10 @@ merge or publication; terminal states have no outgoing edges. Suspended states r
 explicit block evidence on entry. Every recovery edge requires recovery approval and a `recorded_prior_state` guard
 whose target matches that edge. Recovery cannot reset budgets or phase history.
 
-Every state must be reachable from the initial state and have a structural terminal path. This is a topology guarantee,
-not a promise that evidence will arrive or that opaque guards eventually pass.
+A run starts in an active state; suspension and completion require guarded transitions. Recovery targets an active prior
+state, never another suspension or terminal state. Every state must be reachable from the initial state and have a
+structural terminal path. This is a topology guarantee, not a promise that evidence will arrive or that opaque guards
+eventually pass.
 
 Cycle controls have four closed forms:
 
@@ -122,3 +125,40 @@ Graph identity is separate from database schema capabilities and current protoco
 records, receipts, and audit history keep their meaning. [#85](https://github.com/nnennandukwe/threadloop/issues/85)
 owns storage evolution; [#86](https://github.com/nnennandukwe/threadloop/issues/86) owns persisted run/configuration
 identity. No storage migration, graph interpreter, scheduler, or Rust runtime is introduced here.
+
+## Example profiles and preservation evidence
+
+The [governed PR profile](fixtures/valid/governed-pr.yaml) maps the current default lifecycle inspected at
+`134b9a58c652a05fd9e6fa5181d96b5d248a4cc1`. Its lifecycle, proof, and review sources are unchanged from the baseline
+inspected by the [current lifecycle mapping](../../current-lifecycle-graph-mapping.md). All eleven states and every
+ordinary forward edge are checked against current exported domain definitions. Tests additionally pin the guard
+requirements, current subject requirements, phase policy, counted repair entries, and block/recovery edges.
+
+The pre-PR profile may repeat implementation, verification, and pre-PR review indefinitely with an explicit human
+escape. After review entry, failures use the three-entry repair budget. Counting includes historical legacy entries even
+if their derived phase is `pre_pr`. `setup_failed` requests setup correction, not repair. The third repair may finish
+verification and return to review; the fourth new repair entry is denied. Completion requires both same-subject human
+approval and observed merge.
+
+The [preservation manifest](preservation.json) maps every preservation-checklist item to graph declarations, capability
+requirements, or an explicit future-runtime obligation. It also maps every current `required_work` code and receipt
+family. Tests check references and compare required-work coverage to the existing mapping. A single Required Action is a
+capability mapping, not a complete sequence: `REFRESH_REVIEW_PROOF_SET`, for example, also requires local and
+independent proof as described by `review_set`. Legacy `IMPLEMENT_ISSUE_40` means restoring proof authority, not
+executing an issue-number action.
+
+Atomic state/version checks, exact replay, append-only audit integrity, current storage compatibility, and adapter trust
+validation are retained as mandatory runtime obligations. They are not proven by compiling a YAML file. Their executable
+controller conformance belongs to [#108](https://github.com/nnennandukwe/threadloop/issues/108). Workflow
+`main`/`origin` defaults and one task per checkout remain caller/profile policy; proof-plan `baselineBranch` remains the
+bound working branch. Existing sessions are not retroactively converted to graph runs.
+
+The [release-to-publish profile](fixtures/valid/release-to-publish.yaml) has a distinct artifact-based lifecycle:
+preparation, release verification, human approval, publication, publication verification, and completion. Failed release
+or publication verification can return to preparation twice, with an explicit human escape when work must stop. Artifact
+changes invalidate prior approval. This fixture has no PR phase policy or PR review capabilities and is
+specification-only; it does not publish anything.
+
+The [minimal release vector](fixtures/valid/minimal-release.yaml) provides a small independently inspectable
+canonicalization example. All three profiles, their bindings, and the [invalid corpus](fixtures/invalid/expected.json)
+are checked by the normal verification workflow.

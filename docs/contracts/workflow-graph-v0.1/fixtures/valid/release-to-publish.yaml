@@ -1,0 +1,313 @@
+schema_version: '0.1'
+description: 'Specification fixture only: release preparation, human approval, publication, and verified delivery.'
+profile:
+  id: release_to_publish
+  revision: 1
+initial_state: preparing
+states:
+  - id: preparing
+    kind: active
+  - id: verifying
+    kind: active
+  - id: awaiting_approval
+    kind: active
+  - id: publishing
+    kind: active
+  - id: publication_check
+    kind: active
+  - id: blocked
+    kind: suspended
+    handoff: recover
+  - id: completed
+    kind: terminal
+required_actions:
+  - id: prepare
+    capability: prepare_release
+    authority: executor
+    parameters: {}
+  - id: verify
+    capability: verify_release
+    authority: executor
+    parameters: {}
+  - id: approve
+    capability: approve_change
+    authority: human
+    parameters: {}
+  - id: publish
+    capability: publish_release
+    authority: executor
+    parameters: {}
+  - id: verify_publication
+    capability: verify_publication
+    authority: executor
+    parameters: {}
+  - id: block
+    capability: block_run
+    authority: human
+    parameters: {}
+  - id: recover
+    capability: recover_run
+    authority: human
+    parameters: {}
+guards:
+  - id: prepared
+    capability: artifact
+    parameters:
+      stage: release_prepared
+      result: passed
+    required_actions:
+      - prepare
+  - id: release_passed
+    capability: artifact
+    parameters:
+      stage: release_verified
+      result: passed
+    required_actions:
+      - verify
+  - id: release_failed
+    capability: artifact
+    parameters:
+      stage: release_verified
+      result: failed
+    required_actions:
+      - verify
+  - id: publication_passed
+    capability: artifact
+    parameters:
+      stage: publication_verified
+      result: passed
+    required_actions:
+      - verify_publication
+  - id: publication_failed
+    capability: artifact
+    parameters:
+      stage: publication_verified
+      result: failed
+    required_actions:
+      - verify_publication
+  - id: approval
+    capability: human_approval
+    parameters:
+      scope: current_subject
+    required_actions:
+      - approve
+  - id: published
+    capability: completion_observed
+    parameters:
+      kind: publication
+    required_actions:
+      - publish
+  - id: remediation_available
+    capability: budget_available
+    parameters:
+      budget: remediation_entries
+    required_actions:
+      - block
+  - id: block
+    capability: block_evidence
+    parameters: {}
+    required_actions:
+      - block
+  - id: recovery
+    capability: human_approval
+    parameters:
+      scope: recovery
+    required_actions:
+      - recover
+  - id: prior_preparing
+    capability: recorded_prior_state
+    parameters:
+      state: preparing
+    required_actions:
+      - recover
+  - id: prior_verifying
+    capability: recorded_prior_state
+    parameters:
+      state: verifying
+    required_actions:
+      - recover
+  - id: prior_awaiting_approval
+    capability: recorded_prior_state
+    parameters:
+      state: awaiting_approval
+    required_actions:
+      - recover
+  - id: prior_publishing
+    capability: recorded_prior_state
+    parameters:
+      state: publishing
+    required_actions:
+      - recover
+  - id: prior_publication_check
+    capability: recorded_prior_state
+    parameters:
+      state: publication_check
+    required_actions:
+      - recover
+transitions:
+  - id: verify_release
+    from: preparing
+    to: verifying
+    guard_refs:
+      - prepared
+    priority: 10
+    authority:
+      - threadloop
+  - id: request_approval
+    from: verifying
+    to: awaiting_approval
+    guard_refs:
+      - release_passed
+    priority: 10
+    authority:
+      - threadloop
+  - id: repair_release
+    from: verifying
+    to: preparing
+    guard_refs:
+      - release_failed
+      - remediation_available
+    priority: 20
+    authority:
+      - threadloop
+  - id: authorize_publication
+    from: awaiting_approval
+    to: publishing
+    guard_refs:
+      - release_passed
+      - approval
+    priority: 10
+    authority:
+      - threadloop
+      - human
+  - id: check_publication
+    from: publishing
+    to: publication_check
+    guard_refs:
+      - published
+    priority: 10
+    authority:
+      - threadloop
+  - id: complete
+    from: publication_check
+    to: completed
+    guard_refs:
+      - publication_passed
+      - published
+      - approval
+    priority: 10
+    authority:
+      - threadloop
+      - human
+  - id: repair_publication
+    from: publication_check
+    to: preparing
+    guard_refs:
+      - publication_failed
+      - remediation_available
+    priority: 20
+    authority:
+      - threadloop
+  - id: block_preparing
+    from: preparing
+    to: blocked
+    guard_refs:
+      - block
+    priority: 0
+    authority:
+      - threadloop
+  - id: resume_preparing
+    from: blocked
+    to: preparing
+    guard_refs:
+      - recovery
+      - prior_preparing
+    priority: 0
+    authority:
+      - threadloop
+      - human
+  - id: block_verifying
+    from: verifying
+    to: blocked
+    guard_refs:
+      - block
+    priority: 0
+    authority:
+      - threadloop
+  - id: resume_verifying
+    from: blocked
+    to: verifying
+    guard_refs:
+      - recovery
+      - prior_verifying
+    priority: 1
+    authority:
+      - threadloop
+      - human
+  - id: block_awaiting_approval
+    from: awaiting_approval
+    to: blocked
+    guard_refs:
+      - block
+    priority: 0
+    authority:
+      - threadloop
+  - id: resume_awaiting_approval
+    from: blocked
+    to: awaiting_approval
+    guard_refs:
+      - recovery
+      - prior_awaiting_approval
+    priority: 2
+    authority:
+      - threadloop
+      - human
+  - id: block_publishing
+    from: publishing
+    to: blocked
+    guard_refs:
+      - block
+    priority: 0
+    authority:
+      - threadloop
+  - id: resume_publishing
+    from: blocked
+    to: publishing
+    guard_refs:
+      - recovery
+      - prior_publishing
+    priority: 3
+    authority:
+      - threadloop
+      - human
+  - id: block_publication_check
+    from: publication_check
+    to: blocked
+    guard_refs:
+      - block
+    priority: 0
+    authority:
+      - threadloop
+  - id: resume_publication_check
+    from: blocked
+    to: publication_check
+    guard_refs:
+      - recovery
+      - prior_publication_check
+    priority: 4
+    authority:
+      - threadloop
+      - human
+budgets:
+  - id: remediation_entries
+    limit: 2
+    transition_refs:
+      - repair_release
+      - repair_publication
+cycle_controls:
+  - id: bounded_remediation
+    kind: budget
+    budget: remediation_entries
+    exit_transition_refs:
+      - block_verifying
+      - block_publication_check

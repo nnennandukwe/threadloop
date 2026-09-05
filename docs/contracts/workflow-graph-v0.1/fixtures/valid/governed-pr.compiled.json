@@ -1,0 +1,702 @@
+{
+  "graph": {
+    "schema_version": "0.1",
+    "capability_catalog": "threadloop.sdlc/0.1",
+    "profile": {
+      "id": "governed_pr",
+      "revision": 1
+    },
+    "initial_state": "queued",
+    "states": [
+      {
+        "id": "blocked",
+        "kind": "suspended",
+        "handoff": "recover"
+      },
+      {
+        "id": "completed",
+        "kind": "terminal"
+      },
+      {
+        "id": "framed",
+        "kind": "active"
+      },
+      {
+        "id": "implementing",
+        "kind": "active"
+      },
+      {
+        "id": "pre_pr_reviewing",
+        "kind": "active"
+      },
+      {
+        "id": "proof_ready",
+        "kind": "active"
+      },
+      {
+        "id": "queued",
+        "kind": "active"
+      },
+      {
+        "id": "ready_for_human",
+        "kind": "active"
+      },
+      {
+        "id": "repairing",
+        "kind": "active"
+      },
+      {
+        "id": "reviewing",
+        "kind": "active"
+      },
+      {
+        "id": "verifying",
+        "kind": "active"
+      }
+    ],
+    "transitions": [
+      {
+        "id": "address_pre_pr_review",
+        "from": "pre_pr_reviewing",
+        "to": "implementing",
+        "guard_refs": ["checkout", "plan", "pre", "review_changes"],
+        "authority": ["threadloop"],
+        "priority": 10
+      },
+      {
+        "id": "begin_implementation",
+        "from": "proof_ready",
+        "to": "implementing",
+        "guard_refs": ["baseline", "plan"],
+        "authority": ["threadloop"],
+        "priority": 10
+      },
+      {
+        "id": "bind_plan",
+        "from": "framed",
+        "to": "proof_ready",
+        "guard_refs": ["plan"],
+        "authority": ["threadloop"],
+        "priority": 10
+      },
+      {
+        "id": "block_framed",
+        "from": "framed",
+        "to": "blocked",
+        "guard_refs": ["block"],
+        "authority": ["threadloop"],
+        "priority": 0
+      },
+      {
+        "id": "block_implementing",
+        "from": "implementing",
+        "to": "blocked",
+        "guard_refs": ["block"],
+        "authority": ["threadloop"],
+        "priority": 0
+      },
+      {
+        "id": "block_pre_pr_reviewing",
+        "from": "pre_pr_reviewing",
+        "to": "blocked",
+        "guard_refs": ["block"],
+        "authority": ["threadloop"],
+        "priority": 0
+      },
+      {
+        "id": "block_proof_ready",
+        "from": "proof_ready",
+        "to": "blocked",
+        "guard_refs": ["block"],
+        "authority": ["threadloop"],
+        "priority": 0
+      },
+      {
+        "id": "block_queued",
+        "from": "queued",
+        "to": "blocked",
+        "guard_refs": ["block"],
+        "authority": ["threadloop"],
+        "priority": 0
+      },
+      {
+        "id": "block_ready_for_human",
+        "from": "ready_for_human",
+        "to": "blocked",
+        "guard_refs": ["block"],
+        "authority": ["threadloop"],
+        "priority": 0
+      },
+      {
+        "id": "block_repairing",
+        "from": "repairing",
+        "to": "blocked",
+        "guard_refs": ["block"],
+        "authority": ["threadloop"],
+        "priority": 0
+      },
+      {
+        "id": "block_reviewing",
+        "from": "reviewing",
+        "to": "blocked",
+        "guard_refs": ["block"],
+        "authority": ["threadloop"],
+        "priority": 0
+      },
+      {
+        "id": "block_verifying",
+        "from": "verifying",
+        "to": "blocked",
+        "guard_refs": ["block"],
+        "authority": ["threadloop"],
+        "priority": 0
+      },
+      {
+        "id": "complete",
+        "from": "ready_for_human",
+        "to": "completed",
+        "guard_refs": ["approval", "merged", "review_clear", "review_current", "review_set"],
+        "authority": ["human", "threadloop"],
+        "priority": 20
+      },
+      {
+        "id": "enter_pre_pr_review",
+        "from": "verifying",
+        "to": "pre_pr_reviewing",
+        "guard_refs": ["checkout", "independent", "local_pass", "plan", "pre"],
+        "authority": ["threadloop"],
+        "priority": 30
+      },
+      {
+        "id": "enter_review",
+        "from": "pre_pr_reviewing",
+        "to": "reviewing",
+        "guard_refs": ["checkout", "independent", "local_pass", "plan", "pre", "review_clean"],
+        "authority": ["threadloop"],
+        "priority": 20
+      },
+      {
+        "id": "frame",
+        "from": "queued",
+        "to": "framed",
+        "guard_refs": [],
+        "authority": ["threadloop"],
+        "priority": 10
+      },
+      {
+        "id": "human_handoff",
+        "from": "reviewing",
+        "to": "ready_for_human",
+        "guard_refs": ["review_clear", "review_current", "review_set"],
+        "authority": ["threadloop"],
+        "priority": 20
+      },
+      {
+        "id": "repair_failed_proof",
+        "from": "verifying",
+        "to": "repairing",
+        "guard_refs": ["local_fail", "plan", "post", "repair_available"],
+        "authority": ["threadloop"],
+        "priority": 50
+      },
+      {
+        "id": "repair_late_review",
+        "from": "ready_for_human",
+        "to": "repairing",
+        "guard_refs": ["repair_available", "review_blocking", "review_current"],
+        "authority": ["threadloop"],
+        "priority": 10
+      },
+      {
+        "id": "repair_review",
+        "from": "reviewing",
+        "to": "repairing",
+        "guard_refs": ["repair_available", "review_blocking", "review_current"],
+        "authority": ["threadloop"],
+        "priority": 10
+      },
+      {
+        "id": "resume_framed",
+        "from": "blocked",
+        "to": "framed",
+        "guard_refs": ["prior_framed", "recovery"],
+        "authority": ["human", "threadloop"],
+        "priority": 1
+      },
+      {
+        "id": "resume_implementing",
+        "from": "blocked",
+        "to": "implementing",
+        "guard_refs": ["prior_implementing", "recovery"],
+        "authority": ["human", "threadloop"],
+        "priority": 3
+      },
+      {
+        "id": "resume_pre_pr_reviewing",
+        "from": "blocked",
+        "to": "pre_pr_reviewing",
+        "guard_refs": ["prior_pre_pr_reviewing", "recovery"],
+        "authority": ["human", "threadloop"],
+        "priority": 5
+      },
+      {
+        "id": "resume_proof_ready",
+        "from": "blocked",
+        "to": "proof_ready",
+        "guard_refs": ["prior_proof_ready", "recovery"],
+        "authority": ["human", "threadloop"],
+        "priority": 2
+      },
+      {
+        "id": "resume_queued",
+        "from": "blocked",
+        "to": "queued",
+        "guard_refs": ["prior_queued", "recovery"],
+        "authority": ["human", "threadloop"],
+        "priority": 0
+      },
+      {
+        "id": "resume_ready_for_human",
+        "from": "blocked",
+        "to": "ready_for_human",
+        "guard_refs": ["prior_ready_for_human", "recovery"],
+        "authority": ["human", "threadloop"],
+        "priority": 8
+      },
+      {
+        "id": "resume_repairing",
+        "from": "blocked",
+        "to": "repairing",
+        "guard_refs": ["prior_repairing", "recovery"],
+        "authority": ["human", "threadloop"],
+        "priority": 7
+      },
+      {
+        "id": "resume_reviewing",
+        "from": "blocked",
+        "to": "reviewing",
+        "guard_refs": ["prior_reviewing", "recovery"],
+        "authority": ["human", "threadloop"],
+        "priority": 6
+      },
+      {
+        "id": "resume_verifying",
+        "from": "blocked",
+        "to": "verifying",
+        "guard_refs": ["prior_verifying", "recovery"],
+        "authority": ["human", "threadloop"],
+        "priority": 4
+      },
+      {
+        "id": "retry_failed_proof",
+        "from": "verifying",
+        "to": "implementing",
+        "guard_refs": ["checkout", "local_fail", "plan", "pre"],
+        "authority": ["threadloop"],
+        "priority": 10
+      },
+      {
+        "id": "retry_review_changes",
+        "from": "verifying",
+        "to": "implementing",
+        "guard_refs": ["checkout", "plan", "pre", "review_changes"],
+        "authority": ["threadloop"],
+        "priority": 20
+      },
+      {
+        "id": "return_to_review",
+        "from": "verifying",
+        "to": "reviewing",
+        "guard_refs": ["checkout", "independent", "local_pass", "plan", "post"],
+        "authority": ["threadloop"],
+        "priority": 40
+      },
+      {
+        "id": "verify_implementation",
+        "from": "implementing",
+        "to": "verifying",
+        "guard_refs": ["plan", "work_committed"],
+        "authority": ["threadloop"],
+        "priority": 10
+      },
+      {
+        "id": "verify_repair",
+        "from": "repairing",
+        "to": "verifying",
+        "guard_refs": ["plan", "repair_committed"],
+        "authority": ["threadloop"],
+        "priority": 10
+      }
+    ],
+    "guards": [
+      {
+        "capability": "human_approval",
+        "parameters": {
+          "scope": "current_subject"
+        },
+        "id": "approval",
+        "required_actions": ["approve"]
+      },
+      {
+        "capability": "repository",
+        "parameters": {
+          "condition": "baseline_matches"
+        },
+        "id": "baseline",
+        "required_actions": ["restore_checkout"]
+      },
+      {
+        "capability": "block_evidence",
+        "parameters": {},
+        "id": "block",
+        "required_actions": ["block"]
+      },
+      {
+        "capability": "repository",
+        "parameters": {
+          "condition": "clean_plan_branch"
+        },
+        "id": "checkout",
+        "required_actions": ["restore_checkout"]
+      },
+      {
+        "capability": "independent_proof",
+        "parameters": {},
+        "id": "independent",
+        "required_actions": ["independent_proof", "restore_evidence"]
+      },
+      {
+        "capability": "local_proof",
+        "parameters": {
+          "result": "failed"
+        },
+        "id": "local_fail",
+        "required_actions": ["correct_setup", "run_gates"]
+      },
+      {
+        "capability": "local_proof",
+        "parameters": {
+          "result": "passed"
+        },
+        "id": "local_pass",
+        "required_actions": ["correct_setup", "restore_evidence", "run_gates"]
+      },
+      {
+        "capability": "completion_observed",
+        "parameters": {
+          "kind": "merge"
+        },
+        "id": "merged",
+        "required_actions": ["merge", "review_evidence"]
+      },
+      {
+        "capability": "proof_plan_bound",
+        "parameters": {},
+        "id": "plan",
+        "required_actions": ["bind_plan", "restore_authority"]
+      },
+      {
+        "capability": "phase",
+        "parameters": {
+          "value": "post_pr"
+        },
+        "id": "post",
+        "required_actions": []
+      },
+      {
+        "capability": "phase",
+        "parameters": {
+          "value": "pre_pr"
+        },
+        "id": "pre",
+        "required_actions": []
+      },
+      {
+        "capability": "recorded_prior_state",
+        "parameters": {
+          "state": "framed"
+        },
+        "id": "prior_framed",
+        "required_actions": ["recover"]
+      },
+      {
+        "capability": "recorded_prior_state",
+        "parameters": {
+          "state": "implementing"
+        },
+        "id": "prior_implementing",
+        "required_actions": ["recover"]
+      },
+      {
+        "capability": "recorded_prior_state",
+        "parameters": {
+          "state": "pre_pr_reviewing"
+        },
+        "id": "prior_pre_pr_reviewing",
+        "required_actions": ["recover"]
+      },
+      {
+        "capability": "recorded_prior_state",
+        "parameters": {
+          "state": "proof_ready"
+        },
+        "id": "prior_proof_ready",
+        "required_actions": ["recover"]
+      },
+      {
+        "capability": "recorded_prior_state",
+        "parameters": {
+          "state": "queued"
+        },
+        "id": "prior_queued",
+        "required_actions": ["recover"]
+      },
+      {
+        "capability": "recorded_prior_state",
+        "parameters": {
+          "state": "ready_for_human"
+        },
+        "id": "prior_ready_for_human",
+        "required_actions": ["recover"]
+      },
+      {
+        "capability": "recorded_prior_state",
+        "parameters": {
+          "state": "repairing"
+        },
+        "id": "prior_repairing",
+        "required_actions": ["recover"]
+      },
+      {
+        "capability": "recorded_prior_state",
+        "parameters": {
+          "state": "reviewing"
+        },
+        "id": "prior_reviewing",
+        "required_actions": ["recover"]
+      },
+      {
+        "capability": "recorded_prior_state",
+        "parameters": {
+          "state": "verifying"
+        },
+        "id": "prior_verifying",
+        "required_actions": ["recover"]
+      },
+      {
+        "capability": "human_approval",
+        "parameters": {
+          "scope": "recovery"
+        },
+        "id": "recovery",
+        "required_actions": ["recover"]
+      },
+      {
+        "capability": "budget_available",
+        "parameters": {
+          "budget": "repair_entries"
+        },
+        "id": "repair_available",
+        "required_actions": ["block"]
+      },
+      {
+        "capability": "repository",
+        "parameters": {
+          "condition": "committed_repair"
+        },
+        "id": "repair_committed",
+        "required_actions": ["commit", "repair"]
+      },
+      {
+        "capability": "review",
+        "parameters": {
+          "condition": "blocking"
+        },
+        "id": "review_blocking",
+        "required_actions": ["review_evidence"]
+      },
+      {
+        "capability": "pre_pr_review",
+        "parameters": {
+          "outcome": "changes_required"
+        },
+        "id": "review_changes",
+        "required_actions": ["pre_pr_review"]
+      },
+      {
+        "capability": "pre_pr_review",
+        "parameters": {
+          "outcome": "clean"
+        },
+        "id": "review_clean",
+        "required_actions": ["pre_pr_review"]
+      },
+      {
+        "capability": "review",
+        "parameters": {
+          "condition": "clear"
+        },
+        "id": "review_clear",
+        "required_actions": ["repair", "review_evidence"]
+      },
+      {
+        "capability": "review",
+        "parameters": {
+          "condition": "current"
+        },
+        "id": "review_current",
+        "required_actions": ["restore_evidence", "review_evidence"]
+      },
+      {
+        "capability": "review",
+        "parameters": {
+          "condition": "proof_set_current"
+        },
+        "id": "review_set",
+        "required_actions": ["independent_proof", "restore_evidence", "review_evidence", "run_gates"]
+      },
+      {
+        "capability": "repository",
+        "parameters": {
+          "condition": "clean_descendant"
+        },
+        "id": "work_committed",
+        "required_actions": ["commit", "implement"]
+      }
+    ],
+    "required_actions": [
+      {
+        "capability": "approve_change",
+        "authority": "human",
+        "parameters": {},
+        "id": "approve"
+      },
+      {
+        "capability": "bind_proof_plan",
+        "authority": "executor",
+        "parameters": {},
+        "id": "bind_plan"
+      },
+      {
+        "capability": "block_run",
+        "authority": "human",
+        "parameters": {},
+        "id": "block"
+      },
+      {
+        "capability": "commit_change",
+        "authority": "executor",
+        "parameters": {},
+        "id": "commit"
+      },
+      {
+        "capability": "correct_gate_setup",
+        "authority": "human",
+        "parameters": {},
+        "id": "correct_setup"
+      },
+      {
+        "capability": "frame_change",
+        "authority": "executor",
+        "parameters": {},
+        "id": "frame"
+      },
+      {
+        "capability": "implement_change",
+        "authority": "executor",
+        "parameters": {},
+        "id": "implement"
+      },
+      {
+        "capability": "obtain_independent_proof",
+        "authority": "executor",
+        "parameters": {},
+        "id": "independent_proof"
+      },
+      {
+        "capability": "merge_change",
+        "authority": "human",
+        "parameters": {},
+        "id": "merge"
+      },
+      {
+        "capability": "record_pre_pr_review",
+        "authority": "executor",
+        "parameters": {},
+        "id": "pre_pr_review"
+      },
+      {
+        "capability": "recover_run",
+        "authority": "human",
+        "parameters": {},
+        "id": "recover"
+      },
+      {
+        "capability": "repair_change",
+        "authority": "executor",
+        "parameters": {},
+        "id": "repair"
+      },
+      {
+        "capability": "restore_proof_authority",
+        "authority": "human",
+        "parameters": {},
+        "id": "restore_authority"
+      },
+      {
+        "capability": "restore_repository",
+        "authority": "human",
+        "parameters": {},
+        "id": "restore_checkout"
+      },
+      {
+        "capability": "restore_evidence",
+        "authority": "human",
+        "parameters": {},
+        "id": "restore_evidence"
+      },
+      {
+        "capability": "obtain_review_evidence",
+        "authority": "executor",
+        "parameters": {},
+        "id": "review_evidence"
+      },
+      {
+        "capability": "run_local_gates",
+        "authority": "executor",
+        "parameters": {},
+        "id": "run_gates"
+      }
+    ],
+    "budgets": [
+      {
+        "id": "repair_entries",
+        "limit": 3,
+        "transition_refs": ["repair_failed_proof", "repair_late_review", "repair_review"]
+      }
+    ],
+    "cycle_controls": [
+      {
+        "id": "bounded_repair",
+        "kind": "budget",
+        "budget": "repair_entries",
+        "exit_transition_refs": ["block_ready_for_human", "block_reviewing", "block_verifying"]
+      },
+      {
+        "id": "pre_pr_escape",
+        "kind": "human_escape",
+        "state_refs": ["implementing", "pre_pr_reviewing", "verifying"],
+        "exit_transition_refs": ["block_implementing", "block_pre_pr_reviewing", "block_verifying"]
+      }
+    ],
+    "phase_policy": {
+      "kind": "entered_state",
+      "state_refs": ["completed", "ready_for_human", "reviewing"],
+      "initial": "pre_pr",
+      "advanced": "post_pr",
+      "monotonic": true,
+      "include_audit_genesis": true
+    }
+  },
+  "graph_digest": "71e45d1a13d5f642b6e885bba2a5632984cd4395bc5978136b5090166bf54a16"
+}

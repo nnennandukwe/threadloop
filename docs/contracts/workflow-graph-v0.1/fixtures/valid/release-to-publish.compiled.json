@@ -1,0 +1,366 @@
+{
+  "graph": {
+    "schema_version": "0.1",
+    "capability_catalog": "threadloop.sdlc/0.1",
+    "profile": {
+      "id": "release_to_publish",
+      "revision": 1
+    },
+    "initial_state": "preparing",
+    "states": [
+      {
+        "id": "awaiting_approval",
+        "kind": "active"
+      },
+      {
+        "id": "blocked",
+        "kind": "suspended",
+        "handoff": "recover"
+      },
+      {
+        "id": "completed",
+        "kind": "terminal"
+      },
+      {
+        "id": "preparing",
+        "kind": "active"
+      },
+      {
+        "id": "publication_check",
+        "kind": "active"
+      },
+      {
+        "id": "publishing",
+        "kind": "active"
+      },
+      {
+        "id": "verifying",
+        "kind": "active"
+      }
+    ],
+    "transitions": [
+      {
+        "id": "authorize_publication",
+        "from": "awaiting_approval",
+        "to": "publishing",
+        "guard_refs": ["approval", "release_passed"],
+        "authority": ["human", "threadloop"],
+        "priority": 10
+      },
+      {
+        "id": "block_awaiting_approval",
+        "from": "awaiting_approval",
+        "to": "blocked",
+        "guard_refs": ["block"],
+        "authority": ["threadloop"],
+        "priority": 0
+      },
+      {
+        "id": "block_preparing",
+        "from": "preparing",
+        "to": "blocked",
+        "guard_refs": ["block"],
+        "authority": ["threadloop"],
+        "priority": 0
+      },
+      {
+        "id": "block_publication_check",
+        "from": "publication_check",
+        "to": "blocked",
+        "guard_refs": ["block"],
+        "authority": ["threadloop"],
+        "priority": 0
+      },
+      {
+        "id": "block_publishing",
+        "from": "publishing",
+        "to": "blocked",
+        "guard_refs": ["block"],
+        "authority": ["threadloop"],
+        "priority": 0
+      },
+      {
+        "id": "block_verifying",
+        "from": "verifying",
+        "to": "blocked",
+        "guard_refs": ["block"],
+        "authority": ["threadloop"],
+        "priority": 0
+      },
+      {
+        "id": "check_publication",
+        "from": "publishing",
+        "to": "publication_check",
+        "guard_refs": ["published"],
+        "authority": ["threadloop"],
+        "priority": 10
+      },
+      {
+        "id": "complete",
+        "from": "publication_check",
+        "to": "completed",
+        "guard_refs": ["approval", "publication_passed", "published"],
+        "authority": ["human", "threadloop"],
+        "priority": 10
+      },
+      {
+        "id": "repair_publication",
+        "from": "publication_check",
+        "to": "preparing",
+        "guard_refs": ["publication_failed", "remediation_available"],
+        "authority": ["threadloop"],
+        "priority": 20
+      },
+      {
+        "id": "repair_release",
+        "from": "verifying",
+        "to": "preparing",
+        "guard_refs": ["release_failed", "remediation_available"],
+        "authority": ["threadloop"],
+        "priority": 20
+      },
+      {
+        "id": "request_approval",
+        "from": "verifying",
+        "to": "awaiting_approval",
+        "guard_refs": ["release_passed"],
+        "authority": ["threadloop"],
+        "priority": 10
+      },
+      {
+        "id": "resume_awaiting_approval",
+        "from": "blocked",
+        "to": "awaiting_approval",
+        "guard_refs": ["prior_awaiting_approval", "recovery"],
+        "authority": ["human", "threadloop"],
+        "priority": 2
+      },
+      {
+        "id": "resume_preparing",
+        "from": "blocked",
+        "to": "preparing",
+        "guard_refs": ["prior_preparing", "recovery"],
+        "authority": ["human", "threadloop"],
+        "priority": 0
+      },
+      {
+        "id": "resume_publication_check",
+        "from": "blocked",
+        "to": "publication_check",
+        "guard_refs": ["prior_publication_check", "recovery"],
+        "authority": ["human", "threadloop"],
+        "priority": 4
+      },
+      {
+        "id": "resume_publishing",
+        "from": "blocked",
+        "to": "publishing",
+        "guard_refs": ["prior_publishing", "recovery"],
+        "authority": ["human", "threadloop"],
+        "priority": 3
+      },
+      {
+        "id": "resume_verifying",
+        "from": "blocked",
+        "to": "verifying",
+        "guard_refs": ["prior_verifying", "recovery"],
+        "authority": ["human", "threadloop"],
+        "priority": 1
+      },
+      {
+        "id": "verify_release",
+        "from": "preparing",
+        "to": "verifying",
+        "guard_refs": ["prepared"],
+        "authority": ["threadloop"],
+        "priority": 10
+      }
+    ],
+    "guards": [
+      {
+        "capability": "human_approval",
+        "parameters": {
+          "scope": "current_subject"
+        },
+        "id": "approval",
+        "required_actions": ["approve"]
+      },
+      {
+        "capability": "block_evidence",
+        "parameters": {},
+        "id": "block",
+        "required_actions": ["block"]
+      },
+      {
+        "capability": "artifact",
+        "parameters": {
+          "stage": "release_prepared",
+          "result": "passed"
+        },
+        "id": "prepared",
+        "required_actions": ["prepare"]
+      },
+      {
+        "capability": "recorded_prior_state",
+        "parameters": {
+          "state": "awaiting_approval"
+        },
+        "id": "prior_awaiting_approval",
+        "required_actions": ["recover"]
+      },
+      {
+        "capability": "recorded_prior_state",
+        "parameters": {
+          "state": "preparing"
+        },
+        "id": "prior_preparing",
+        "required_actions": ["recover"]
+      },
+      {
+        "capability": "recorded_prior_state",
+        "parameters": {
+          "state": "publication_check"
+        },
+        "id": "prior_publication_check",
+        "required_actions": ["recover"]
+      },
+      {
+        "capability": "recorded_prior_state",
+        "parameters": {
+          "state": "publishing"
+        },
+        "id": "prior_publishing",
+        "required_actions": ["recover"]
+      },
+      {
+        "capability": "recorded_prior_state",
+        "parameters": {
+          "state": "verifying"
+        },
+        "id": "prior_verifying",
+        "required_actions": ["recover"]
+      },
+      {
+        "capability": "artifact",
+        "parameters": {
+          "stage": "publication_verified",
+          "result": "failed"
+        },
+        "id": "publication_failed",
+        "required_actions": ["verify_publication"]
+      },
+      {
+        "capability": "artifact",
+        "parameters": {
+          "stage": "publication_verified",
+          "result": "passed"
+        },
+        "id": "publication_passed",
+        "required_actions": ["verify_publication"]
+      },
+      {
+        "capability": "completion_observed",
+        "parameters": {
+          "kind": "publication"
+        },
+        "id": "published",
+        "required_actions": ["publish"]
+      },
+      {
+        "capability": "human_approval",
+        "parameters": {
+          "scope": "recovery"
+        },
+        "id": "recovery",
+        "required_actions": ["recover"]
+      },
+      {
+        "capability": "artifact",
+        "parameters": {
+          "stage": "release_verified",
+          "result": "failed"
+        },
+        "id": "release_failed",
+        "required_actions": ["verify"]
+      },
+      {
+        "capability": "artifact",
+        "parameters": {
+          "stage": "release_verified",
+          "result": "passed"
+        },
+        "id": "release_passed",
+        "required_actions": ["verify"]
+      },
+      {
+        "capability": "budget_available",
+        "parameters": {
+          "budget": "remediation_entries"
+        },
+        "id": "remediation_available",
+        "required_actions": ["block"]
+      }
+    ],
+    "required_actions": [
+      {
+        "capability": "approve_change",
+        "authority": "human",
+        "parameters": {},
+        "id": "approve"
+      },
+      {
+        "capability": "block_run",
+        "authority": "human",
+        "parameters": {},
+        "id": "block"
+      },
+      {
+        "capability": "prepare_release",
+        "authority": "executor",
+        "parameters": {},
+        "id": "prepare"
+      },
+      {
+        "capability": "publish_release",
+        "authority": "executor",
+        "parameters": {},
+        "id": "publish"
+      },
+      {
+        "capability": "recover_run",
+        "authority": "human",
+        "parameters": {},
+        "id": "recover"
+      },
+      {
+        "capability": "verify_release",
+        "authority": "executor",
+        "parameters": {},
+        "id": "verify"
+      },
+      {
+        "capability": "verify_publication",
+        "authority": "executor",
+        "parameters": {},
+        "id": "verify_publication"
+      }
+    ],
+    "budgets": [
+      {
+        "id": "remediation_entries",
+        "limit": 2,
+        "transition_refs": ["repair_publication", "repair_release"]
+      }
+    ],
+    "cycle_controls": [
+      {
+        "id": "bounded_remediation",
+        "kind": "budget",
+        "budget": "remediation_entries",
+        "exit_transition_refs": ["block_publication_check", "block_verifying"]
+      }
+    ],
+    "phase_policy": null
+  },
+  "graph_digest": "17065977d0b16f024cc3c48387d4156cedcc6b2f36b681bee3e002fe09713dee"
+}
