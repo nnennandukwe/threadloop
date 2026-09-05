@@ -20,6 +20,17 @@ export function validateControllerInput(input: unknown): ValidationResult<Contro
   if (!state) reject('UNKNOWN_STATE', '$.binding.source_state', 'The source state is not declared by the bound graph.');
   if (value.policy.digest !== sha256(canonicalJson(value.policy.rules)))
     reject('POLICY_DIGEST_MISMATCH', '$.policy', 'Policy contents differ from their claimed digest.');
+  for (const family of ['local_proof', 'independent_proof'] as const) {
+    const required = graph.value.graph.guards.some(
+      (guard) =>
+        guard.capability === family ||
+        (guard.capability === 'review' && guard.parameters.condition === 'proof_set_current'),
+    );
+    const gates =
+      family === 'local_proof' ? value.policy.rules.local_gate_ids : value.policy.rules.independent_gate_ids;
+    if (required && gates.length === 0)
+      reject('INVALID_PROOF_POLICY', '$.policy.rules', `The graph requires a nonempty ${family} gate configuration.`);
+  }
   if ((value.binding.subject.kind === 'repository') !== (value.observation.repository !== null))
     reject(
       'OBSERVATION_KIND_MISMATCH',
@@ -137,11 +148,15 @@ export function currentObservation(input: ControllerInput): boolean {
 function evidenceStream(receipt: ControllerInput['receipts'][number]): string {
   const payload = receipt.payload;
   return canonicalJson({
+    workflow_policy: receipt.workflow_policy,
     type: payload.type,
     gate: 'gate_id' in payload ? payload.gate_id : null,
     stage: 'stage' in payload ? payload.stage : null,
     scope: 'scope' in payload ? payload.scope : null,
     kind: 'kind' in payload ? payload.kind : null,
+    prior_state: 'prior_state' in payload ? payload.prior_state : null,
+    destination: 'destination' in payload ? payload.destination : null,
+    approver: 'approver' in payload ? payload.approver : null,
   });
 }
 

@@ -76,10 +76,11 @@ use additionally requires the current subject and Workflow policy, an unexpired 
 Earlier producer state versions remain usable when these bindings hold: advancing from verification to review does not
 by itself invalidate local proof.
 
-For each subject, the highest authoritative sequence supersedes earlier receipts of the same payload type and gate,
-artifact stage, approval scope, or completion kind. Supersession never silently revives an older receipt when the newest
-is expired or fenced. Duplicate identities/sequences are invalid. Human approval identifies a human authority present in
-the policy; publication evidence must match the policy destination.
+For each subject and Workflow policy, the highest authoritative sequence supersedes earlier receipts of the same payload
+type and typed selectors: gate, artifact stage, approval scope and approver, completion kind and destination, or block
+prior state. Receipts for another policy or selector do not supersede that stream. Supersession never silently revives
+an older receipt when the newest is expired or fenced. Duplicate identities/sequences are invalid. Human approval
+identifies a human authority present in the policy; publication evidence must match the policy destination.
 
 ## Decision outcomes
 

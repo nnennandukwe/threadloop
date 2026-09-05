@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { actionActorSchema, type ControllerInput } from '../../scripts/controller-contract/contracts.js';
-import { validateActionRequest, validateControllerInput } from '../../scripts/controller-contract/validation.js';
+import {
+  currentReceipt,
+  validateActionRequest,
+  validateControllerInput,
+} from '../../scripts/controller-contract/validation.js';
 import { buildActionRequest } from '../../scripts/controller-contract/request.js';
 import { controllerSnapshot, localProofIntent } from '../fixtures/controller-contract.js';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
@@ -679,7 +683,7 @@ describe('Blocked facts and active request obligations', () => {
       decisionEnvelope(fixture.input, fixture.expected.decision),
     );
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.diagnostics.map((item) => item.code)).toContain('GUARD_EVIDENCE_MISMATCH');
+    if (!result.ok) expect(result.diagnostics.map((item) => item.code)).toContain('INVALID_PROOF_POLICY');
   });
 });
 
@@ -858,5 +862,127 @@ describe('Graph-declared actor parity', () => {
       ).ok,
     ).toBe(true);
     expect(validateActionRequest(input, executorRequest.value).ok).toBe(false);
+  });
+});
+
+describe('Proof policy and receipt supersession', () => {
+  it('rejects empty gate configuration required by the graph before validating blocked reasons', async () => {
+    for (const key of ['local_gate_ids', 'independent_gate_ids'] as const) {
+      const fixture = await readExample('transition_available');
+      fixture.input.policy.rules[key] = [];
+      fixture.input.policy.digest = sha256(canonicalJson(fixture.input.policy.rules));
+      for (const item of fixture.input.receipts) item.workflow_policy.digest = fixture.input.policy.digest;
+      const input = validateControllerInput(fixture.input);
+      expect(input.ok, key).toBe(false);
+      const candidate = decisionEnvelope(fixture.input, {
+        outcome: 'blocked',
+        reasons: [
+          {
+            code: 'EVIDENCE_UNAVAILABLE',
+            guard_id: 'review_set',
+            message: 'Proof unavailable',
+            recovery: 'Restore proof policy',
+          },
+        ],
+      });
+      const result = validateControllerDecision(fixture.input, candidate);
+      expect(result.ok, key).toBe(false);
+      if (!result.ok) expect(result.diagnostics.map((item) => item.code)).toContain('INVALID_PROOF_POLICY');
+    }
+    expect(validateControllerInput(await controllerSnapshot('release-to-publish')).ok).toBe(true);
+  });
+
+  it('preserves current-state block evidence when another state has a later receipt', async () => {
+    const input = await controllerSnapshot();
+    const current = receipt(input);
+    current.payload = {
+      type: 'block_evidence',
+      prior_state: input.binding.source_state,
+      reason: 'Stop',
+      recovery: 'Restore proof',
+      stop_code: 'PROOF_UNAVAILABLE',
+    };
+    current.payload_digest = sha256(canonicalJson(current.payload));
+    const other = {
+      ...structuredClone(current),
+      id: 'other_state_block',
+      sequence: 2,
+      payload: { ...current.payload, prior_state: 'verifying' },
+    };
+    other.payload_digest = sha256(canonicalJson(other.payload));
+    input.receipts = [current, other];
+    const guard = input.compiled_graph.graph.guards.find((guard) => guard.capability === 'block_evidence')!;
+    const candidate = decisionEnvelope(input, {
+      outcome: 'blocked',
+      reasons: [
+        {
+          code: 'EVIDENCE_UNAVAILABLE',
+          guard_id: guard.id,
+          message: 'No current block evidence',
+          recovery: 'Collect block evidence',
+        },
+      ],
+    });
+    const result = validateControllerDecision(input, candidate);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.diagnostics.map((item) => item.code)).toContain('BLOCKED_REASON_MISMATCH');
+  });
+});
+
+describe('Receipt stream identities', () => {
+  it('does not let a different workflow policy supersede current evidence', async () => {
+    const input = await controllerSnapshot();
+    const proof = receipt(input);
+    const other = {
+      ...structuredClone(proof),
+      id: 'other_policy_proof',
+      sequence: 2,
+      workflow_policy: { id: 'other_policy', digest: sha256('other_policy') },
+    };
+    input.receipts = [proof, other];
+    expect(validateControllerInput(input).ok).toBe(true);
+    expect(currentReceipt(proof, input)).toBe(true);
+    expect(currentReceipt(other, input)).toBe(false);
+  });
+
+  it('keeps different publication destinations and human approvers in separate streams', async () => {
+    const pairs = [
+      [
+        { type: 'completion_observed', kind: 'publication', destination: 'channel_a' },
+        { type: 'completion_observed', kind: 'publication', destination: 'channel_b' },
+      ],
+      [
+        {
+          type: 'human_approval',
+          scope: 'current_subject',
+          approver: { type: 'human', id: 'alice' },
+          reason: 'Approved',
+        },
+        {
+          type: 'human_approval',
+          scope: 'current_subject',
+          approver: { type: 'human', id: 'bob' },
+          reason: 'Approved',
+        },
+      ],
+    ] as const;
+    for (const [firstPayload, secondPayload] of pairs) {
+      const input = await controllerSnapshot();
+      const first = { ...receipt(input), payload: firstPayload, payload_digest: sha256(canonicalJson(firstPayload)) };
+      const second: ControllerInput['receipts'][number] = {
+        ...receipt(input),
+        id: 'later_receipt',
+        sequence: 2,
+        payload: secondPayload,
+        payload_digest: sha256(canonicalJson(secondPayload)),
+      };
+      input.receipts = [first, second];
+      expect(validateControllerInput(input).ok).toBe(true);
+      expect(currentReceipt(first, input)).toBe(true);
+      expect(currentReceipt(second, input)).toBe(true);
+      second.payload = firstPayload;
+      second.payload_digest = first.payload_digest;
+      expect(currentReceipt(first, input)).toBe(false);
+    }
   });
 });

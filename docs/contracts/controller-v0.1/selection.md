@@ -88,9 +88,10 @@ facts without inventing a lifecycle event.
 
 Candidate validation checks reason-specific facts and rejects unsupported assertions, including expired-claim reports
 without an expired active claim. It rejects `AMBIGUOUS_REMEDY` and `NO_APPLICABLE_REMEDY` with
-`SELECTION_PROOF_REQUIRED` until a selector can prove them exhaustively. Required local and independent proof sets must
-be nonempty when their guards or review proof-set conditions are asserted; profiles that do not use them may keep empty
-sets. Empty configuration is not passing proof.
+`SELECTION_PROOF_REQUIRED` until a selector can prove them exhaustively. Input validation requires nonempty local and
+independent gate configuration whenever the graph declares the corresponding guards or a review proof-set condition.
+Profiles that do not use these guards may keep empty sets. Empty required configuration returns `INVALID_PROOF_POLICY`
+before candidate validation; it cannot be treated as available evidence or passing proof.
 
 Examples cover all six outcomes, proof ordering, stale refresh, human approval/merge, completion, setup failure,
 exhausted repair, waiting, expiry, uncertain execution, and artifact publication. Their validation proves schema,
