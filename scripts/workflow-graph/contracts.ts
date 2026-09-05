@@ -131,19 +131,20 @@ const cycleControlSchema = z.discriminatedUnion('kind', [
   z.strictObject({
     id: identifier,
     kind: z.literal('human_escape'),
-    state_refs: references.min(1),
+    transition_refs: references.min(1),
     exit_transition_refs: references.min(1),
   }),
   z.strictObject({
     id: identifier,
     kind: z.literal('terminal_route'),
-    state_refs: references.min(1),
+    transition_refs: references.min(1),
     exit_transition_refs: references.min(1),
   }),
   z.strictObject({
     id: identifier,
     kind: z.literal('guard_stop'),
     guard: identifier,
+    transition_refs: references.min(1),
     exit_transition_refs: references.min(1),
   }),
 ]);

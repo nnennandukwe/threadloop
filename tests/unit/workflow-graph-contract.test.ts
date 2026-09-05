@@ -90,7 +90,7 @@ describe('Governed PR preservation', () => {
     expect(profile.cycle_controls).toContainEqual({
       id: 'pre_pr_escape',
       kind: 'human_escape',
-      state_refs: ['implementing', 'verifying', 'pre_pr_reviewing'],
+      transition_refs: ['verify_implementation', 'retry_failed_proof', 'retry_review_changes', 'address_pre_pr_review'],
       exit_transition_refs: ['block_implementing', 'block_verifying', 'block_pre_pr_reviewing'],
     });
   });
@@ -403,7 +403,7 @@ function cyclicProfile(): WorkflowProfile {
     },
   );
   profile.cycle_controls = [
-    { id: 'escape', kind: 'human_escape', state_refs: ['prepared'], exit_transition_refs: ['stop'] },
+    { id: 'escape', kind: 'human_escape', transition_refs: ['repeat'], exit_transition_refs: ['stop'] },
   ];
   return profile;
 }
@@ -454,6 +454,53 @@ describe('Cycle control contracts', () => {
     expect(compile(profile)).toMatchObject({ ok: false, diagnostics: [{ code: 'UNCONTROLLED_CYCLE' }] });
   });
 
+  it.each(['human_escape', 'terminal_route', 'guard_stop'] as const)(
+    'does not let a %s control certify an unlisted self-loop at the same source',
+    (kind) => {
+      const profile = cyclicProfile();
+      if (kind === 'terminal_route') {
+        profile.transitions.find((edge) => edge.id === 'finish')!.priority = 0;
+        profile.transitions.find((edge) => edge.id === 'stop')!.priority = 10;
+        profile.cycle_controls = [
+          { id: 'escape', kind, transition_refs: ['repeat'], exit_transition_refs: ['finish'] },
+        ];
+      } else if (kind === 'guard_stop') {
+        profile.guards.push({ id: 'requested', capability: 'stop_requested', parameters: {} });
+        profile.transitions.find((edge) => edge.id === 'stop')!.guard_refs.push('requested');
+        profile.cycle_controls = [
+          { id: 'escape', kind, guard: 'requested', transition_refs: ['repeat'], exit_transition_refs: ['stop'] },
+        ];
+      }
+      profile.transitions.push({
+        id: 'uncontrolled_repeat',
+        from: 'prepared',
+        to: 'prepared',
+        priority: 2,
+        guard_refs: [],
+        authority: ['threadloop'],
+      });
+      expect(compile(profile)).toMatchObject({ ok: false, diagnostics: [{ code: 'UNCONTROLLED_CYCLE' }] });
+    },
+  );
+
+  it('rejects an overlapping cycle that bypasses a listed repeat at its source', () => {
+    const profile = cyclicProfile();
+    profile.states.push({ id: 'inner', kind: 'active' });
+    profile.transitions.push(
+      { id: 'enter_inner', from: 'prepared', to: 'inner', priority: 2, guard_refs: [], authority: ['threadloop'] },
+      { id: 'leave_inner', from: 'inner', to: 'prepared', guard_refs: [], authority: ['threadloop'] },
+    );
+    expect(compile(profile)).toMatchObject({ ok: false, diagnostics: [{ code: 'UNCONTROLLED_CYCLE' }] });
+  });
+
+  it('rejects a stop route that loses priority to the controlled repeat', () => {
+    const profile = cyclicProfile();
+    profile.transitions.find((edge) => edge.id === 'stop')!.priority = 2;
+    const result = compile(profile);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.diagnostics.map((item) => item.code)).toContain('INVALID_CYCLE_CONTROL');
+  });
+
   it('accepts a finite entry budget and rejects an exit requiring the exhausted budget', () => {
     const profile = cyclicProfile();
     profile.budgets = [{ id: 'repairs', limit: 3, transition_refs: ['repeat'] }];
@@ -476,18 +523,34 @@ describe('Cycle control contracts', () => {
 
   it('requires actual guard-stop and terminal routes', () => {
     const profile = cyclicProfile();
+    profile.transitions.find((edge) => edge.id === 'finish')!.priority = 0;
+    profile.transitions.find((edge) => edge.id === 'stop')!.priority = 10;
     profile.cycle_controls = [
-      { id: 'finish_route', kind: 'terminal_route', state_refs: ['prepared'], exit_transition_refs: ['finish'] },
+      { id: 'finish_route', kind: 'terminal_route', transition_refs: ['repeat'], exit_transition_refs: ['finish'] },
     ];
     expect(compile(profile).ok).toBe(true);
     profile.cycle_controls = [
-      { id: 'stop_route', kind: 'guard_stop', guard: 'approval', exit_transition_refs: ['stop'] },
+      {
+        id: 'stop_route',
+        kind: 'guard_stop',
+        guard: 'approval',
+        transition_refs: ['repeat'],
+        exit_transition_refs: ['stop'],
+      },
     ];
     expect(compile(profile).ok).toBe(false);
     profile.guards.push({ id: 'requested', capability: 'stop_requested', parameters: {} });
+    profile.transitions.find((edge) => edge.id === 'finish')!.priority = 10;
+    profile.transitions.find((edge) => edge.id === 'stop')!.priority = 0;
     profile.transitions.find((edge) => edge.id === 'stop')!.guard_refs.push('requested');
     profile.cycle_controls = [
-      { id: 'stop_route', kind: 'guard_stop', guard: 'requested', exit_transition_refs: ['stop'] },
+      {
+        id: 'stop_route',
+        kind: 'guard_stop',
+        guard: 'requested',
+        transition_refs: ['repeat'],
+        exit_transition_refs: ['stop'],
+      },
     ];
     expect(compile(profile).ok).toBe(true);
   });
@@ -500,6 +563,18 @@ describe('Cycle control contracts', () => {
 });
 
 describe('Graph identity', () => {
+  it('normalizes the order of explicit cycle and budget transition references', async () => {
+    const profile = await readProfile('governed-pr');
+    const original = compiled(profile);
+    profile.cycle_controls?.reverse();
+    for (const control of profile.cycle_controls ?? []) {
+      control.exit_transition_refs.reverse();
+      if ('transition_refs' in control) control.transition_refs.reverse();
+    }
+    for (const budget of profile.budgets ?? []) budget.transition_refs.reverse();
+    expect(compiled(profile)).toEqual(original);
+  });
+
   it('ignores YAML presentation, description, and unordered declaration order', () => {
     const profile = cyclicProfile();
     const original = compiled(profile);

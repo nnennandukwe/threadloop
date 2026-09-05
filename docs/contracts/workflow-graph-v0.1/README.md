@@ -87,18 +87,24 @@ eventually pass.
 
 Cycle controls have four closed forms:
 
-| Kind             | Required structural proof                                                                                                                                                      |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `budget`         | Every listed budget entry checks `budget_available` for that counter. Each entry source has an explicit exit to suspension or completion that requires no budget availability. |
-| `human_escape`   | Every named state has an explicit edge into human suspension.                                                                                                                  |
-| `terminal_route` | The listed exit edges form an acyclic subgraph through which each named state reaches a terminal state.                                                                        |
-| `guard_stop`     | Each listed exit reaches suspension or completion and requires the named registered `stop_requested` guard.                                                                    |
+| Kind             | Required structural proof                                                                                                                                                              |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `budget`         | Every listed budget entry checks `budget_available` for that counter. Each entry source has an explicit exit to suspension or completion that requires no budget availability.         |
+| `human_escape`   | Each listed continuation transition has an earlier-priority exit at its source into human suspension.                                                                                  |
+| `terminal_route` | Each listed continuation transition has an earlier-priority exit at its source that reaches completion through the listed acyclic exit subgraph.                                       |
+| `guard_stop`     | Each listed continuation transition has an earlier-priority exit at its source. Every listed exit reaches suspension or completion and requires the registered `stop_requested` guard. |
 
-For residual-cycle analysis, remove counted edges certified by valid budget controls, edges requiring human authority on
-every traversal, and states certified by a valid escape or stop route. Any remaining directed cycle is rejected.
-Controls do not certify an entire strongly connected component: an inner self-loop or overlapping cycle that avoids the
-control still fails. Escape and terminal-route declarations establish an available intervention route, not automatic
-eventual termination. Guard truth, budget accounting, and actual human authority must be enforced by a future runtime.
+The three route controls explicitly name their covered continuation edges in `transition_refs`. They never cover an
+entire state. When a declared exit is eligible, its lower priority number makes it take precedence over that
+continuation. For example, a declared `repeat` self-loop may run without a limit while its stop route is ineligible. An
+added `other_repeat` self-loop at the same state requires its own control coverage.
+
+For residual-cycle analysis, remove only counted edges certified by valid budget controls, the exact continuation edges
+certified by valid route controls, and edges requiring human authority on every traversal. Any remaining directed cycle
+is rejected, including an inner self-loop or overlapping cycle through the same source state that bypasses those edges.
+No state or strongly connected component is removed wholesale. Escape and terminal-route declarations establish an
+available intervention route, not automatic eventual termination. Guard truth, budget accounting, and actual human
+authority must be enforced by a future runtime.
 
 Budget consumption counts accepted transitions with the listed identifiers across the full run history. Entry is allowed
 only when the count is strictly below `limit`; the accepted entry consumes one unit. Rejected attempts and idempotent

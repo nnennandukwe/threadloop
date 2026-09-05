@@ -122,7 +122,7 @@ function normalize(profile: WorkflowProfile): CompiledPayload {
     cycle_controls: byId(profile.cycle_controls ?? []).map((control) => ({
       ...control,
       exit_transition_refs: [...control.exit_transition_refs].sort(),
-      ...('state_refs' in control ? { state_refs: [...control.state_refs].sort() } : {}),
+      ...('transition_refs' in control ? { transition_refs: [...control.transition_refs].sort() } : {}),
     })),
     phase_policy: profile.phase_policy
       ? { ...profile.phase_policy, state_refs: [...profile.phase_policy.state_refs].sort() }

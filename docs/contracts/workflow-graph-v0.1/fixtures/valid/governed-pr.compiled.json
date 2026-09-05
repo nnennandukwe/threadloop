@@ -685,7 +685,12 @@
       {
         "id": "pre_pr_escape",
         "kind": "human_escape",
-        "state_refs": ["implementing", "pre_pr_reviewing", "verifying"],
+        "transition_refs": [
+          "address_pre_pr_review",
+          "retry_failed_proof",
+          "retry_review_changes",
+          "verify_implementation"
+        ],
         "exit_transition_refs": ["block_implementing", "block_pre_pr_reviewing", "block_verifying"]
       }
     ],
@@ -698,5 +703,5 @@
       "include_audit_genesis": true
     }
   },
-  "graph_digest": "71e45d1a13d5f642b6e885bba2a5632984cd4395bc5978136b5090166bf54a16"
+  "graph_digest": "7df5f3b655e61bc872f83de08c6ce7b0c0c714de15256ada7b13127264bcd2dc"
 }

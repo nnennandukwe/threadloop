@@ -109,7 +109,7 @@ export function validateTopology(profile: WorkflowProfile): Diagnostic[] {
   (profile.cycle_controls ?? []).forEach((control, index) => {
     const path = `$.cycle_controls[${index}]`;
     refs(control.exit_transition_refs, edges, `${path}.exit_transition_refs`);
-    if ('state_refs' in control) refs(control.state_refs, states, `${path}.state_refs`);
+    if ('transition_refs' in control) refs(control.transition_refs, edges, `${path}.transition_refs`);
     if (control.kind === 'budget') ref(control.budget, budgets, `${path}.budget`);
     if (control.kind === 'guard_stop') ref(control.guard, guards, `${path}.guard`);
   });
@@ -305,43 +305,51 @@ function hasCycle(states: readonly string[], edges: readonly Edge[]): boolean {
 function validateCycles(profile: WorkflowProfile): Diagnostic[] {
   const errors: Diagnostic[] = [];
   const states = new Map(profile.states.map((state) => [state.id, state]));
-  const guardedStates = new Set<string>();
   // A required human authorization interrupts autonomous cycling on every traversal.
   const guardedEdges = new Set(
     profile.transitions.filter((edge) => edge.authority.includes('human')).map((edge) => edge.id),
   );
   (profile.cycle_controls ?? []).forEach((control, index) => {
     const exits = profile.transitions.filter((edge) => control.exit_transition_refs.includes(edge.id));
+    const entries = profile.transitions.filter(
+      (edge) => 'transition_refs' in control && control.transition_refs.includes(edge.id),
+    );
     const toHandoff = (edge: Edge) => states.get(edge.to)?.kind === 'suspended';
     const toStop = (edge: Edge) => toHandoff(edge) || states.get(edge.to)?.kind === 'terminal';
+    // When an exit is eligible, branch precedence must select it before the controlled continuation.
+    const exitPrecedes = (entry: Edge) =>
+      exits.some((exit) => exit.from === entry.from && (exit.priority ?? 0) < (entry.priority ?? 0));
     let valid = false;
     switch (control.kind) {
       case 'human_escape':
-        valid = exits.every(toHandoff) && control.state_refs.every((id) => exits.some((edge) => edge.from === id));
-        if (valid) for (const id of control.state_refs) guardedStates.add(id);
+        valid = exits.every(toHandoff) && entries.every(exitPrecedes);
         break;
       case 'terminal_route':
         valid =
           !hasCycle([...states.keys()], exits) &&
-          control.state_refs.every((id) =>
-            [...reach([id], exits)].some((target) => states.get(target)?.kind === 'terminal'),
+          entries.every((entry) =>
+            exits.some(
+              (exit) =>
+                exit.from === entry.from &&
+                (exit.priority ?? 0) < (entry.priority ?? 0) &&
+                [...reach([exit.to], exits)].some((target) => states.get(target)?.kind === 'terminal'),
+            ),
           );
-        if (valid) for (const id of control.state_refs) guardedStates.add(id);
         break;
       case 'guard_stop': {
         const guard = profile.guards.find((candidate) => candidate.id === control.guard);
         valid =
           guard?.capability === 'stop_requested' &&
-          exits.every((edge) => toStop(edge) && edge.guard_refs.includes(control.guard));
-        if (valid) for (const edge of exits) guardedStates.add(edge.from);
+          exits.every((edge) => toStop(edge) && edge.guard_refs.includes(control.guard)) &&
+          entries.every(exitPrecedes);
         break;
       }
       case 'budget': {
         const budget = profile.budgets?.find((candidate) => candidate.id === control.budget);
-        const entries = profile.transitions.filter((edge) => budget?.transition_refs.includes(edge.id));
+        const countedEntries = profile.transitions.filter((edge) => budget?.transition_refs.includes(edge.id));
         // Exhaustion must not require the exhausted budget again, even on the escape edge.
         valid =
-          entries.length > 0 &&
+          countedEntries.length > 0 &&
           exits.every(
             (edge) =>
               toStop(edge) &&
@@ -349,11 +357,12 @@ function validateCycles(profile: WorkflowProfile): Diagnostic[] {
                 profile.guards.some((guard) => guard.id === ref && guard.capability === 'budget_available'),
               ),
           ) &&
-          entries.every((entry) => exits.some((edge) => edge.from === entry.from));
-        if (valid) for (const edge of entries) guardedEdges.add(edge.id);
+          countedEntries.every((entry) => exits.some((edge) => edge.from === entry.from));
+        if (valid) for (const edge of countedEntries) guardedEdges.add(edge.id);
         break;
       }
     }
+    if (valid && control.kind !== 'budget') for (const edge of entries) guardedEdges.add(edge.id);
     if (!valid)
       errors.push(
         diagnostic(
@@ -361,14 +370,12 @@ function validateCycles(profile: WorkflowProfile): Diagnostic[] {
           `$.cycle_controls[${index}]`,
           control.id,
           'Cycle control does not provide its declared stop, budget exit, or human escape.',
-          'Reference actual protected entries and reachable exit transitions; an exhausted budget cannot gate its own exit.',
+          'Name the controlled transitions and higher-priority stop routes; an exhausted budget cannot gate its own exit.',
         ),
       );
   });
-  const residualStates = profile.states.map((state) => state.id).filter((id) => !guardedStates.has(id));
-  const residualEdges = profile.transitions.filter(
-    (edge) => !guardedEdges.has(edge.id) && !guardedStates.has(edge.from) && !guardedStates.has(edge.to),
-  );
+  const residualStates = profile.states.map((state) => state.id);
+  const residualEdges = profile.transitions.filter((edge) => !guardedEdges.has(edge.id));
   if (hasCycle(residualStates, residualEdges))
     errors.push(
       diagnostic(

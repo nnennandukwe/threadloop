@@ -723,7 +723,7 @@
                     "type": "string",
                     "const": "human_escape"
                   },
-                  "state_refs": {
+                  "transition_refs": {
                     "minItems": 1,
                     "type": "array",
                     "items": {
@@ -740,7 +740,7 @@
                     }
                   }
                 },
-                "required": ["id", "kind", "state_refs", "exit_transition_refs"],
+                "required": ["id", "kind", "transition_refs", "exit_transition_refs"],
                 "additionalProperties": false
               },
               {
@@ -754,7 +754,7 @@
                     "type": "string",
                     "const": "terminal_route"
                   },
-                  "state_refs": {
+                  "transition_refs": {
                     "minItems": 1,
                     "type": "array",
                     "items": {
@@ -771,7 +771,7 @@
                     }
                   }
                 },
-                "required": ["id", "kind", "state_refs", "exit_transition_refs"],
+                "required": ["id", "kind", "transition_refs", "exit_transition_refs"],
                 "additionalProperties": false
               },
               {
@@ -789,6 +789,14 @@
                     "type": "string",
                     "pattern": "^[a-z][a-z0-9_]{0,63}$"
                   },
+                  "transition_refs": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                    }
+                  },
                   "exit_transition_refs": {
                     "minItems": 1,
                     "type": "array",
@@ -798,7 +806,7 @@
                     }
                   }
                 },
-                "required": ["id", "kind", "guard", "exit_transition_refs"],
+                "required": ["id", "kind", "guard", "transition_refs", "exit_transition_refs"],
                 "additionalProperties": false
               }
             ]

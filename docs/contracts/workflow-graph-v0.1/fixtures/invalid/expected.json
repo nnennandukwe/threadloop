@@ -102,5 +102,9 @@
   {
     "file": "prior-state-completed.yaml",
     "expected_code": "INVALID_PRIOR_STATE"
+  },
+  {
+    "file": "cycle-control-bypass.yaml",
+    "expected_code": "UNCONTROLLED_CYCLE"
   }
 ]

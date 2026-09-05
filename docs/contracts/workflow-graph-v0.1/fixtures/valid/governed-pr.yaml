@@ -625,10 +625,11 @@ budgets:
 cycle_controls:
   - id: pre_pr_escape
     kind: human_escape
-    state_refs:
-      - implementing
-      - verifying
-      - pre_pr_reviewing
+    transition_refs:
+      - verify_implementation
+      - retry_failed_proof
+      - retry_review_changes
+      - address_pre_pr_review
     exit_transition_refs:
       - block_implementing
       - block_verifying
