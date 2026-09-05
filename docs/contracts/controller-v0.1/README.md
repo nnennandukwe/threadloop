@@ -100,11 +100,14 @@ transition with block evidence. `terminal` reports an already terminal run, not 
 return validation diagnostics rather than a decision bound to invalid input.
 
 Each blocked reason is checked against explicit facts. Unavailable capability names an `action_id`, unavailable
-authority names a `transition_id`, unavailable evidence names a `guard_id`, and an idempotency conflict names the
-proposed request identity/digest. These references must belong to the current state. Reason text cannot substitute for
-facts. `AMBIGUOUS_REMEDY` and `NO_APPLICABLE_REMEDY` remain valid wire codes for the future selector, but this candidate
-validator returns `SELECTION_PROOF_REQUIRED` for them: proving a tie or absence of remedies requires exhaustive
-selection, which is outside #105. A successful candidate check never proves precedence over alternatives.
+authority names a `transition_id`, unavailable evidence names a `guard_id`, and an idempotency conflict names the full
+proposed Action Request envelope. A conflict validates only if its contents pass request validation with the registry
+conflict as the sole error. These references must belong to the current state. Reason text cannot substitute for facts.
+Unavailable evidence requires a missing current receipt for a receipt-backed guard; a failed result or an inapplicable
+phase, budget, repository, or prior-state predicate is not missing evidence. `AMBIGUOUS_REMEDY` and
+`NO_APPLICABLE_REMEDY` remain valid wire codes for the future selector, but this candidate validator returns
+`SELECTION_PROOF_REQUIRED` for them: proving a tie or absence of remedies requires exhaustive selection, which is
+outside #105. A successful candidate check never proves precedence over alternatives.
 
 Healthy in-flight execution reports `waiting`. Stale subject/state binding, expired/invalidated claims, changed policy,
 cancellation, and uncertain effects require reconciliation. Waiting contains no new Action Request. The projection is

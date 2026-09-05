@@ -264,7 +264,7 @@ const decisionPayloadSchema = z.discriminatedUnion('outcome', [
           z.strictObject({ code: z.literal('EXECUTION_RECONCILIATION_REQUIRED'), ...reasonFields }),
           z.strictObject({ code: z.literal('CLAIM_EXPIRED'), ...reasonFields }),
           z.strictObject({ code: z.literal('UNSUPPORTED_CAPABILITY'), action_id: identifier, ...reasonFields }),
-          z.strictObject({ code: z.literal('IDEMPOTENCY_CONFLICT'), request: requestReference, ...reasonFields }),
+          z.strictObject({ code: z.literal('IDEMPOTENCY_CONFLICT'), request: actionRequestSchema, ...reasonFields }),
           z.strictObject({ code: z.literal('EVIDENCE_UNAVAILABLE'), guard_id: identifier, ...reasonFields }),
           z.strictObject({ code: z.literal('AUTHORITY_UNAVAILABLE'), transition_id: identifier, ...reasonFields }),
           z.strictObject({ code: z.literal('AMBIGUOUS_REMEDY'), ...reasonFields }),
@@ -283,6 +283,31 @@ export type ActionRequest = z.infer<typeof actionRequestSchema>;
 export type ControllerDecision = z.infer<typeof controllerDecisionSchema>;
 
 export function publishedControllerSchemas() {
+  const metadata = z.registry<{ id: string }>();
+  const definitions = {
+    Identifier: identifier,
+    NonemptyText: text,
+    Digest: digest,
+    Counter: counter,
+    Timestamp: timestamp,
+    Identity: identity,
+    IdentifierReferences: references,
+    RepositorySubject: repositorySubject,
+    Subject: subjectSchema,
+    Authority: authority,
+    EvidencePayload: evidencePayload,
+    ClaimReference: claimReference,
+    RequestReference: requestReference,
+    Receipt: receipt,
+    RunBinding: runBinding,
+    ArtifactInput: artifactInput,
+    EvidenceRequirements: requirements,
+    ExecutorRequest: executorRequest,
+    HumanRequest: humanRequest,
+    ActionRequest: actionRequestSchema,
+    CompiledGraph: compiledGraphSchema,
+  };
+  for (const [id, schema] of Object.entries(definitions)) metadata.add(schema, { id });
   return Object.fromEntries(
     Object.entries({
       'controller-input': controllerInputSchema,
@@ -291,7 +316,7 @@ export function publishedControllerSchemas() {
     }).map(([name, schema]) => [
       name,
       {
-        ...z.toJSONSchema(schema, { target: 'draft-2020-12', reused: 'ref' }),
+        ...z.toJSONSchema(schema, { target: 'draft-2020-12', metadata, reused: 'inline' }),
         $id: `https://github.com/nnennandukwe/threadloop/contracts/controller/0.1/${name}`,
       },
     ]),

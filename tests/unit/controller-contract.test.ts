@@ -46,6 +46,7 @@ describe('Published controller specification', () => {
     for (const [name, schema] of Object.entries(publishedControllerSchemas())) {
       const document: unknown = JSON.parse(await readFile(new URL(`schemas/${name}.schema.json`, bundle), 'utf8'));
       expect(document).toEqual(schema);
+      expect(JSON.stringify(schema)).not.toContain('__schema');
       expect(new Ajv2020({ strict: true, strictTypes: false, validateFormats: false }).validateSchema(schema)).toBe(
         true,
       );
@@ -547,6 +548,8 @@ describe('Qodo review regressions', () => {
 describe('Blocked facts and active request obligations', () => {
   it('rejects unsupported blocked assertions and identifies selector-only proof gaps', async () => {
     const fixture = await readExample('transition_available');
+    const proposed = buildActionRequest(fixture.input, localProofIntent(fixture.input));
+    if (!proposed.ok) throw new Error('Expected request');
     const reasons = [
       { code: 'STALE_OBSERVATION' },
       { code: 'INVALID_HISTORY' },
@@ -555,7 +558,7 @@ describe('Blocked facts and active request obligations', () => {
       { code: 'UNSUPPORTED_CAPABILITY', action_id: 'run_gates' },
       { code: 'AUTHORITY_UNAVAILABLE', transition_id: 'human_handoff' },
       { code: 'EVIDENCE_UNAVAILABLE', guard_id: 'review_set' },
-      { code: 'IDEMPOTENCY_CONFLICT', request: { idempotency_key: sha256('slot'), request_digest: sha256('request') } },
+      { code: 'IDEMPOTENCY_CONFLICT', request: proposed.value },
       { code: 'AMBIGUOUS_REMEDY' },
       { code: 'NO_APPLICABLE_REMEDY' },
     ];
@@ -586,7 +589,9 @@ describe('Blocked facts and active request obligations', () => {
     const conflict = () =>
       decisionEnvelope(input, {
         outcome: 'blocked',
-        reasons: [{ code: 'IDEMPOTENCY_CONFLICT', request, message: 'Conflict', recovery: 'Reconcile request' }],
+        reasons: [
+          { code: 'IDEMPOTENCY_CONFLICT', request: built.value, message: 'Conflict', recovery: 'Reconcile request' },
+        ],
       });
     input.existing_requests = [request];
     expect(validateControllerDecision(input, conflict()).ok).toBe(false);
@@ -674,5 +679,98 @@ describe('Blocked facts and active request obligations', () => {
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.diagnostics.map((item) => item.code)).toContain('GUARD_EVIDENCE_MISMATCH');
+  });
+});
+
+describe('Qodo blocked-reason follow-up', () => {
+  it('does not accept an invented proposed digest as conflict evidence', async () => {
+    const input = await controllerSnapshot();
+    const built = buildActionRequest(input, localProofIntent(input));
+    if (!built.ok) throw new Error('Expected request');
+    const reference = {
+      idempotency_key: built.value.request.idempotency_key,
+      request_digest: built.value.request_digest,
+    };
+    input.existing_requests = [reference];
+    const candidate = decisionEnvelope(input, {
+      outcome: 'blocked',
+      reasons: [
+        {
+          code: 'IDEMPOTENCY_CONFLICT',
+          request: { ...reference, request_digest: sha256('invented proposal') },
+          message: 'Conflict',
+          recovery: 'Reconcile request',
+        },
+      ],
+    });
+    expect(validateControllerDecision(input, candidate).ok).toBe(false);
+  });
+
+  it('does not classify an inapplicable phase as unavailable evidence', async () => {
+    const input = await controllerSnapshot();
+    input.binding.source_state = 'verifying';
+    const candidate = decisionEnvelope(input, {
+      outcome: 'blocked',
+      reasons: [
+        { code: 'EVIDENCE_UNAVAILABLE', guard_id: 'pre', message: 'Evidence missing', recovery: 'Restore evidence' },
+      ],
+    });
+    expect(validateControllerDecision(input, candidate).ok).toBe(false);
+  });
+});
+
+describe('Verifiable blocked evidence', () => {
+  it('requires valid proposed contents and a real content difference for conflict', async () => {
+    const input = await controllerSnapshot();
+    const built = buildActionRequest(input, localProofIntent(input));
+    if (!built.ok) throw new Error('Expected request');
+    const proposal = structuredClone(built.value);
+    input.existing_requests = [
+      { idempotency_key: built.value.request.idempotency_key, request_digest: built.value.request_digest },
+    ];
+    proposal.request.inputs.unshift({ role: 'change_context', artifact: { id: 'context', digest: sha256('context') } });
+    proposal.request_digest = sha256(canonicalJson(proposal.request));
+    const conflict = () =>
+      decisionEnvelope(input, {
+        outcome: 'blocked',
+        reasons: [
+          {
+            code: 'IDEMPOTENCY_CONFLICT',
+            request: proposal,
+            message: 'Different contents for the same logical action',
+            recovery: 'Reconcile the existing request',
+          },
+        ],
+      });
+    expect(validateControllerDecision(input, conflict()).ok).toBe(true);
+    proposal.request_digest = sha256('invented proposal');
+    expect(validateControllerDecision(input, conflict()).ok).toBe(false);
+    proposal.request_digest = sha256(canonicalJson(proposal.request));
+    input.observation.repository!.clean = false;
+    expect(validateControllerDecision(input, conflict()).ok).toBe(false);
+  });
+
+  it('distinguishes missing proof from an observed failed result', async () => {
+    const input = await controllerSnapshot();
+    input.binding.source_state = 'verifying';
+    const blocked = () =>
+      decisionEnvelope(input, {
+        outcome: 'blocked',
+        reasons: [
+          {
+            code: 'EVIDENCE_UNAVAILABLE',
+            guard_id: 'local_pass',
+            message: 'Current gate receipt is absent',
+            recovery: 'Collect the current proof',
+          },
+        ],
+      });
+    expect(validateControllerDecision(input, blocked()).ok).toBe(true);
+    const failed = receipt(input);
+    if (failed.payload.type !== 'local_proof') throw new Error('Expected local proof');
+    failed.payload.result = 'failed';
+    failed.payload_digest = sha256(canonicalJson(failed.payload));
+    input.receipts = [failed];
+    expect(validateControllerDecision(input, blocked()).ok).toBe(false);
   });
 });
