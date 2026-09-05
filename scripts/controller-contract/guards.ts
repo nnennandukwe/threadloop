@@ -5,6 +5,18 @@ type Receipt = ControllerInput['receipts'][number];
 type Guard = ControllerInput['compiled_graph']['graph']['guards'][number];
 const same = (left: unknown, right: unknown) => canonicalJson(left) === canonicalJson(right);
 
+export function hasRepairAdmission(input: ControllerInput, actionId: string): boolean {
+  const admission = input.history.status === 'verified' ? input.history.repair_admission : null;
+  return (
+    admission !== null &&
+    admission.action_id === actionId &&
+    admission.bound_state_version === input.binding.state_version &&
+    input.compiled_graph.graph.transitions.some(
+      (edge) => edge.id === admission.transition_id && edge.to === input.binding.source_state,
+    )
+  );
+}
+
 // Check required facts of an asserted transition. No outgoing-edge search or remedy selection occurs here.
 export function supportsGuard(input: ControllerInput, guard: Guard, receipts: Receipt[]): boolean {
   const history = input.history;
@@ -34,6 +46,8 @@ export function supportsGuard(input: ControllerInput, guard: Guard, receipts: Re
         case 'committed_repair':
           return (
             history.status === 'verified' &&
+            (guard.parameters.condition !== 'committed_repair' ||
+              guard.required_actions.some((actionId) => hasRepairAdmission(input, actionId))) &&
             history.implementation_basis !== null &&
             same(observation.basis, history.implementation_basis) &&
             observation.relationship === 'descendant'

@@ -412,8 +412,7 @@ describe('Preserved lifecycle and temporal boundaries', () => {
       typeof input.observation.repository.basis
     >;
     input.observation.repository.relationship = 'descendant';
-    const original = structuredClone(input);
-    const candidate = decisionEnvelope(input, {
+    const outcome = {
       outcome: 'transition_available',
       transition_id: 'verify_repair',
       target_state: 'verifying',
@@ -421,8 +420,18 @@ describe('Preserved lifecycle and temporal boundaries', () => {
         { guard_id: 'plan', evidence_ids: [] },
         { guard_id: 'repair_committed', evidence_ids: [] },
       ],
-    });
-    expect(validateControllerDecision(input, candidate).ok).toBe(true);
+    };
+    expect(validateControllerDecision(input, decisionEnvelope(input, outcome)).ok).toBe(false);
+    input.history.repair_admission = {
+      action_id: 'repair',
+      transition_id: 'repair_failed_proof',
+      entry_state_version: 5,
+      bound_state_version: 5,
+      budget_id: 'repair_entries',
+      consumed: 3,
+    };
+    const original = structuredClone(input);
+    expect(validateControllerDecision(input, decisionEnvelope(input, outcome)).ok).toBe(true);
     expect(input).toEqual(original);
   });
 
@@ -1065,5 +1074,19 @@ describe('Repair recovery and executor-only claims', () => {
       expect(validateControllerInput(input).ok).toBe(false);
     }
     expect(validateControllerDecision(fixture.input, fixture.expected).ok).toBe(true);
+  });
+});
+
+describe('Repair commit authority', () => {
+  it('requires the active repair admission for commit work on the committed-repair guard', async () => {
+    const fixture = await readExample('admitted_repair');
+    if (fixture.input.history.status !== 'verified' || fixture.intent === null)
+      throw new Error('Expected repair fixture');
+    const admission = fixture.input.history.repair_admission;
+    const intent = { ...fixture.intent, action_id: 'commit' };
+    fixture.input.history.repair_admission = null;
+    expect(buildActionRequest(fixture.input, intent).ok).toBe(false);
+    fixture.input.history.repair_admission = admission;
+    expect(buildActionRequest(fixture.input, intent).ok).toBe(true);
   });
 });

@@ -68,7 +68,9 @@ adapter must retain the original entry through suspension and verified recovery 
 `bound_state_version` to the current version. Normal progress out of that state clears the admission. It must never
 reuse a historical admission for a new repair episode. Verifying this history derivation remains an admission-boundary
 obligation; the candidate validator checks its explicit references and bindings. The final admitted repair remains
-usable at the budget limit.
+usable at the budget limit. The admission is required for repair work, any commit action satisfying `committed_repair`,
+and the committed-repair guard that permits progress to verification. Completing work does not bypass admission or
+consume another entry.
 
 Receipts retain identity and authoritative sequence; run, graph, producer state version, subject; verification-policy
 and Workflow policy identities; acceptance-record identity; typed payload and digest; optional deadline; and, for

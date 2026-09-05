@@ -3,7 +3,7 @@ import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import { actionRequestSchema, controllerInputSchema, type ActionRequest, type ControllerInput } from './contracts.js';
 import { diagnostic, validateShape, type Diagnostic, type ValidationResult } from '../workflow-graph/contracts.js';
 import { validateGraphBinding } from '../workflow-graph/compiler.js';
-import { supportsGuard } from './guards.js';
+import { hasRepairAdmission, supportsGuard } from './guards.js';
 
 export function validateControllerInput(input: unknown): ValidationResult<ControllerInput> {
   const parsed = validateShape(controllerInputSchema, input);
@@ -449,6 +449,16 @@ export function validateRequestInSnapshot(
 }
 
 function actionPrerequisites(input: ControllerInput, request: ActionRequest['request']): boolean {
+  if (
+    input.compiled_graph.graph.guards.some(
+      (guard) =>
+        request.guard_ids.includes(guard.id) &&
+        guard.capability === 'repository' &&
+        guard.parameters.condition === 'committed_repair' &&
+        !guard.required_actions.some((actionId) => hasRepairAdmission(input, actionId)),
+    )
+  )
+    return false;
   const receipts = input.receipts.filter(
     (receipt) => request.evidence_ids.includes(receipt.id) && currentReceipt(receipt, input),
   );
@@ -540,15 +550,7 @@ function actionPrerequisites(input: ControllerInput, request: ActionRequest['req
       const setupFailed = receipts.some(
         (receipt) => receipt.payload.type === 'local_proof' && receipt.payload.result === 'setup_failed',
       );
-      const history = input.history;
-      const admission = history.status === 'verified' ? history.repair_admission : null;
-      const admitted =
-        admission !== null &&
-        admission.action_id === request.action_id &&
-        input.compiled_graph.graph.transitions.some(
-          (edge) => edge.id === admission.transition_id && edge.to === input.binding.source_state,
-        );
-      return failure && !setupFailed && admitted;
+      return failure && !setupFailed && hasRepairAdmission(input, request.action_id);
     }
     default:
       return true;
