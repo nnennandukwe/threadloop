@@ -80,8 +80,19 @@ export function validateTopology(profile: WorkflowProfile): Diagnostic[] {
     refs(guard.required_actions ?? [], actions, `$.guards[${index}].required_actions`);
     if (guard.capability === 'budget_available')
       ref(guard.parameters.budget, budgets, `$.guards[${index}].parameters.budget`);
-    if (guard.capability === 'recorded_prior_state')
+    if (guard.capability === 'recorded_prior_state') {
       ref(guard.parameters.state, states, `$.guards[${index}].parameters.state`);
+      const prior = states.get(guard.parameters.state);
+      if (prior && prior.kind !== 'active') {
+        report(
+          'INVALID_PRIOR_STATE',
+          `$.guards[${index}].parameters.state`,
+          guard.id,
+          'A recorded prior-state guard must reference an active state, even when unused.',
+          'Reference the active state recorded before suspension; suspended and terminal states cannot be recovery bases.',
+        );
+      }
+    }
     if (guard.capability === 'phase' && !profile.phase_policy)
       report(
         'PHASE_POLICY_REQUIRED',

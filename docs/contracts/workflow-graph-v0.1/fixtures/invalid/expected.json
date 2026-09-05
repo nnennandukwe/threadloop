@@ -94,5 +94,13 @@
   {
     "file": "custom-tag.yaml",
     "expected_code": "YAML_INVALID"
+  },
+  {
+    "file": "prior-state-blocked.yaml",
+    "expected_code": "INVALID_PRIOR_STATE"
+  },
+  {
+    "file": "prior-state-completed.yaml",
+    "expected_code": "INVALID_PRIOR_STATE"
   }
 ]

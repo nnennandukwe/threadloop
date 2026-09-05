@@ -409,6 +409,14 @@ function cyclicProfile(): WorkflowProfile {
 }
 
 describe('Cycle control contracts', () => {
+  it.each(['blocked', 'completed'])('rejects an unused recorded prior-state guard naming %s', (state) => {
+    const profile = cyclicProfile();
+    profile.guards.push({ id: 'invalid_prior', capability: 'recorded_prior_state', parameters: { state } });
+    expect(compile(profile)).toMatchObject({
+      ok: false,
+      diagnostics: [{ code: 'INVALID_PRIOR_STATE', identifier: 'invalid_prior' }],
+    });
+  });
   it('requires a run to begin in an active state', () => {
     const profile = minimalProfile();
     profile.initial_state = 'completed';
