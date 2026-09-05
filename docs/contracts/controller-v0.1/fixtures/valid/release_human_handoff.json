@@ -1,0 +1,253 @@
+{
+  "id": "release_human_handoff",
+  "graph_fixture": "release-to-publish",
+  "input": {
+    "schema_version": "0.1",
+    "binding": {
+      "workflow_run_id": "workflow_1",
+      "graph_schema_version": "0.1",
+      "graph_digest": "17065977d0b16f024cc3c48387d4156cedcc6b2f36b681bee3e002fe09713dee",
+      "source_state": "awaiting_approval",
+      "state_version": 5,
+      "subject": {
+        "kind": "artifact",
+        "artifact_id": "sample_release",
+        "content_digest": "54e9bc4df5e24ba97fad28ff0afbbd9af2239f1d14065e81a894d3fbd14e7510"
+      }
+    },
+    "observation": {
+      "id": "observation_b",
+      "subject": {
+        "kind": "artifact",
+        "artifact_id": "sample_release",
+        "content_digest": "54e9bc4df5e24ba97fad28ff0afbbd9af2239f1d14065e81a894d3fbd14e7510"
+      },
+      "state_version": 5,
+      "status": "verified",
+      "valid_until": null,
+      "repository": null
+    },
+    "history": {
+      "status": "verified",
+      "digest": "d31caa5a33b5c6edb4901d35bfa6db686989c324821892ad8e26f4bab717fc27",
+      "phase": null,
+      "budget_counts": [
+        {
+          "budget_id": "remediation_entries",
+          "used": 0
+        }
+      ],
+      "prior_state": null,
+      "implementation_basis": null,
+      "proof_plan_bound": false
+    },
+    "policy": {
+      "id": "workflow_policy",
+      "digest": "34991493666b6defe78070b6227d3538273ed4279d8abe402e65cb9be51c261e",
+      "rules": {
+        "selection": "threadloop.remedies/0.1",
+        "proof_plan": null,
+        "repository_binding": null,
+        "publication_destination": "release_channel",
+        "local_gate_ids": [],
+        "independent_gate_ids": [],
+        "evidence_policies": [
+          {
+            "id": "trusted_evidence",
+            "digest": "997c333585c7d8794eed32314bb36f7b81037f58425b7a5cb0d51ca75cf9f392"
+          }
+        ],
+        "authorities": [
+          {
+            "type": "threadloop",
+            "identity": {
+              "id": "controller",
+              "digest": "c1472135b14c77c8bef98e73f70208325fa0dcf1e6bd668ae9b31a9cea295fe7"
+            }
+          },
+          {
+            "type": "human",
+            "identity": {
+              "id": "maintainer",
+              "digest": "9c5646b582f10531c791dd2372854409c96e8276f979c0aa4a505ec760e06100"
+            }
+          }
+        ]
+      }
+    },
+    "available_capabilities": [
+      {
+        "capability": "approve_change",
+        "actor": "human"
+      },
+      {
+        "capability": "block_run",
+        "actor": "human"
+      },
+      {
+        "capability": "prepare_release",
+        "actor": "executor"
+      },
+      {
+        "capability": "publish_release",
+        "actor": "executor"
+      },
+      {
+        "capability": "recover_run",
+        "actor": "human"
+      },
+      {
+        "capability": "verify_release",
+        "actor": "executor"
+      },
+      {
+        "capability": "verify_publication",
+        "actor": "executor"
+      }
+    ],
+    "receipts": [
+      {
+        "id": "release_verified",
+        "workflow_run_id": "workflow_1",
+        "graph_digest": "17065977d0b16f024cc3c48387d4156cedcc6b2f36b681bee3e002fe09713dee",
+        "source_state_version": 3,
+        "subject": {
+          "kind": "artifact",
+          "artifact_id": "sample_release",
+          "content_digest": "54e9bc4df5e24ba97fad28ff0afbbd9af2239f1d14065e81a894d3fbd14e7510"
+        },
+        "sequence": 1,
+        "policy": {
+          "id": "trusted_evidence",
+          "digest": "997c333585c7d8794eed32314bb36f7b81037f58425b7a5cb0d51ca75cf9f392"
+        },
+        "workflow_policy": {
+          "id": "workflow_policy",
+          "digest": "34991493666b6defe78070b6227d3538273ed4279d8abe402e65cb9be51c261e"
+        },
+        "acceptance": {
+          "id": "acceptance_release_verified",
+          "digest": "0b96fc8f8dc3a256bb2ca36b89dfa804bdb449db9b97f1f9a2416f720e414e1b"
+        },
+        "valid_until": null,
+        "origin": {
+          "kind": "observation"
+        },
+        "payload": {
+          "type": "artifact",
+          "stage": "release_verified",
+          "result": "passed"
+        },
+        "payload_digest": "c465c2d9ad8fb15d0ee190fff2596d2ecc8a9b0ca229b123f9acf3e73810197e"
+      }
+    ],
+    "invalidated_claims": [],
+    "execution": {
+      "status": "idle"
+    },
+    "existing_requests": [],
+    "evaluation_time": null
+  },
+  "intent": {
+    "action_id": "approve",
+    "transition_id": "authorize_publication",
+    "guard_ids": ["approval"],
+    "inputs": [],
+    "evidence_ids": ["release_verified"],
+    "evidence_requirements": [
+      {
+        "family": "human_approval",
+        "guard_id": "approval",
+        "subject": {
+          "kind": "artifact",
+          "artifact_id": "sample_release",
+          "content_digest": "54e9bc4df5e24ba97fad28ff0afbbd9af2239f1d14065e81a894d3fbd14e7510"
+        }
+      }
+    ],
+    "valid_until": null
+  },
+  "expected": {
+    "decision": {
+      "schema_version": "0.1",
+      "input_digest": "7292edb4571f70ef4b134c76bf9da2a683909c125031ac951f0515e23d4b0107",
+      "binding": {
+        "workflow_run_id": "workflow_1",
+        "graph_schema_version": "0.1",
+        "graph_digest": "17065977d0b16f024cc3c48387d4156cedcc6b2f36b681bee3e002fe09713dee",
+        "source_state": "awaiting_approval",
+        "state_version": 5,
+        "subject": {
+          "kind": "artifact",
+          "artifact_id": "sample_release",
+          "content_digest": "54e9bc4df5e24ba97fad28ff0afbbd9af2239f1d14065e81a894d3fbd14e7510"
+        }
+      },
+      "outcome": "human_action_required",
+      "action_request": {
+        "request": {
+          "schema_version": "0.1",
+          "binding": {
+            "workflow_run_id": "workflow_1",
+            "graph_schema_version": "0.1",
+            "graph_digest": "17065977d0b16f024cc3c48387d4156cedcc6b2f36b681bee3e002fe09713dee",
+            "source_state": "awaiting_approval",
+            "state_version": 5,
+            "subject": {
+              "kind": "artifact",
+              "artifact_id": "sample_release",
+              "content_digest": "54e9bc4df5e24ba97fad28ff0afbbd9af2239f1d14065e81a894d3fbd14e7510"
+            }
+          },
+          "capability_catalog": "threadloop.sdlc/0.1",
+          "action_id": "approve",
+          "actor": "human",
+          "capability": "approve_change",
+          "transition_id": "authorize_publication",
+          "guard_ids": ["approval"],
+          "inputs": [],
+          "evidence_ids": ["release_verified"],
+          "constraints": {
+            "require_current_subject": true,
+            "lifecycle_mutation": false,
+            "valid_until": null
+          },
+          "policy": {
+            "id": "workflow_policy",
+            "digest": "34991493666b6defe78070b6227d3538273ed4279d8abe402e65cb9be51c261e"
+          },
+          "authorities": [
+            {
+              "type": "threadloop",
+              "identity": {
+                "id": "controller",
+                "digest": "c1472135b14c77c8bef98e73f70208325fa0dcf1e6bd668ae9b31a9cea295fe7"
+              }
+            },
+            {
+              "type": "human",
+              "identity": {
+                "id": "maintainer",
+                "digest": "9c5646b582f10531c791dd2372854409c96e8276f979c0aa4a505ec760e06100"
+              }
+            }
+          ],
+          "evidence_requirements": [
+            {
+              "family": "human_approval",
+              "guard_id": "approval",
+              "subject": {
+                "kind": "artifact",
+                "artifact_id": "sample_release",
+                "content_digest": "54e9bc4df5e24ba97fad28ff0afbbd9af2239f1d14065e81a894d3fbd14e7510"
+              }
+            }
+          ],
+          "idempotency_key": "e25c15a7c5564217c78f8ee714a2af23682debd7ecd7bdbd5001a2793ea7773c"
+        },
+        "request_digest": "72341d7afde52ca25a0c962177c1e21a7c6a48f342bbbbe884da3323b3762408"
+      }
+    },
+    "decision_digest": "87d2feac9598815368afb91bd360d408aee265698e024aaae997d0783b413a12"
+  }
+}

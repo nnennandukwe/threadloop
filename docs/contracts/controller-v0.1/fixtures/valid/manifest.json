@@ -1,0 +1,20 @@
+[
+  "action_required",
+  "stale_evidence_refresh",
+  "independent_proof_required",
+  "review_evidence_required",
+  "transition_available",
+  "human_approval",
+  "human_merge",
+  "completion_available",
+  "terminal",
+  "stale_observation",
+  "unsupported_capability",
+  "waiting",
+  "expired_claim",
+  "unknown_execution_outcome",
+  "setup_failure_handoff",
+  "repair_budget_handoff",
+  "release_human_handoff",
+  "release_publication"
+]

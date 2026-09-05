@@ -1,0 +1,13 @@
+{
+  "id": "policy_digest_drift",
+  "base": "action_required",
+  "mutations": [
+    {
+      "path": ["input", "policy", "rules", "local_gate_ids"],
+      "value": []
+    }
+  ],
+  "schema_valid": true,
+  "reseal": true,
+  "expected_code": "POLICY_DIGEST_MISMATCH"
+}

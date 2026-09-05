@@ -1,0 +1,13 @@
+{
+  "id": "guard_coverage_removed",
+  "base": "transition_available",
+  "mutations": [
+    {
+      "path": ["expected", "decision", "checks"],
+      "value": []
+    }
+  ],
+  "schema_valid": true,
+  "reseal": true,
+  "expected_code": "GUARD_COVERAGE_MISMATCH"
+}

@@ -1,0 +1,13 @@
+{
+  "id": "stale_observation_action",
+  "base": "action_required",
+  "mutations": [
+    {
+      "path": ["input", "observation", "state_version"],
+      "value": 4
+    }
+  ],
+  "schema_valid": true,
+  "reseal": true,
+  "expected_code": "STALE_OBSERVATION"
+}

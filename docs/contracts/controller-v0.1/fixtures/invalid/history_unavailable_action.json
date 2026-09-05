@@ -1,0 +1,16 @@
+{
+  "id": "history_unavailable_action",
+  "base": "action_required",
+  "mutations": [
+    {
+      "path": ["input", "history"],
+      "value": {
+        "status": "unavailable",
+        "reason": "History could not be verified"
+      }
+    }
+  ],
+  "schema_valid": true,
+  "reseal": true,
+  "expected_code": "INVALID_HISTORY"
+}

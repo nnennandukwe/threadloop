@@ -1,0 +1,13 @@
+{
+  "id": "wrong_request_actor_binding",
+  "base": "setup_failure_handoff",
+  "mutations": [
+    {
+      "path": ["expected", "decision", "action_request", "request", "actor"],
+      "value": "executor"
+    }
+  ],
+  "schema_valid": false,
+  "reseal": true,
+  "expected_code": "SCHEMA_INVALID"
+}

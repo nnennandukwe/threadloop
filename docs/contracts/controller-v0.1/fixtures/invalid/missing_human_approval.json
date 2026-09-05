@@ -1,0 +1,13 @@
+{
+  "id": "missing_human_approval",
+  "base": "completion_available",
+  "mutations": [
+    {
+      "path": ["expected", "decision", "checks", 3, "evidence_ids"],
+      "value": []
+    }
+  ],
+  "schema_valid": true,
+  "reseal": true,
+  "expected_code": "GUARD_EVIDENCE_MISMATCH"
+}

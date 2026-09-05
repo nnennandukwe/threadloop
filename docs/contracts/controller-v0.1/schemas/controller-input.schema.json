@@ -1,0 +1,1979 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "0.1"
+    },
+    "compiled_graph": {
+      "type": "object",
+      "properties": {
+        "graph": {
+          "type": "object",
+          "properties": {
+            "schema_version": {
+              "type": "string",
+              "const": "0.1"
+            },
+            "capability_catalog": {
+              "type": "string",
+              "const": "threadloop.sdlc/0.1"
+            },
+            "profile": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "revision": {
+                  "minimum": 1,
+                  "$ref": "#/$defs/__schema1"
+                }
+              },
+              "required": ["id", "revision"],
+              "additionalProperties": false
+            },
+            "initial_state": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "states": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/__schema2"
+              }
+            },
+            "transitions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "from": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "to": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "guard_refs": {
+                    "$ref": "#/$defs/__schema3"
+                  },
+                  "authority": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/__schema4"
+                    }
+                  },
+                  "priority": {
+                    "$ref": "#/$defs/__schema1"
+                  }
+                },
+                "required": ["id", "from", "to", "guard_refs", "authority", "priority"],
+                "additionalProperties": false
+              }
+            },
+            "guards": {
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "capability": {
+                        "type": "string",
+                        "const": "proof_plan_bound"
+                      },
+                      "parameters": {
+                        "$ref": "#/$defs/__schema5"
+                      },
+                      "id": {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      "required_actions": {
+                        "$ref": "#/$defs/__schema3"
+                      }
+                    },
+                    "required": ["capability", "parameters", "id", "required_actions"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "capability": {
+                        "type": "string",
+                        "const": "repository"
+                      },
+                      "parameters": {
+                        "type": "object",
+                        "properties": {
+                          "condition": {
+                            "type": "string",
+                            "enum": ["baseline_matches", "clean_descendant", "clean_plan_branch", "committed_repair"]
+                          }
+                        },
+                        "required": ["condition"],
+                        "additionalProperties": false
+                      },
+                      "id": {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      "required_actions": {
+                        "$ref": "#/$defs/__schema3"
+                      }
+                    },
+                    "required": ["capability", "parameters", "id", "required_actions"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "capability": {
+                        "type": "string",
+                        "const": "phase"
+                      },
+                      "parameters": {
+                        "type": "object",
+                        "properties": {
+                          "value": {
+                            "type": "string",
+                            "enum": ["pre_pr", "post_pr"]
+                          }
+                        },
+                        "required": ["value"],
+                        "additionalProperties": false
+                      },
+                      "id": {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      "required_actions": {
+                        "$ref": "#/$defs/__schema3"
+                      }
+                    },
+                    "required": ["capability", "parameters", "id", "required_actions"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "capability": {
+                        "type": "string",
+                        "const": "local_proof"
+                      },
+                      "parameters": {
+                        "type": "object",
+                        "properties": {
+                          "result": {
+                            "type": "string",
+                            "enum": ["passed", "failed"]
+                          }
+                        },
+                        "required": ["result"],
+                        "additionalProperties": false
+                      },
+                      "id": {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      "required_actions": {
+                        "$ref": "#/$defs/__schema3"
+                      }
+                    },
+                    "required": ["capability", "parameters", "id", "required_actions"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "capability": {
+                        "type": "string",
+                        "const": "independent_proof"
+                      },
+                      "parameters": {
+                        "$ref": "#/$defs/__schema5"
+                      },
+                      "id": {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      "required_actions": {
+                        "$ref": "#/$defs/__schema3"
+                      }
+                    },
+                    "required": ["capability", "parameters", "id", "required_actions"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "capability": {
+                        "type": "string",
+                        "const": "pre_pr_review"
+                      },
+                      "parameters": {
+                        "type": "object",
+                        "properties": {
+                          "outcome": {
+                            "type": "string",
+                            "enum": ["clean", "changes_required"]
+                          }
+                        },
+                        "required": ["outcome"],
+                        "additionalProperties": false
+                      },
+                      "id": {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      "required_actions": {
+                        "$ref": "#/$defs/__schema3"
+                      }
+                    },
+                    "required": ["capability", "parameters", "id", "required_actions"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "capability": {
+                        "type": "string",
+                        "const": "review"
+                      },
+                      "parameters": {
+                        "type": "object",
+                        "properties": {
+                          "condition": {
+                            "type": "string",
+                            "enum": ["current", "blocking", "clear", "proof_set_current"]
+                          }
+                        },
+                        "required": ["condition"],
+                        "additionalProperties": false
+                      },
+                      "id": {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      "required_actions": {
+                        "$ref": "#/$defs/__schema3"
+                      }
+                    },
+                    "required": ["capability", "parameters", "id", "required_actions"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "capability": {
+                        "type": "string",
+                        "const": "human_approval"
+                      },
+                      "parameters": {
+                        "type": "object",
+                        "properties": {
+                          "scope": {
+                            "type": "string",
+                            "enum": ["current_subject", "recovery"]
+                          }
+                        },
+                        "required": ["scope"],
+                        "additionalProperties": false
+                      },
+                      "id": {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      "required_actions": {
+                        "$ref": "#/$defs/__schema3"
+                      }
+                    },
+                    "required": ["capability", "parameters", "id", "required_actions"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "capability": {
+                        "type": "string",
+                        "const": "completion_observed"
+                      },
+                      "parameters": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": ["merge", "publication"]
+                          }
+                        },
+                        "required": ["kind"],
+                        "additionalProperties": false
+                      },
+                      "id": {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      "required_actions": {
+                        "$ref": "#/$defs/__schema3"
+                      }
+                    },
+                    "required": ["capability", "parameters", "id", "required_actions"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "capability": {
+                        "type": "string",
+                        "const": "block_evidence"
+                      },
+                      "parameters": {
+                        "$ref": "#/$defs/__schema5"
+                      },
+                      "id": {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      "required_actions": {
+                        "$ref": "#/$defs/__schema3"
+                      }
+                    },
+                    "required": ["capability", "parameters", "id", "required_actions"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "capability": {
+                        "type": "string",
+                        "const": "recorded_prior_state"
+                      },
+                      "parameters": {
+                        "type": "object",
+                        "properties": {
+                          "state": {
+                            "$ref": "#/$defs/__schema0"
+                          }
+                        },
+                        "required": ["state"],
+                        "additionalProperties": false
+                      },
+                      "id": {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      "required_actions": {
+                        "$ref": "#/$defs/__schema3"
+                      }
+                    },
+                    "required": ["capability", "parameters", "id", "required_actions"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "capability": {
+                        "type": "string",
+                        "const": "budget_available"
+                      },
+                      "parameters": {
+                        "type": "object",
+                        "properties": {
+                          "budget": {
+                            "$ref": "#/$defs/__schema0"
+                          }
+                        },
+                        "required": ["budget"],
+                        "additionalProperties": false
+                      },
+                      "id": {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      "required_actions": {
+                        "$ref": "#/$defs/__schema3"
+                      }
+                    },
+                    "required": ["capability", "parameters", "id", "required_actions"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "capability": {
+                        "type": "string",
+                        "const": "stop_requested"
+                      },
+                      "parameters": {
+                        "$ref": "#/$defs/__schema5"
+                      },
+                      "id": {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      "required_actions": {
+                        "$ref": "#/$defs/__schema3"
+                      }
+                    },
+                    "required": ["capability", "parameters", "id", "required_actions"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "capability": {
+                        "type": "string",
+                        "const": "artifact"
+                      },
+                      "parameters": {
+                        "type": "object",
+                        "properties": {
+                          "stage": {
+                            "type": "string",
+                            "enum": ["release_prepared", "release_verified", "publication_verified"]
+                          },
+                          "result": {
+                            "type": "string",
+                            "enum": ["passed", "failed"]
+                          }
+                        },
+                        "required": ["stage", "result"],
+                        "additionalProperties": false
+                      },
+                      "id": {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      "required_actions": {
+                        "$ref": "#/$defs/__schema3"
+                      }
+                    },
+                    "required": ["capability", "parameters", "id", "required_actions"],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "required_actions": {
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "capability": {
+                        "$ref": "#/$defs/__schema6"
+                      },
+                      "authority": {
+                        "$ref": "#/$defs/__schema7"
+                      },
+                      "parameters": {
+                        "$ref": "#/$defs/__schema5"
+                      },
+                      "id": {
+                        "$ref": "#/$defs/__schema0"
+                      }
+                    },
+                    "required": ["capability", "authority", "parameters", "id"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "capability": {
+                        "$ref": "#/$defs/__schema8"
+                      },
+                      "authority": {
+                        "$ref": "#/$defs/__schema9"
+                      },
+                      "parameters": {
+                        "$ref": "#/$defs/__schema5"
+                      },
+                      "id": {
+                        "$ref": "#/$defs/__schema0"
+                      }
+                    },
+                    "required": ["capability", "authority", "parameters", "id"],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "budgets": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "limit": {
+                    "minimum": 1,
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  "transition_refs": {
+                    "minItems": 1,
+                    "$ref": "#/$defs/__schema3"
+                  }
+                },
+                "required": ["id", "limit", "transition_refs"],
+                "additionalProperties": false
+              }
+            },
+            "cycle_controls": {
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "const": "budget"
+                      },
+                      "budget": {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      "exit_transition_refs": {
+                        "minItems": 1,
+                        "$ref": "#/$defs/__schema3"
+                      }
+                    },
+                    "required": ["id", "kind", "budget", "exit_transition_refs"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "const": "human_escape"
+                      },
+                      "transition_refs": {
+                        "minItems": 1,
+                        "$ref": "#/$defs/__schema3"
+                      },
+                      "exit_transition_refs": {
+                        "minItems": 1,
+                        "$ref": "#/$defs/__schema3"
+                      }
+                    },
+                    "required": ["id", "kind", "transition_refs", "exit_transition_refs"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "const": "terminal_route"
+                      },
+                      "transition_refs": {
+                        "minItems": 1,
+                        "$ref": "#/$defs/__schema3"
+                      },
+                      "exit_transition_refs": {
+                        "minItems": 1,
+                        "$ref": "#/$defs/__schema3"
+                      }
+                    },
+                    "required": ["id", "kind", "transition_refs", "exit_transition_refs"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "const": "guard_stop"
+                      },
+                      "guard": {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      "transition_refs": {
+                        "minItems": 1,
+                        "$ref": "#/$defs/__schema3"
+                      },
+                      "exit_transition_refs": {
+                        "minItems": 1,
+                        "$ref": "#/$defs/__schema3"
+                      }
+                    },
+                    "required": ["id", "kind", "guard", "transition_refs", "exit_transition_refs"],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "phase_policy": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "entered_state"
+                    },
+                    "state_refs": {
+                      "minItems": 1,
+                      "$ref": "#/$defs/__schema3"
+                    },
+                    "initial": {
+                      "type": "string",
+                      "const": "pre_pr"
+                    },
+                    "advanced": {
+                      "type": "string",
+                      "const": "post_pr"
+                    },
+                    "monotonic": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "include_audit_genesis": {
+                      "type": "boolean",
+                      "const": true
+                    }
+                  },
+                  "required": ["kind", "state_refs", "initial", "advanced", "monotonic", "include_audit_genesis"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "schema_version",
+            "capability_catalog",
+            "profile",
+            "initial_state",
+            "states",
+            "transitions",
+            "guards",
+            "required_actions",
+            "budgets",
+            "cycle_controls",
+            "phase_policy"
+          ],
+          "additionalProperties": false
+        },
+        "graph_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": ["graph", "graph_digest"],
+      "additionalProperties": false
+    },
+    "binding": {
+      "$ref": "#/$defs/__schema10"
+    },
+    "observation": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/__schema11"
+        },
+        "subject": {
+          "$ref": "#/$defs/__schema15"
+        },
+        "state_version": {
+          "$ref": "#/$defs/__schema14"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["verified", "unavailable", "corrupt"]
+        },
+        "valid_until": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/__schema17"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "repository": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/__schema11"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "clean": {
+                  "type": "boolean"
+                },
+                "basis": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/__schema16"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "relationship": {
+                  "type": "string",
+                  "enum": ["equal", "descendant", "unrelated", "unknown"]
+                }
+              },
+              "required": ["branch", "clean", "basis", "relationship"],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": ["id", "subject", "state_version", "status", "valid_until", "repository"],
+      "additionalProperties": false
+    },
+    "history": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "verified"
+            },
+            "digest": {
+              "$ref": "#/$defs/__schema12"
+            },
+            "proof_plan_bound": {
+              "type": "boolean"
+            },
+            "phase": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": ["pre_pr", "post_pr"]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "budget_counts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "budget_id": {
+                    "$ref": "#/$defs/__schema13"
+                  },
+                  "used": {
+                    "$ref": "#/$defs/__schema14"
+                  }
+                },
+                "required": ["budget_id", "used"],
+                "additionalProperties": false
+              }
+            },
+            "prior_state": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/__schema13"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "implementation_basis": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/__schema15"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "status",
+            "digest",
+            "proof_plan_bound",
+            "phase",
+            "budget_counts",
+            "prior_state",
+            "implementation_basis"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": ["unavailable", "corrupt"]
+            },
+            "reason": {
+              "$ref": "#/$defs/__schema11"
+            }
+          },
+          "required": ["status", "reason"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "policy": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/__schema11"
+        },
+        "digest": {
+          "$ref": "#/$defs/__schema12"
+        },
+        "rules": {
+          "type": "object",
+          "properties": {
+            "selection": {
+              "type": "string",
+              "const": "threadloop.remedies/0.1"
+            },
+            "proof_plan": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/__schema18"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "repository_binding": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "branch": {
+                      "$ref": "#/$defs/__schema11"
+                    },
+                    "baseline": {
+                      "$ref": "#/$defs/__schema16"
+                    }
+                  },
+                  "required": ["branch", "baseline"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "publication_destination": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/__schema11"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "local_gate_ids": {
+              "$ref": "#/$defs/__schema19"
+            },
+            "independent_gate_ids": {
+              "$ref": "#/$defs/__schema19"
+            },
+            "evidence_policies": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/__schema18"
+              }
+            },
+            "authorities": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/__schema20"
+              }
+            }
+          },
+          "required": [
+            "selection",
+            "proof_plan",
+            "repository_binding",
+            "publication_destination",
+            "local_gate_ids",
+            "independent_gate_ids",
+            "evidence_policies",
+            "authorities"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": ["id", "digest", "rules"],
+      "additionalProperties": false
+    },
+    "available_capabilities": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "capability": {
+                "$ref": "#/$defs/__schema6"
+              },
+              "actor": {
+                "$ref": "#/$defs/__schema7"
+              }
+            },
+            "required": ["capability", "actor"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "capability": {
+                "$ref": "#/$defs/__schema8"
+              },
+              "actor": {
+                "$ref": "#/$defs/__schema9"
+              }
+            },
+            "required": ["capability", "actor"],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "receipts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/__schema13"
+          },
+          "workflow_run_id": {
+            "$ref": "#/$defs/__schema11"
+          },
+          "graph_digest": {
+            "$ref": "#/$defs/__schema12"
+          },
+          "source_state_version": {
+            "$ref": "#/$defs/__schema14"
+          },
+          "subject": {
+            "$ref": "#/$defs/__schema15"
+          },
+          "sequence": {
+            "minimum": 1,
+            "$ref": "#/$defs/__schema14"
+          },
+          "policy": {
+            "$ref": "#/$defs/__schema18"
+          },
+          "workflow_policy": {
+            "$ref": "#/$defs/__schema18"
+          },
+          "acceptance": {
+            "$ref": "#/$defs/__schema18"
+          },
+          "valid_until": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/__schema17"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "origin": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "observation"
+                  }
+                },
+                "required": ["kind"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "attempt"
+                  },
+                  "request": {
+                    "$ref": "#/$defs/__schema21"
+                  },
+                  "claim": {
+                    "$ref": "#/$defs/__schema22"
+                  },
+                  "attempt_id": {
+                    "$ref": "#/$defs/__schema11"
+                  }
+                },
+                "required": ["kind", "request", "claim", "attempt_id"],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "payload": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "proof_plan"
+                  },
+                  "plan": {
+                    "$ref": "#/$defs/__schema18"
+                  },
+                  "baseline": {
+                    "$ref": "#/$defs/__schema16"
+                  }
+                },
+                "required": ["type", "plan", "baseline"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "local_proof"
+                  },
+                  "gate_id": {
+                    "$ref": "#/$defs/__schema13"
+                  },
+                  "result": {
+                    "type": "string",
+                    "enum": ["passed", "failed", "setup_failed"]
+                  },
+                  "clean": {
+                    "type": "boolean"
+                  }
+                },
+                "required": ["type", "gate_id", "result", "clean"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "independent_proof"
+                  },
+                  "gate_id": {
+                    "$ref": "#/$defs/__schema13"
+                  },
+                  "result": {
+                    "type": "string",
+                    "enum": ["passed", "failed"]
+                  }
+                },
+                "required": ["type", "gate_id", "result"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "pre_pr_review"
+                  },
+                  "outcome": {
+                    "type": "string",
+                    "enum": ["clean", "changes_required"]
+                  },
+                  "findings": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "$ref": "#/$defs/__schema11"
+                        },
+                        "blocking": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": ["id", "blocking"],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": ["type", "outcome", "findings"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "review"
+                  },
+                  "outcome": {
+                    "type": "string",
+                    "enum": ["clean", "changes_required"]
+                  },
+                  "findings": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "$ref": "#/$defs/__schema11"
+                        },
+                        "blocking": {
+                          "type": "boolean"
+                        },
+                        "outdated": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": ["id", "blocking", "outdated"],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": ["type", "outcome", "findings"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "human_approval"
+                  },
+                  "scope": {
+                    "type": "string",
+                    "enum": ["current_subject", "recovery"]
+                  },
+                  "approver": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "const": "human"
+                      },
+                      "id": {
+                        "$ref": "#/$defs/__schema11"
+                      }
+                    },
+                    "required": ["type", "id"],
+                    "additionalProperties": false
+                  },
+                  "reason": {
+                    "$ref": "#/$defs/__schema11"
+                  }
+                },
+                "required": ["type", "scope", "approver", "reason"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "completion_observed"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": ["merge", "publication"]
+                  },
+                  "destination": {
+                    "$ref": "#/$defs/__schema11"
+                  }
+                },
+                "required": ["type", "kind", "destination"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "block_evidence"
+                  },
+                  "reason": {
+                    "$ref": "#/$defs/__schema11"
+                  },
+                  "recovery": {
+                    "$ref": "#/$defs/__schema11"
+                  },
+                  "stop_code": {
+                    "$ref": "#/$defs/__schema11"
+                  },
+                  "prior_state": {
+                    "$ref": "#/$defs/__schema13"
+                  }
+                },
+                "required": ["type", "reason", "recovery", "stop_code", "prior_state"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "stop_requested"
+                  },
+                  "reason": {
+                    "$ref": "#/$defs/__schema11"
+                  }
+                },
+                "required": ["type", "reason"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "artifact"
+                  },
+                  "stage": {
+                    "type": "string",
+                    "enum": ["release_prepared", "release_verified", "publication_verified"]
+                  },
+                  "result": {
+                    "type": "string",
+                    "enum": ["passed", "failed"]
+                  }
+                },
+                "required": ["type", "stage", "result"],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "payload_digest": {
+            "$ref": "#/$defs/__schema12"
+          }
+        },
+        "required": [
+          "id",
+          "workflow_run_id",
+          "graph_digest",
+          "source_state_version",
+          "subject",
+          "sequence",
+          "policy",
+          "workflow_policy",
+          "acceptance",
+          "valid_until",
+          "origin",
+          "payload",
+          "payload_digest"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "invalidated_claims": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema22"
+      }
+    },
+    "execution": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "idle"
+            }
+          },
+          "required": ["status"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "in_flight"
+            },
+            "request": {
+              "$ref": "#/$defs/__schema24"
+            },
+            "claim": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "$ref": "#/$defs/__schema11"
+                },
+                "version": {
+                  "$ref": "#/$defs/__schema23"
+                },
+                "valid_until": {
+                  "$ref": "#/$defs/__schema17"
+                }
+              },
+              "required": ["id", "version", "valid_until"],
+              "additionalProperties": false
+            },
+            "attempt": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "$ref": "#/$defs/__schema11"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": ["pending", "running"]
+                }
+              },
+              "required": ["id", "status"],
+              "additionalProperties": false
+            }
+          },
+          "required": ["status", "request", "claim", "attempt"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "reconciliation_required"
+            },
+            "request": {
+              "$ref": "#/$defs/__schema24"
+            },
+            "claim": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/__schema22"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "attempt_id": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/__schema11"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "enum": ["expired", "replaced", "unknown_outcome", "conflict", "cancelled"]
+            }
+          },
+          "required": ["status", "request", "claim", "attempt_id", "reason"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "existing_requests": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema21"
+      }
+    },
+    "evaluation_time": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/__schema17"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "compiled_graph",
+    "binding",
+    "observation",
+    "history",
+    "policy",
+    "available_capabilities",
+    "receipts",
+    "invalidated_claims",
+    "execution",
+    "existing_requests",
+    "evaluation_time"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "__schema1": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "__schema2": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "kind": {
+              "type": "string",
+              "const": "active"
+            }
+          },
+          "required": ["id", "kind"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "kind": {
+              "type": "string",
+              "const": "suspended"
+            },
+            "handoff": {
+              "$ref": "#/$defs/__schema0"
+            }
+          },
+          "required": ["id", "kind", "handoff"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "kind": {
+              "type": "string",
+              "const": "terminal"
+            }
+          },
+          "required": ["id", "kind"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "__schema3": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema0"
+      }
+    },
+    "__schema4": {
+      "type": "string",
+      "enum": ["threadloop", "human"]
+    },
+    "__schema5": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "__schema6": {
+      "type": "string",
+      "enum": [
+        "frame_change",
+        "bind_proof_plan",
+        "implement_change",
+        "commit_change",
+        "run_local_gates",
+        "obtain_independent_proof",
+        "record_pre_pr_review",
+        "obtain_review_evidence",
+        "repair_change",
+        "correct_gate_setup",
+        "restore_proof_authority",
+        "restore_repository",
+        "restore_evidence",
+        "prepare_release",
+        "verify_release",
+        "publish_release",
+        "verify_publication"
+      ]
+    },
+    "__schema7": {
+      "type": "string",
+      "enum": ["human", "executor"]
+    },
+    "__schema8": {
+      "type": "string",
+      "enum": ["block_run", "recover_run", "approve_change", "merge_change"]
+    },
+    "__schema9": {
+      "type": "string",
+      "const": "human"
+    },
+    "__schema10": {
+      "type": "object",
+      "properties": {
+        "workflow_run_id": {
+          "$ref": "#/$defs/__schema11"
+        },
+        "graph_schema_version": {
+          "type": "string",
+          "const": "0.1"
+        },
+        "graph_digest": {
+          "$ref": "#/$defs/__schema12"
+        },
+        "source_state": {
+          "$ref": "#/$defs/__schema13"
+        },
+        "state_version": {
+          "$ref": "#/$defs/__schema14"
+        },
+        "subject": {
+          "$ref": "#/$defs/__schema15"
+        }
+      },
+      "required": [
+        "workflow_run_id",
+        "graph_schema_version",
+        "graph_digest",
+        "source_state",
+        "state_version",
+        "subject"
+      ],
+      "additionalProperties": false
+    },
+    "__schema11": {
+      "type": "string",
+      "minLength": 1
+    },
+    "__schema12": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "__schema13": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "__schema14": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "__schema15": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/__schema16"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "artifact"
+            },
+            "artifact_id": {
+              "$ref": "#/$defs/__schema11"
+            },
+            "content_digest": {
+              "$ref": "#/$defs/__schema12"
+            }
+          },
+          "required": ["kind", "artifact_id", "content_digest"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "__schema16": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "repository"
+        },
+        "repository_id": {
+          "$ref": "#/$defs/__schema11"
+        },
+        "revision": {
+          "$ref": "#/$defs/__schema11"
+        },
+        "content_digest": {
+          "$ref": "#/$defs/__schema12"
+        }
+      },
+      "required": ["kind", "repository_id", "revision", "content_digest"],
+      "additionalProperties": false
+    },
+    "__schema17": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+    },
+    "__schema18": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/__schema11"
+        },
+        "digest": {
+          "$ref": "#/$defs/__schema12"
+        }
+      },
+      "required": ["id", "digest"],
+      "additionalProperties": false
+    },
+    "__schema19": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema13"
+      }
+    },
+    "__schema20": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["threadloop", "human"]
+        },
+        "identity": {
+          "$ref": "#/$defs/__schema18"
+        }
+      },
+      "required": ["type", "identity"],
+      "additionalProperties": false
+    },
+    "__schema21": {
+      "type": "object",
+      "properties": {
+        "idempotency_key": {
+          "$ref": "#/$defs/__schema12"
+        },
+        "request_digest": {
+          "$ref": "#/$defs/__schema12"
+        }
+      },
+      "required": ["idempotency_key", "request_digest"],
+      "additionalProperties": false
+    },
+    "__schema22": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/__schema11"
+        },
+        "version": {
+          "$ref": "#/$defs/__schema23"
+        }
+      },
+      "required": ["id", "version"],
+      "additionalProperties": false
+    },
+    "__schema23": {
+      "minimum": 1,
+      "$ref": "#/$defs/__schema14"
+    },
+    "__schema24": {
+      "type": "object",
+      "properties": {
+        "request": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "schema_version": {
+                  "$ref": "#/$defs/__schema25"
+                },
+                "binding": {
+                  "$ref": "#/$defs/__schema10"
+                },
+                "capability_catalog": {
+                  "$ref": "#/$defs/__schema26"
+                },
+                "action_id": {
+                  "$ref": "#/$defs/__schema13"
+                },
+                "transition_id": {
+                  "$ref": "#/$defs/__schema13"
+                },
+                "guard_ids": {
+                  "$ref": "#/$defs/__schema27"
+                },
+                "inputs": {
+                  "$ref": "#/$defs/__schema28"
+                },
+                "evidence_ids": {
+                  "$ref": "#/$defs/__schema19"
+                },
+                "constraints": {
+                  "$ref": "#/$defs/__schema29"
+                },
+                "policy": {
+                  "$ref": "#/$defs/__schema18"
+                },
+                "authorities": {
+                  "$ref": "#/$defs/__schema30"
+                },
+                "evidence_requirements": {
+                  "$ref": "#/$defs/__schema31"
+                },
+                "idempotency_key": {
+                  "$ref": "#/$defs/__schema12"
+                },
+                "actor": {
+                  "type": "string",
+                  "const": "executor"
+                },
+                "capability": {
+                  "$ref": "#/$defs/__schema6"
+                }
+              },
+              "required": [
+                "schema_version",
+                "binding",
+                "capability_catalog",
+                "action_id",
+                "transition_id",
+                "guard_ids",
+                "inputs",
+                "evidence_ids",
+                "constraints",
+                "policy",
+                "authorities",
+                "evidence_requirements",
+                "idempotency_key",
+                "actor",
+                "capability"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "schema_version": {
+                  "$ref": "#/$defs/__schema25"
+                },
+                "binding": {
+                  "$ref": "#/$defs/__schema10"
+                },
+                "capability_catalog": {
+                  "$ref": "#/$defs/__schema26"
+                },
+                "action_id": {
+                  "$ref": "#/$defs/__schema13"
+                },
+                "transition_id": {
+                  "$ref": "#/$defs/__schema13"
+                },
+                "guard_ids": {
+                  "$ref": "#/$defs/__schema27"
+                },
+                "inputs": {
+                  "$ref": "#/$defs/__schema28"
+                },
+                "evidence_ids": {
+                  "$ref": "#/$defs/__schema19"
+                },
+                "constraints": {
+                  "$ref": "#/$defs/__schema29"
+                },
+                "policy": {
+                  "$ref": "#/$defs/__schema18"
+                },
+                "authorities": {
+                  "$ref": "#/$defs/__schema30"
+                },
+                "evidence_requirements": {
+                  "$ref": "#/$defs/__schema31"
+                },
+                "idempotency_key": {
+                  "$ref": "#/$defs/__schema12"
+                },
+                "actor": {
+                  "type": "string",
+                  "const": "human"
+                },
+                "capability": {
+                  "type": "string",
+                  "enum": [
+                    "frame_change",
+                    "bind_proof_plan",
+                    "implement_change",
+                    "commit_change",
+                    "run_local_gates",
+                    "obtain_independent_proof",
+                    "record_pre_pr_review",
+                    "obtain_review_evidence",
+                    "repair_change",
+                    "correct_gate_setup",
+                    "restore_proof_authority",
+                    "restore_repository",
+                    "restore_evidence",
+                    "prepare_release",
+                    "verify_release",
+                    "publish_release",
+                    "verify_publication",
+                    "block_run",
+                    "recover_run",
+                    "approve_change",
+                    "merge_change"
+                  ]
+                }
+              },
+              "required": [
+                "schema_version",
+                "binding",
+                "capability_catalog",
+                "action_id",
+                "transition_id",
+                "guard_ids",
+                "inputs",
+                "evidence_ids",
+                "constraints",
+                "policy",
+                "authorities",
+                "evidence_requirements",
+                "idempotency_key",
+                "actor",
+                "capability"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "request_digest": {
+          "$ref": "#/$defs/__schema12"
+        }
+      },
+      "required": ["request", "request_digest"],
+      "additionalProperties": false
+    },
+    "__schema25": {
+      "type": "string",
+      "const": "0.1"
+    },
+    "__schema26": {
+      "type": "string",
+      "const": "threadloop.sdlc/0.1"
+    },
+    "__schema27": {
+      "minItems": 1,
+      "$ref": "#/$defs/__schema19"
+    },
+    "__schema28": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": ["change_context", "proof_plan", "implementation_basis", "release_manifest", "publication_target"]
+          },
+          "artifact": {
+            "$ref": "#/$defs/__schema18"
+          }
+        },
+        "required": ["role", "artifact"],
+        "additionalProperties": false
+      }
+    },
+    "__schema29": {
+      "type": "object",
+      "properties": {
+        "require_current_subject": {
+          "type": "boolean",
+          "const": true
+        },
+        "lifecycle_mutation": {
+          "type": "boolean",
+          "const": false
+        },
+        "valid_until": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/__schema17"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": ["require_current_subject", "lifecycle_mutation", "valid_until"],
+      "additionalProperties": false
+    },
+    "__schema30": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema20"
+      }
+    },
+    "__schema31": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema32"
+      }
+    },
+    "__schema32": {
+      "type": "object",
+      "properties": {
+        "family": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "proof_plan",
+                "local_proof",
+                "independent_proof",
+                "pre_pr_review",
+                "review",
+                "human_approval",
+                "completion_observed",
+                "block_evidence",
+                "stop_requested",
+                "artifact"
+              ]
+            },
+            {
+              "type": "string",
+              "const": "repository_observation"
+            }
+          ]
+        },
+        "guard_id": {
+          "$ref": "#/$defs/__schema13"
+        },
+        "subject": {
+          "$ref": "#/$defs/__schema15"
+        }
+      },
+      "required": ["family", "guard_id", "subject"],
+      "additionalProperties": false
+    }
+  },
+  "$id": "https://github.com/nnennandukwe/threadloop/contracts/controller/0.1/controller-input"
+}

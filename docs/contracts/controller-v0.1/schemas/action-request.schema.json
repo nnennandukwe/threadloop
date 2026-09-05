@@ -1,0 +1,425 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "request": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "schema_version": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "binding": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "capability_catalog": {
+              "$ref": "#/$defs/__schema6"
+            },
+            "action_id": {
+              "$ref": "#/$defs/__schema4"
+            },
+            "transition_id": {
+              "$ref": "#/$defs/__schema4"
+            },
+            "guard_ids": {
+              "$ref": "#/$defs/__schema7"
+            },
+            "inputs": {
+              "$ref": "#/$defs/__schema9"
+            },
+            "evidence_ids": {
+              "$ref": "#/$defs/__schema8"
+            },
+            "constraints": {
+              "$ref": "#/$defs/__schema11"
+            },
+            "policy": {
+              "$ref": "#/$defs/__schema10"
+            },
+            "authorities": {
+              "$ref": "#/$defs/__schema12"
+            },
+            "evidence_requirements": {
+              "$ref": "#/$defs/__schema14"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/__schema3"
+            },
+            "actor": {
+              "type": "string",
+              "const": "executor"
+            },
+            "capability": {
+              "type": "string",
+              "enum": [
+                "frame_change",
+                "bind_proof_plan",
+                "implement_change",
+                "commit_change",
+                "run_local_gates",
+                "obtain_independent_proof",
+                "record_pre_pr_review",
+                "obtain_review_evidence",
+                "repair_change",
+                "correct_gate_setup",
+                "restore_proof_authority",
+                "restore_repository",
+                "restore_evidence",
+                "prepare_release",
+                "verify_release",
+                "publish_release",
+                "verify_publication"
+              ]
+            }
+          },
+          "required": [
+            "schema_version",
+            "binding",
+            "capability_catalog",
+            "action_id",
+            "transition_id",
+            "guard_ids",
+            "inputs",
+            "evidence_ids",
+            "constraints",
+            "policy",
+            "authorities",
+            "evidence_requirements",
+            "idempotency_key",
+            "actor",
+            "capability"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "schema_version": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "binding": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "capability_catalog": {
+              "$ref": "#/$defs/__schema6"
+            },
+            "action_id": {
+              "$ref": "#/$defs/__schema4"
+            },
+            "transition_id": {
+              "$ref": "#/$defs/__schema4"
+            },
+            "guard_ids": {
+              "$ref": "#/$defs/__schema7"
+            },
+            "inputs": {
+              "$ref": "#/$defs/__schema9"
+            },
+            "evidence_ids": {
+              "$ref": "#/$defs/__schema8"
+            },
+            "constraints": {
+              "$ref": "#/$defs/__schema11"
+            },
+            "policy": {
+              "$ref": "#/$defs/__schema10"
+            },
+            "authorities": {
+              "$ref": "#/$defs/__schema12"
+            },
+            "evidence_requirements": {
+              "$ref": "#/$defs/__schema14"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/__schema3"
+            },
+            "actor": {
+              "type": "string",
+              "const": "human"
+            },
+            "capability": {
+              "type": "string",
+              "enum": [
+                "frame_change",
+                "bind_proof_plan",
+                "implement_change",
+                "commit_change",
+                "run_local_gates",
+                "obtain_independent_proof",
+                "record_pre_pr_review",
+                "obtain_review_evidence",
+                "repair_change",
+                "correct_gate_setup",
+                "restore_proof_authority",
+                "restore_repository",
+                "restore_evidence",
+                "prepare_release",
+                "verify_release",
+                "publish_release",
+                "verify_publication",
+                "block_run",
+                "recover_run",
+                "approve_change",
+                "merge_change"
+              ]
+            }
+          },
+          "required": [
+            "schema_version",
+            "binding",
+            "capability_catalog",
+            "action_id",
+            "transition_id",
+            "guard_ids",
+            "inputs",
+            "evidence_ids",
+            "constraints",
+            "policy",
+            "authorities",
+            "evidence_requirements",
+            "idempotency_key",
+            "actor",
+            "capability"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "request_digest": {
+      "$ref": "#/$defs/__schema3"
+    }
+  },
+  "required": ["request", "request_digest"],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "type": "string",
+      "const": "0.1"
+    },
+    "__schema1": {
+      "type": "object",
+      "properties": {
+        "workflow_run_id": {
+          "$ref": "#/$defs/__schema2"
+        },
+        "graph_schema_version": {
+          "type": "string",
+          "const": "0.1"
+        },
+        "graph_digest": {
+          "$ref": "#/$defs/__schema3"
+        },
+        "source_state": {
+          "$ref": "#/$defs/__schema4"
+        },
+        "state_version": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "subject": {
+          "$ref": "#/$defs/__schema5"
+        }
+      },
+      "required": [
+        "workflow_run_id",
+        "graph_schema_version",
+        "graph_digest",
+        "source_state",
+        "state_version",
+        "subject"
+      ],
+      "additionalProperties": false
+    },
+    "__schema2": {
+      "type": "string",
+      "minLength": 1
+    },
+    "__schema3": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "__schema4": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "__schema5": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "repository"
+            },
+            "repository_id": {
+              "$ref": "#/$defs/__schema2"
+            },
+            "revision": {
+              "$ref": "#/$defs/__schema2"
+            },
+            "content_digest": {
+              "$ref": "#/$defs/__schema3"
+            }
+          },
+          "required": ["kind", "repository_id", "revision", "content_digest"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "artifact"
+            },
+            "artifact_id": {
+              "$ref": "#/$defs/__schema2"
+            },
+            "content_digest": {
+              "$ref": "#/$defs/__schema3"
+            }
+          },
+          "required": ["kind", "artifact_id", "content_digest"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "__schema6": {
+      "type": "string",
+      "const": "threadloop.sdlc/0.1"
+    },
+    "__schema7": {
+      "minItems": 1,
+      "$ref": "#/$defs/__schema8"
+    },
+    "__schema8": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema4"
+      }
+    },
+    "__schema9": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": ["change_context", "proof_plan", "implementation_basis", "release_manifest", "publication_target"]
+          },
+          "artifact": {
+            "$ref": "#/$defs/__schema10"
+          }
+        },
+        "required": ["role", "artifact"],
+        "additionalProperties": false
+      }
+    },
+    "__schema10": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/__schema2"
+        },
+        "digest": {
+          "$ref": "#/$defs/__schema3"
+        }
+      },
+      "required": ["id", "digest"],
+      "additionalProperties": false
+    },
+    "__schema11": {
+      "type": "object",
+      "properties": {
+        "require_current_subject": {
+          "type": "boolean",
+          "const": true
+        },
+        "lifecycle_mutation": {
+          "type": "boolean",
+          "const": false
+        },
+        "valid_until": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": ["require_current_subject", "lifecycle_mutation", "valid_until"],
+      "additionalProperties": false
+    },
+    "__schema12": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema13"
+      }
+    },
+    "__schema13": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["threadloop", "human"]
+        },
+        "identity": {
+          "$ref": "#/$defs/__schema10"
+        }
+      },
+      "required": ["type", "identity"],
+      "additionalProperties": false
+    },
+    "__schema14": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema15"
+      }
+    },
+    "__schema15": {
+      "type": "object",
+      "properties": {
+        "family": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "proof_plan",
+                "local_proof",
+                "independent_proof",
+                "pre_pr_review",
+                "review",
+                "human_approval",
+                "completion_observed",
+                "block_evidence",
+                "stop_requested",
+                "artifact"
+              ]
+            },
+            {
+              "type": "string",
+              "const": "repository_observation"
+            }
+          ]
+        },
+        "guard_id": {
+          "$ref": "#/$defs/__schema4"
+        },
+        "subject": {
+          "$ref": "#/$defs/__schema5"
+        }
+      },
+      "required": ["family", "guard_id", "subject"],
+      "additionalProperties": false
+    }
+  },
+  "$id": "https://github.com/nnennandukwe/threadloop/contracts/controller/0.1/action-request"
+}
