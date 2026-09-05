@@ -1,0 +1,13 @@
+{
+  "id": "unavailable_capability_action",
+  "base": "action_required",
+  "mutations": [
+    {
+      "path": ["input", "available_capabilities"],
+      "value": []
+    }
+  ],
+  "schema_valid": true,
+  "reseal": true,
+  "expected_code": "UNSUPPORTED_CAPABILITY"
+}

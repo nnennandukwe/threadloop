@@ -75,6 +75,9 @@ permission; the Controller Decision representation belongs to
 [#105](https://github.com/nnennandukwe/threadloop/issues/105). The compiler does not evaluate guards or select a next
 action.
 
+The [Controller Decision and Action Request contract](../controller-v0.1/README.md) specifies those inputs and outputs
+with development-only candidate validation. It does not enable runtime graph evaluation.
+
 Human approval guards also require human authority. Terminal entry requires current-subject human approval and observed
 merge or publication; terminal states have no outgoing edges. Suspended states require a human `recover_run` handoff and
 explicit block evidence on entry. Every recovery edge requires recovery approval and a `recorded_prior_state` guard

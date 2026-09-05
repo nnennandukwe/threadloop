@@ -1,0 +1,13 @@
+{
+  "id": "human_merge_without_approval",
+  "base": "human_merge",
+  "mutations": [
+    {
+      "path": ["expected", "decision", "action_request", "request", "evidence_ids"],
+      "value": ["independent_b", "local_b", "review_b"]
+    }
+  ],
+  "schema_valid": true,
+  "reseal": true,
+  "expected_code": "ACTION_PREREQUISITE_MISSING"
+}

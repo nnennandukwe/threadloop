@@ -1,0 +1,13 @@
+{
+  "id": "stale_receipt_transition",
+  "base": "transition_available",
+  "mutations": [
+    {
+      "path": ["input", "receipts", 0, "subject", "content_digest"],
+      "value": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "schema_valid": true,
+  "reseal": true,
+  "expected_code": "STALE_OR_MISSING_EVIDENCE"
+}

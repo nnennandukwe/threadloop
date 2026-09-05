@@ -1,0 +1,13 @@
+{
+  "id": "unknown_input_field",
+  "base": "action_required",
+  "mutations": [
+    {
+      "path": ["input", "environment"],
+      "value": {}
+    }
+  ],
+  "schema_valid": false,
+  "reseal": true,
+  "expected_code": "SCHEMA_INVALID"
+}

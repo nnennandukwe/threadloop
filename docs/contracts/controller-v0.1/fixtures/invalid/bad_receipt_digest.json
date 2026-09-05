@@ -1,0 +1,13 @@
+{
+  "id": "bad_receipt_digest",
+  "base": "transition_available",
+  "mutations": [
+    {
+      "path": ["input", "receipts", 0, "payload_digest"],
+      "value": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "schema_valid": true,
+  "reseal": true,
+  "expected_code": "RECEIPT_DIGEST_MISMATCH"
+}

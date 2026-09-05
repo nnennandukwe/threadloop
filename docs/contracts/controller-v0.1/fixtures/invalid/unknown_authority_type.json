@@ -1,0 +1,13 @@
+{
+  "id": "unknown_authority_type",
+  "base": "action_required",
+  "mutations": [
+    {
+      "path": ["input", "policy", "rules", "authorities", 0, "type"],
+      "value": "executor"
+    }
+  ],
+  "schema_valid": false,
+  "reseal": true,
+  "expected_code": "SCHEMA_INVALID"
+}
