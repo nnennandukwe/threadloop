@@ -227,6 +227,7 @@ const decisionFields = {
   binding: runBinding,
 };
 const guardCheck = z.strictObject({ guard_id: identifier, evidence_ids: references });
+const reasonFields = { message: text, recovery: text };
 const decisionPayloadSchema = z.discriminatedUnion('outcome', [
   z.strictObject({
     ...decisionFields,
@@ -257,22 +258,18 @@ const decisionPayloadSchema = z.discriminatedUnion('outcome', [
     outcome: z.literal('blocked'),
     reasons: z
       .array(
-        z.strictObject({
-          code: z.enum([
-            'STALE_OBSERVATION',
-            'INVALID_HISTORY',
-            'UNSUPPORTED_CAPABILITY',
-            'EXECUTION_RECONCILIATION_REQUIRED',
-            'CLAIM_EXPIRED',
-            'IDEMPOTENCY_CONFLICT',
-            'AMBIGUOUS_REMEDY',
-            'EVIDENCE_UNAVAILABLE',
-            'AUTHORITY_UNAVAILABLE',
-            'NO_APPLICABLE_REMEDY',
-          ]),
-          message: text,
-          recovery: text,
-        }),
+        z.discriminatedUnion('code', [
+          z.strictObject({ code: z.literal('STALE_OBSERVATION'), ...reasonFields }),
+          z.strictObject({ code: z.literal('INVALID_HISTORY'), ...reasonFields }),
+          z.strictObject({ code: z.literal('EXECUTION_RECONCILIATION_REQUIRED'), ...reasonFields }),
+          z.strictObject({ code: z.literal('CLAIM_EXPIRED'), ...reasonFields }),
+          z.strictObject({ code: z.literal('UNSUPPORTED_CAPABILITY'), action_id: identifier, ...reasonFields }),
+          z.strictObject({ code: z.literal('IDEMPOTENCY_CONFLICT'), request: requestReference, ...reasonFields }),
+          z.strictObject({ code: z.literal('EVIDENCE_UNAVAILABLE'), guard_id: identifier, ...reasonFields }),
+          z.strictObject({ code: z.literal('AUTHORITY_UNAVAILABLE'), transition_id: identifier, ...reasonFields }),
+          z.strictObject({ code: z.literal('AMBIGUOUS_REMEDY'), ...reasonFields }),
+          z.strictObject({ code: z.literal('NO_APPLICABLE_REMEDY'), ...reasonFields }),
+        ]),
       )
       .min(1),
   }),

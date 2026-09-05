@@ -99,9 +99,19 @@ Neither `blocked` nor `human_action_required` changes lifecycle state. Entering 
 transition with block evidence. `terminal` reports an already terminal run, not a completion command. Structural errors
 return validation diagnostics rather than a decision bound to invalid input.
 
+Each blocked reason is checked against explicit facts. Unavailable capability names an `action_id`, unavailable
+authority names a `transition_id`, unavailable evidence names a `guard_id`, and an idempotency conflict names the
+proposed request identity/digest. These references must belong to the current state. Reason text cannot substitute for
+facts. `AMBIGUOUS_REMEDY` and `NO_APPLICABLE_REMEDY` remain valid wire codes for the future selector, but this candidate
+validator returns `SELECTION_PROOF_REQUIRED` for them: proving a tie or absence of remedies requires exhaustive
+selection, which is outside #105. A successful candidate check never proves precedence over alternatives.
+
 Healthy in-flight execution reports `waiting`. Stale subject/state binding, expired/invalidated claims, changed policy,
 cancellation, and uncertain effects require reconciliation. Waiting contains no new Action Request. The projection is
-limited to `idle`, `in_flight`, and `reconciliation_required`.
+limited to `idle`, `in_flight`, and `reconciliation_required`. Embedded requests must satisfy the graph's immutable
+action, actor, transition, guard, and evidence requirements even when awaiting reconciliation. Healthy waiting
+additionally requires current request prerequisites, policy, capability support, evidence, and bindings. Historical
+bindings can be retained for reconciliation but cannot qualify as waiting.
 [#106](https://github.com/nnennandukwe/threadloop/issues/106) owns acquisition, renewal, replacement, cancellation,
 retry safety, receipt admission, and durable conflicts. This projection does not promise exactly-once execution.
 

@@ -180,10 +180,10 @@ describe('Controller contract actor boundary', () => {
 
 function decisionEnvelope(input: ControllerInput, outcome: object) {
   const decision = {
+    ...outcome,
     schema_version: '0.1',
     input_digest: sha256(canonicalJson(input)),
     binding: input.binding,
-    ...outcome,
   };
   return { decision, decision_digest: sha256(canonicalJson(decision)) };
 }
@@ -479,5 +479,200 @@ describe('Proof binding and repair admission', () => {
       evidence_requirements: [{ family: 'review', guard_id: 'review_clear', subject: input.binding.subject }],
     };
     expect(buildActionRequest(input, intent).ok).toBe(false);
+  });
+});
+
+describe('Qodo review regressions', () => {
+  it('rejects a resealed blocked reason that is absent from a healthy snapshot', async () => {
+    const input = await controllerSnapshot();
+    const candidate = decisionEnvelope(input, {
+      outcome: 'blocked',
+      reasons: [{ code: 'CLAIM_EXPIRED', message: 'Claim expired', recovery: 'Reconcile claim' }],
+    });
+    expect(validateControllerDecision(input, candidate).ok).toBe(false);
+  });
+
+  it('rejects a resealed undeclared in-flight action before classifying waiting', async () => {
+    const fixture = await readExample('waiting');
+    const execution = fixture.input.execution;
+    if (execution.status !== 'in_flight') throw new Error('Expected active fixture');
+    const envelope = execution.request;
+    envelope.request.action_id = 'undeclared_action';
+    envelope.request.idempotency_key = sha256(
+      canonicalJson({
+        schema_version: '0.1',
+        binding: envelope.request.binding,
+        action_id: envelope.request.action_id,
+      }),
+    );
+    envelope.request_digest = sha256(canonicalJson(envelope.request));
+    expect(validateControllerInput(fixture.input).ok).toBe(false);
+    expect(
+      validateControllerDecision(
+        fixture.input,
+        decisionEnvelope(fixture.input, {
+          outcome: 'waiting',
+          request: { idempotency_key: envelope.request.idempotency_key, request_digest: envelope.request_digest },
+          claim: { id: execution.claim.id, version: execution.claim.version },
+          attempt_id: execution.attempt.id,
+        }),
+      ).ok,
+    ).toBe(false);
+  });
+
+  it('does not satisfy an independent-proof guard with an empty requirement set', async () => {
+    const input = await controllerSnapshot();
+    input.binding.source_state = 'verifying';
+    if (input.history.status !== 'verified') throw new Error('Expected verified history');
+    input.policy.rules.independent_gate_ids = [];
+    input.policy.digest = sha256(canonicalJson(input.policy.rules));
+    const local = receipt(input);
+    input.receipts = [local];
+    const candidate = decisionEnvelope(input, {
+      outcome: 'transition_available',
+      transition_id: 'return_to_review',
+      target_state: 'reviewing',
+      checks: [
+        { guard_id: 'plan', evidence_ids: [] },
+        { guard_id: 'post', evidence_ids: [] },
+        { guard_id: 'checkout', evidence_ids: [] },
+        { guard_id: 'local_pass', evidence_ids: [local.id] },
+        { guard_id: 'independent', evidence_ids: [] },
+      ],
+    });
+    expect(validateControllerDecision(input, candidate).ok).toBe(false);
+  });
+});
+
+describe('Blocked facts and active request obligations', () => {
+  it('rejects unsupported blocked assertions and identifies selector-only proof gaps', async () => {
+    const fixture = await readExample('transition_available');
+    const reasons = [
+      { code: 'STALE_OBSERVATION' },
+      { code: 'INVALID_HISTORY' },
+      { code: 'EXECUTION_RECONCILIATION_REQUIRED' },
+      { code: 'CLAIM_EXPIRED' },
+      { code: 'UNSUPPORTED_CAPABILITY', action_id: 'run_gates' },
+      { code: 'AUTHORITY_UNAVAILABLE', transition_id: 'human_handoff' },
+      { code: 'EVIDENCE_UNAVAILABLE', guard_id: 'review_set' },
+      { code: 'IDEMPOTENCY_CONFLICT', request: { idempotency_key: sha256('slot'), request_digest: sha256('request') } },
+      { code: 'AMBIGUOUS_REMEDY' },
+      { code: 'NO_APPLICABLE_REMEDY' },
+    ];
+    for (const reason of reasons) {
+      const candidate = decisionEnvelope(fixture.input, {
+        outcome: 'blocked',
+        reasons: [{ ...reason, message: 'Claimed reason', recovery: 'Restore facts' }],
+      });
+      const result = validateControllerDecision(fixture.input, candidate);
+      expect(result.ok, reason.code).toBe(false);
+      if (!result.ok)
+        expect(result.diagnostics.map((item) => item.code)).toContain(
+          ['AMBIGUOUS_REMEDY', 'NO_APPLICABLE_REMEDY'].includes(reason.code)
+            ? 'SELECTION_PROOF_REQUIRED'
+            : 'BLOCKED_REASON_MISMATCH',
+        );
+    }
+  });
+
+  it('requires real registry conflicts and accepts explicit unavailable history', async () => {
+    const input = await controllerSnapshot();
+    const built = buildActionRequest(input, localProofIntent(input));
+    if (!built.ok) throw new Error('Expected request');
+    const request = {
+      idempotency_key: built.value.request.idempotency_key,
+      request_digest: built.value.request_digest,
+    };
+    const conflict = () =>
+      decisionEnvelope(input, {
+        outcome: 'blocked',
+        reasons: [{ code: 'IDEMPOTENCY_CONFLICT', request, message: 'Conflict', recovery: 'Reconcile request' }],
+      });
+    input.existing_requests = [request];
+    expect(validateControllerDecision(input, conflict()).ok).toBe(false);
+    input.existing_requests[0] = { ...request, request_digest: sha256('different content') };
+    expect(validateControllerDecision(input, conflict()).ok).toBe(true);
+    input.history = { status: 'unavailable', reason: 'History unavailable' };
+    expect(
+      validateControllerDecision(
+        input,
+        decisionEnvelope(input, {
+          outcome: 'blocked',
+          reasons: [{ code: 'INVALID_HISTORY', message: 'History unavailable', recovery: 'Restore verified history' }],
+        }),
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('reports terminal instead of blocking an already terminal idle run', async () => {
+    const fixture = await readExample('terminal');
+    fixture.input.observation.status = 'unavailable';
+    const candidate = decisionEnvelope(fixture.input, {
+      outcome: 'blocked',
+      reasons: [{ code: 'STALE_OBSERVATION', message: 'Unavailable observation', recovery: 'Refresh observation' }],
+    });
+    const result = validateControllerDecision(fixture.input, candidate);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.diagnostics.map((item) => item.code)).toContain('TERMINAL_RUN');
+  });
+
+  it('validates graph references in immutable execution requests after rehashing', async () => {
+    for (const [field, value, code] of [
+      ['capability', 'obtain_review_evidence', 'ACTION_BINDING_MISMATCH'],
+      ['transition_id', 'undeclared_transition', 'ACTION_TRANSITION_MISMATCH'],
+      ['guard_ids', ['undeclared_guard'], 'ACTION_GUARD_MISMATCH'],
+    ] as const) {
+      const fixture = await readExample('waiting');
+      if (fixture.input.execution.status !== 'in_flight') throw new Error('Expected active fixture');
+      const envelope = fixture.input.execution.request;
+      replaceFixtureValue(envelope.request, [field], value);
+      envelope.request_digest = sha256(canonicalJson(envelope.request));
+      const result = validateControllerInput(fixture.input);
+      expect(result.ok, field).toBe(false);
+      if (!result.ok) expect(result.diagnostics.map((item) => item.code)).toContain(code);
+    }
+  });
+
+  it('requires reconciliation when active work loses current prerequisites or binding', async () => {
+    for (const drift of ['repository', 'state', 'capability'] as const) {
+      const fixture = await readExample('waiting');
+      if (fixture.input.execution.status !== 'in_flight') throw new Error('Expected active fixture');
+      if (drift === 'repository') fixture.input.observation.repository!.clean = false;
+      if (drift === 'state') {
+        fixture.input.binding.state_version += 1;
+        fixture.input.observation.state_version += 1;
+      }
+      if (drift === 'capability') fixture.input.available_capabilities = [];
+      expect(validateControllerInput(fixture.input).ok, drift).toBe(true);
+      const result = validateControllerDecision(
+        fixture.input,
+        decisionEnvelope(fixture.input, fixture.expected.decision),
+      );
+      expect(result.ok, drift).toBe(false);
+      const blocked = decisionEnvelope(fixture.input, {
+        outcome: 'blocked',
+        reasons: [
+          {
+            code: 'EXECUTION_RECONCILIATION_REQUIRED',
+            message: 'Active request lost its prerequisites',
+            recovery: 'Reconcile existing work',
+          },
+        ],
+      });
+      expect(validateControllerDecision(fixture.input, blocked).ok, drift).toBe(true);
+    }
+  });
+
+  it('requires a nonempty independent proof set for review advancement', async () => {
+    const fixture = await readExample('transition_available');
+    fixture.input.policy.rules.independent_gate_ids = [];
+    fixture.input.policy.digest = sha256(canonicalJson(fixture.input.policy.rules));
+    for (const item of fixture.input.receipts) item.workflow_policy.digest = fixture.input.policy.digest;
+    const result = validateControllerDecision(
+      fixture.input,
+      decisionEnvelope(fixture.input, fixture.expected.decision),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.diagnostics.map((item) => item.code)).toContain('GUARD_EVIDENCE_MISMATCH');
   });
 });

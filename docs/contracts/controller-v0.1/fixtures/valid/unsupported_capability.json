@@ -130,10 +130,11 @@
         {
           "code": "UNSUPPORTED_CAPABILITY",
           "message": "unsupported capability",
-          "recovery": "Refresh the explicit snapshot or reconcile the existing execution before reevaluation."
+          "recovery": "Refresh the explicit snapshot or reconcile the existing execution before reevaluation.",
+          "action_id": "run_gates"
         }
       ]
     },
-    "decision_digest": "b6446029cb58d3d656d4221502112096b2a9994ae64c8f7701c82bac7b40cdaf"
+    "decision_digest": "8f1d85e5f652dda14df15f8af8bded57144a27527473dfc58957352971cf294b"
   }
 }

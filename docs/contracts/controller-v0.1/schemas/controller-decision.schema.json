@@ -311,17 +311,7 @@
               "const": "waiting"
             },
             "request": {
-              "type": "object",
-              "properties": {
-                "idempotency_key": {
-                  "$ref": "#/$defs/__schema1"
-                },
-                "request_digest": {
-                  "$ref": "#/$defs/__schema1"
-                }
-              },
-              "required": ["idempotency_key", "request_digest"],
-              "additionalProperties": false
+              "$ref": "#/$defs/__schema18"
             },
             "claim": {
               "type": "object",
@@ -364,7 +354,7 @@
               "minItems": 1,
               "type": "array",
               "items": {
-                "$ref": "#/$defs/__schema18"
+                "$ref": "#/$defs/__schema19"
               }
             }
           },
@@ -640,30 +630,201 @@
     "__schema18": {
       "type": "object",
       "properties": {
-        "code": {
-          "type": "string",
-          "enum": [
-            "STALE_OBSERVATION",
-            "INVALID_HISTORY",
-            "UNSUPPORTED_CAPABILITY",
-            "EXECUTION_RECONCILIATION_REQUIRED",
-            "CLAIM_EXPIRED",
-            "IDEMPOTENCY_CONFLICT",
-            "AMBIGUOUS_REMEDY",
-            "EVIDENCE_UNAVAILABLE",
-            "AUTHORITY_UNAVAILABLE",
-            "NO_APPLICABLE_REMEDY"
-          ]
+        "idempotency_key": {
+          "$ref": "#/$defs/__schema1"
         },
-        "message": {
-          "$ref": "#/$defs/__schema3"
-        },
-        "recovery": {
-          "$ref": "#/$defs/__schema3"
+        "request_digest": {
+          "$ref": "#/$defs/__schema1"
         }
       },
-      "required": ["code", "message", "recovery"],
+      "required": ["idempotency_key", "request_digest"],
       "additionalProperties": false
+    },
+    "__schema19": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "STALE_OBSERVATION"
+            },
+            "message": {
+              "$ref": "#/$defs/__schema3"
+            },
+            "recovery": {
+              "$ref": "#/$defs/__schema3"
+            }
+          },
+          "required": ["code", "message", "recovery"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "INVALID_HISTORY"
+            },
+            "message": {
+              "$ref": "#/$defs/__schema3"
+            },
+            "recovery": {
+              "$ref": "#/$defs/__schema3"
+            }
+          },
+          "required": ["code", "message", "recovery"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "EXECUTION_RECONCILIATION_REQUIRED"
+            },
+            "message": {
+              "$ref": "#/$defs/__schema3"
+            },
+            "recovery": {
+              "$ref": "#/$defs/__schema3"
+            }
+          },
+          "required": ["code", "message", "recovery"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "CLAIM_EXPIRED"
+            },
+            "message": {
+              "$ref": "#/$defs/__schema3"
+            },
+            "recovery": {
+              "$ref": "#/$defs/__schema3"
+            }
+          },
+          "required": ["code", "message", "recovery"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "UNSUPPORTED_CAPABILITY"
+            },
+            "action_id": {
+              "$ref": "#/$defs/__schema4"
+            },
+            "message": {
+              "$ref": "#/$defs/__schema3"
+            },
+            "recovery": {
+              "$ref": "#/$defs/__schema3"
+            }
+          },
+          "required": ["code", "action_id", "message", "recovery"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "IDEMPOTENCY_CONFLICT"
+            },
+            "request": {
+              "$ref": "#/$defs/__schema18"
+            },
+            "message": {
+              "$ref": "#/$defs/__schema3"
+            },
+            "recovery": {
+              "$ref": "#/$defs/__schema3"
+            }
+          },
+          "required": ["code", "request", "message", "recovery"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "EVIDENCE_UNAVAILABLE"
+            },
+            "guard_id": {
+              "$ref": "#/$defs/__schema4"
+            },
+            "message": {
+              "$ref": "#/$defs/__schema3"
+            },
+            "recovery": {
+              "$ref": "#/$defs/__schema3"
+            }
+          },
+          "required": ["code", "guard_id", "message", "recovery"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "AUTHORITY_UNAVAILABLE"
+            },
+            "transition_id": {
+              "$ref": "#/$defs/__schema4"
+            },
+            "message": {
+              "$ref": "#/$defs/__schema3"
+            },
+            "recovery": {
+              "$ref": "#/$defs/__schema3"
+            }
+          },
+          "required": ["code", "transition_id", "message", "recovery"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "AMBIGUOUS_REMEDY"
+            },
+            "message": {
+              "$ref": "#/$defs/__schema3"
+            },
+            "recovery": {
+              "$ref": "#/$defs/__schema3"
+            }
+          },
+          "required": ["code", "message", "recovery"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "NO_APPLICABLE_REMEDY"
+            },
+            "message": {
+              "$ref": "#/$defs/__schema3"
+            },
+            "recovery": {
+              "$ref": "#/$defs/__schema3"
+            }
+          },
+          "required": ["code", "message", "recovery"],
+          "additionalProperties": false
+        }
+      ]
     }
   },
   "$id": "https://github.com/nnennandukwe/threadloop/contracts/controller/0.1/controller-decision"

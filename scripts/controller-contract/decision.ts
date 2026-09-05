@@ -1,4 +1,5 @@
 import { supportsGuard } from './guards.js';
+import { validateBlockedReasons } from './blocked.js';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
 import { controllerDecisionSchema, type ControllerDecision, type ControllerInput } from './contracts.js';
@@ -42,7 +43,11 @@ export function validateControllerDecision(
         '$.decision.terminal_state',
         'Only an already terminal run with no unresolved execution can report terminal.',
       );
-  } else if (decision.outcome !== 'blocked') {
+  } else if (decision.outcome === 'blocked') {
+    if (state.kind === 'terminal' && value.execution.status === 'idle')
+      reject('TERMINAL_RUN', '$.decision.outcome', 'An already terminal idle run reports terminal.');
+    errors.push(...validateBlockedReasons(value, decision.reasons));
+  } else {
     if (state.kind === 'terminal')
       reject(
         'TERMINAL_RUN',
@@ -72,6 +77,10 @@ export function validateControllerDecision(
         decision.attempt_id !== execution.attempt.id
       )
         reject('INVALID_WAIT', '$.decision', 'Waiting must reference matching, current, unexpired execution.');
+      if (execution.status === 'in_flight') {
+        const request = validateRequestInSnapshot(value, execution.request, 'in_flight');
+        if (!request.ok) errors.push(...request.diagnostics);
+      }
     } else if (decision.outcome === 'engineering_action_required' || decision.outcome === 'human_action_required') {
       const request = validateRequestInSnapshot(value, decision.action_request);
       if (!request.ok) errors.push(...request.diagnostics);

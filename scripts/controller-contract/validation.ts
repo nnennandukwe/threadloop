@@ -78,15 +78,7 @@ export function validateControllerInput(input: unknown): ValidationResult<Contro
   }
   if (value.execution.status !== 'idle') {
     const request = value.execution.request;
-    if (
-      sha256(canonicalJson(request.request)) !== request.request_digest ||
-      request.request.idempotency_key !== requestIdentity(request.request.binding, request.request.action_id)
-    )
-      reject(
-        'REQUEST_DIGEST_MISMATCH',
-        '$.execution.request',
-        'Execution references a request with an invalid content or idempotency digest.',
-      );
+    errors.push(...validateRequestStructure(value, request));
     if (
       request.request.actor !== 'executor' ||
       request.request.binding.workflow_run_id !== value.binding.workflow_run_id ||
@@ -216,19 +208,10 @@ export function validateActionRequest(snapshot: unknown, request: unknown): Vali
   return validateRequestInSnapshot(input.value, parsed.value);
 }
 
-export function validateRequestInSnapshot(
-  input: ControllerInput,
-  envelope: ActionRequest,
-): ValidationResult<ActionRequest> {
+function validateRequestStructure(input: ControllerInput, envelope: ActionRequest): Diagnostic[] {
   const request = envelope.request;
   const errors: Diagnostic[] = [];
   const reject = (code: string, path: string, message: string) => errors.push(issue(code, path, message));
-  if (!same(request.binding, input.binding))
-    reject(
-      'REQUEST_BINDING_MISMATCH',
-      '$.request.binding',
-      'Request must bind the exact current run, state version, graph, and subject.',
-    );
   if (sha256(canonicalJson(request)) !== envelope.request_digest)
     reject('REQUEST_DIGEST_MISMATCH', '$.request_digest', 'Request contents do not match their digest.');
   if (request.idempotency_key !== requestIdentity(request.binding, request.action_id))
@@ -236,15 +219,6 @@ export function validateRequestInSnapshot(
       'IDEMPOTENCY_IDENTITY_MISMATCH',
       '$.request.idempotency_key',
       'Idempotency identity must identify this logical action slot.',
-    );
-  if (
-    !same(request.policy, { id: input.policy.id, digest: input.policy.digest }) ||
-    !same(request.authorities, input.policy.rules.authorities)
-  )
-    reject(
-      'POLICY_BINDING_MISMATCH',
-      '$.request.policy',
-      'Request must retain the exact policy and authority identities.',
     );
   if (
     !request.authorities.some((authority) => authority.type === 'threadloop') ||
@@ -255,28 +229,6 @@ export function validateRequestInSnapshot(
       '$.request.authorities',
       'Required ThreadLoop or human authority identity is missing.',
     );
-  if (!actionPrerequisites(input, request))
-    reject(
-      'ACTION_PREREQUISITE_MISSING',
-      '$.request.evidence_ids',
-      'Supply current prerequisite evidence and facts for this action; an executor must not choose a workaround.',
-    );
-  if (!currentObservation(input))
-    reject(
-      'STALE_OBSERVATION',
-      '$.observation',
-      'Obtain a current verified subject observation before constructing a request.',
-    );
-  if (input.history.status !== 'verified')
-    reject('INVALID_HISTORY', '$.history', 'Requests require a verified history projection.');
-  if (input.execution.status !== 'idle')
-    reject(
-      'EXECUTION_NOT_IDLE',
-      '$.execution',
-      'Wait for current execution or reconcile its outcome before requesting work.',
-    );
-  if (expired(request.constraints.valid_until, input))
-    reject('REQUEST_EXPIRED', '$.request.constraints.valid_until', 'The request validity interval has ended.');
   if (
     request.constraints.valid_until !== null &&
     (!Number.isFinite(Date.parse(request.constraints.valid_until)) ||
@@ -295,22 +247,14 @@ export function validateRequestInSnapshot(
       '$.request.action_id',
       'Request actor and capability must match the graph action.',
     );
-  if (
-    !input.available_capabilities.some((item) => item.capability === request.capability && item.actor === request.actor)
-  )
-    reject(
-      'UNSUPPORTED_CAPABILITY',
-      '$.available_capabilities',
-      'This actor capability is unavailable; do not substitute an executor or human.',
-    );
   const edge = graph.transitions.find(
-    (edge) => edge.id === request.transition_id && edge.from === input.binding.source_state,
+    (edge) => edge.id === request.transition_id && edge.from === request.binding.source_state,
   );
   if (!edge)
     reject(
       'ACTION_TRANSITION_MISMATCH',
       '$.request.transition_id',
-      'The selected transition must leave the current state.',
+      'The selected transition must leave the request source state.',
     );
   for (const guardId of request.guard_ids) {
     const guard = graph.guards.find((guard) => guard.id === guardId);
@@ -321,6 +265,98 @@ export function validateRequestInSnapshot(
         'Each remedy must be declared by a guard of the selected transition.',
       );
   }
+  for (const requirement of request.evidence_requirements) {
+    const guard = graph.guards.find((guard) => guard.id === requirement.guard_id);
+    if (
+      !same(requirement.subject, request.binding.subject) ||
+      !request.guard_ids.includes(requirement.guard_id) ||
+      !guard ||
+      !guardFamilies(guard.capability, guard.parameters).includes(requirement.family) ||
+      !actionFamilies[request.capability].includes(requirement.family)
+    )
+      reject(
+        'EVIDENCE_REQUIREMENT_MISMATCH',
+        '$.request.evidence_requirements',
+        'Evidence requirements must match the subject, selected guards, and action capability.',
+      );
+  }
+  if (request.guard_ids.some((id) => !request.evidence_requirements.some((requirement) => requirement.guard_id === id)))
+    reject(
+      'MISSING_EVIDENCE_REQUIREMENT',
+      '$.request.evidence_requirements',
+      'Every remedied guard needs an explicit evidence requirement.',
+    );
+  for (const [path, values] of [
+    ['guard_ids', request.guard_ids],
+    ['evidence_ids', request.evidence_ids],
+    ['inputs', request.inputs.map((item) => item.role)],
+    ['evidence_requirements', request.evidence_requirements.map(canonicalJson)],
+  ] as const) {
+    if (new Set(values).size !== values.length)
+      reject('DUPLICATE_IDENTITY', '$.request.' + path, 'A request cannot contain duplicate references.');
+    if (!same(values, [...values].sort()))
+      reject(
+        'NON_CANONICAL_REQUEST',
+        '$.request.' + path,
+        'Request reference arrays must use the documented canonical order.',
+      );
+  }
+  return errors;
+}
+
+export function validateRequestInSnapshot(
+  input: ControllerInput,
+  envelope: ActionRequest,
+  mode: 'new' | 'in_flight' = 'new',
+): ValidationResult<ActionRequest> {
+  const request = envelope.request;
+  const errors = validateRequestStructure(input, envelope);
+  const reject = (code: string, path: string, message: string) => errors.push(issue(code, path, message));
+  if (!same(request.binding, input.binding))
+    reject(
+      'REQUEST_BINDING_MISMATCH',
+      '$.request.binding',
+      'Request must bind the exact current run, state version, graph, and subject.',
+    );
+  if (
+    !same(request.policy, { id: input.policy.id, digest: input.policy.digest }) ||
+    !same(request.authorities, input.policy.rules.authorities)
+  )
+    reject(
+      'POLICY_BINDING_MISMATCH',
+      '$.request.policy',
+      'Request must retain the exact policy and authority identities.',
+    );
+  if (!actionPrerequisites(input, request))
+    reject(
+      'ACTION_PREREQUISITE_MISSING',
+      '$.request.evidence_ids',
+      'Supply current prerequisite evidence and facts for this action; an executor must not choose a workaround.',
+    );
+  if (!currentObservation(input))
+    reject(
+      'STALE_OBSERVATION',
+      '$.observation',
+      'Obtain a current verified subject observation before constructing a request.',
+    );
+  if (input.history.status !== 'verified')
+    reject('INVALID_HISTORY', '$.history', 'Requests require a verified history projection.');
+  if (mode === 'new' && input.execution.status !== 'idle')
+    reject(
+      'EXECUTION_NOT_IDLE',
+      '$.execution',
+      'Wait for current execution or reconcile its outcome before requesting work.',
+    );
+  if (expired(request.constraints.valid_until, input))
+    reject('REQUEST_EXPIRED', '$.request.constraints.valid_until', 'The request validity interval has ended.');
+  if (
+    !input.available_capabilities.some((item) => item.capability === request.capability && item.actor === request.actor)
+  )
+    reject(
+      'UNSUPPORTED_CAPABILITY',
+      '$.available_capabilities',
+      'This actor capability is unavailable; do not substitute an executor or human.',
+    );
   const deadlines = [input.observation.valid_until];
   for (const id of request.evidence_ids) {
     const receipt = input.receipts.find((receipt) => receipt.id === id);
@@ -343,27 +379,6 @@ export function validateRequestInSnapshot(
       '$.request.constraints.valid_until',
       'Request validity must not exceed its observation or supporting evidence.',
     );
-  for (const requirement of request.evidence_requirements) {
-    const guard = graph.guards.find((guard) => guard.id === requirement.guard_id);
-    if (
-      !same(requirement.subject, input.binding.subject) ||
-      !request.guard_ids.includes(requirement.guard_id) ||
-      !guard ||
-      !guardFamilies(guard.capability, guard.parameters).includes(requirement.family) ||
-      !actionFamilies[request.capability].includes(requirement.family)
-    )
-      reject(
-        'EVIDENCE_REQUIREMENT_MISMATCH',
-        '$.request.evidence_requirements',
-        'Evidence requirements must match the subject, selected guards, and action capability.',
-      );
-  }
-  if (request.guard_ids.some((id) => !request.evidence_requirements.some((requirement) => requirement.guard_id === id)))
-    reject(
-      'MISSING_EVIDENCE_REQUIREMENT',
-      '$.request.evidence_requirements',
-      'Every remedied guard needs an explicit evidence requirement.',
-    );
   for (const artifact of request.inputs)
     if (artifact.role === 'proof_plan' && !same(artifact.artifact, input.policy.rules.proof_plan))
       reject('PROOF_PLAN_MISMATCH', '$.request.inputs', 'Use the immutable proof plan from the explicit policy.');
@@ -372,21 +387,6 @@ export function validateRequestInSnapshot(
     !request.inputs.some((item) => item.role === 'proof_plan' && same(item.artifact, input.policy.rules.proof_plan))
   )
     reject('PROOF_PLAN_REQUIRED', '$.request.inputs', 'Proof collection requires the bound proof plan input.');
-  for (const [path, values] of [
-    ['guard_ids', request.guard_ids],
-    ['evidence_ids', request.evidence_ids],
-    ['inputs', request.inputs.map((item) => item.role)],
-    ['evidence_requirements', request.evidence_requirements.map(canonicalJson)],
-  ] as const) {
-    if (new Set(values).size !== values.length)
-      reject('DUPLICATE_IDENTITY', '$.request.' + path, 'A request cannot contain duplicate references.');
-    if (!same(values, [...values].sort()))
-      reject(
-        'NON_CANONICAL_REQUEST',
-        '$.request.' + path,
-        'Request reference arrays must use the documented canonical order.',
-      );
-  }
   for (const existing of input.existing_requests)
     if (existing.idempotency_key === request.idempotency_key && existing.request_digest !== envelope.request_digest)
       reject(

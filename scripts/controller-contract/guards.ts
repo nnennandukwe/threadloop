@@ -69,10 +69,13 @@ export function supportsGuard(input: ControllerInput, guard: Guard, receipts: Re
       );
     }
     case 'independent_proof':
-      return rules.independent_gate_ids.every((gate) =>
-        payloads.some(
-          (proof) => proof.type === 'independent_proof' && proof.gate_id === gate && proof.result === 'passed',
-        ),
+      return (
+        rules.independent_gate_ids.length > 0 &&
+        rules.independent_gate_ids.every((gate) =>
+          payloads.some(
+            (proof) => proof.type === 'independent_proof' && proof.gate_id === gate && proof.result === 'passed',
+          ),
+        )
       );
     case 'pre_pr_review':
       return payloads.some(
@@ -98,6 +101,7 @@ export function supportsGuard(input: ControllerInput, guard: Guard, receipts: Re
               proof.type === 'local_proof' && proof.gate_id === gate && proof.result === 'passed' && proof.clean,
           ),
         ) &&
+        rules.independent_gate_ids.length > 0 &&
         rules.independent_gate_ids.every((gate) =>
           payloads.some(
             (proof) => proof.type === 'independent_proof' && proof.gate_id === gate && proof.result === 'passed',
