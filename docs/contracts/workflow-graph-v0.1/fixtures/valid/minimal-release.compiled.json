@@ -1,0 +1,61 @@
+{
+  "graph": {
+    "schema_version": "0.1",
+    "capability_catalog": "threadloop.sdlc/0.1",
+    "profile": {
+      "id": "minimal_release",
+      "revision": 1
+    },
+    "initial_state": "prepared",
+    "states": [
+      {
+        "id": "completed",
+        "kind": "terminal"
+      },
+      {
+        "id": "prepared",
+        "kind": "active"
+      }
+    ],
+    "transitions": [
+      {
+        "id": "finish",
+        "from": "prepared",
+        "to": "completed",
+        "guard_refs": ["approval", "published"],
+        "authority": ["human", "threadloop"],
+        "priority": 0
+      }
+    ],
+    "guards": [
+      {
+        "capability": "human_approval",
+        "parameters": {
+          "scope": "current_subject"
+        },
+        "id": "approval",
+        "required_actions": ["approve"]
+      },
+      {
+        "capability": "completion_observed",
+        "parameters": {
+          "kind": "publication"
+        },
+        "id": "published",
+        "required_actions": []
+      }
+    ],
+    "required_actions": [
+      {
+        "capability": "approve_change",
+        "authority": "human",
+        "parameters": {},
+        "id": "approve"
+      }
+    ],
+    "budgets": [],
+    "cycle_controls": [],
+    "phase_policy": null
+  },
+  "graph_digest": "f52d36aa29c3c29c835d8e2520cd03a473acf1ab5aa2642568146fe28acbfc35"
+}

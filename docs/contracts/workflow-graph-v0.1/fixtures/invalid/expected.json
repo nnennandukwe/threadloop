@@ -1,0 +1,98 @@
+[
+  {
+    "file": "unknown-additive-version.yaml",
+    "expected_code": "UNSUPPORTED_VERSION"
+  },
+  {
+    "file": "unknown-breaking-version.yaml",
+    "expected_code": "UNSUPPORTED_VERSION"
+  },
+  {
+    "file": "noncanonical-version.yaml",
+    "expected_code": "UNSUPPORTED_VERSION"
+  },
+  {
+    "file": "duplicate-identifiers.yaml",
+    "expected_code": "DUPLICATE_ID"
+  },
+  {
+    "file": "missing-initial-state.yaml",
+    "expected_code": "SCHEMA_INVALID"
+  },
+  {
+    "file": "unknown-initial-state.yaml",
+    "expected_code": "UNKNOWN_REFERENCE"
+  },
+  {
+    "file": "unreachable-state.yaml",
+    "expected_code": "UNREACHABLE_STATE"
+  },
+  {
+    "file": "missing-terminal-path.yaml",
+    "expected_code": "NO_TERMINAL_PATH"
+  },
+  {
+    "file": "unknown-transition-target.yaml",
+    "expected_code": "UNKNOWN_REFERENCE"
+  },
+  {
+    "file": "unknown-guard-reference.yaml",
+    "expected_code": "UNKNOWN_REFERENCE"
+  },
+  {
+    "file": "unknown-guard-type.yaml",
+    "expected_code": "SCHEMA_INVALID"
+  },
+  {
+    "file": "unknown-action-type.yaml",
+    "expected_code": "SCHEMA_INVALID"
+  },
+  {
+    "file": "unknown-authority.yaml",
+    "expected_code": "SCHEMA_INVALID"
+  },
+  {
+    "file": "ambiguous-transitions.yaml",
+    "expected_code": "AMBIGUOUS_TRANSITIONS"
+  },
+  {
+    "file": "priority-tie.yaml",
+    "expected_code": "AMBIGUOUS_TRANSITIONS"
+  },
+  {
+    "file": "uncontrolled-cycle.yaml",
+    "expected_code": "UNCONTROLLED_CYCLE"
+  },
+  {
+    "file": "provider-core-type.yaml",
+    "expected_code": "SCHEMA_INVALID"
+  },
+  {
+    "file": "provider-parameters.yaml",
+    "expected_code": "SCHEMA_INVALID"
+  },
+  {
+    "file": "unsafe-integer.yaml",
+    "expected_code": "YAML_INVALID"
+  },
+  {
+    "file": "completion-without-human.yaml",
+    "expected_code": "COMPLETION_AUTHORITY_REQUIRED"
+  },
+  {
+    "file": "human-action-as-executor.yaml",
+    "expected_code": "SCHEMA_INVALID"
+  },
+  {
+    "file": "duplicate-keys.yaml",
+    "expected_code": "YAML_INVALID"
+  },
+  {
+    "file": "alias.yaml",
+    "expected_code": "YAML_INVALID"
+  },
+  {
+    "file": "custom-tag.yaml",
+    "expected_code": "YAML_INVALID"
+  }
+]

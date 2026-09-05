@@ -29,3 +29,96 @@ code, shell commands, expression languages, provider payloads, or dynamically lo
 
 From the repository root, run `npm test -- tests/unit/workflow-graph-contract.test.ts` for focused iteration and
 `npm run check` before review. These checks do not rewrite the published schemas or fixture expectations.
+
+## Compilation and graph identity
+
+The development-only `compileWorkflowProfile(source)` function returns either
+`{ ok: true, value: { graph, graph_digest } }` or `{ ok: false, diagnostics }`. It performs no filesystem, clock,
+environment, network, capability execution, or runtime-state reads. Callers supply YAML text explicitly. Diagnostics
+contain a stable code, a document path, an implicated identifier when available, a message, and recovery guidance. Shape
+errors precede semantic checks; no invalid input receives a graph or digest.
+
+Compilation resolves references, checks reachability and terminal paths, verifies authority requirements, validates
+cycle controls, then normalizes the profile. A JSON Schema-valid document alone is not an accepted graph.
+
+Normalization discards only the optional root author `description`. It retains profile identity and revision, schema
+version, and the immutable capability catalog identity `threadloop.sdlc/0.1`. Declaration arrays sort by ASCII `id`;
+reference and authority arrays sort lexicographically. Duplicate identifiers within each declaration namespace and
+duplicate references are rejected. Multiple outgoing edges need explicit distinct priorities; a sole edge defaults to
+priority zero. Omitted guard `required_actions`, budgets, and cycle controls become empty arrays. An omitted phase
+policy becomes `null`. Compiled graphs contain every normalized field and reject author descriptions.
+
+Canonical JSON recursively sorts object keys by UTF-16 code units, preserves normalized array order, uses ECMAScript
+JSON string escaping, and contains no insignificant whitespace or trailing newline. Encode those characters as UTF-8 and
+hash them with SHA-256. The resulting 64 lowercase hexadecimal characters are stored in `graph_digest`, outside the
+hashed `graph` payload. Strings are preserved without Unicode normalization; numbers are safe integers serialized as
+JSON integers, including negative zero as zero. This defines ThreadLoop's algorithm; it does not claim RFC 8785
+conformance.
+
+Each valid fixture has a readable `.compiled.json` envelope, a `.canonical` file containing the exact JSON payload bytes
+without a trailing newline, and a `.binding.json` identity. These are reviewed golden expectations. Tests neither update
+them nor infer expected digests from current compiler output.
+
+The development-only `validateGraphBinding(binding, compiled)` helper validates both schemas, graph semantics, canonical
+declaration order, the claimed graph digest, and equality with the supplied binding. It returns the validated graph or
+diagnostics and never changes its inputs. It accepts JSON values, not serialized bytes; insignificant JSON whitespace or
+object-key presentation is outside this helper's input. A future byte-oriented importer must verify the canonical byte
+contract as well.
+
+## Transition and cycle semantics
+
+Every transition requires ThreadLoop authority. All referenced guards and authority requirements are conjunctive. A
+guard may identify Required Actions that could supply its missing evidence; declaring those actions never satisfies the
+guard. Lower integer priorities take precedence among eligible transitions. No eligible edge means no transition
+permission; the Controller Decision representation belongs to
+[#105](https://github.com/nnennandukwe/threadloop/issues/105). The compiler does not evaluate guards or select a next
+action.
+
+Human approval guards also require human authority. Terminal entry requires current-subject human approval and observed
+merge or publication; terminal states have no outgoing edges. Suspended states require a human `recover_run` handoff and
+explicit block evidence on entry. Every recovery edge requires recovery approval and a `recorded_prior_state` guard
+whose target matches that edge. Recovery cannot reset budgets or phase history.
+
+Every state must be reachable from the initial state and have a structural terminal path. This is a topology guarantee,
+not a promise that evidence will arrive or that opaque guards eventually pass.
+
+Cycle controls have four closed forms:
+
+| Kind             | Required structural proof                                                                                                                                                      |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `budget`         | Every listed budget entry checks `budget_available` for that counter. Each entry source has an explicit exit to suspension or completion that requires no budget availability. |
+| `human_escape`   | Every named state has an explicit edge into human suspension.                                                                                                                  |
+| `terminal_route` | The listed exit edges form an acyclic subgraph through which each named state reaches a terminal state.                                                                        |
+| `guard_stop`     | Each listed exit reaches suspension or completion and requires the named registered `stop_requested` guard.                                                                    |
+
+For residual-cycle analysis, remove counted edges certified by valid budget controls, edges requiring human authority on
+every traversal, and states certified by a valid escape or stop route. Any remaining directed cycle is rejected.
+Controls do not certify an entire strongly connected component: an inner self-loop or overlapping cycle that avoids the
+control still fails. Escape and terminal-route declarations establish an available intervention route, not automatic
+eventual termination. Guard truth, budget accounting, and actual human authority must be enforced by a future runtime.
+
+Budget consumption counts accepted transitions with the listed identifiers across the full run history. Entry is allowed
+only when the count is strictly below `limit`; the accepted entry consumes one unit. Rejected attempts and idempotent
+replays add none. The final permitted entry may finish its work and return through verification. Exhaustion denies a new
+entry and leaves the declared exit available; it neither invents block evidence nor silently changes state.
+
+## Compatibility and run binding
+
+Only the string schema version `"0.1"` and catalog identity `threadloop.sdlc/0.1` are supported. Unknown fields,
+capability names, versions, and provider payload types fail closed. Ordinary prose may name a provider;
+provider-specific guard, action, authority, or parameter types do not become core capabilities.
+
+An additive future version preserves all existing field meanings and canonicalization rules while introducing explicitly
+negotiated fields or capabilities. Removing or reinterpreting a field, changing authority or guard semantics, or
+changing canonical bytes is breaking. Neither kind is implicitly accepted by this v0.1 reader. Support needs an explicit
+schema and catalog update with reviewed compatibility fixtures; unknown data is never dropped before hashing.
+
+A future Workflow Run must retain its original `graph_schema_version` and `graph_digest` for its lifetime. Editing a
+YAML profile may create a new graph artifact, but cannot replace the graph bound to an active run. An unavailable old
+graph requires restoration or explicit blocking, not substitution. These are contract requirements and specification
+tests; existing sessions do not acquire graph bindings from this issue.
+
+Graph identity is separate from database schema capabilities and current protocol versions. Existing SQLite schema v8
+records, receipts, and audit history keep their meaning. [#85](https://github.com/nnennandukwe/threadloop/issues/85)
+owns storage evolution; [#86](https://github.com/nnennandukwe/threadloop/issues/86) owns persisted run/configuration
+identity. No storage migration, graph interpreter, scheduler, or Rust runtime is introduced here.

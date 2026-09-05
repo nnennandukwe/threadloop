@@ -183,6 +183,8 @@ export const graphBindingSchema = z.strictObject({
 });
 
 export type WorkflowProfile = z.infer<typeof workflowProfileSchema>;
+export type CompiledPayload = z.infer<typeof compiledPayloadSchema>;
+export type CompiledGraph = z.infer<typeof compiledGraphSchema>;
 
 export interface Diagnostic {
   code: string;

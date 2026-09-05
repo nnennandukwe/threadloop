@@ -1,0 +1,35 @@
+schema_version: "0.1"
+profile:
+  id: minimal_release
+  revision: 1
+initial_state: prepared
+states:
+  - id: prepared
+    kind: active
+  - id: completed
+    kind: terminal
+transitions:
+  - id: finish
+    from: prepared
+    to: completed
+    guard_refs:
+      - approval
+      - published
+    authority:
+      - scheduler
+guards:
+  - id: approval
+    capability: human_approval
+    parameters:
+      scope: current_subject
+    required_actions:
+      - approve
+  - id: published
+    capability: completion_observed
+    parameters:
+      kind: publication
+required_actions:
+  - id: approve
+    capability: approve_change
+    authority: human
+    parameters: {}
