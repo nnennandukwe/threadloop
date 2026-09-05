@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "graph_schema_version": {
+      "type": "string",
+      "const": "0.1"
+    },
+    "graph_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  },
+  "required": ["graph_schema_version", "graph_digest"],
+  "additionalProperties": false,
+  "$id": "https://github.com/nnennandukwe/threadloop/contracts/workflow-graph/0.1/graph-binding"
+}

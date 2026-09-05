@@ -4,6 +4,9 @@ Inspected implementation: origin/main@71452630e803911ad5ceaeb41bac45bc158f6489
 
 Artifact status: current-state compatibility mapping, not executable graph schema
 
+The [Workflow Profile and Compiled Graph v0.1 specification](contracts/workflow-graph-v0.1/README.md) provides versioned
+schemas, static compilation checks, and preservation fixtures for this mapping. It does not enable graph execution.
+
 This artifact maps the current ThreadLoop governed PR lifecycle to the planned SDLC graph language. It is the
 compatibility input for #103 and should be read with the terminology and ADR work in #102, the future versioned Workflow
 Profile and Compiled Graph contracts in #104, the storage-version evolution tracked by #85, the immutable run and

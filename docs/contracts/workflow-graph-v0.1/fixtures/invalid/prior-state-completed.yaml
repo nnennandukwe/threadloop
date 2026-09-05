@@ -1,0 +1,658 @@
+schema_version: "0.1"
+description: Specification fixture for the current governed pull-request
+  lifecycle. Does not enable execution.
+profile:
+  id: governed_pr
+  revision: 1
+initial_state: queued
+states:
+  - id: queued
+    kind: active
+  - id: framed
+    kind: active
+  - id: proof_ready
+    kind: active
+  - id: implementing
+    kind: active
+  - id: verifying
+    kind: active
+  - id: pre_pr_reviewing
+    kind: active
+  - id: reviewing
+    kind: active
+  - id: repairing
+    kind: active
+  - id: ready_for_human
+    kind: active
+  - id: blocked
+    kind: suspended
+    handoff: recover
+  - id: completed
+    kind: terminal
+required_actions:
+  - id: frame
+    capability: frame_change
+    authority: executor
+    parameters: {}
+  - id: bind_plan
+    capability: bind_proof_plan
+    authority: executor
+    parameters: {}
+  - id: restore_authority
+    capability: restore_proof_authority
+    authority: human
+    parameters: {}
+  - id: restore_checkout
+    capability: restore_repository
+    authority: human
+    parameters: {}
+  - id: implement
+    capability: implement_change
+    authority: executor
+    parameters: {}
+  - id: commit
+    capability: commit_change
+    authority: executor
+    parameters: {}
+  - id: run_gates
+    capability: run_local_gates
+    authority: executor
+    parameters: {}
+  - id: correct_setup
+    capability: correct_gate_setup
+    authority: human
+    parameters: {}
+  - id: independent_proof
+    capability: obtain_independent_proof
+    authority: executor
+    parameters: {}
+  - id: pre_pr_review
+    capability: record_pre_pr_review
+    authority: executor
+    parameters: {}
+  - id: review_evidence
+    capability: obtain_review_evidence
+    authority: executor
+    parameters: {}
+  - id: restore_evidence
+    capability: restore_evidence
+    authority: human
+    parameters: {}
+  - id: repair
+    capability: repair_change
+    authority: executor
+    parameters: {}
+  - id: approve
+    capability: approve_change
+    authority: human
+    parameters: {}
+  - id: merge
+    capability: merge_change
+    authority: human
+    parameters: {}
+  - id: block
+    capability: block_run
+    authority: human
+    parameters: {}
+  - id: recover
+    capability: recover_run
+    authority: human
+    parameters: {}
+guards:
+  - id: plan
+    capability: proof_plan_bound
+    parameters: {}
+    required_actions:
+      - bind_plan
+      - restore_authority
+  - id: baseline
+    capability: repository
+    parameters:
+      condition: baseline_matches
+    required_actions:
+      - restore_checkout
+  - id: work_committed
+    capability: repository
+    parameters:
+      condition: clean_descendant
+    required_actions:
+      - implement
+      - commit
+  - id: checkout
+    capability: repository
+    parameters:
+      condition: clean_plan_branch
+    required_actions:
+      - restore_checkout
+  - id: repair_committed
+    capability: repository
+    parameters:
+      condition: committed_repair
+    required_actions:
+      - repair
+      - commit
+  - id: pre
+    capability: phase
+    parameters:
+      value: pre_pr
+    required_actions: []
+  - id: post
+    capability: phase
+    parameters:
+      value: post_pr
+    required_actions: []
+  - id: local_pass
+    capability: local_proof
+    parameters:
+      result: passed
+    required_actions:
+      - run_gates
+      - correct_setup
+      - restore_evidence
+  - id: local_fail
+    capability: local_proof
+    parameters:
+      result: failed
+    required_actions:
+      - run_gates
+      - correct_setup
+  - id: independent
+    capability: independent_proof
+    parameters: {}
+    required_actions:
+      - independent_proof
+      - restore_evidence
+  - id: review_changes
+    capability: pre_pr_review
+    parameters:
+      outcome: changes_required
+    required_actions:
+      - pre_pr_review
+  - id: review_clean
+    capability: pre_pr_review
+    parameters:
+      outcome: clean
+    required_actions:
+      - pre_pr_review
+  - id: review_current
+    capability: review
+    parameters:
+      condition: current
+    required_actions:
+      - review_evidence
+      - restore_evidence
+  - id: review_blocking
+    capability: review
+    parameters:
+      condition: blocking
+    required_actions:
+      - review_evidence
+  - id: review_clear
+    capability: review
+    parameters:
+      condition: clear
+    required_actions:
+      - repair
+      - review_evidence
+  - id: review_set
+    capability: review
+    parameters:
+      condition: proof_set_current
+    required_actions:
+      - run_gates
+      - independent_proof
+      - review_evidence
+      - restore_evidence
+  - id: repair_available
+    capability: budget_available
+    parameters:
+      budget: repair_entries
+    required_actions:
+      - block
+  - id: approval
+    capability: human_approval
+    parameters:
+      scope: current_subject
+    required_actions:
+      - approve
+  - id: merged
+    capability: completion_observed
+    parameters:
+      kind: merge
+    required_actions:
+      - merge
+      - review_evidence
+  - id: block
+    capability: block_evidence
+    parameters: {}
+    required_actions:
+      - block
+  - id: recovery
+    capability: human_approval
+    parameters:
+      scope: recovery
+    required_actions:
+      - recover
+  - id: prior_queued
+    capability: recorded_prior_state
+    parameters:
+      state: queued
+    required_actions:
+      - recover
+  - id: prior_framed
+    capability: recorded_prior_state
+    parameters:
+      state: framed
+    required_actions:
+      - recover
+  - id: prior_proof_ready
+    capability: recorded_prior_state
+    parameters:
+      state: proof_ready
+    required_actions:
+      - recover
+  - id: prior_implementing
+    capability: recorded_prior_state
+    parameters:
+      state: implementing
+    required_actions:
+      - recover
+  - id: prior_verifying
+    capability: recorded_prior_state
+    parameters:
+      state: verifying
+    required_actions:
+      - recover
+  - id: prior_pre_pr_reviewing
+    capability: recorded_prior_state
+    parameters:
+      state: pre_pr_reviewing
+    required_actions:
+      - recover
+  - id: prior_reviewing
+    capability: recorded_prior_state
+    parameters:
+      state: reviewing
+    required_actions:
+      - recover
+  - id: prior_repairing
+    capability: recorded_prior_state
+    parameters:
+      state: repairing
+    required_actions:
+      - recover
+  - id: prior_ready_for_human
+    capability: recorded_prior_state
+    parameters:
+      state: ready_for_human
+    required_actions:
+      - recover
+  - id: invalid_prior
+    capability: recorded_prior_state
+    parameters:
+      state: completed
+transitions:
+  - id: frame
+    from: queued
+    to: framed
+    guard_refs: []
+    priority: 10
+    authority:
+      - threadloop
+  - id: bind_plan
+    from: framed
+    to: proof_ready
+    guard_refs:
+      - plan
+    priority: 10
+    authority:
+      - threadloop
+  - id: begin_implementation
+    from: proof_ready
+    to: implementing
+    guard_refs:
+      - plan
+      - baseline
+    priority: 10
+    authority:
+      - threadloop
+  - id: verify_implementation
+    from: implementing
+    to: verifying
+    guard_refs:
+      - plan
+      - work_committed
+    priority: 10
+    authority:
+      - threadloop
+  - id: retry_failed_proof
+    from: verifying
+    to: implementing
+    guard_refs:
+      - plan
+      - pre
+      - checkout
+      - local_fail
+    priority: 10
+    authority:
+      - threadloop
+  - id: retry_review_changes
+    from: verifying
+    to: implementing
+    guard_refs:
+      - plan
+      - pre
+      - checkout
+      - review_changes
+    priority: 20
+    authority:
+      - threadloop
+  - id: enter_pre_pr_review
+    from: verifying
+    to: pre_pr_reviewing
+    guard_refs:
+      - plan
+      - pre
+      - checkout
+      - local_pass
+      - independent
+    priority: 30
+    authority:
+      - threadloop
+  - id: return_to_review
+    from: verifying
+    to: reviewing
+    guard_refs:
+      - plan
+      - post
+      - checkout
+      - local_pass
+      - independent
+    priority: 40
+    authority:
+      - threadloop
+  - id: repair_failed_proof
+    from: verifying
+    to: repairing
+    guard_refs:
+      - plan
+      - post
+      - local_fail
+      - repair_available
+    priority: 50
+    authority:
+      - threadloop
+  - id: address_pre_pr_review
+    from: pre_pr_reviewing
+    to: implementing
+    guard_refs:
+      - plan
+      - pre
+      - checkout
+      - review_changes
+    priority: 10
+    authority:
+      - threadloop
+  - id: enter_review
+    from: pre_pr_reviewing
+    to: reviewing
+    guard_refs:
+      - plan
+      - pre
+      - checkout
+      - review_clean
+      - local_pass
+      - independent
+    priority: 20
+    authority:
+      - threadloop
+  - id: repair_review
+    from: reviewing
+    to: repairing
+    guard_refs:
+      - review_current
+      - review_blocking
+      - repair_available
+    priority: 10
+    authority:
+      - threadloop
+  - id: human_handoff
+    from: reviewing
+    to: ready_for_human
+    guard_refs:
+      - review_current
+      - review_clear
+      - review_set
+    priority: 20
+    authority:
+      - threadloop
+  - id: verify_repair
+    from: repairing
+    to: verifying
+    guard_refs:
+      - plan
+      - repair_committed
+    priority: 10
+    authority:
+      - threadloop
+  - id: repair_late_review
+    from: ready_for_human
+    to: repairing
+    guard_refs:
+      - review_current
+      - review_blocking
+      - repair_available
+    priority: 10
+    authority:
+      - threadloop
+  - id: complete
+    from: ready_for_human
+    to: completed
+    guard_refs:
+      - review_current
+      - review_clear
+      - review_set
+      - approval
+      - merged
+    priority: 20
+    authority:
+      - threadloop
+      - human
+  - id: block_queued
+    from: queued
+    to: blocked
+    guard_refs:
+      - block
+    priority: 0
+    authority:
+      - threadloop
+  - id: resume_queued
+    from: blocked
+    to: queued
+    guard_refs:
+      - recovery
+      - prior_queued
+    priority: 0
+    authority:
+      - threadloop
+      - human
+  - id: block_framed
+    from: framed
+    to: blocked
+    guard_refs:
+      - block
+    priority: 0
+    authority:
+      - threadloop
+  - id: resume_framed
+    from: blocked
+    to: framed
+    guard_refs:
+      - recovery
+      - prior_framed
+    priority: 1
+    authority:
+      - threadloop
+      - human
+  - id: block_proof_ready
+    from: proof_ready
+    to: blocked
+    guard_refs:
+      - block
+    priority: 0
+    authority:
+      - threadloop
+  - id: resume_proof_ready
+    from: blocked
+    to: proof_ready
+    guard_refs:
+      - recovery
+      - prior_proof_ready
+    priority: 2
+    authority:
+      - threadloop
+      - human
+  - id: block_implementing
+    from: implementing
+    to: blocked
+    guard_refs:
+      - block
+    priority: 0
+    authority:
+      - threadloop
+  - id: resume_implementing
+    from: blocked
+    to: implementing
+    guard_refs:
+      - recovery
+      - prior_implementing
+    priority: 3
+    authority:
+      - threadloop
+      - human
+  - id: block_verifying
+    from: verifying
+    to: blocked
+    guard_refs:
+      - block
+    priority: 0
+    authority:
+      - threadloop
+  - id: resume_verifying
+    from: blocked
+    to: verifying
+    guard_refs:
+      - recovery
+      - prior_verifying
+    priority: 4
+    authority:
+      - threadloop
+      - human
+  - id: block_pre_pr_reviewing
+    from: pre_pr_reviewing
+    to: blocked
+    guard_refs:
+      - block
+    priority: 0
+    authority:
+      - threadloop
+  - id: resume_pre_pr_reviewing
+    from: blocked
+    to: pre_pr_reviewing
+    guard_refs:
+      - recovery
+      - prior_pre_pr_reviewing
+    priority: 5
+    authority:
+      - threadloop
+      - human
+  - id: block_reviewing
+    from: reviewing
+    to: blocked
+    guard_refs:
+      - block
+    priority: 0
+    authority:
+      - threadloop
+  - id: resume_reviewing
+    from: blocked
+    to: reviewing
+    guard_refs:
+      - recovery
+      - prior_reviewing
+    priority: 6
+    authority:
+      - threadloop
+      - human
+  - id: block_repairing
+    from: repairing
+    to: blocked
+    guard_refs:
+      - block
+    priority: 0
+    authority:
+      - threadloop
+  - id: resume_repairing
+    from: blocked
+    to: repairing
+    guard_refs:
+      - recovery
+      - prior_repairing
+    priority: 7
+    authority:
+      - threadloop
+      - human
+  - id: block_ready_for_human
+    from: ready_for_human
+    to: blocked
+    guard_refs:
+      - block
+    priority: 0
+    authority:
+      - threadloop
+  - id: resume_ready_for_human
+    from: blocked
+    to: ready_for_human
+    guard_refs:
+      - recovery
+      - prior_ready_for_human
+    priority: 8
+    authority:
+      - threadloop
+      - human
+budgets:
+  - id: repair_entries
+    limit: 3
+    transition_refs:
+      - repair_failed_proof
+      - repair_review
+      - repair_late_review
+cycle_controls:
+  - id: pre_pr_escape
+    kind: human_escape
+    transition_refs:
+      - verify_implementation
+      - retry_failed_proof
+      - retry_review_changes
+      - address_pre_pr_review
+    exit_transition_refs:
+      - block_implementing
+      - block_verifying
+      - block_pre_pr_reviewing
+  - id: bounded_repair
+    kind: budget
+    budget: repair_entries
+    exit_transition_refs:
+      - block_verifying
+      - block_reviewing
+      - block_ready_for_human
+phase_policy:
+  kind: entered_state
+  initial: pre_pr
+  advanced: post_pr
+  monotonic: true
+  include_audit_genesis: true
+  state_refs:
+    - reviewing
+    - ready_for_human
+    - completed
