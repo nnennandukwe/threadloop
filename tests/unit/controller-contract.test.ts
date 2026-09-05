@@ -11,11 +11,12 @@ import { Ajv2020 } from 'ajv/dist/2020.js';
 import { z } from 'zod';
 import {
   actionIntentSchema,
+  actionRequestSchema,
   controllerInputSchema,
   controllerDecisionSchema,
   publishedControllerSchemas,
 } from '../../scripts/controller-contract/contracts.js';
-import { compiledGraphSchema } from '../../scripts/workflow-graph/contracts.js';
+import { compiledGraphSchema, compiledPayloadSchema } from '../../scripts/workflow-graph/contracts.js';
 
 const bundle = new URL('../../docs/contracts/controller-v0.1/', import.meta.url);
 const exampleSchema = z.strictObject({
@@ -772,5 +773,90 @@ describe('Verifiable blocked evidence', () => {
     failed.payload_digest = sha256(canonicalJson(failed.payload));
     input.receipts = [failed];
     expect(validateControllerDecision(input, blocked()).ok).toBe(false);
+  });
+});
+
+describe('Block evidence state identity', () => {
+  it('requires block evidence for the current source state', async () => {
+    const input = await controllerSnapshot();
+    const evidence = receipt(input);
+    evidence.payload = {
+      type: 'block_evidence',
+      prior_state: 'verifying',
+      reason: 'Stop',
+      recovery: 'Restore proof',
+      stop_code: 'PROOF_UNAVAILABLE',
+    };
+    evidence.payload_digest = sha256(canonicalJson(evidence.payload));
+    input.receipts = [evidence];
+    const guard = input.compiled_graph.graph.guards.find((guard) => guard.capability === 'block_evidence')!;
+    const candidate = () =>
+      decisionEnvelope(input, {
+        outcome: 'blocked',
+        reasons: [
+          {
+            code: 'EVIDENCE_UNAVAILABLE',
+            guard_id: guard.id,
+            message: 'No block evidence for the current state',
+            recovery: 'Collect block evidence for this state',
+          },
+        ],
+      });
+    expect(validateControllerDecision(input, candidate()).ok).toBe(true);
+    evidence.payload.prior_state = input.binding.source_state;
+    evidence.payload_digest = sha256(canonicalJson(evidence.payload));
+    expect(validateControllerDecision(input, candidate()).ok).toBe(false);
+  });
+});
+
+describe('Graph-declared actor parity', () => {
+  it('preserves every catalog capability and actor pair in typed and offline request schemas', async () => {
+    const input = await controllerSnapshot();
+    const built = buildActionRequest(input, localProofIntent(input));
+    if (!built.ok) throw new Error('Expected request');
+    const check = new Ajv2020({ strict: true, strictTypes: false, validateFormats: false }).compile(
+      publishedControllerSchemas()['action-request']!,
+    );
+    for (const catalog of compiledPayloadSchema.shape.required_actions.element.options) {
+      for (const capability of catalog.shape.capability.options) {
+        for (const actor of ['human', 'executor'] as const) {
+          const expected = catalog.shape.authority.safeParse(actor).success;
+          const request = { ...built.value.request, capability, actor };
+          const envelope = { request, request_digest: sha256(canonicalJson(request)) };
+          expect(actionActorSchema.safeParse({ capability, actor }).success, capability + ':' + actor).toBe(expected);
+          expect(actionRequestSchema.safeParse(envelope).success, capability + ':' + actor).toBe(expected);
+          expect(check(envelope), capability + ':' + actor).toBe(expected);
+        }
+      }
+    }
+  });
+
+  it('permits human local gates only when the bound graph assigns them to a human', async () => {
+    const input = await controllerSnapshot();
+    const executorRequest = buildActionRequest(input, localProofIntent(input));
+    if (!executorRequest.ok) throw new Error('Expected executor request');
+    const disguised = { ...executorRequest.value.request, actor: 'human' };
+    expect(
+      validateActionRequest(input, { request: disguised, request_digest: sha256(canonicalJson(disguised)) }).ok,
+    ).toBe(false);
+    const graph = input.compiled_graph.graph;
+    const action = graph.required_actions.find((action) => action.id === 'run_gates')!;
+    action.authority = 'human';
+    input.compiled_graph.graph_digest = sha256(canonicalJson(graph));
+    input.binding.graph_digest = input.compiled_graph.graph_digest;
+    input.available_capabilities = graph.required_actions.map((action) =>
+      actionActorSchema.parse({ capability: action.capability, actor: action.authority }),
+    );
+    const handoff = buildActionRequest(input, localProofIntent(input));
+    expect(handoff.ok).toBe(true);
+    if (!handoff.ok) return;
+    expect(handoff.value.request.actor).toBe('human');
+    expect(
+      validateControllerDecision(
+        input,
+        decisionEnvelope(input, { outcome: 'human_action_required', action_request: handoff.value }),
+      ).ok,
+    ).toBe(true);
+    expect(validateActionRequest(input, executorRequest.value).ok).toBe(false);
   });
 });

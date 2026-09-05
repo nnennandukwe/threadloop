@@ -120,8 +120,11 @@ function missingEvidence(
       );
     case 'artifact':
       return !payloads.some((payload) => payload.type === 'artifact' && payload.stage === guard.parameters.stage);
-    case 'pre_pr_review':
     case 'block_evidence':
+      return !payloads.some(
+        (payload) => payload.type === 'block_evidence' && payload.prior_state === input.binding.source_state,
+      );
+    case 'pre_pr_review':
     case 'stop_requested':
       return !payloads.some((payload) => payload.type === guard.capability);
     default:

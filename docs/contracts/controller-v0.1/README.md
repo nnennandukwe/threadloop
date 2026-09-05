@@ -129,6 +129,13 @@ validity constraints, and logical idempotency identity.
 graph-declared actor. Available capability support cannot override that declaration. A human request cannot validate as
 the executor variant, even after recomputing its digest.
 
+The #104 catalog permits either `human` or `executor` for ordinary capabilities, including `run_local_gates` and
+`correct_gate_setup`. Only the four capabilities listed above are globally human-only. The generic offline schemas
+therefore permit either actor for ordinary capabilities; exact actor assignment is checked against the supplied Compiled
+Graph during semantic validation. For example, the governed-PR graph assigns `correct_gate_setup` to a human and
+`run_local_gates` to an executor. Another valid graph may assign local gates to a human. Schema validity alone does not
+establish graph-specific authorization.
+
 After current proof/review permits entry to `ready_for_human`:
 
 ```text
