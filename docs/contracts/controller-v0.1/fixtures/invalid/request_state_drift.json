@@ -1,0 +1,13 @@
+{
+  "id": "request_state_drift",
+  "base": "action_required",
+  "mutations": [
+    {
+      "path": ["input", "binding", "state_version"],
+      "value": 6
+    }
+  ],
+  "schema_valid": true,
+  "reseal": true,
+  "expected_code": "REQUEST_BINDING_MISMATCH"
+}

@@ -1,0 +1,13 @@
+{
+  "id": "mismatched_repair_consumption",
+  "base": "admitted_repair",
+  "mutations": [
+    {
+      "path": ["input", "history", "repair_admission", "consumed"],
+      "value": 2
+    }
+  ],
+  "schema_valid": true,
+  "reseal": true,
+  "expected_code": "INVALID_REPAIR_ADMISSION"
+}

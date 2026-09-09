@@ -1,0 +1,13 @@
+{
+  "id": "unknown_history_budget",
+  "base": "action_required",
+  "mutations": [
+    {
+      "path": ["input", "history", "budget_counts", 0, "budget_id"],
+      "value": "other_budget"
+    }
+  ],
+  "schema_valid": true,
+  "reseal": true,
+  "expected_code": "INVALID_HISTORY"
+}

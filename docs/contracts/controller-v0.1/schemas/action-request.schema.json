@@ -1,0 +1,455 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "request": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ExecutorRequest"
+        },
+        {
+          "$ref": "#/$defs/HumanRequest"
+        }
+      ]
+    },
+    "request_digest": {
+      "$ref": "#/$defs/Digest"
+    }
+  },
+  "required": ["request", "request_digest"],
+  "additionalProperties": false,
+  "$defs": {
+    "ExecutorRequest": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "0.1"
+        },
+        "binding": {
+          "$ref": "#/$defs/RunBinding"
+        },
+        "capability_catalog": {
+          "type": "string",
+          "const": "threadloop.sdlc/0.1"
+        },
+        "action_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "transition_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "guard_ids": {
+          "minItems": 1,
+          "$ref": "#/$defs/IdentifierReferences"
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ArtifactInput"
+          }
+        },
+        "evidence_ids": {
+          "$ref": "#/$defs/IdentifierReferences"
+        },
+        "constraints": {
+          "type": "object",
+          "properties": {
+            "require_current_subject": {
+              "type": "boolean",
+              "const": true
+            },
+            "lifecycle_mutation": {
+              "type": "boolean",
+              "const": false
+            },
+            "valid_until": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": ["require_current_subject", "lifecycle_mutation", "valid_until"],
+          "additionalProperties": false
+        },
+        "policy": {
+          "$ref": "#/$defs/Identity"
+        },
+        "authorities": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Authority"
+          }
+        },
+        "evidence_requirements": {
+          "minItems": 1,
+          "$ref": "#/$defs/EvidenceRequirements"
+        },
+        "idempotency_key": {
+          "$ref": "#/$defs/Digest"
+        },
+        "actor": {
+          "type": "string",
+          "const": "executor"
+        },
+        "capability": {
+          "type": "string",
+          "enum": [
+            "frame_change",
+            "bind_proof_plan",
+            "implement_change",
+            "commit_change",
+            "run_local_gates",
+            "obtain_independent_proof",
+            "record_pre_pr_review",
+            "obtain_review_evidence",
+            "repair_change",
+            "correct_gate_setup",
+            "restore_proof_authority",
+            "restore_repository",
+            "restore_evidence",
+            "prepare_release",
+            "verify_release",
+            "publish_release",
+            "verify_publication"
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "binding",
+        "capability_catalog",
+        "action_id",
+        "transition_id",
+        "guard_ids",
+        "inputs",
+        "evidence_ids",
+        "constraints",
+        "policy",
+        "authorities",
+        "evidence_requirements",
+        "idempotency_key",
+        "actor",
+        "capability"
+      ],
+      "additionalProperties": false
+    },
+    "RunBinding": {
+      "type": "object",
+      "properties": {
+        "workflow_run_id": {
+          "$ref": "#/$defs/NonemptyText"
+        },
+        "graph_schema_version": {
+          "type": "string",
+          "const": "0.1"
+        },
+        "graph_digest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "source_state": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "state_version": {
+          "$ref": "#/$defs/Counter"
+        },
+        "subject": {
+          "$ref": "#/$defs/Subject"
+        }
+      },
+      "required": [
+        "workflow_run_id",
+        "graph_schema_version",
+        "graph_digest",
+        "source_state",
+        "state_version",
+        "subject"
+      ],
+      "additionalProperties": false
+    },
+    "NonemptyText": {
+      "type": "string",
+      "minLength": 1
+    },
+    "Digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "Identifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "Counter": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "Subject": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RepositorySubject"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "artifact"
+            },
+            "artifact_id": {
+              "$ref": "#/$defs/NonemptyText"
+            },
+            "content_digest": {
+              "$ref": "#/$defs/Digest"
+            }
+          },
+          "required": ["kind", "artifact_id", "content_digest"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "RepositorySubject": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "repository"
+        },
+        "repository_id": {
+          "$ref": "#/$defs/NonemptyText"
+        },
+        "revision": {
+          "$ref": "#/$defs/NonemptyText"
+        },
+        "content_digest": {
+          "$ref": "#/$defs/Digest"
+        }
+      },
+      "required": ["kind", "repository_id", "revision", "content_digest"],
+      "additionalProperties": false
+    },
+    "IdentifierReferences": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Identifier"
+      }
+    },
+    "ArtifactInput": {
+      "type": "object",
+      "properties": {
+        "role": {
+          "type": "string",
+          "enum": ["change_context", "proof_plan", "implementation_basis", "release_manifest", "publication_target"]
+        },
+        "artifact": {
+          "$ref": "#/$defs/Identity"
+        }
+      },
+      "required": ["role", "artifact"],
+      "additionalProperties": false
+    },
+    "Identity": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/NonemptyText"
+        },
+        "digest": {
+          "$ref": "#/$defs/Digest"
+        }
+      },
+      "required": ["id", "digest"],
+      "additionalProperties": false
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+    },
+    "Authority": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["threadloop", "human"]
+        },
+        "identity": {
+          "$ref": "#/$defs/Identity"
+        }
+      },
+      "required": ["type", "identity"],
+      "additionalProperties": false
+    },
+    "EvidenceRequirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "family": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "proof_plan",
+                  "local_proof",
+                  "independent_proof",
+                  "pre_pr_review",
+                  "review",
+                  "human_approval",
+                  "completion_observed",
+                  "block_evidence",
+                  "stop_requested",
+                  "artifact"
+                ]
+              },
+              {
+                "type": "string",
+                "const": "repository_observation"
+              }
+            ]
+          },
+          "guard_id": {
+            "$ref": "#/$defs/Identifier"
+          },
+          "subject": {
+            "$ref": "#/$defs/Subject"
+          }
+        },
+        "required": ["family", "guard_id", "subject"],
+        "additionalProperties": false
+      }
+    },
+    "HumanRequest": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "0.1"
+        },
+        "binding": {
+          "$ref": "#/$defs/RunBinding"
+        },
+        "capability_catalog": {
+          "type": "string",
+          "const": "threadloop.sdlc/0.1"
+        },
+        "action_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "transition_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "guard_ids": {
+          "minItems": 1,
+          "$ref": "#/$defs/IdentifierReferences"
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ArtifactInput"
+          }
+        },
+        "evidence_ids": {
+          "$ref": "#/$defs/IdentifierReferences"
+        },
+        "constraints": {
+          "type": "object",
+          "properties": {
+            "require_current_subject": {
+              "type": "boolean",
+              "const": true
+            },
+            "lifecycle_mutation": {
+              "type": "boolean",
+              "const": false
+            },
+            "valid_until": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": ["require_current_subject", "lifecycle_mutation", "valid_until"],
+          "additionalProperties": false
+        },
+        "policy": {
+          "$ref": "#/$defs/Identity"
+        },
+        "authorities": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Authority"
+          }
+        },
+        "evidence_requirements": {
+          "minItems": 1,
+          "$ref": "#/$defs/EvidenceRequirements"
+        },
+        "idempotency_key": {
+          "$ref": "#/$defs/Digest"
+        },
+        "actor": {
+          "type": "string",
+          "const": "human"
+        },
+        "capability": {
+          "type": "string",
+          "enum": [
+            "frame_change",
+            "bind_proof_plan",
+            "implement_change",
+            "commit_change",
+            "run_local_gates",
+            "obtain_independent_proof",
+            "record_pre_pr_review",
+            "obtain_review_evidence",
+            "repair_change",
+            "correct_gate_setup",
+            "restore_proof_authority",
+            "restore_repository",
+            "restore_evidence",
+            "prepare_release",
+            "verify_release",
+            "publish_release",
+            "verify_publication",
+            "block_run",
+            "recover_run",
+            "approve_change",
+            "merge_change"
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "binding",
+        "capability_catalog",
+        "action_id",
+        "transition_id",
+        "guard_ids",
+        "inputs",
+        "evidence_ids",
+        "constraints",
+        "policy",
+        "authorities",
+        "evidence_requirements",
+        "idempotency_key",
+        "actor",
+        "capability"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$id": "https://github.com/nnennandukwe/threadloop/contracts/controller/0.1/action-request"
+}

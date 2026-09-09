@@ -1,0 +1,13 @@
+{
+  "id": "missing_repair_admission",
+  "base": "admitted_repair",
+  "mutations": [
+    {
+      "path": ["input", "history", "repair_admission"],
+      "value": null
+    }
+  ],
+  "schema_valid": true,
+  "reseal": true,
+  "expected_code": "ACTION_PREREQUISITE_MISSING"
+}

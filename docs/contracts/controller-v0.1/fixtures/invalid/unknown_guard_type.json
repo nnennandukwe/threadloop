@@ -1,0 +1,13 @@
+{
+  "id": "unknown_guard_type",
+  "base": "action_required",
+  "mutations": [
+    {
+      "path": ["input", "compiled_graph", "graph", "guards", 0, "capability"],
+      "value": "provider_guard"
+    }
+  ],
+  "schema_valid": false,
+  "reseal": true,
+  "expected_code": "SCHEMA_INVALID"
+}

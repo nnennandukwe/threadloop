@@ -1,0 +1,13 @@
+{
+  "id": "unknown_evidence_type",
+  "base": "transition_available",
+  "mutations": [
+    {
+      "path": ["input", "receipts", 0, "payload", "type"],
+      "value": "provider_evidence"
+    }
+  ],
+  "schema_valid": false,
+  "reseal": true,
+  "expected_code": "SCHEMA_INVALID"
+}

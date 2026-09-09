@@ -1,0 +1,13 @@
+{
+  "id": "input_digest_tampering",
+  "base": "action_required",
+  "mutations": [
+    {
+      "path": ["expected", "decision", "input_digest"],
+      "value": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "schema_valid": true,
+  "reseal": false,
+  "expected_code": "DECISION_BINDING_MISMATCH"
+}

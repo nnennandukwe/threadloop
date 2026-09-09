@@ -1,0 +1,13 @@
+{
+  "id": "unknown_input_version",
+  "base": "action_required",
+  "mutations": [
+    {
+      "path": ["input", "schema_version"],
+      "value": "0.2"
+    }
+  ],
+  "schema_valid": false,
+  "reseal": true,
+  "expected_code": "UNSUPPORTED_VERSION"
+}

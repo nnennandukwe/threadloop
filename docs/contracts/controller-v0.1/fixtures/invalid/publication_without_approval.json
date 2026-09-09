@@ -1,0 +1,13 @@
+{
+  "id": "publication_without_approval",
+  "base": "release_publication",
+  "mutations": [
+    {
+      "path": ["expected", "decision", "action_request", "request", "evidence_ids"],
+      "value": ["release_verified"]
+    }
+  ],
+  "schema_valid": true,
+  "reseal": true,
+  "expected_code": "ACTION_PREREQUISITE_MISSING"
+}

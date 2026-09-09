@@ -1,0 +1,13 @@
+{
+  "id": "unsafe_state_version",
+  "base": "action_required",
+  "mutations": [
+    {
+      "path": ["input", "binding", "state_version"],
+      "value": 9007199254740992
+    }
+  ],
+  "schema_valid": false,
+  "reseal": true,
+  "expected_code": "SCHEMA_INVALID"
+}

@@ -1,0 +1,13 @@
+{
+  "id": "duplicate_receipt_identity",
+  "base": "transition_available",
+  "mutations": [
+    {
+      "path": ["input", "receipts", 1, "id"],
+      "value": "local_b"
+    }
+  ],
+  "schema_valid": true,
+  "reseal": true,
+  "expected_code": "DUPLICATE_IDENTITY"
+}

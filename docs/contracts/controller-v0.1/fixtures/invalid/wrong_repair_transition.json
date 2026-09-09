@@ -1,0 +1,13 @@
+{
+  "id": "wrong_repair_transition",
+  "base": "admitted_repair",
+  "mutations": [
+    {
+      "path": ["input", "history", "repair_admission", "transition_id"],
+      "value": "enter_review"
+    }
+  ],
+  "schema_valid": true,
+  "reseal": true,
+  "expected_code": "INVALID_REPAIR_ADMISSION"
+}

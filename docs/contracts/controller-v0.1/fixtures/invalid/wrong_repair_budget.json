@@ -1,0 +1,13 @@
+{
+  "id": "wrong_repair_budget",
+  "base": "admitted_repair",
+  "mutations": [
+    {
+      "path": ["input", "history", "repair_admission", "budget_id"],
+      "value": "unrelated_budget"
+    }
+  ],
+  "schema_valid": true,
+  "reseal": true,
+  "expected_code": "INVALID_REPAIR_ADMISSION"
+}

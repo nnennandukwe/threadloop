@@ -1,0 +1,16 @@
+title = "ThreadLoop secret scanning"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "generic-api-key"
+
+[[rules.allowlists]]
+description = "Controller fixture idempotency keys are public SHA-256 request identities"
+condition = "AND"
+regexTarget = "match"
+# requestIdentity() hashes the canonical schema version, binding, and action ID.
+# Restrict this exception to that field in the published v0.1 positive fixtures.
+paths = ['''^docs/contracts/controller-v0\.1/fixtures/valid/[a-z_]+\.(json|request\.canonical|decision\.canonical)$''']
+regexes = ['''^idempotency_key":\s*"[a-f0-9]{64}"$''']

@@ -1,0 +1,13 @@
+{
+  "id": "unknown_action_type",
+  "base": "action_required",
+  "mutations": [
+    {
+      "path": ["expected", "decision", "action_request", "request", "capability"],
+      "value": "provider_action"
+    }
+  ],
+  "schema_valid": false,
+  "reseal": true,
+  "expected_code": "SCHEMA_INVALID"
+}

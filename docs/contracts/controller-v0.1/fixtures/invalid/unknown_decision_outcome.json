@@ -1,0 +1,13 @@
+{
+  "id": "unknown_decision_outcome",
+  "base": "action_required",
+  "mutations": [
+    {
+      "path": ["expected", "decision", "outcome"],
+      "value": "execute_and_advance"
+    }
+  ],
+  "schema_valid": false,
+  "reseal": true,
+  "expected_code": "SCHEMA_INVALID"
+}

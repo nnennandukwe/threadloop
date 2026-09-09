@@ -1,0 +1,13 @@
+{
+  "id": "unknown_requirement_family",
+  "base": "action_required",
+  "mutations": [
+    {
+      "path": ["expected", "decision", "action_request", "request", "evidence_requirements", 0, "family"],
+      "value": "provider_output"
+    }
+  ],
+  "schema_valid": false,
+  "reseal": true,
+  "expected_code": "SCHEMA_INVALID"
+}

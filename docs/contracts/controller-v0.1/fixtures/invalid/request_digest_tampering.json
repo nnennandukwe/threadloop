@@ -1,0 +1,13 @@
+{
+  "id": "request_digest_tampering",
+  "base": "action_required",
+  "mutations": [
+    {
+      "path": ["expected", "decision", "action_request", "request_digest"],
+      "value": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "schema_valid": true,
+  "reseal": false,
+  "expected_code": "REQUEST_DIGEST_MISMATCH"
+}

@@ -1,0 +1,13 @@
+{
+  "id": "wrong_handoff_outcome",
+  "base": "human_approval",
+  "mutations": [
+    {
+      "path": ["expected", "decision", "outcome"],
+      "value": "engineering_action_required"
+    }
+  ],
+  "schema_valid": false,
+  "reseal": true,
+  "expected_code": "SCHEMA_INVALID"
+}

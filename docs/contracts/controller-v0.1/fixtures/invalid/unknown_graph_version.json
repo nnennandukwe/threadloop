@@ -1,0 +1,13 @@
+{
+  "id": "unknown_graph_version",
+  "base": "action_required",
+  "mutations": [
+    {
+      "path": ["input", "compiled_graph", "graph", "schema_version"],
+      "value": "0.2"
+    }
+  ],
+  "schema_valid": false,
+  "reseal": true,
+  "expected_code": "UNSUPPORTED_VERSION"
+}

@@ -1,0 +1,13 @@
+{
+  "id": "expired_wait",
+  "base": "waiting",
+  "mutations": [
+    {
+      "path": ["input", "evaluation_time"],
+      "value": "2026-09-05T12:00:00.000Z"
+    }
+  ],
+  "schema_valid": true,
+  "reseal": true,
+  "expected_code": "INVALID_WAIT"
+}
