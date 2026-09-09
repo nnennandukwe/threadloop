@@ -81,10 +81,17 @@ claim, Attempt, and recovery-evidence identities cannot be reassigned. Runtime c
 across a Workflow Run, so #105's claim-reference invalidation cannot fence an unrelated request. Cross-journal registry
 uniqueness is a runtime admission obligation; evaluating two independent copies in memory cannot enforce it.
 
-Referenced recovery observations are checked for identity collisions before returning an earlier operation result.
-Replaying an unchanged reconciliation operation cannot conceal changed observation content under a reused identity.
-Receipt-admission identities from every retained context, including the initial context, receive the same collision
-protection before operation replay. Exact duplicate admission copies are idempotent.
+Recovery observations and receipt admissions in every operation context are checked for identity collisions before
+returning an earlier result, even when that operation does not use the observations. All collisions in a context are
+retained together; the operation returns the first conflict result and the projection lists every conflict. Replaying an
+unchanged operation cannot conceal changed observation content under a reused identity. A contradictory initial context
+fails with `INITIAL_EVIDENCE_CONFLICT` before a journal exists; replay applies the same initial validation. Exact
+duplicate observation copies are idempotent.
+
+Every first retained schema-valid receipt submission reserves its receipt identity, including rejected executor
+mismatches. This preserves rejection history; it does not admit the report or authorize its submitter. An operation-ID
+collision does not admit the alternate operation's receipt identity, just as it does not admit alternate grant
+identities.
 
 Rejected grant proposals also reserve their proposed claim and Attempt identities. Exact redelivery returns the original
 rejection; changing a deadline, executor, or recovery evidence under those identities produces a conflict. After
@@ -233,9 +240,11 @@ before use. The core does not define provider-specific queries or #107's receipt
 
 Human reconciliation requires `executor_stopped`. `effect_confirmed` additionally requires `effect_occurred`, and
 `no_effect_confirmed` additionally requires `no_effect`; `abandon` needs stop evidence alone. Contradictory
-observations, missing stop proof, changed bindings, or bad hashes do not clear uncertainty. For the latest Attempt,
-`effect_confirmed` closes the request against repetition and retains evidence; it does not manufacture a successful
-executor receipt or satisfy lifecycle guards. `no_effect_confirmed` allows a separately acquired replacement if all
+observations, missing stop proof, changed bindings, or bad hashes do not clear uncertainty. `effect_confirmed` for any
+generation closes an open request against repetition and cancels any active replacement; it does not manufacture a
+successful executor receipt or satisfy lifecycle guards. A cancelled replacement that already started retains its own
+unknown outcome for separate reconciliation. This current human disposition is distinct from a fenced executor's late
+report, which cannot close another generation. `no_effect_confirmed` allows a separately acquired replacement if all
 other conditions hold. `abandon` requires stopped execution, cancels any active replacement, prevents another Attempt,
 and preserves the unresolved historical effect report. Abandonment is a human acceptance of an unresolved historical
 outcome, not proof of no effect. It cannot satisfy a proof or completion guard. After abandonment, the execution slot

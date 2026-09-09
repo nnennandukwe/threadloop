@@ -15,6 +15,7 @@ import {
   type ExecutionJournal,
   type ExecutionOperation,
   type RecoveryEvidence,
+  type ReceiptAdmission,
 } from './contracts.js';
 
 export interface OperationResult {
@@ -44,6 +45,48 @@ export interface ExecutionProjection {
   }[];
   invalidated_claims: { id: string; version: number }[];
   operations: { id: string; digest: string; result: OperationResult }[];
+}
+
+type IdentityCollision = Pick<
+  ExecutionProjection['conflicts'][number],
+  'namespace' | 'identity' | 'original_digest' | 'incoming_digest'
+>;
+interface ObservationRecord {
+  namespace: 'recovery_evidence' | 'receipt_admission';
+  identity: string;
+  content: RecoveryEvidence | ReceiptAdmission;
+}
+
+function contextObservations(context: ExecutionContext): ObservationRecord[] {
+  return [
+    ...context.recovery_evidence.map((record) => ({
+      namespace: 'recovery_evidence' as const,
+      identity: record.evidence.id,
+      content: record,
+    })),
+    ...context.receipt_admissions.map((record) => ({
+      namespace: 'receipt_admission' as const,
+      identity: record.admission.id,
+      content: record,
+    })),
+  ];
+}
+
+function observationConflicts(previous: ObservationRecord[], incoming: ObservationRecord[]): IdentityCollision[] {
+  const known = [...previous];
+  const collisions: IdentityCollision[] = [];
+  for (const record of incoming) {
+    const original = known.find((item) => item.namespace === record.namespace && item.identity === record.identity);
+    if (original && !same(original.content, record.content))
+      collisions.push({
+        namespace: record.namespace,
+        identity: record.identity,
+        original_digest: executionDigest(original.content),
+        incoming_digest: executionDigest(record.content),
+      });
+    known.push(record);
+  }
+  return collisions;
 }
 
 export function executionDigest(value: unknown): string {
@@ -100,6 +143,8 @@ export function createExecutionJournal(
   if (bound.value.request.actor !== 'executor')
     return invalid('HUMAN_REQUEST', 'Human requests cannot acquire claims.');
   if (!controlActor(current, 'threadloop')) return invalid('AUTHORITY_MISMATCH', 'ThreadLoop admits execution policy.');
+  if (observationConflicts([], contextObservations(current)).length > 0)
+    return invalid('INITIAL_EVIDENCE_CONFLICT', 'Initial observation identities must have one immutable value.');
   const executionPolicy = parsedPolicy.value;
   if (
     executionPolicy.digest !== executionDigest(executionPolicy.rules) ||
@@ -287,87 +332,63 @@ function step(
   const digest = executionDigest(operation);
   const known = state.operations.find((record) => record.id === operation.id);
   const command = operation.command;
-  let collision:
-    | Pick<ExecutionProjection['conflicts'][number], 'namespace' | 'identity' | 'original_digest' | 'incoming_digest'>
-    | undefined;
+  const collisions: IdentityCollision[] = [];
   if (known && known.digest !== digest)
-    collision = {
+    collisions.push({
       namespace: 'operation',
       identity: operation.id,
       original_digest: known.digest,
       incoming_digest: digest,
-    };
-  else if (command.kind === 'reconcile' || command.kind === 'replace') {
-    const previous = [
-      ...journal.execution.initial_context.recovery_evidence,
-      ...journal.execution.entries.flatMap((entry) => entry.context.recovery_evidence),
-    ];
-    for (const evidence of context.recovery_evidence.filter((item) =>
-      command.evidence_ids.includes(item.evidence.id),
-    )) {
-      const original = previous.find((item) => item.evidence.id === evidence.evidence.id);
-      if (original && !same(original, evidence)) {
-        collision = {
-          namespace: 'recovery_evidence',
-          identity: evidence.evidence.id,
-          original_digest: executionDigest(original),
-          incoming_digest: executionDigest(evidence),
-        };
-        break;
-      }
-      previous.push(evidence);
-    }
-  }
-  if (!collision) {
-    const previous = [
-      ...journal.execution.initial_context.receipt_admissions,
-      ...journal.execution.entries.flatMap((entry) => entry.context.receipt_admissions),
-    ];
-    for (const admission of context.receipt_admissions) {
-      const original = previous.find((item) => item.admission.id === admission.admission.id);
-      if (original && !same(original, admission)) {
-        collision = {
-          namespace: 'receipt_admission',
-          identity: admission.admission.id,
-          original_digest: executionDigest(original),
-          incoming_digest: executionDigest(admission),
-        };
-        break;
-      }
-      previous.push(admission);
-    }
-  }
-  if (!collision && known) return { ok: true, value: { result: known.result, replayed: true } };
-  const conflictId = collision
-    ? executionDigest([collision.namespace, collision.identity, collision.original_digest, collision.incoming_digest])
-    : null;
-  const priorConflict = state.conflicts.find((record) => record.id === conflictId);
-  if (priorConflict && known) return { ok: true, value: { result: priorConflict.result, replayed: true } };
+    });
+  collisions.push(
+    ...observationConflicts(
+      [
+        ...contextObservations(journal.execution.initial_context),
+        ...journal.execution.entries.flatMap((entry) => contextObservations(entry.context)),
+      ],
+      contextObservations(context),
+    ),
+  );
+  if (collisions.length === 0 && known) return { ok: true, value: { result: known.result, replayed: true } };
+  const priorConflicts = collisions.map((item) =>
+    state.conflicts.find(
+      (record) =>
+        record.id === executionDigest([item.namespace, item.identity, item.original_digest, item.incoming_digest]),
+    ),
+  );
+  if (known && priorConflicts.length > 0 && priorConflicts.every((item) => item !== undefined))
+    return { ok: true, value: { result: priorConflicts[0]!.result, replayed: true } };
   if (time.value < state.evaluated_at) return invalid('TIME_REVERSED', 'Authority time cannot move backwards.');
   state.revision += 1;
   state.evaluated_at = time.value;
-  if (collision) {
-    const result = conflict(
-      state,
-      collision.namespace,
-      collision.identity,
-      collision.original_digest,
-      collision.incoming_digest,
+  if (collisions.length > 0) {
+    const results = collisions.map((item) =>
+      conflict(state, item.namespace, item.identity, item.original_digest, item.incoming_digest),
     );
-    if (!known) state.operations.push({ id: operation.id, digest, result });
+    const result = results[0]!;
+    if (!known) {
+      state.operations.push({ id: operation.id, digest, result });
+      retainReceipt(state, command, result);
+    }
     return { ok: true, value: { result, replayed: false } };
   }
   const result = execute(journal, state, context, operation, time.value);
+  retainReceipt(state, command, result);
+  state.operations.push({ id: operation.id, digest, result });
+  return { ok: true, value: { result, replayed: false } };
+}
+
+function retainReceipt(
+  state: ExecutionProjection,
+  command: ExecutionOperation['command'],
+  result: OperationResult,
+): void {
   if (
     command.kind === 'submit_receipt' &&
-    context.actor.kind === 'executor' &&
-    same(context.actor.executor, command.receipt.receipt.executor) &&
     !state.receipts.some((record) => record.envelope.receipt.id === command.receipt.receipt.id)
   ) {
     state.receipts.push({ envelope: command.receipt, result });
   }
-  state.operations.push({ id: operation.id, digest, result });
-  return { ok: true, value: { result, replayed: false } };
 }
 
 function outcome(
@@ -451,8 +472,6 @@ function execute(
   }
   // A repeated submission returns its historical disposition, never fresh claim authority.
   if (command.kind === 'submit_receipt') {
-    if (context.actor.kind !== 'executor' || !same(context.actor.executor, command.receipt.receipt.executor))
-      return fail('EXECUTOR_MISMATCH');
     const previous = state.receipts.find((record) => record.envelope.receipt.id === command.receipt.receipt.id);
     if (previous)
       return same(previous.envelope, command.receipt)
@@ -464,6 +483,8 @@ function execute(
             executionDigest(previous.envelope),
             executionDigest(command.receipt),
           );
+    if (context.actor.kind !== 'executor' || !same(context.actor.executor, command.receipt.receipt.executor))
+      return fail('EXECUTOR_MISMATCH');
   }
   if (command.kind === 'acquire' || command.kind === 'replace') {
     if (context.actor.kind !== 'executor' || !same(context.actor.executor, command.executor))
@@ -810,8 +831,8 @@ function recoveryFacts(
   const facts: RecoveryEvidence['evidence'][] = [];
   for (const id of ids) {
     const matches = context.recovery_evidence.filter((item) => item.evidence.id === id);
-    if (matches.length !== 1)
-      return invalid('RECOVERY_EVIDENCE_MISMATCH', 'Each observation must resolve exactly once.');
+    if (matches.length === 0 || matches.some((item) => !same(item, matches[0])))
+      return invalid('RECOVERY_EVIDENCE_MISMATCH', 'Each observation must resolve to one immutable value.');
     const envelope = matches[0]!;
     const fact = envelope.evidence;
     if (
@@ -883,13 +904,10 @@ function reconcile(
     resolved_at: now,
   };
   if (
-    command.disposition === 'effect_confirmed' &&
-    state.request_status === 'open' &&
-    attempt.id === state.attempts.at(-1)?.id
-  )
-    state.request_status = 'satisfied';
-  if (command.disposition === 'abandon' && state.request_status === 'open') {
-    state.request_status = 'cancelled';
+    (command.disposition === 'effect_confirmed' || command.disposition === 'abandon') &&
+    state.request_status === 'open'
+  ) {
+    state.request_status = command.disposition === 'effect_confirmed' ? 'satisfied' : 'cancelled';
     for (const current of state.claims)
       if (current.status === 'active')
         close(
