@@ -24,12 +24,13 @@ export function withinExecutionLimits(value: unknown): boolean {
         bytes += Math.max(0, current.length - 1);
         for (const item of current) if (!visit(item, depth + 1)) return false;
       } else {
-        const entries = Object.entries(current);
-        if (entries.length > executionLimits.values - values) return false;
-        bytes += Math.max(0, entries.length - 1);
-        for (const [key, item] of entries) {
-          bytes += stringBytes(key) + 1;
-          if (bytes > executionLimits.jsonBytes || !visit(item, depth + 1)) return false;
+        let count = 0;
+        for (const key in current) {
+          if (!Object.hasOwn(current, key)) continue;
+          if (values >= executionLimits.values) return false;
+          bytes += stringBytes(key) + 1 + (count++ > 0 ? 1 : 0);
+          if (bytes > executionLimits.jsonBytes || !visit((current as Record<string, unknown>)[key], depth + 1))
+            return false;
         }
       }
     } else bytes += String(current).length;

@@ -1,8 +1,7 @@
 import { withinExecutionLimits } from './limits.js';
-import { createHash } from 'node:crypto';
 import { isExecutionAdmitted, type ExecutionAuthority } from './authority.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
-import { sha256 } from '../../src/adapters/crypto/sha256.js';
+import { createIncrementalSha256, sha256 } from '../../src/adapters/crypto/sha256.js';
 import { actionRequestSchema, type ActionRequest, type ControllerInput } from '../controller-contract/contracts.js';
 import { same, validateControllerInput, validateRequestInSnapshot } from '../controller-contract/validation.js';
 import { diagnostic, validateShape, type ValidationResult } from '../workflow-graph/contracts.js';
@@ -389,14 +388,15 @@ function journalPrefixHasher(execution: ExecutionJournal['execution']) {
     .map(([key, value]) => ({ key, json: `${JSON.stringify(key)}:${canonicalJson(value)}` }));
   const before = fields.filter((field) => field.key < 'entries').map((field) => field.json);
   const after = fields.filter((field) => field.key > 'entries').map((field) => field.json);
-  const hash = createHash('sha256').update(`{${before.length ? before.join(',') + ',' : ''}"entries":[`);
+  const hash = createIncrementalSha256();
+  hash.update(`{${before.length ? before.join(',') + ',' : ''}"entries":[`);
   const suffix = `]${after.length ? ',' + after.join(',') : ''}}`;
   let count = 0;
   return {
     append(entry: ExecutionJournal['execution']['entries'][number]): string {
       if (count++ > 0) hash.update(',');
       hash.update(canonicalJson(entry));
-      return hash.copy().update(suffix).digest('hex');
+      return hash.digest(suffix);
     },
   };
 }
@@ -491,9 +491,15 @@ function step(
   if (!same(context.actor, operation.actor))
     return invalid('ACTOR_MISMATCH', 'Authenticated actor must match the operation.');
   const request = journal.execution.action_request;
+  const controlOperation = ['cancel', 'invalidate', 'expire', 'reconcile', 'resolve_conflict'].includes(
+    operation.command.kind,
+  );
+  // The independently admitted control operation still targets the original request.
+  // Drift must prevent new work without preventing closure or recovery of old work.
   if (
-    context.snapshot.binding.workflow_run_id !== request.request.binding.workflow_run_id ||
-    context.snapshot.binding.graph_digest !== request.request.binding.graph_digest
+    !controlOperation &&
+    (context.snapshot.binding.workflow_run_id !== request.request.binding.workflow_run_id ||
+      context.snapshot.binding.graph_digest !== request.request.binding.graph_digest)
   )
     return invalid('CONTEXT_BINDING_MISMATCH', 'Context must belong to the original Workflow Run and graph.');
   const digest = executionDigest(operation);

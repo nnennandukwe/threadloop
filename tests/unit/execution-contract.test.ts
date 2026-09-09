@@ -791,6 +791,69 @@ describe('Terminal receipts and non-repeatable recovery', () => {
 });
 
 describe('Controller projection and preserved bindings', () => {
+  it.each(['cancel', 'invalidate', 'expire'] as const)(
+    'records %s against the original binding after the admitted run and graph move',
+    async (kind) => {
+      const { journal } = await initialExecution();
+      const started = operate(operate(journal, grant).journal, { kind: 'start', ...target });
+      const moved = await executionFixture('release-to-publish');
+      moved.context.snapshot.binding.workflow_run_id = 'replacement_run';
+      moved.context.snapshot.receipts = [];
+      moved.context.snapshot.evaluation_time = '2026-09-10T10:05:00.000Z';
+      const command: ExecutionOperation['command'] =
+        kind === 'cancel'
+          ? { kind, reason: 'Lifecycle moved' }
+          : kind === 'invalidate'
+            ? { kind, reason: 'binding_changed' }
+            : { kind, ...target };
+      const operation = operationFor(started.journal, moved.context.actor, command);
+      const closed = applyExecutionOperation(started.journal, moved.context, operation);
+      expect(closed.ok, JSON.stringify(closed)).toBe(true);
+      if (!closed.ok) return;
+      expect(closed.value.result.disposition).toBe('applied');
+      expect(closed.value.projection.attempts[0]).toMatchObject({ status: 'unknown_outcome', effect: 'unknown' });
+      expect(closed.value.projection.claims[0]?.binding).toEqual(journal.execution.action_request.request.binding);
+      expect(closed.value.projection.attempts[0]?.binding).toEqual(journal.execution.action_request.request.binding);
+      const retargeted = applyExecutionOperation(started.journal, moved.context, {
+        ...operation,
+        binding: moved.context.snapshot.binding,
+      });
+      expect(retargeted.ok && retargeted.value.result.code).toBe('OPERATION_BINDING_MISMATCH');
+      moved.context.actor = humanActor(journal);
+      moved.context.snapshot.evaluation_time = '2026-09-10T10:06:00.000Z';
+      moved.context.recovery_evidence = [recoveryFor(journal, 'executor_stopped'), recoveryFor(journal, 'no_effect')];
+      const recovered = applyExecutionOperation(
+        closed.value.journal,
+        moved.context,
+        operationFor(closed.value.journal, moved.context.actor, {
+          kind: 'reconcile',
+          ...target,
+          disposition: 'no_effect_confirmed',
+          evidence_ids: moved.context.recovery_evidence.map((item) => item.evidence.id),
+          reason: 'Reconcile the original Attempt',
+        }),
+      );
+      expect(recovered.ok && recovered.value.result.code).toBe('ATTEMPT_RECONCILED');
+      const executorContext = { ...moved.context, actor: { kind: 'executor' as const, executor: executorA } };
+      const renewal = applyExecutionOperation(
+        started.journal,
+        executorContext,
+        operationFor(started.journal, executorContext.actor, {
+          kind: 'renew',
+          ...target,
+          valid_until: '2026-09-10T10:10:00.000Z',
+        }),
+      );
+      expect(renewal).toMatchObject({ ok: false, diagnostics: [{ code: 'CONTEXT_BINDING_MISMATCH' }] });
+      const forbiddenClosure = applyExecutionOperation(
+        started.journal,
+        executorContext,
+        operationFor(started.journal, executorContext.actor, command),
+      );
+      expect(forbiddenClosure.ok && forbiddenClosure.value.result.code).toBe('AUTHORITY_MISMATCH');
+    },
+  );
+
   it('does not use an absent start as no-effect proof when independent evidence reports an effect', async () => {
     const { journal } = await initialExecution();
     const expired = operate(

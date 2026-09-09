@@ -50,12 +50,14 @@ values, and 64 nesting levels. It checks resource bounds before schema cloning, 
 replay. Exceeding a limit returns `EXECUTION_INPUT_LIMIT` without a proposal. A full journal still supports exact
 operation redelivery without appending. Preserve the complete history and use a conforming implementation with enough
 capacity; truncating history or resetting the same logical request would discard identity and fencing obligations. These
-are development-tool limits, not production retention policy.
+are development-tool limits, not production retention policy. Object traversal stops at the first exceeded budget
+without materializing every property/value pair.
 
 Replay builds private indexes for operation, grant, and observation identities in one pass. Prefix hashes extend the
 canonical entries array incrementally, preserving the full-payload SHA-256 contract without repeatedly serializing
 history. Each public call validates the supplied history; no persistent cache or mutable caller-supplied projection is
-trusted.
+trusted. Incremental SHA-256 uses the existing crypto adapter boundary in `src/adapters/crypto/sha256.ts`; execution
+replay does not construct a platform hasher directly.
 
 ## Identity and authority
 
@@ -103,6 +105,12 @@ operation admission against its exact prefix; it cannot legitimize a fabricated 
 Historical admissions remain auditable after authority rotation; fresh admissions must use the current authority and
 reject rollback. The authority must distinguish an admitted historical prefix from the current committed head for a new
 operation/projection. Commit still requires the atomic comparison below.
+
+Cancellation, invalidation, expiry, and human recovery/conflict disposition may use an admitted snapshot from a newer
+run or graph while targeting the exact original operation binding. The authority must explicitly admit that old-bound
+operation and the current context together. These paths preserve the original request, claim and Attempt bindings and
+record unknown effects; they confer no authority to execute in the new context. Acquisition, renewal, start, release,
+receipt submission, registration, and controller projection still reject a different run or graph.
 
 An admitted new policy can revoke old actors and authorize current actors to cancel or invalidate an old-bound request.
 An executor-added authority, admission record, acceptance identity, or modified command changes the admission digest and

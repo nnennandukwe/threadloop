@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import * as cryptoAdapter from '../../src/adapters/crypto/sha256.js';
 import {
   applyExecutionOperation,
   executionDigest,
@@ -8,6 +9,56 @@ import { executionLimits } from '../../scripts/execution-contract/limits.js';
 import { initialExecution, grant, executorA, operationFor, operate } from '../fixtures/execution-contract.js';
 
 describe('Bounded execution replay', () => {
+  it('can substitute incremental hashing through the crypto adapter during replay', async () => {
+    const { journal } = await initialExecution();
+    const factory = vi.spyOn(cryptoAdapter, 'createIncrementalSha256').mockImplementation(() => {
+      let prefix = '';
+      return {
+        update(value: string) {
+          prefix += value;
+        },
+        digest(suffix = '') {
+          return cryptoAdapter.sha256(prefix + suffix);
+        },
+      };
+    });
+    try {
+      const claimed = operate(journal, grant);
+      const started = operate(claimed.journal, {
+        kind: 'start',
+        claim: { id: 'claim_a', version: 1 },
+        attempt_id: 'attempt_a',
+      });
+      const released = operate(started.journal, {
+        kind: 'release',
+        claim: { id: 'claim_a', version: 1 },
+        attempt_id: 'attempt_a',
+      });
+      expect(released.result.code).toBe('CLAIM_RELEASED');
+      expect(released.projection.attempts[0]?.status).toBe('unknown_outcome');
+      expect(factory).toHaveBeenCalled();
+    } finally {
+      factory.mockRestore();
+    }
+  });
+
+  it('stops reading object properties as soon as the resource budget is exhausted', () => {
+    const later = vi.fn(() => {
+      throw new Error('An over-budget input must not read remaining values');
+    });
+    const input = Object.defineProperty({ first: 'x'.repeat(executionLimits.jsonBytes + 1) }, 'later', {
+      enumerable: true,
+      get: later,
+    });
+    const authority = { isAdmitted: vi.fn(() => true) };
+    expect(replayExecutionJournal(input, authority)).toMatchObject({
+      ok: false,
+      diagnostics: [{ code: 'EXECUTION_INPUT_LIMIT' }],
+    });
+    expect(later).not.toHaveBeenCalled();
+    expect(authority.isAdmitted).not.toHaveBeenCalled();
+  });
+
   it('replays a full journal with one authority check per entry and preserves duplicate grant results', async () => {
     const { journal, context } = await initialExecution();
     context.actor = { kind: 'executor', executor: executorA };
