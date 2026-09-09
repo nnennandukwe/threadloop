@@ -16,6 +16,7 @@ import {
   type ExecutionOperation,
   type ExecutionContext,
   type RecoveryEvidence,
+  type ReceiptAdmission,
 } from '../../scripts/execution-contract/contracts.js';
 import {
   executionFixture,
@@ -30,9 +31,268 @@ import {
   controllerActor,
   humanActor,
   recoveryFor,
+  receiptAdmissionFor,
 } from '../fixtures/execution-contract.js';
 
 describe('Execution admission', () => {
+  it.each(['succeeded', 'failed'] as const)('does not trust a raw %s no-effect report', async (status) => {
+    const { journal } = await initialExecution();
+    const started = operate(operate(journal, grant).journal, { kind: 'start', ...target });
+    const receipt = receiptFor(journal, {
+      status,
+      evidence: [{ id: 'invented', digest: executionDigest('invented') }],
+    });
+    const reported = operate(
+      started.journal,
+      { kind: 'submit_receipt', receipt },
+      undefined,
+      '2026-09-10T10:01:00.000Z',
+      [],
+      [],
+    );
+    expect(reported.result.code).toBe('RECEIPT_ADMISSION_MISMATCH');
+    expect(reported.projection.request_status).toBe('open');
+    expect(reported.projection.attempts[0]).toMatchObject({ status: 'running', effect: 'unknown', receipt_id: null });
+    expect(reported.projection.receipts).toEqual([{ envelope: receipt, result: reported.result }]);
+    const expired = operate(
+      reported.journal,
+      { kind: 'expire', ...target },
+      controllerActor(journal),
+      '2026-09-10T10:05:00.000Z',
+    );
+    const retry = operate(
+      expired.journal,
+      {
+        kind: 'replace',
+        previous_claim: target.claim,
+        claim_id: 'claim_b',
+        attempt_id: 'attempt_b',
+        executor: executorB,
+        valid_until: '2026-09-10T10:10:00.000Z',
+        evidence_ids: [],
+      },
+      { kind: 'executor', executor: executorB },
+      '2026-09-10T10:05:00.000Z',
+    );
+    expect(retry.result.code).toBe('RECONCILIATION_REQUIRED');
+  });
+
+  const admissionChanges: [string, (record: ReceiptAdmission) => void][] = [
+    [
+      'request',
+      ({ admission }) => {
+        admission.request.request_digest = executionDigest('other request');
+      },
+    ],
+    [
+      'run',
+      ({ admission }) => {
+        admission.binding.workflow_run_id = 'other_run';
+      },
+    ],
+    [
+      'graph',
+      ({ admission }) => {
+        admission.binding.graph_digest = executionDigest('other graph');
+      },
+    ],
+    [
+      'state',
+      ({ admission }) => {
+        admission.binding.state_version += 1;
+      },
+    ],
+    [
+      'subject',
+      ({ admission }) => {
+        admission.binding.subject.content_digest = executionDigest('other subject');
+      },
+    ],
+    [
+      'execution policy',
+      ({ admission }) => {
+        admission.execution_policy.digest = executionDigest('other policy');
+      },
+    ],
+    [
+      'claim',
+      ({ admission }) => {
+        admission.claim.id = 'other_claim';
+      },
+    ],
+    [
+      'generation',
+      ({ admission }) => {
+        admission.claim.version += 1;
+      },
+    ],
+    [
+      'Attempt',
+      ({ admission }) => {
+        admission.attempt_id = 'other_attempt';
+      },
+    ],
+    [
+      'executor',
+      ({ admission }) => {
+        admission.executor.incarnation = 'other_process';
+      },
+    ],
+    [
+      'receipt ID',
+      ({ admission }) => {
+        admission.receipt.id = 'other_receipt';
+      },
+    ],
+    [
+      'receipt digest',
+      ({ admission }) => {
+        admission.receipt.digest = executionDigest('other receipt');
+      },
+    ],
+    [
+      'verification policy',
+      ({ admission }) => {
+        admission.verification_policy.digest = executionDigest('other verifier');
+      },
+    ],
+    [
+      'before report',
+      ({ admission }) => {
+        admission.admitted_at = '2026-09-10T10:00:00.000Z';
+      },
+    ],
+    [
+      'future admission',
+      ({ admission }) => {
+        admission.admitted_at = '2026-09-10T10:02:00.000Z';
+      },
+    ],
+    [
+      'expiry boundary',
+      ({ admission }) => {
+        admission.valid_until = '2026-09-10T10:01:00.000Z';
+      },
+    ],
+  ];
+  it.each(admissionChanges)('rejects a resealed admission with mismatched %s', async (_name, change) => {
+    const { journal } = await initialExecution();
+    const started = operate(operate(journal, grant).journal, { kind: 'start', ...target });
+    const receipt = receiptFor(journal);
+    const admission = receiptAdmissionFor(journal, receipt);
+    change(admission);
+    admission.admission_digest = executionDigest(admission.admission);
+    const rejected = operate(
+      started.journal,
+      { kind: 'submit_receipt', receipt },
+      undefined,
+      '2026-09-10T10:01:00.000Z',
+      [],
+      [admission],
+    );
+    expect(rejected.result.code).toBe('RECEIPT_ADMISSION_MISMATCH');
+    expect(rejected.projection.attempts).toEqual(started.projection.attempts);
+    expect(rejected.projection.request_status).toBe('open');
+    expect(rejected.journal.execution.entries.at(-1)?.context.receipt_admissions).toEqual([admission]);
+  });
+
+  it('rejects bad admission hashes and retains the original rejection after later admission', async () => {
+    const { journal } = await initialExecution();
+    const started = operate(operate(journal, grant).journal, { kind: 'start', ...target });
+    const receipt = receiptFor(journal);
+    const admission = receiptAdmissionFor(journal, receipt);
+    admission.admission_digest = executionDigest('wrong hash');
+    const rejected = operate(
+      started.journal,
+      { kind: 'submit_receipt', receipt },
+      undefined,
+      '2026-09-10T10:01:00.000Z',
+      [],
+      [admission],
+    );
+    expect(rejected.result.code).toBe('RECEIPT_ADMISSION_MISMATCH');
+    const corrected = receiptAdmissionFor(journal, receipt);
+    corrected.admission.id = 'new_admission';
+    corrected.admission_digest = executionDigest(corrected.admission);
+    const redelivered = operate(
+      rejected.journal,
+      { kind: 'submit_receipt', receipt },
+      undefined,
+      '2026-09-10T10:01:00.000Z',
+      [],
+      [corrected],
+    );
+    expect(redelivered.result).toEqual(rejected.result);
+    expect(redelivered.projection.attempts).toEqual(started.projection.attempts);
+    const freshReceipt = receiptFor(journal, { id: 'verified_report' });
+    const accepted = operate(
+      redelivered.journal,
+      { kind: 'submit_receipt', receipt: freshReceipt },
+      undefined,
+      '2026-09-10T10:01:00.000Z',
+    );
+    expect(accepted.result.code).toBe('RECEIPT_ACCEPTED');
+  });
+
+  it('deduplicates admitted reports without manufacturing controller guard receipts', async () => {
+    const { journal, context } = await initialExecution();
+    const started = operate(operate(journal, grant).journal, { kind: 'start', ...target });
+    const receipt = receiptFor(journal);
+    const admission = receiptAdmissionFor(journal, receipt);
+    const accepted = operate(
+      started.journal,
+      { kind: 'submit_receipt', receipt },
+      undefined,
+      '2026-09-10T10:01:00.000Z',
+      [],
+      [admission, structuredClone(admission)],
+    );
+    expect(accepted.result.code).toBe('RECEIPT_ACCEPTED');
+    const replayed = applyExecutionOperation(accepted.journal, accepted.context, accepted.operation);
+    expect(replayed.ok && replayed.value.journal).toEqual(accepted.journal);
+    const projected = projectControllerExecution(accepted.journal, {
+      ...context.snapshot,
+      evaluation_time: '2026-09-10T10:01:00.000Z',
+    });
+    expect(projected.ok && projected.value.execution.status).toBe('idle');
+    expect(projected.ok && Object.hasOwn(projected.value, 'receipts')).toBe(false);
+    expect(accepted.projection.attempts).toHaveLength(1);
+    expect(accepted.projection.receipts).toHaveLength(1);
+  });
+
+  it.each(['initial', 'entry'] as const)(
+    'retains %s admission identities before duplicate operation replay',
+    async (location) => {
+      const fixture = await initialExecution();
+      const receipt = receiptFor(fixture.journal);
+      const original = receiptAdmissionFor(fixture.journal, receipt);
+      let journal = fixture.journal;
+      if (location === 'initial') {
+        fixture.context.receipt_admissions = [original];
+        const created = createExecutionJournal(fixture.context, fixture.request, fixture.policy);
+        if (!created.ok) throw new Error(JSON.stringify(created));
+        journal = created.value;
+      }
+      const acquired = operate(journal, grant, undefined, '2026-09-10T10:00:00.000Z', [], [original]);
+      const changed = structuredClone(acquired.context);
+      changed.receipt_admissions[0]!.admission.acceptance.digest = executionDigest('changed acceptance');
+      changed.receipt_admissions[0]!.admission_digest = executionDigest(changed.receipt_admissions[0]!.admission);
+      const result = applyExecutionOperation(acquired.journal, changed, acquired.operation);
+      expect(result.ok && result.value.result.code).toBe('IDENTITY_CONFLICT');
+      if (!result.ok) return;
+      expect(result.value.projection.conflicts[0]?.namespace).toBe('receipt_admission');
+      expect(result.value.projection.attempts).toEqual(acquired.projection.attempts);
+      const duplicate = applyExecutionOperation(result.value.journal, changed, acquired.operation);
+      expect(duplicate.ok && duplicate.value.journal).toEqual(result.value.journal);
+      const anotherOperation = operationFor(result.value.journal, changed.actor, grant, 'another_delivery');
+      const another = applyExecutionOperation(result.value.journal, changed, anotherOperation);
+      expect(another.ok && another.value.journal.execution.entries.length).toBe(
+        result.value.journal.execution.entries.length + 1,
+      );
+      if (another.ok) expect(another.value.projection.operations.at(-1)?.id).toBe('another_delivery');
+    },
+  );
+
   it('does not grant an already invalidated claim identity', async () => {
     const { journal, context } = await initialExecution();
     const actor = { kind: 'executor' as const, executor: executorA };
@@ -474,6 +734,7 @@ describe('Published execution contract corpus', () => {
     'replace',
     'replace_with_stop',
     'receipt',
+    'unadmitted_receipt',
     'repeat_receipt',
     'late_receipt',
     'receipt_collision',
@@ -567,6 +828,7 @@ describe('Published execution contract corpus', () => {
             actor = { kind: 'executor', executor: executorB };
             break;
           case 'receipt':
+          case 'unadmitted_receipt':
           case 'repeat_receipt':
           case 'receipt_collision':
           case 'late_receipt':
@@ -604,7 +866,7 @@ describe('Published execution contract corpus', () => {
             actor = controllerActor(journal);
             break;
         }
-        const result = operate(journal, command, actor, time, evidence);
+        const result = operate(journal, command, actor, time, evidence, name === 'unadmitted_receipt' ? [] : undefined);
         codes.push(result.result.code);
         journal = result.journal;
       }
@@ -823,6 +1085,13 @@ describe('Durable conflicts and bounded recovery', () => {
         '2026-09-10T10:01:00.000Z',
       );
       expect(reported.result.code).toBe('RECEIPT_ACCEPTED');
+      expect(reported.projection.attempts[0]?.binding.subject).toEqual(
+        journal.execution.action_request.request.binding.subject,
+      );
+      expect(reported.projection.attempts[0]?.resulting_subject).toBeNull();
+      expect(reported.projection.receipts[0]?.envelope.receipt.binding.subject).toEqual(
+        journal.execution.action_request.request.binding.subject,
+      );
       const replacement = operate(
         reported.journal,
         {
@@ -961,6 +1230,26 @@ describe('Durable conflicts and bounded recovery', () => {
     expect(abandoned.projection.request_status).toBe('cancelled');
     expect(abandoned.projection.claims[1]?.status).toBe('cancelled');
     expect(abandoned.projection.attempts[1]?.status).toBe('cancelled');
+    expect(abandoned.projection.attempts[0]).toMatchObject({
+      status: 'unknown_outcome',
+      effect: 'unknown',
+      resolution: { disposition: 'abandon' },
+    });
+    const afterAbandonment = projectControllerExecution(abandoned.journal, snapshot);
+    expect(afterAbandonment.ok && afterAbandonment.value.execution.status).toBe('idle');
+    const forbiddenRetry = operate(
+      abandoned.journal,
+      {
+        ...grant,
+        claim_id: 'claim_after_abandonment',
+        attempt_id: 'attempt_after_abandonment',
+        valid_until: '2026-09-10T10:10:00.000Z',
+      },
+      undefined,
+      snapshot.evaluation_time,
+    );
+    expect(forbiddenRetry.result.code).toBe('REQUEST_CLOSED');
+    expect(forbiddenRetry.projection.attempts).toHaveLength(2);
     const unresolved = projectControllerExecution(cancelled.journal, snapshot);
     expect(unresolved.ok && unresolved.value.execution.status).toBe('reconciliation_required');
     if (unresolved.ok && unresolved.value.execution.status === 'reconciliation_required')

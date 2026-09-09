@@ -1,5 +1,35 @@
 [
   {
+    "id": "unadmitted_local_success",
+    "profile": "governed-pr",
+    "retry_safety": "reconciliation_required",
+    "steps": ["acquire", "start", "unadmitted_receipt"],
+    "codes": ["CLAIM_ACQUIRED", "ATTEMPT_STARTED", "RECEIPT_ADMISSION_MISMATCH"],
+    "claims": ["active"],
+    "attempts": ["running"],
+    "request_status": "open",
+    "receipt_count": 1,
+    "projection": "in_flight"
+  },
+  {
+    "id": "unadmitted_publication_success",
+    "profile": "release-to-publish",
+    "retry_safety": "reconciliation_required",
+    "steps": ["acquire", "start", "unadmitted_receipt", "expire", "replace"],
+    "codes": [
+      "CLAIM_ACQUIRED",
+      "ATTEMPT_STARTED",
+      "RECEIPT_ADMISSION_MISMATCH",
+      "CLAIM_EXPIRED",
+      "RECONCILIATION_REQUIRED"
+    ],
+    "claims": ["expired"],
+    "attempts": ["unknown_outcome"],
+    "request_status": "open",
+    "receipt_count": 1,
+    "projection": "reconciliation_required"
+  },
+  {
     "id": "claim_and_renewal",
     "profile": "governed-pr",
     "retry_safety": "reconciliation_required",

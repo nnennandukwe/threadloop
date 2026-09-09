@@ -10,6 +10,7 @@ import type {
   ExecutionJournal,
   ExecutionOperation,
   AttemptReceipt,
+  ReceiptAdmission,
   RecoveryEvidence,
 } from '../../scripts/execution-contract/contracts.js';
 import {
@@ -52,6 +53,7 @@ export async function executionFixture(profile: 'governed-pr' | 'release-to-publ
     snapshot,
     actor: { kind: 'threadloop', identity: snapshot.policy.rules.authorities[0]!.identity },
     recovery_evidence: [],
+    receipt_admissions: [],
   };
   return { context, request, policy };
 }
@@ -104,11 +106,15 @@ export function operate(
   actor: ExecutionContext['actor'] = { kind: 'executor', executor: executorA },
   time = '2026-09-10T10:00:00.000Z',
   evidence: RecoveryEvidence[] = [],
+  admissions?: ReceiptAdmission[],
 ) {
   const context = structuredClone(journal.execution.initial_context);
   context.actor = actor;
   context.snapshot.evaluation_time = time;
   context.recovery_evidence = evidence;
+  // Test-only admitted context; raw/untrusted-report tests pass [] explicitly.
+  context.receipt_admissions =
+    admissions ?? (command.kind === 'submit_receipt' ? [receiptAdmissionFor(journal, command.receipt)] : []);
   const operation = operationFor(journal, actor, command);
   const result = applyExecutionOperation(journal, context, operation);
   if (!result.ok) throw new Error(JSON.stringify(result));
@@ -166,4 +172,28 @@ export function recoveryFor(journal: ExecutionJournal, kind: RecoveryEvidence['e
     acceptance: { id: `accepted_${kind}`, digest: executionDigest(kind) },
   };
   return { evidence, evidence_digest: executionDigest(evidence) };
+}
+
+export function receiptAdmissionFor(
+  journal: ExecutionJournal,
+  envelope: AttemptReceipt,
+  time = envelope.receipt.finished_at,
+): ReceiptAdmission {
+  const report = envelope.receipt;
+  const admission: ReceiptAdmission['admission'] = {
+    schema_version: '0.1',
+    id: `admission_${report.id}_${envelope.receipt_digest}`,
+    request: report.request,
+    binding: report.binding,
+    execution_policy: report.execution_policy,
+    claim: report.claim,
+    attempt_id: report.attempt_id,
+    executor: report.executor,
+    receipt: { id: report.id, digest: envelope.receipt_digest },
+    verification_policy: journal.execution.initial_context.snapshot.policy.rules.evidence_policies[0]!,
+    acceptance: { id: `accepted_${report.id}`, digest: executionDigest(['accepted', envelope.receipt_digest]) },
+    admitted_at: time,
+    valid_until: null,
+  };
+  return structuredClone({ admission, admission_digest: executionDigest(admission) });
 }

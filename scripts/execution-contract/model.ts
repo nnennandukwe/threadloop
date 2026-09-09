@@ -35,7 +35,7 @@ export interface ExecutionProjection {
   receipts: { envelope: AttemptReceipt; result: OperationResult }[];
   conflicts: {
     id: string;
-    namespace: 'operation' | 'request' | 'receipt' | 'claim' | 'attempt' | 'recovery_evidence';
+    namespace: 'operation' | 'request' | 'receipt' | 'claim' | 'attempt' | 'recovery_evidence' | 'receipt_admission';
     identity: string;
     original_digest: string;
     incoming_digest: string;
@@ -316,6 +316,25 @@ function step(
         break;
       }
       previous.push(evidence);
+    }
+  }
+  if (!collision) {
+    const previous = [
+      ...journal.execution.initial_context.receipt_admissions,
+      ...journal.execution.entries.flatMap((entry) => entry.context.receipt_admissions),
+    ];
+    for (const admission of context.receipt_admissions) {
+      const original = previous.find((item) => item.admission.id === admission.admission.id);
+      if (original && !same(original, admission)) {
+        collision = {
+          namespace: 'receipt_admission',
+          identity: admission.admission.id,
+          original_digest: executionDigest(original),
+          incoming_digest: executionDigest(admission),
+        };
+        break;
+      }
+      previous.push(admission);
     }
   }
   if (!collision && known) return { ok: true, value: { result: known.result, replayed: true } };
@@ -735,6 +754,7 @@ function submit(
       !same(receipt.resulting_subject, receipt.binding.subject))
   )
     result = fail('INVALID_ATTEMPT_OUTCOME');
+  else if (!admittedReceipt(context, envelope, now)) result = fail('RECEIPT_ADMISSION_MISMATCH');
   else {
     attempt.status = receipt.effect === 'unknown' ? 'unknown_outcome' : receipt.status;
     attempt.effect = receipt.effect;
@@ -751,6 +771,30 @@ function submit(
     };
   }
   return result;
+}
+
+function admittedReceipt(context: ExecutionContext, envelope: AttemptReceipt, now: string): boolean {
+  const receipt = envelope.receipt;
+  const matches = context.receipt_admissions.filter((item) => item.admission.receipt.id === receipt.id);
+  const admitted = matches[0];
+  // Repeated transport copies of the same immutable admission are harmless.
+  if (!admitted || matches.some((item) => !same(item, admitted))) return false;
+  const fact = admitted.admission;
+  return (
+    admitted.admission_digest === executionDigest(fact) &&
+    fact.receipt.digest === envelope.receipt_digest &&
+    same(fact.request, receipt.request) &&
+    same(fact.binding, receipt.binding) &&
+    same(fact.execution_policy, receipt.execution_policy) &&
+    same(fact.claim, receipt.claim) &&
+    fact.attempt_id === receipt.attempt_id &&
+    same(fact.executor, receipt.executor) &&
+    context.snapshot.policy.rules.evidence_policies.some((policy) => same(policy, fact.verification_policy)) &&
+    realTime(fact.admitted_at) &&
+    fact.admitted_at >= receipt.finished_at &&
+    fact.admitted_at <= now &&
+    (fact.valid_until === null || (realTime(fact.valid_until) && fact.valid_until > now))
+  );
 }
 
 function recoveryFacts(

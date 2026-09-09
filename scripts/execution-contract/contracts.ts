@@ -42,6 +42,21 @@ export const attemptReceiptSchema = z.strictObject({
   receipt_digest: digest,
 });
 
+// ThreadLoop admits the whole report after independent evidence verification (#107).
+export const receiptAdmissionSchema = z.strictObject({
+  admission: z.strictObject({
+    schema_version: z.literal('0.1'),
+    id: text,
+    ...attemptFields,
+    receipt: identity,
+    verification_policy: identity,
+    acceptance: identity,
+    admitted_at: timestamp,
+    valid_until: timestamp.nullable(),
+  }),
+  admission_digest: digest,
+});
+
 // These are already-admitted independent observations, not executor assertions.
 export const recoveryEvidenceSchema = z.strictObject({
   evidence: z.strictObject({
@@ -61,6 +76,7 @@ export const executionContextSchema = z.strictObject({
   snapshot: controllerInputSchema,
   actor,
   recovery_evidence: z.array(recoveryEvidenceSchema),
+  receipt_admissions: z.array(receiptAdmissionSchema),
 });
 
 const target = { claim: claimReference, attempt_id: text };
@@ -167,6 +183,7 @@ export type ExecutionPolicy = z.infer<typeof executionPolicySchema>;
 export type ExecutionClaim = z.infer<typeof executionClaimSchema>;
 export type Attempt = z.infer<typeof attemptSchema>;
 export type AttemptReceipt = z.infer<typeof attemptReceiptSchema>;
+export type ReceiptAdmission = z.infer<typeof receiptAdmissionSchema>;
 export type RecoveryEvidence = z.infer<typeof recoveryEvidenceSchema>;
 
 export function publishedExecutionSchemas() {
@@ -187,6 +204,7 @@ export function publishedExecutionSchemas() {
     ControllerInput: controllerInputSchema,
     ExecutionPolicy: executionPolicySchema,
     AttemptReceipt: attemptReceiptSchema,
+    ReceiptAdmission: receiptAdmissionSchema,
     RecoveryEvidence: recoveryEvidenceSchema,
     ExecutionContext: executionContextSchema,
     ExecutionOperation: executionOperationSchema,
@@ -199,6 +217,7 @@ export function publishedExecutionSchemas() {
       'execution-claim': executionClaimSchema,
       attempt: attemptSchema,
       'attempt-receipt': attemptReceiptSchema,
+      'receipt-admission': receiptAdmissionSchema,
       'recovery-evidence': recoveryEvidenceSchema,
       'execution-policy': executionPolicySchema,
     }).map(([name, schema]) => [

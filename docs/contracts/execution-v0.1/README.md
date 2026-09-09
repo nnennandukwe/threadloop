@@ -10,8 +10,8 @@ verify external effects, or implement distributed exclusion.
 Strict Zod definitions generate offline Draft 2020-12 schemas for the
 [Execution Claim](schemas/execution-claim.schema.json), [Attempt](schemas/attempt.schema.json),
 [execution policy](schemas/execution-policy.schema.json), [operation](schemas/execution-operation.schema.json),
-[Attempt receipt](schemas/attempt-receipt.schema.json), [recovery evidence](schemas/recovery-evidence.schema.json), and
-[journal](schemas/execution-journal.schema.json).
+[Attempt receipt](schemas/attempt-receipt.schema.json), [receipt admission](schemas/receipt-admission.schema.json),
+[recovery evidence](schemas/recovery-evidence.schema.json), and [journal](schemas/execution-journal.schema.json).
 
 The public development functions in `scripts/execution-contract/model.ts` are:
 
@@ -47,7 +47,7 @@ bounded development model, not a prescribed runtime storage layout, event store,
 
 ## Identity and authority
 
-Every operation, claim, Attempt, receipt, and recovery observation retains:
+Every operation, claim, Attempt, receipt, receipt admission, and recovery observation retains:
 
 - the exact Action Request idempotency key and request digest;
 - Workflow Run identity, graph schema version/digest, source Lifecycle State and state version;
@@ -59,8 +59,10 @@ The original Action Request retains its action, capability, actor, transition, g
 evidence, Workflow policy, and authority identities. Human Action Requests cannot enter this model. A resulting subject
 is additional evidence: it cannot overwrite the original binding or make an earlier approval current for new content. A
 non-null resulting subject is a successor of that bound subject: its kind and repository/artifact identity must match.
-Changed content or repository revision is permitted for an occurred effect; a no-effect receipt must retain the complete
-original subject. Other output artifacts belong in evidence references and #107's output protocol.
+Changed content or repository revision is permitted for an occurred effect. If supplied, a no-effect resulting subject
+must equal the complete original subject. A null result makes no separate successor claim; the required
+`binding.subject` remains intact in the receipt and Attempt. Other output artifacts belong in evidence references and
+the output protocol in #107.
 
 An executor incarnation identifies one bounded process/run identity. A restarted process does not silently inherit the
 old incarnation's permission to repeat work. Delivery identities confer no authority. ThreadLoop admits the request and
@@ -69,18 +71,20 @@ current ThreadLoop or human authority can cancel/invalidate. Expiry recording be
 conflict disposition require a current human authority identified by the explicit snapshot policy.
 
 All contexts must be admitted by the future authority: authenticated actor identity, immutable request/policy registry,
-verified graph/run/history, current observations, verification-policy trust, and recovery-evidence acceptance records.
+verified graph/run/history, current observations, verification-policy trust, and receipt/recovery acceptance records.
 The model checks their consistency and hashes. It does not authenticate an attacker who fabricates an entire context,
 rehashes a history, or labels external evidence accepted. Snapshot admission must reject rollback to an older committed
 journal, graph, observation, or authority state.
 
-Request identities are globally unique logical slots under #105. Within a slot, operation, receipt, claim, Attempt, and
-recovery-evidence identities cannot be reassigned. Runtime claim identities must also be unique across a Workflow Run,
-so #105's claim-reference invalidation cannot fence an unrelated request. Cross-journal registry uniqueness is a runtime
-admission obligation; evaluating two independent copies in memory cannot enforce it.
+Request identities are globally unique logical slots under #105. Within a slot, operation, receipt, receipt-admission,
+claim, Attempt, and recovery-evidence identities cannot be reassigned. Runtime claim identities must also be unique
+across a Workflow Run, so #105's claim-reference invalidation cannot fence an unrelated request. Cross-journal registry
+uniqueness is a runtime admission obligation; evaluating two independent copies in memory cannot enforce it.
 
 Referenced recovery observations are checked for identity collisions before returning an earlier operation result.
 Replaying an unchanged reconciliation operation cannot conceal changed observation content under a reused identity.
+Receipt-admission identities from every retained context, including the initial context, receive the same collision
+protection before operation replay. Exact duplicate admission copies are idempotent.
 
 Rejected grant proposals also reserve their proposed claim and Attempt identities. Exact redelivery returns the original
 rejection; changing a deadline, executor, or recovery evidence under those identities produces a conflict. After
@@ -113,12 +117,38 @@ its retained journal instead of calling `createExecutionJournal` again.
 One claim generation has exactly one Attempt. `pending` means the start operation has not been accepted. `running` means
 start was accepted, not that a process is known alive. Attempt terminal statuses are `succeeded`, `failed`, `blocked`,
 `interrupted`, `cancelled`, and `unknown_outcome`. Effect knowledge is separately `not_started`, `none`, `occurred`, or
-`unknown`. An interrupted process does not imply `none`. A raw terminal receipt with `effect: unknown` stays intact
-while the Attempt projects `unknown_outcome`; a successful receipt cannot claim an unknown effect or omit all supporting
-evidence references. One accepted terminal receipt closes the Attempt; another identity cannot reopen it. Successful
-read-only work may correctly report `effect: none`; the request is satisfied because the bounded action succeeded.
-Effect knowledge describes external effects, independently of action success. A failed or interrupted no-effect outcome
-can instead leave an open request eligible for replacement.
+`unknown`. An interrupted process does not imply `none`. An admitted terminal receipt with `effect: unknown` stays
+intact while the Attempt projects `unknown_outcome`; a successful receipt cannot claim an unknown effect or omit all
+supporting evidence references. One accepted terminal receipt closes the Attempt; another identity cannot reopen it.
+Successful read-only work may correctly report `effect: none`; the request is satisfied because the bounded action
+succeeded. Effect knowledge describes external effects, independently of action success. A failed or interrupted
+no-effect outcome can instead leave an open request eligible for replacement.
+
+## Trusted receipt admission
+
+Every new terminal receipt acceptance requires exactly one distinct trusted ThreadLoop receipt-admission record in
+`context.receipt_admissions`. An executor report alone cannot establish success, known no effect, or a known effect. The
+admission contains the exact receipt identity/digest, all request/run/graph/state/subject/policy/claim/Attempt/executor
+bindings, an accepted verification-policy identity/digest, an acceptance identity/digest, admission time, and optional
+expiry. Its own digest covers the entire admission. Admission must occur at/after reported completion and no later than
+evaluation time; expiry is inclusive. The receipt digest also binds its outcome, effect knowledge, resulting subject,
+and every evidence reference, so substituting an artifact or changing a report requires another admission.
+
+The trusted admission boundary must verify the referenced artifacts, their actual digests, applicable policy, exact
+subject/effect scope, and the asserted outcome/effect knowledge before issuing this record. A failure report claiming
+`effect: none` requires that verification too: absence of a receipt or an executor assertion cannot authorize retry. The
+consistency validator checks the bound record; it does not fetch artifacts or authenticate an attacker-supplied
+admission. Hashes and acceptance identities are not authentication. #107 implements the underlying provenance and
+evidence verification; the context must be supplied by ThreadLoop's trusted admission boundary, never accepted directly
+from the executor. The test fixture helper supplies synthetic already-admitted context only.
+
+A missing, stale, mismatched, or bad-digest admission retains the raw report with `RECEIPT_ADMISSION_MISMATCH` and
+leaves the running Attempt, unknown effect knowledge, and open request unchanged. Exact redelivery preserves that
+rejection; it cannot retroactively turn the same receipt identity into accepted evidence. After verification, a fresh
+report and admission identity may describe the same completed work while the original claim remains current, without
+repeating the effect. If authority has expired, use independent recovery instead. A changed reused admission identity is
+a durable conflict. Admission never bypasses fencing, creates a #105 normalized guard receipt, or advances a Workflow
+Run.
 
 Every operation carries `expected_revision` and `expected_execution_digest`. Fresh execution and lifecycle mutations
 enforce them. Identity observations are intentionally evaluated first: request registration, historical redelivery, and
@@ -208,10 +238,12 @@ observations, missing stop proof, changed bindings, or bad hashes do not clear u
 executor receipt or satisfy lifecycle guards. `no_effect_confirmed` allows a separately acquired replacement if all
 other conditions hold. `abandon` requires stopped execution, cancels any active replacement, prevents another Attempt,
 and preserves the unresolved historical effect report. Abandonment is a human acceptance of an unresolved historical
-outcome, not proof of no effect. It cannot satisfy a proof or completion guard. Replaced Attempts retain their
-unresolved effects. Once active work closes, all unresolved generations remain visible until individually reconciled,
-including after cancellation of a replacement. Conflict resolution does not resolve unknown effects. There is no
-repeat-despite-unknown override for a non-repeatable action in v0.1.
+outcome, not proof of no effect. It cannot satisfy a proof or completion guard. After abandonment, the execution slot
+may become `idle` only when there is no other active or unresolved Attempt; the cancelled request remains closed and the
+original `unknown` report plus explicit human abandonment remain in history. This ends the execution obligation, not the
+Workflow Run. Replaced Attempts retain their unresolved effects. Once active work closes, all unresolved generations
+remain visible until individually reconciled, including after cancellation of a replacement. Conflict resolution does
+not resolve unknown effects. There is no repeat-despite-unknown override for a non-repeatable action in v0.1.
 
 ## Failure and recovery matrix
 
@@ -219,25 +251,26 @@ For every row, Workflow Run lifecycle state/version, graph, original subject/req
 approval, and repair-budget history remain unchanged. Records listed below are proposed append-only history, not actual
 persistence performed by this package.
 
-| Failure or interruption                   | Forbidden change                            | Retained result/evidence                               | Caller/operator recovery                                            |
-| ----------------------------------------- | ------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------- |
-| Duplicate acquisition, same content       | No second claim/Attempt; no extended time   | Original grant/result                                  | Read current claim; never infer freshness from replay.              |
-| Different executor competes               | No second current grant                     | `EXECUTION_VERSION_CONFLICT` or `CLAIM_HELD`           | Reread committed claim; wait or use permitted recovery.             |
-| Reused identity, changed content          | No overwrite or reinterpretation            | `IDENTITY_CONFLICT`, both canonical inputs and digests | Human resolves against original digest; new effects remain blocked. |
-| Crash before proposed append commits      | No acknowledged grant or start              | Prior committed journal                                | Replay the same operation against that journal.                     |
-| Crash after append, before acknowledgment | No second execution record                  | Committed operation and deterministic result           | Reconstruct and return the original result.                         |
-| Death before admitted start               | No action work                              | Closed pending Attempt, `not_started`                  | Fence/close, then acquire a new generation.                         |
-| Death during execution                    | No inference of failure/no effect           | `unknown_outcome` and original bindings                | Apply retry policy or human reconciliation.                         |
-| Effect completes, receipt absent          | No blind repetition                         | Started Attempt and uncertainty                        | Independently inspect the exact effect, then human disposition.     |
-| Expiry/replacement, late receipt          | No new acceptance or replacement completion | Receipt plus `CLAIM_FENCED`                            | Keep diagnostic evidence; independently reconcile if needed.        |
-| Exact receipt replay after acceptance     | No new receipt/admission                    | Original acceptance result                             | Return acknowledgment; do not repeat effects.                       |
-| Cancel before acquisition                 | No grant                                    | Cancelled request                                      | Outer lifecycle handling remains separate.                          |
-| Cancel while pending                      | No start                                    | Cancelled Attempt, `not_started`                       | Preserve cancellation; no replacement.                              |
-| Cancel while running                      | No claim authority; no asserted rollback    | Cancelled claim, unknown effect                        | Prove stop and reconcile; cancellation remains binding.             |
-| Claim/request/subject/policy drift        | No renewal or authoritative receipt         | Rejected operation and reconciliation context          | Restore verified context or resolve the old execution.              |
-| Malformed input or damaged journal        | No append proposal                          | Original input remains with caller; diagnostics        | Restore verified history; never silently reset it.                  |
-| Attempt capacity exhausted                | No additional grant                         | `ATTEMPT_LIMIT_REACHED`                                | Human review; no counter reset or policy rewrite.                   |
-| Schema generator interrupted              | No claim about coherent generated artifacts | Edited working files; prior Git revision retained      | Rerun generator, then parity tests; commit only coherent artifacts. |
+| Failure or interruption                   | Forbidden change                            | Retained result/evidence                               | Caller/operator recovery                                                   |
+| ----------------------------------------- | ------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------- |
+| Duplicate acquisition, same content       | No second claim/Attempt; no extended time   | Original grant/result                                  | Read current claim; never infer freshness from replay.                     |
+| Different executor competes               | No second current grant                     | `EXECUTION_VERSION_CONFLICT` or `CLAIM_HELD`           | Reread committed claim; wait or use permitted recovery.                    |
+| Reused identity, changed content          | No overwrite or reinterpretation            | `IDENTITY_CONFLICT`, both canonical inputs and digests | Human resolves against original digest; new effects remain blocked.        |
+| Crash before proposed append commits      | No acknowledged grant or start              | Prior committed journal                                | Replay the same operation against that journal.                            |
+| Crash after append, before acknowledgment | No second execution record                  | Committed operation and deterministic result           | Reconstruct and return the original result.                                |
+| Death before admitted start               | No action work                              | Closed pending Attempt, `not_started`                  | Fence/close, then acquire a new generation.                                |
+| Death during execution                    | No inference of failure/no effect           | `unknown_outcome` and original bindings                | Apply retry policy or human reconciliation.                                |
+| Effect completes, receipt absent          | No blind repetition                         | Started Attempt and uncertainty                        | Independently inspect the exact effect, then human disposition.            |
+| Terminal report lacks trusted admission   | No success or known no-effect acceptance    | Raw report and admission rejection                     | Verify evidence; submit new report identities while current, or reconcile. |
+| Expiry/replacement, late receipt          | No new acceptance or replacement completion | Receipt plus `CLAIM_FENCED`                            | Keep diagnostic evidence; independently reconcile if needed.               |
+| Exact receipt replay after acceptance     | No new receipt/admission                    | Original acceptance result                             | Return acknowledgment; do not repeat effects.                              |
+| Cancel before acquisition                 | No grant                                    | Cancelled request                                      | Outer lifecycle handling remains separate.                                 |
+| Cancel while pending                      | No start                                    | Cancelled Attempt, `not_started`                       | Preserve cancellation; no replacement.                                     |
+| Cancel while running                      | No claim authority; no asserted rollback    | Cancelled claim, unknown effect                        | Prove stop and reconcile; cancellation remains binding.                    |
+| Claim/request/subject/policy drift        | No renewal or authoritative receipt         | Rejected operation and reconciliation context          | Restore verified context or resolve the old execution.                     |
+| Malformed input or damaged journal        | No append proposal                          | Original input remains with caller; diagnostics        | Restore verified history; never silently reset it.                         |
+| Attempt capacity exhausted                | No additional grant                         | `ATTEMPT_LIMIT_REACHED`                                | Human review; no counter reset or policy rewrite.                          |
+| Schema generator interrupted              | No claim about coherent generated artifacts | Edited working files; prior Git revision retained      | Rerun generator, then parity tests; commit only coherent artifacts.        |
 
 ## Three concrete sequences
 
@@ -294,7 +327,10 @@ npm run security:dependencies
 never regenerate expectations. [Scenario fixtures](fixtures/scenarios.json) declare expected operation codes,
 claim/Attempt states, receipt counts, and controller projections. The fixture assembler reuses the accepted governed-PR
 and release-publication inputs, and passes no expected outcomes to the model. [Rejections](fixtures/rejections.json)
-include structurally invalid operations and semantically invalid receipts with recomputed hashes.
+include structurally invalid operations and semantically invalid receipts with recomputed hashes. Admission tests also
+alter every binding and reseal its digest, check policy/time validity, and reject raw reports with invented evidence
+references. Accepted report fixtures explicitly model trusted ThreadLoop admission; they do not verify the synthetic
+artifacts.
 
 [Golden digests](fixtures/golden-digests.json) were independently authored using Python sorted-key JSON and SHA-256,
 from the accepted #105 action-required request and explicit acquisition fields. They do not call the TypeScript

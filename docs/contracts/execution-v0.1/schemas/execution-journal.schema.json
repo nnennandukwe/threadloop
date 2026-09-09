@@ -705,9 +705,15 @@
           "items": {
             "$ref": "#/$defs/RecoveryEvidence"
           }
+        },
+        "receipt_admissions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReceiptAdmission"
+          }
         }
       },
-      "required": ["snapshot", "actor", "recovery_evidence"],
+      "required": ["snapshot", "actor", "recovery_evidence", "receipt_admissions"],
       "additionalProperties": false
     },
     "ControllerInput": {
@@ -3345,6 +3351,84 @@
       "type": "string",
       "format": "date-time",
       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+    },
+    "ReceiptAdmission": {
+      "type": "object",
+      "properties": {
+        "admission": {
+          "type": "object",
+          "properties": {
+            "schema_version": {
+              "type": "string",
+              "const": "0.1"
+            },
+            "id": {
+              "$ref": "#/$defs/NonEmptyText"
+            },
+            "request": {
+              "$ref": "#/$defs/RequestReference"
+            },
+            "binding": {
+              "$ref": "#/$defs/RequestBinding"
+            },
+            "execution_policy": {
+              "$ref": "#/$defs/Identity"
+            },
+            "claim": {
+              "$ref": "#/$defs/ClaimReference"
+            },
+            "attempt_id": {
+              "$ref": "#/$defs/NonEmptyText"
+            },
+            "executor": {
+              "$ref": "#/$defs/Executor"
+            },
+            "receipt": {
+              "$ref": "#/$defs/Identity"
+            },
+            "verification_policy": {
+              "$ref": "#/$defs/Identity"
+            },
+            "acceptance": {
+              "$ref": "#/$defs/Identity"
+            },
+            "admitted_at": {
+              "$ref": "#/$defs/AuthorityTime"
+            },
+            "valid_until": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AuthorityTime"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "schema_version",
+            "id",
+            "request",
+            "binding",
+            "execution_policy",
+            "claim",
+            "attempt_id",
+            "executor",
+            "receipt",
+            "verification_policy",
+            "acceptance",
+            "admitted_at",
+            "valid_until"
+          ],
+          "additionalProperties": false
+        },
+        "admission_digest": {
+          "$ref": "#/$defs/Sha256Digest"
+        }
+      },
+      "required": ["admission", "admission_digest"],
+      "additionalProperties": false
     },
     "ExecutionOperation": {
       "type": "object",
