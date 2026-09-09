@@ -1,11 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  applyExecutionOperation,
-  createExecutionJournal,
-  executionDigest,
-  replayExecutionJournal,
-  projectControllerExecution,
-} from '../../scripts/execution-contract/model.js';
+import { executionDigest } from '../../scripts/execution-contract/model.js';
 import { validateControllerDecision } from '../../scripts/controller-contract/decision.js';
 import type { ControllerDecision } from '../../scripts/controller-contract/contracts.js';
 import { readFile } from 'node:fs/promises';
@@ -19,6 +13,10 @@ import {
   type ReceiptAdmission,
 } from '../../scripts/execution-contract/contracts.js';
 import {
+  applyExecutionOperation,
+  createExecutionJournal,
+  replayExecutionJournal,
+  projectControllerExecution,
   executionFixture,
   initialExecution,
   operate,
@@ -793,6 +791,128 @@ describe('Terminal receipts and non-repeatable recovery', () => {
 });
 
 describe('Controller projection and preserved bindings', () => {
+  it('does not use an absent start as no-effect proof when independent evidence reports an effect', async () => {
+    const { journal } = await initialExecution();
+    const expired = operate(
+      operate(journal, grant).journal,
+      { kind: 'expire', ...target },
+      controllerActor(journal),
+      '2026-09-10T10:05:00.000Z',
+    );
+    const result = operate(
+      expired.journal,
+      {
+        ...grant,
+        kind: 'replace',
+        claim_id: 'claim_b',
+        attempt_id: 'attempt_b',
+        previous_claim: target.claim,
+        valid_until: '2026-09-10T10:10:00.000Z',
+        evidence_ids: [],
+      },
+      undefined,
+      '2026-09-10T10:06:00.000Z',
+      [recoveryFor(journal, 'effect_occurred')],
+    );
+    expect(result.result.code).toBe('RECONCILIATION_REQUIRED');
+    expect(result.projection.attempts).toEqual(expired.projection.attempts);
+  });
+
+  it.each(['unclaimed', 'released', 'completed'] as const)(
+    'keeps an inactive %s execution blocked when its exact request is no longer current',
+    async (phase) => {
+      const initial = await initialExecution();
+      let journal = initial.journal;
+      if (phase !== 'unclaimed') {
+        journal = operate(journal, grant).journal;
+        if (phase === 'released') journal = operate(journal, { kind: 'release', ...target }).journal;
+        else {
+          journal = operate(journal, { kind: 'start', ...target }).journal;
+          journal = operate(
+            journal,
+            { kind: 'submit_receipt', receipt: receiptFor(journal) },
+            undefined,
+            '2026-09-10T10:01:00.000Z',
+          ).journal;
+        }
+      }
+      const before = replayExecutionJournal(journal);
+      for (const drift of ['state', 'subject', 'policy', 'capability', 'observation'] as const) {
+        const snapshot = structuredClone(initial.context.snapshot);
+        snapshot.evaluation_time = '2026-09-10T10:01:00.000Z';
+        if (drift === 'state') {
+          snapshot.binding.state_version++;
+          snapshot.observation.state_version++;
+        } else if (drift === 'subject') {
+          snapshot.binding.subject.content_digest = executionDigest('new subject');
+          snapshot.observation.subject = snapshot.binding.subject;
+        } else if (drift === 'policy') snapshot.policy.id = 'new policy';
+        else if (drift === 'capability') snapshot.available_capabilities = [];
+        else snapshot.observation.valid_until = snapshot.evaluation_time;
+        const projected = projectControllerExecution(journal, snapshot);
+        expect(projected.ok && projected.value.execution.status, drift).toBe('reconciliation_required');
+      }
+      // Projection does not retract previously accepted receipts or mutate retained history.
+      expect(replayExecutionJournal(journal)).toEqual(before);
+    },
+  );
+
+  it.each(['current', 'retained'] as const)(
+    'rejects no-effect reconciliation that omits %s contrary evidence',
+    async (location) => {
+      const { journal } = await initialExecution();
+      const started = operate(operate(journal, grant).journal, { kind: 'start', ...target });
+      let expired = operate(
+        started.journal,
+        { kind: 'expire', ...target },
+        controllerActor(journal),
+        '2026-09-10T10:05:00.000Z',
+      );
+      const contrary = recoveryFor(journal, 'effect_occurred');
+      if (location === 'retained')
+        expired = operate(
+          expired.journal,
+          { kind: 'expire', ...target },
+          controllerActor(journal),
+          '2026-09-10T10:06:00.000Z',
+          [contrary],
+        );
+      const evidence = [recoveryFor(journal, 'executor_stopped'), recoveryFor(journal, 'no_effect')];
+      const refused = operate(
+        expired.journal,
+        {
+          kind: 'reconcile',
+          ...target,
+          disposition: 'no_effect_confirmed',
+          evidence_ids: evidence.map((item) => item.evidence.id),
+          reason: 'Selected only favorable observations',
+        },
+        humanActor(journal),
+        '2026-09-10T10:06:00.000Z',
+        location === 'current' ? [...evidence, contrary] : evidence,
+      );
+      expect(refused.result.code).toBe('RECOVERY_EVIDENCE_CONTRADICTORY');
+      expect(refused.projection.attempts).toEqual(expired.projection.attempts);
+      expect(refused.projection.request_status).toBe('open');
+      const retry = operate(
+        refused.journal,
+        {
+          ...grant,
+          kind: 'replace',
+          claim_id: 'claim_b',
+          attempt_id: 'attempt_b',
+          previous_claim: target.claim,
+          valid_until: '2026-09-10T10:10:00.000Z',
+          evidence_ids: [],
+        },
+        undefined,
+        '2026-09-10T10:06:00.000Z',
+      );
+      expect(retry.result.disposition).toBe('rejected');
+      expect(retry.projection.claims).toHaveLength(1);
+    },
+  );
+
   it('rejects expiry from an authority revoked by the current admitted policy', async () => {
     const { journal } = await initialExecution();
     const claimed = operate(journal, grant);

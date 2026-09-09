@@ -1,3 +1,6 @@
+import { withinExecutionLimits } from './limits.js';
+import { createHash } from 'node:crypto';
+import { isExecutionAdmitted, type ExecutionAuthority } from './authority.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import { actionRequestSchema, type ActionRequest, type ControllerInput } from '../controller-contract/contracts.js';
@@ -57,6 +60,52 @@ interface ObservationRecord {
   content: RecoveryEvidence | ReceiptAdmission;
 }
 
+interface ReplayIndex {
+  observations: Map<string, ObservationRecord>;
+  operations: Map<string, ExecutionProjection['operations'][number]>;
+  grantsByClaim: Map<string, { operation: ExecutionOperation; result: OperationResult }>;
+  grantsByAttempt: Map<string, ExecutionOperation>;
+}
+
+function newReplayIndex(context: ExecutionContext): ReplayIndex {
+  const index: ReplayIndex = {
+    observations: new Map(),
+    operations: new Map(),
+    grantsByClaim: new Map(),
+    grantsByAttempt: new Map(),
+  };
+  rememberObservations(index, context);
+  return index;
+}
+
+function observationKey(record: ObservationRecord): string {
+  return canonicalJson([record.namespace, record.identity]);
+}
+
+function rememberObservations(index: ReplayIndex, context: ExecutionContext): void {
+  for (const record of contextObservations(context)) {
+    const key = observationKey(record);
+    if (!index.observations.has(key)) index.observations.set(key, record);
+  }
+}
+
+function rememberOperation(
+  index: ReplayIndex,
+  state: ExecutionProjection,
+  operation: ExecutionOperation,
+  digest: string,
+  result: OperationResult,
+): void {
+  const record = { id: operation.id, digest, result };
+  state.operations.push(record);
+  index.operations.set(operation.id, record);
+  const command = operation.command;
+  if (command.kind === 'acquire' || command.kind === 'replace') {
+    if (!index.grantsByClaim.has(command.claim_id)) index.grantsByClaim.set(command.claim_id, { operation, result });
+    if (!index.grantsByAttempt.has(command.attempt_id)) index.grantsByAttempt.set(command.attempt_id, operation);
+  }
+}
+
 function contextObservations(context: ExecutionContext): ObservationRecord[] {
   return [
     ...context.recovery_evidence.map((record) => ({
@@ -72,11 +121,15 @@ function contextObservations(context: ExecutionContext): ObservationRecord[] {
   ];
 }
 
-function observationConflicts(previous: ObservationRecord[], incoming: ObservationRecord[]): IdentityCollision[] {
-  const known = [...previous];
+function observationConflicts(
+  previous: Map<string, ObservationRecord>,
+  incoming: ObservationRecord[],
+): IdentityCollision[] {
+  const added = new Map<string, ObservationRecord>();
   const collisions: IdentityCollision[] = [];
   for (const record of incoming) {
-    const original = known.find((item) => item.namespace === record.namespace && item.identity === record.identity);
+    const key = observationKey(record);
+    const original = previous.get(key) ?? added.get(key);
     if (original && !same(original.content, record.content))
       collisions.push({
         namespace: record.namespace,
@@ -84,7 +137,7 @@ function observationConflicts(previous: ObservationRecord[], incoming: Observati
         original_digest: executionDigest(original.content),
         incoming_digest: executionDigest(record.content),
       });
-    known.push(record);
+    if (!original) added.set(key, record);
   }
   return collisions;
 }
@@ -128,13 +181,31 @@ export function createExecutionJournal(
   context: unknown,
   request: unknown,
   policy: unknown,
+  authority: ExecutionAuthority,
 ): ValidationResult<ExecutionJournal> {
+  if (![context, request, policy].every(withinExecutionLimits))
+    return invalid(
+      'EXECUTION_INPUT_LIMIT',
+      'Input exceeds the bounded development validator limits. Retain the complete input for an implementation with sufficient capacity.',
+    );
   const parsedContext = validateShape(executionContextSchema, context);
   if (!parsedContext.ok) return parsedContext;
   const parsedRequest = validateShape(actionRequestSchema, request);
   if (!parsedRequest.ok) return parsedRequest;
   const parsedPolicy = validateShape(executionPolicySchema, policy);
   if (!parsedPolicy.ok) return parsedPolicy;
+  if (
+    !isExecutionAdmitted(authority, {
+      kind: 'create',
+      context: parsedContext.value,
+      request: parsedRequest.value,
+      policy: parsedPolicy.value,
+    })
+  )
+    return invalid(
+      'UNTRUSTED_EXECUTION_INPUT',
+      'Independent authority must admit the exact initial request, policy, and context.',
+    );
   const current = parsedContext.value;
   const time = contextTime(current);
   if (!time.ok) return time;
@@ -143,7 +214,7 @@ export function createExecutionJournal(
   if (bound.value.request.actor !== 'executor')
     return invalid('HUMAN_REQUEST', 'Human requests cannot acquire claims.');
   if (!controlActor(current, 'threadloop')) return invalid('AUTHORITY_MISMATCH', 'ThreadLoop admits execution policy.');
-  if (observationConflicts([], contextObservations(current)).length > 0)
+  if (observationConflicts(new Map(), contextObservations(current)).length > 0)
     return invalid('INITIAL_EVIDENCE_CONFLICT', 'Initial observation identities must have one immutable value.');
   const executionPolicy = parsedPolicy.value;
   if (
@@ -159,7 +230,7 @@ export function createExecutionJournal(
     initial_context: current,
     entries: [],
   };
-  return { ok: true, value: { execution, execution_digest: executionDigest(execution) } };
+  return sealJournal(execution);
 }
 
 function emptyProjection(time: string): ExecutionProjection {
@@ -179,13 +250,27 @@ function emptyProjection(time: string): ExecutionProjection {
 export function projectControllerExecution(
   journal: unknown,
   snapshot: unknown,
+  authority: ExecutionAuthority,
 ): ValidationResult<Pick<ControllerInput, 'execution' | 'invalidated_claims' | 'existing_requests'>> {
+  if (![journal, snapshot].every(withinExecutionLimits))
+    return invalid(
+      'EXECUTION_INPUT_LIMIT',
+      'Input exceeds the bounded development validator limits; no projection is produced.',
+    );
   const parsed = validateShape(executionJournalSchema, journal);
   if (!parsed.ok) return parsed;
-  const replayed = replayExecutionJournal(parsed.value);
+  const replayed = replayExecutionJournal(parsed.value, authority);
   if (!replayed.ok) return replayed;
   const current = validateControllerInput(snapshot);
   if (!current.ok) return current;
+  if (
+    !isExecutionAdmitted(authority, {
+      kind: 'projection',
+      execution_digest: parsed.value.execution_digest,
+      snapshot: current.value,
+    })
+  )
+    return invalid('UNTRUSTED_EXECUTION_INPUT', 'Independent authority must admit the current projection snapshot.');
   const input = current.value;
   const state = replayed.value;
   const request = parsed.value.execution.action_request;
@@ -244,14 +329,32 @@ export function projectControllerExecution(
         attempt: { id: attempt.id, status: attempt.status },
       };
   } else {
-    if (unresolved)
+    if (!validateRequestInSnapshot(input, request, 'in_flight').ok)
+      execution = blocked('conflict', unresolved ?? attempt);
+    else if (unresolved)
       execution = blocked(state.request_status === 'cancelled' ? 'cancelled' : 'unknown_outcome', unresolved);
   }
   return { ok: true, value: { execution, invalidated_claims: invalidated, existing_requests: existing } };
 }
 
 /** Reconstructs statuses from retained operations; an asserted mutable projection is never trusted. */
-export function replayExecutionJournal(journal: unknown): ValidationResult<ExecutionProjection> {
+export function replayExecutionJournal(
+  journal: unknown,
+  authority: ExecutionAuthority,
+): ValidationResult<ExecutionProjection> {
+  const replayed = replay(journal, authority);
+  return replayed.ok ? { ok: true, value: replayed.value.projection } : replayed;
+}
+
+function replay(
+  journal: unknown,
+  authority: ExecutionAuthority,
+): ValidationResult<{ projection: ExecutionProjection; index: ReplayIndex }> {
+  if (!withinExecutionLimits(journal))
+    return invalid(
+      'EXECUTION_INPUT_LIMIT',
+      'Journal exceeds the bounded development validator limits; retain its complete history.',
+    );
   const parsed = validateShape(executionJournalSchema, journal);
   if (!parsed.ok) return parsed;
   const value = parsed.value;
@@ -261,28 +364,58 @@ export function replayExecutionJournal(journal: unknown): ValidationResult<Execu
     value.execution.initial_context,
     value.execution.action_request,
     value.execution.execution_policy,
+    authority,
   );
   if (!initial.ok) return initial;
-  let prefix = initial.value;
+  const prefix = initial.value;
+  const hasher = journalPrefixHasher(value.execution);
+  const index = newReplayIndex(value.execution.initial_context);
   const projection = emptyProjection(value.execution.initial_context.snapshot.evaluation_time!);
   for (const entry of value.execution.entries) {
-    const applied = step(prefix, projection, entry.context, entry.operation);
+    const applied = step(prefix, projection, entry.context, entry.operation, authority, index);
     if (!applied.ok) return applied;
     if (applied.value.replayed) return invalid('DUPLICATE_JOURNAL_ENTRY', 'Exact deliveries must not append twice.');
-    prefix = append(prefix, entry.context, entry.operation);
+    prefix.execution.entries.push(entry);
+    prefix.execution_digest = hasher.append(entry);
   }
-  return { ok: true, value: projection };
+  return { ok: true, value: { projection, index } };
 }
 
-function append(journal: ExecutionJournal, context: ExecutionContext, operation: ExecutionOperation): ExecutionJournal {
-  const execution = { ...journal.execution, entries: [...journal.execution.entries, { context, operation }] };
-  return { execution, execution_digest: executionDigest(execution) };
+/** Hash the invariant fields once and extend only the entries array during replay. */
+function journalPrefixHasher(execution: ExecutionJournal['execution']) {
+  const fields = Object.entries(execution)
+    .filter(([key]) => key !== 'entries')
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([key, value]) => ({ key, json: `${JSON.stringify(key)}:${canonicalJson(value)}` }));
+  const before = fields.filter((field) => field.key < 'entries').map((field) => field.json);
+  const after = fields.filter((field) => field.key > 'entries').map((field) => field.json);
+  const hash = createHash('sha256').update(`{${before.length ? before.join(',') + ',' : ''}"entries":[`);
+  const suffix = `]${after.length ? ',' + after.join(',') : ''}}`;
+  let count = 0;
+  return {
+    append(entry: ExecutionJournal['execution']['entries'][number]): string {
+      if (count++ > 0) hash.update(',');
+      hash.update(canonicalJson(entry));
+      return hash.copy().update(suffix).digest('hex');
+    },
+  };
+}
+
+function sealJournal(execution: ExecutionJournal['execution']): ValidationResult<ExecutionJournal> {
+  const envelope = { execution, execution_digest: '0'.repeat(64) };
+  if (!withinExecutionLimits(envelope))
+    return invalid(
+      'EXECUTION_INPUT_LIMIT',
+      'Journal capacity reached; preserve the complete history and use an implementation with sufficient capacity. Never truncate or reset the request.',
+    );
+  return { ok: true, value: { execution, execution_digest: executionDigest(execution) } };
 }
 
 export function applyExecutionOperation(
   journal: unknown,
   context: unknown,
   operation: unknown,
+  authority: ExecutionAuthority,
 ): ValidationResult<{
   expected_execution_digest: string;
   journal: ExecutionJournal;
@@ -290,24 +423,44 @@ export function applyExecutionOperation(
   result: OperationResult;
   replayed: boolean;
 }> {
+  if (![journal, context, operation].every(withinExecutionLimits))
+    return invalid(
+      'EXECUTION_INPUT_LIMIT',
+      'Input exceeds the bounded development validator limits; no append is proposed.',
+    );
   const history = validateShape(executionJournalSchema, journal);
   if (!history.ok) return history;
-  const state = replayExecutionJournal(history.value);
+  const state = replay(history.value, authority);
   if (!state.ok) return state;
   const parsedContext = validateShape(executionContextSchema, context);
   if (!parsedContext.ok) return parsedContext;
   const parsedOperation = validateShape(executionOperationSchema, operation);
   if (!parsedOperation.ok) return parsedOperation;
-  const applied = step(history.value, state.value, parsedContext.value, parsedOperation.value);
+  const applied = step(
+    history.value,
+    state.value.projection,
+    parsedContext.value,
+    parsedOperation.value,
+    authority,
+    state.value.index,
+  );
   if (!applied.ok) return applied;
+  const proposed = applied.value.replayed
+    ? { ok: true as const, value: history.value }
+    : sealJournal({
+        ...history.value.execution,
+        entries: [
+          ...history.value.execution.entries,
+          { context: parsedContext.value, operation: parsedOperation.value },
+        ],
+      });
+  if (!proposed.ok) return proposed;
   return {
     ok: true,
     value: {
       expected_execution_digest: history.value.execution_digest,
-      journal: applied.value.replayed
-        ? history.value
-        : append(history.value, parsedContext.value, parsedOperation.value),
-      projection: state.value,
+      journal: proposed.value,
+      projection: state.value.projection,
       ...applied.value,
     },
   };
@@ -318,7 +471,21 @@ function step(
   state: ExecutionProjection,
   context: ExecutionContext,
   operation: ExecutionOperation,
+  authority: ExecutionAuthority,
+  index: ReplayIndex,
 ): ValidationResult<{ result: OperationResult; replayed: boolean }> {
+  if (
+    !isExecutionAdmitted(authority, {
+      kind: 'operation',
+      execution_digest: journal.execution_digest,
+      context,
+      operation,
+    })
+  )
+    return invalid(
+      'UNTRUSTED_EXECUTION_INPUT',
+      'Independent authority must admit the exact actor, snapshot, observations, and operation.',
+    );
   const time = contextTime(context);
   if (!time.ok) return time;
   if (!same(context.actor, operation.actor))
@@ -330,7 +497,7 @@ function step(
   )
     return invalid('CONTEXT_BINDING_MISMATCH', 'Context must belong to the original Workflow Run and graph.');
   const digest = executionDigest(operation);
-  const known = state.operations.find((record) => record.id === operation.id);
+  const known = index.operations.get(operation.id);
   const command = operation.command;
   const collisions: IdentityCollision[] = [];
   if (known && known.digest !== digest)
@@ -340,15 +507,7 @@ function step(
       original_digest: known.digest,
       incoming_digest: digest,
     });
-  collisions.push(
-    ...observationConflicts(
-      [
-        ...contextObservations(journal.execution.initial_context),
-        ...journal.execution.entries.flatMap((entry) => contextObservations(entry.context)),
-      ],
-      contextObservations(context),
-    ),
-  );
+  collisions.push(...observationConflicts(index.observations, contextObservations(context)));
   if (collisions.length === 0 && known) return { ok: true, value: { result: known.result, replayed: true } };
   const priorConflicts = collisions.map((item) =>
     state.conflicts.find(
@@ -361,20 +520,21 @@ function step(
   if (time.value < state.evaluated_at) return invalid('TIME_REVERSED', 'Authority time cannot move backwards.');
   state.revision += 1;
   state.evaluated_at = time.value;
+  rememberObservations(index, context);
   if (collisions.length > 0) {
     const results = collisions.map((item) =>
       conflict(state, item.namespace, item.identity, item.original_digest, item.incoming_digest),
     );
     const result = results[0]!;
     if (!known) {
-      state.operations.push({ id: operation.id, digest, result });
+      rememberOperation(index, state, operation, digest, result);
       retainReceipt(state, command, result);
     }
     return { ok: true, value: { result, replayed: false } };
   }
-  const result = execute(journal, state, context, operation, time.value);
+  const result = execute(journal, state, context, operation, time.value, index);
   retainReceipt(state, command, result);
-  state.operations.push({ id: operation.id, digest, result });
+  rememberOperation(index, state, operation, digest, result);
   return { ok: true, value: { result, replayed: false } };
 }
 
@@ -440,6 +600,7 @@ function execute(
   context: ExecutionContext,
   operation: ExecutionOperation,
   now: string,
+  index: ReplayIndex,
 ): OperationResult {
   const fail = (code: string) => outcome(code, state.revision);
   const applied = (code: string) => outcome(code, state.revision, 'applied');
@@ -489,19 +650,10 @@ function execute(
   if (command.kind === 'acquire' || command.kind === 'replace') {
     if (context.actor.kind !== 'executor' || !same(context.actor.executor, command.executor))
       return fail('EXECUTOR_MISMATCH');
-    const previous = journal.execution.entries.find((entry) => {
-      const prior = entry.operation.command;
-      return (
-        (prior.kind === 'acquire' || prior.kind === 'replace') &&
-        prior.claim_id === command.claim_id &&
-        state.operations.some(
-          (record) => record.id === entry.operation.id && record.digest === executionDigest(entry.operation),
-        )
-      );
-    });
+    const previous = index.grantsByClaim.get(command.claim_id);
     if (previous)
       return same(previous.operation.command, command) && same(previous.operation.actor, operation.actor)
-        ? state.operations.find((record) => record.id === previous.operation.id)!.result
+        ? previous.result
         : conflict(
             state,
             'claim',
@@ -509,22 +661,13 @@ function execute(
             executionDigest(previous.operation.command),
             executionDigest(command),
           );
-    const attemptGrant = journal.execution.entries.find((entry) => {
-      const prior = entry.operation.command;
-      return (
-        (prior.kind === 'acquire' || prior.kind === 'replace') &&
-        prior.attempt_id === command.attempt_id &&
-        state.operations.some(
-          (record) => record.id === entry.operation.id && record.digest === executionDigest(entry.operation),
-        )
-      );
-    });
+    const attemptGrant = index.grantsByAttempt.get(command.attempt_id);
     if (attemptGrant)
       return conflict(
         state,
         'attempt',
         command.attempt_id,
-        executionDigest(attemptGrant.operation.command),
+        executionDigest(attemptGrant.command),
         executionDigest(command),
       );
   }
@@ -675,15 +818,16 @@ function acquire(
     if (!previous || !same(command.previous_claim, reference(previous))) return fail('PREVIOUS_CLAIM_MISMATCH');
     const attempt = state.attempts.find((attempt) => attempt.id === previous.attempt_id)!;
     const evidence = recoveryFacts(journal, context, previous, attempt, command.evidence_ids, now);
-    if (!evidence.ok) return fail('RECOVERY_EVIDENCE_MISMATCH');
+    if (!evidence.ok) return fail(evidence.diagnostics[0]!.code);
     const safety = journal.execution.execution_policy.rules.retry_safety;
     const knownNoEffect =
-      attempt.started_at === null ||
-      attempt.resolution?.disposition === 'no_effect_confirmed' ||
-      (attempt.receipt_id !== null && attempt.effect === 'none');
+      !evidence.value.effect_observed &&
+      (attempt.started_at === null ||
+        attempt.resolution?.disposition === 'no_effect_confirmed' ||
+        (attempt.receipt_id !== null && attempt.effect === 'none'));
     const repeatable =
       safety === 'repeatable_with_overlap' ||
-      (safety === 'repeatable_after_stop' && evidence.value.some((item) => item.kind === 'executor_stopped'));
+      (safety === 'repeatable_after_stop' && evidence.value.selected.some((item) => item.kind === 'executor_stopped'));
     if (attempt.resolution?.disposition === 'abandon' || (!knownNoEffect && !repeatable))
       return fail('RECONCILIATION_REQUIRED');
   }
@@ -825,7 +969,7 @@ function recoveryFacts(
   attempt: Attempt,
   ids: string[],
   now: string,
-): ValidationResult<RecoveryEvidence['evidence'][]> {
+): ValidationResult<{ selected: RecoveryEvidence['evidence'][]; effect_observed: boolean }> {
   if (new Set(ids).size !== ids.length)
     return invalid('RECOVERY_EVIDENCE_MISMATCH', 'Duplicate observation references.');
   const facts: RecoveryEvidence['evidence'][] = [];
@@ -835,28 +979,59 @@ function recoveryFacts(
       return invalid('RECOVERY_EVIDENCE_MISMATCH', 'Each observation must resolve to one immutable value.');
     const envelope = matches[0]!;
     const fact = envelope.evidence;
-    if (
-      envelope.evidence_digest !== executionDigest(fact) ||
-      !same(fact.request, requestReference(journal.execution.action_request)) ||
-      !same(fact.binding, claim.binding) ||
-      !same(fact.execution_policy, claim.execution_policy) ||
-      !same(fact.claim, reference(claim)) ||
-      fact.attempt_id !== attempt.id ||
-      !same(fact.executor, claim.executor) ||
-      fact.observed_at < (claim.closed_at ?? claim.acquired_at) ||
-      fact.observed_at > now ||
-      !realTime(fact.observed_at) ||
-      !sameSubjectIdentity(fact.resulting_subject, claim.binding.subject) ||
-      !context.snapshot.policy.rules.evidence_policies.some((policy) => same(policy, fact.verification_policy)) ||
-      (fact.kind !== 'effect_occurred' && fact.resulting_subject !== null)
-    )
+    if (!validRecoveryFact(envelope, context, claim, attempt, now))
       return invalid(
         'RECOVERY_EVIDENCE_MISMATCH',
         'Recovery observations must bind this exact closed Attempt and accepted verification policy.',
       );
     facts.push(fact);
   }
-  return { ok: true, value: facts };
+  const allKinds = new Set(facts.map((fact) => fact.kind));
+  const contexts = [
+    journal.execution.initial_context,
+    ...journal.execution.entries.map((entry) => entry.context),
+    context,
+  ];
+  for (const admitted of contexts) {
+    const observedAt = admitted.snapshot.evaluation_time;
+    if (observedAt === null) continue;
+    for (const envelope of admitted.recovery_evidence)
+      if (validRecoveryFact(envelope, admitted, claim, attempt, observedAt)) allKinds.add(envelope.evidence.kind);
+  }
+  if (attempt.effect === 'occurred') allKinds.add('effect_occurred');
+  if (attempt.effect === 'none' || attempt.resolution?.disposition === 'no_effect_confirmed') allKinds.add('no_effect');
+  if (attempt.resolution?.disposition === 'effect_confirmed') allKinds.add('effect_occurred');
+  if (allKinds.has('effect_occurred') && allKinds.has('no_effect'))
+    return invalid(
+      'RECOVERY_EVIDENCE_CONTRADICTORY',
+      'Retained or current observations disagree about this Attempt; selecting fewer references cannot authorize retry.',
+    );
+  return { ok: true, value: { selected: facts, effect_observed: allKinds.has('effect_occurred') } };
+}
+
+function validRecoveryFact(
+  envelope: RecoveryEvidence,
+  context: ExecutionContext,
+  claim: ExecutionClaim,
+  attempt: Attempt,
+  now: string,
+): boolean {
+  const fact = envelope.evidence;
+  return !(
+    envelope.evidence_digest !== executionDigest(fact) ||
+    !same(fact.request, claim.request) ||
+    !same(fact.binding, claim.binding) ||
+    !same(fact.execution_policy, claim.execution_policy) ||
+    !same(fact.claim, reference(claim)) ||
+    fact.attempt_id !== attempt.id ||
+    !same(fact.executor, claim.executor) ||
+    fact.observed_at < (claim.closed_at ?? claim.acquired_at) ||
+    fact.observed_at > now ||
+    !realTime(fact.observed_at) ||
+    !sameSubjectIdentity(fact.resulting_subject, claim.binding.subject) ||
+    !context.snapshot.policy.rules.evidence_policies.some((policy) => same(policy, fact.verification_policy)) ||
+    (fact.kind !== 'effect_occurred' && fact.resulting_subject !== null)
+  );
 }
 
 function sameSubjectIdentity(
@@ -888,8 +1063,8 @@ function reconcile(
   if (!claim || !attempt || claim.status === 'active' || attempt.resolution !== null || attempt.status === 'succeeded')
     return fail('ATTEMPT_NOT_RECONCILABLE');
   const evidence = recoveryFacts(journal, context, claim, attempt, command.evidence_ids, now);
-  if (!evidence.ok) return fail('RECOVERY_EVIDENCE_MISMATCH');
-  const kinds = evidence.value.map((fact) => fact.kind);
+  if (!evidence.ok) return fail(evidence.diagnostics[0]!.code);
+  const kinds = evidence.value.selected.map((fact) => fact.kind);
   if (!kinds.includes('executor_stopped') || (kinds.includes('no_effect') && kinds.includes('effect_occurred')))
     return fail('RECOVERY_EVIDENCE_INSUFFICIENT');
   if (command.disposition === 'effect_confirmed' && !kinds.includes('effect_occurred'))

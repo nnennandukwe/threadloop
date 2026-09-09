@@ -1,3 +1,4 @@
+import { executionLimits } from './limits.js';
 import { z } from 'zod';
 import { actionRequestSchema, controllerInputSchema, subjectSchema } from '../controller-contract/contracts.js';
 
@@ -124,7 +125,9 @@ export const executionJournalSchema = z.strictObject({
     action_request: actionRequestSchema,
     execution_policy: executionPolicySchema,
     initial_context: executionContextSchema,
-    entries: z.array(z.strictObject({ context: executionContextSchema, operation: executionOperationSchema })),
+    entries: z
+      .array(z.strictObject({ context: executionContextSchema, operation: executionOperationSchema }))
+      .max(executionLimits.journalEntries),
   }),
   execution_digest: digest,
 });

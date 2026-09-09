@@ -16,10 +16,10 @@ Strict Zod definitions generate offline Draft 2020-12 schemas for the
 The public development functions in `scripts/execution-contract/model.ts` are:
 
 ```typescript
-createExecutionJournal(context: unknown, request: unknown, policy: unknown)
-replayExecutionJournal(journal: unknown)
-applyExecutionOperation(journal: unknown, context: unknown, operation: unknown)
-projectControllerExecution(journal: unknown, snapshot: unknown)
+createExecutionJournal(context: unknown, request: unknown, policy: unknown, authority: ExecutionAuthority)
+replayExecutionJournal(journal: unknown, authority: ExecutionAuthority)
+applyExecutionOperation(journal: unknown, context: unknown, operation: unknown, authority: ExecutionAuthority)
+projectControllerExecution(journal: unknown, snapshot: unknown, authority: ExecutionAuthority)
 ```
 
 All return #104's `ValidationResult<T>`. Invalid shapes, journal digests, admission contexts, and reversed authority
@@ -44,6 +44,18 @@ The journal is the canonical development input. Projections are rebuilt from its
 callers cannot supply a mutable status as authority. The complete journal payload is hashed outside its envelope using
 ThreadLoop's existing canonical JSON and SHA-256 conventions. Unknown fields and versions fail closed. This format is a
 bounded development model, not a prescribed runtime storage layout, event store, process protocol, or signature format.
+
+The offline validator accepts at most 256 retained entries, 16 MiB of JSON per input/proposed journal, one million JSON
+values, and 64 nesting levels. It checks resource bounds before schema cloning, canonicalization, authority calls, and
+replay. Exceeding a limit returns `EXECUTION_INPUT_LIMIT` without a proposal. A full journal still supports exact
+operation redelivery without appending. Preserve the complete history and use a conforming implementation with enough
+capacity; truncating history or resetting the same logical request would discard identity and fencing obligations. These
+are development-tool limits, not production retention policy.
+
+Replay builds private indexes for operation, grant, and observation identities in one pass. Prefix hashes extend the
+canonical entries array incrementally, preserving the full-payload SHA-256 contract without repeatedly serializing
+history. Each public call validates the supplied history; no persistent cache or mutable caller-supplied projection is
+trusted.
 
 ## Identity and authority
 
@@ -70,11 +82,32 @@ immutable execution policy; the executor can acquire its own claim, start, renew
 current ThreadLoop or human authority can cancel/invalidate. Expiry recording belongs to ThreadLoop. Reconciliation and
 conflict disposition require a current human authority identified by the explicit snapshot policy.
 
-All contexts must be admitted by the future authority: authenticated actor identity, immutable request/policy registry,
-verified graph/run/history, current observations, verification-policy trust, and receipt/recovery acceptance records.
-The model checks their consistency and hashes. It does not authenticate an attacker who fabricates an entire context,
-rehashes a history, or labels external evidence accepted. Snapshot admission must reject rollback to an older committed
-journal, graph, observation, or authority state.
+Every public development function requires a host-supplied `ExecutionAuthority` with
+`isAdmitted(digest: string): boolean`. This independent lookup is supplied through application wiring, never decoded
+from an executor message, journal, or snapshot. Before evaluating an operation the validator requires an affirmative
+lookup for the exact admission digest. Missing approval, a non-boolean result, or an unavailable authority returns
+`UNTRUSTED_EXECUTION_INPUT` without an append. There is no permissive default.
+
+`executionAdmissionDigest` in `scripts/execution-contract/authority.ts` hashes the canonical envelope
+`{ domain: "threadloop.execution-admission.v0.1", admission }`. Its three admission variants bind:
+
+- `create`: the complete initial context, request, and execution policy;
+- `operation`: the current journal digest, complete context, and complete operation;
+- `projection`: the journal digest and complete current controller snapshot.
+
+The authority must admit authenticated actor identity and intent, current policy/registry state, verified graph/run/
+history and observations, and exact independently verified receipt/recovery acceptance records. Computing this digest is
+not proof of admission: the authority lookup must resolve it in a separately controlled source. In particular, it must
+never populate its allowlist from the same incoming JSON. Replay checks the initial admission and each historical
+operation admission against its exact prefix; it cannot legitimize a fabricated history merely by rehashing it.
+Historical admissions remain auditable after authority rotation; fresh admissions must use the current authority and
+reject rollback. The authority must distinguish an admitted historical prefix from the current committed head for a new
+operation/projection. Commit still requires the atomic comparison below.
+
+An admitted new policy can revoke old actors and authorize current actors to cancel or invalidate an old-bound request.
+An executor-added authority, admission record, acceptance identity, or modified command changes the admission digest and
+cannot inherit a prior approval. This defines and enforces the development trust seam; the production
+identity/provenance provider and underlying artifact verification belong to #107 and later runtime work.
 
 Request identities are globally unique logical slots under #105. Within a slot, operation, receipt, receipt-admission,
 claim, Attempt, and recovery-evidence identities cannot be reassigned. Runtime claim identities must also be unique
@@ -144,10 +177,11 @@ and every evidence reference, so substituting an artifact or changing a report r
 The trusted admission boundary must verify the referenced artifacts, their actual digests, applicable policy, exact
 subject/effect scope, and the asserted outcome/effect knowledge before issuing this record. A failure report claiming
 `effect: none` requires that verification too: absence of a receipt or an executor assertion cannot authorize retry. The
-consistency validator checks the bound record; it does not fetch artifacts or authenticate an attacker-supplied
-admission. Hashes and acceptance identities are not authentication. #107 implements the underlying provenance and
-evidence verification; the context must be supplied by ThreadLoop's trusted admission boundary, never accepted directly
-from the executor. The test fixture helper supplies synthetic already-admitted context only.
+validator checks the bound record only inside an independently admitted operation context. A fabricated record changes
+that context's admission digest and fails the authority lookup, even when all record hashes are valid. Hashes and
+acceptance identities alone are not authentication. #107 implements the underlying artifact/provenance verification
+before the authority approves an admission digest. The test fixture helper populates a synthetic admission store;
+separate trust-boundary tests use the raw public API and a protected test allowlist to reject executor modifications.
 
 A missing, stale, mismatched, or bad-digest admission retains the raw report with `RECEIPT_ADMISSION_MISMATCH` and
 leaves the running Attempt, unknown effect knowledge, and open request unchanged. Exact redelivery preserves that
@@ -254,6 +288,13 @@ Workflow Run. Replaced Attempts retain their unresolved effects. Once active wor
 remain visible until individually reconciled, including after cancellation of a replacement. Conflict resolution does
 not resolve unknown effects. There is no repeat-despite-unknown override for a non-repeatable action in v0.1.
 
+Recovery checks all valid current and retained observations for the exact Attempt, including observations omitted from
+`evidence_ids`. An admitted `effect_occurred` and `no_effect` disagreement returns `RECOVERY_EVIDENCE_CONTRADICTORY`;
+receipt effect knowledge and prior reconciliation also participate. Selecting only favorable references cannot establish
+no effect or permit replacement. Evidence for a different binding or observation that failed its original policy/time
+validation is not silently promoted. Contradictory evidence leaves the Attempt and request unchanged and requires
+independent investigation; no automatic retry or evidence deletion resolves it.
+
 ## Failure and recovery matrix
 
 For every row, Workflow Run lifecycle state/version, graph, original subject/request, proof-plan binding, human
@@ -308,6 +349,10 @@ Attempt over a newer resolved replacement when one exists. Detailed causes remai
 reason vocabulary is preserved. Resolved execution may become `idle`; that does not cancel, recover, advance, approve,
 merge, or complete a Workflow Run.
 
+Inactive journals also validate their exact original request against the current snapshot. State, subject, policy,
+authority, capability, observation/evidence freshness, or request expiry drift projects reconciliation instead of idle.
+This does not rewrite accepted receipts or invalidate a completed claim merely because its request is now historical.
+
 The projection refuses another run/graph or a different outstanding Action Request rather than overwriting it. A future
 authority must serialize execution obligations across a Workflow Run as required by #105, even though this bounded
 journal models one request. Exact normalized receipt IDs/sequences remain unique in #105; transport deduplication
@@ -327,7 +372,8 @@ explicit support; no fields are dropped before hashing.
 ## Verification and proof limits
 
 ```bash
-npm test -- tests/unit/execution-contract.test.ts tests/unit/controller-contract.test.ts tests/unit/workflow-graph-contract.test.ts
+npm test -- tests/unit/execution-contract.test.ts tests/unit/execution-authority.test.ts tests/unit/execution-limits.test.ts
+npm test -- tests/unit/controller-contract.test.ts tests/unit/workflow-graph-contract.test.ts
 npm run check
 npm run security:dependencies
 ```

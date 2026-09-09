@@ -19,6 +19,7 @@
           "$ref": "#/$defs/ExecutionContext"
         },
         "entries": {
+          "maxItems": 256,
           "type": "array",
           "items": {
             "type": "object",

@@ -14,11 +14,50 @@ import type {
   RecoveryEvidence,
 } from '../../scripts/execution-contract/contracts.js';
 import {
-  applyExecutionOperation,
-  createExecutionJournal,
+  applyExecutionOperation as apply,
+  createExecutionJournal as create,
+  replayExecutionJournal as replay,
+  projectControllerExecution as project,
   executionDigest,
   requestReference,
 } from '../../scripts/execution-contract/model.js';
+
+import { executionAdmissionDigest, type ExecutionAdmission } from '../../scripts/execution-contract/authority.js';
+
+// Test-only authority store. Production must populate its independent store after authentication
+// and evidence verification; it must never admit inputs merely because they reached the validator.
+const fixtureAdmissions = new Set<string>();
+const fixtureAuthority = { isAdmitted: (digest: string) => fixtureAdmissions.has(digest) };
+function admitFixture(admission: ExecutionAdmission) {
+  fixtureAdmissions.add(executionAdmissionDigest(admission));
+  return fixtureAuthority;
+}
+export function createExecutionJournal(context: unknown, request: unknown, policy: unknown) {
+  return create(context, request, policy, admitFixture({ kind: 'create', context, request, policy }));
+}
+export function applyExecutionOperation(journal: ExecutionJournal, context: unknown, operation: unknown) {
+  return apply(
+    journal,
+    context,
+    operation,
+    admitFixture({
+      kind: 'operation',
+      execution_digest: journal.execution_digest,
+      context,
+      operation,
+    }),
+  );
+}
+export function replayExecutionJournal(journal: unknown) {
+  return replay(journal, fixtureAuthority);
+}
+export function projectControllerExecution(journal: ExecutionJournal, snapshot: unknown) {
+  return project(
+    journal,
+    snapshot,
+    admitFixture({ kind: 'projection', execution_digest: journal.execution_digest, snapshot }),
+  );
+}
 
 export async function executionFixture(profile: 'governed-pr' | 'release-to-publish' = 'governed-pr') {
   let snapshot = await controllerSnapshot(profile);
