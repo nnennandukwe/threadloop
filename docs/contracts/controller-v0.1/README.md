@@ -139,6 +139,10 @@ bindings can be retained for reconciliation but cannot qualify as waiting.
 [#106](https://github.com/nnennandukwe/threadloop/issues/106) owns acquisition, renewal, replacement, cancellation,
 retry safety, receipt admission, and durable conflicts. This projection does not promise exactly-once execution.
 
+The [Execution Claim and Attempt v0.1 contract](../execution-v0.1/README.md) defines those semantics with a pure journal
+model, explicit recovery rules, and fixtures. It projects into this existing schema without enabling runtime claim
+acquisition, durable receipt ingestion, or action execution.
+
 Execution Claim and Attempt projections accept only executor requests, as defined in #106. Human handoffs retain the
 shared Action Request envelope but never enter these executor claim states. Pending human work remains
 `human_action_required` until accepted human evidence changes the decision; stable request identity supports later

@@ -30,11 +30,12 @@ item, task ticket, work order
 **Action Request**: A bounded request for an actor or executor to perform exactly one action for a Workflow Run.
 _Avoid_: work order, job ticket
 
-**Execution Claim**: A claim that an executor has accepted responsibility for one Action Request without gaining
-authority over the next Lifecycle State. _Avoid_: lease, ownership transfer
+**Execution Claim**: The exclusive, time-bounded authorization of one executor incarnation to attempt an exact Action
+Request. Its fencing generation identifies authority without granting control over the next Lifecycle State. _Avoid_:
+lease, ownership transfer
 
-**Attempt**: One execution of an Action Request or evidence-producing step whose result can be retained and compared
-with later evidence. _Avoid_: Workflow Run, Agent Run
+**Attempt**: One admitted execution of an Action Request under one Execution Claim generation. Its outcome and evidence
+remain distinct from claim authority and Workflow Run completion. _Avoid_: Workflow Run, Agent Run
 
 **Evidence Receipt**: A retained claim about observed work, verification, review, approval, or merge state that can be
 evaluated by Guards. _Avoid_: telemetry event, status note
