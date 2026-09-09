@@ -109,6 +109,10 @@ Do not add blanket vulnerability or secret-scanning baselines. An unavoidable de
 advisory in `osv-scanner.toml`, explain why the vulnerable behavior is unreachable, link a remediation issue, and expire
 within 30 days. High or critical advisories must be fixed rather than ignored.
 
+The `markdownlint-cli2` override pins `smol-toml` to the patched `1.7.1` release for
+[GHSA-7w5x-hrqm-74c2](https://github.com/advisories/GHSA-7w5x-hrqm-74c2). Version `0.23.2` of the CLI pins the
+vulnerable `1.7.0` release; remove this override when an upstream CLI release depends on a patched version.
+
 ## Pull request quality
 
 Use the pull request template and complete every applicable section. A review-ready pull request:
