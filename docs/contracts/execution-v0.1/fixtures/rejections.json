@@ -1,0 +1,114 @@
+[
+  {
+    "id": "operation_run_drift",
+    "path": ["binding", "workflow_run_id"],
+    "value": "other_run",
+    "reseal": false,
+    "code": "OPERATION_BINDING_MISMATCH"
+  },
+  {
+    "id": "operation_state_drift",
+    "path": ["binding", "state_version"],
+    "value": 6,
+    "reseal": false,
+    "code": "OPERATION_BINDING_MISMATCH"
+  },
+  {
+    "id": "operation_graph_drift",
+    "path": ["binding", "graph_digest"],
+    "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "reseal": false,
+    "code": "OPERATION_BINDING_MISMATCH"
+  },
+  {
+    "id": "request_digest_drift",
+    "path": ["request", "request_digest"],
+    "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "reseal": false,
+    "code": "OPERATION_BINDING_MISMATCH"
+  },
+  {
+    "id": "execution_policy_drift",
+    "path": ["execution_policy", "id"],
+    "value": "other_policy",
+    "reseal": false,
+    "code": "OPERATION_BINDING_MISMATCH"
+  },
+  {
+    "id": "receipt_attempt_drift",
+    "path": ["command", "receipt", "receipt", "attempt_id"],
+    "value": "other_attempt",
+    "reseal": true,
+    "code": "RECEIPT_BINDING_MISMATCH"
+  },
+  {
+    "id": "receipt_claim_drift",
+    "path": ["command", "receipt", "receipt", "claim", "version"],
+    "value": 2,
+    "reseal": true,
+    "code": "RECEIPT_BINDING_MISMATCH"
+  },
+  {
+    "id": "receipt_subject_drift",
+    "path": ["command", "receipt", "receipt", "binding", "subject", "revision"],
+    "value": "commit_c",
+    "reseal": true,
+    "code": "RECEIPT_BINDING_MISMATCH"
+  },
+  {
+    "id": "receipt_hash_tampering",
+    "path": ["command", "receipt", "receipt_digest"],
+    "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "reseal": false,
+    "code": "RECEIPT_BINDING_MISMATCH"
+  },
+  {
+    "id": "receipt_before_start",
+    "path": ["command", "receipt", "receipt", "finished_at"],
+    "value": "2026-09-10T09:59:59.999Z",
+    "reseal": true,
+    "code": "INVALID_ATTEMPT_OUTCOME"
+  },
+  {
+    "id": "receipt_from_future",
+    "path": ["command", "receipt", "receipt", "finished_at"],
+    "value": "2026-09-10T10:02:00.000Z",
+    "reseal": true,
+    "code": "INVALID_ATTEMPT_OUTCOME"
+  },
+  {
+    "id": "success_with_uncertain_effect",
+    "path": ["command", "receipt", "receipt", "effect"],
+    "value": "unknown",
+    "reseal": true,
+    "code": "INVALID_ATTEMPT_OUTCOME"
+  },
+  {
+    "id": "success_without_evidence",
+    "path": ["command", "receipt", "receipt", "evidence"],
+    "value": [],
+    "reseal": true,
+    "code": "INVALID_ATTEMPT_OUTCOME"
+  },
+  {
+    "id": "unknown_operation_version",
+    "path": ["schema_version"],
+    "value": "0.2",
+    "reseal": false,
+    "code": "UNSUPPORTED_VERSION"
+  },
+  {
+    "id": "unsafe_revision",
+    "path": ["expected_revision"],
+    "value": 9007199254740992,
+    "reseal": false,
+    "code": "SCHEMA_INVALID"
+  },
+  {
+    "id": "unknown_operation_field",
+    "path": ["provider"],
+    "value": "vendor",
+    "reseal": false,
+    "code": "SCHEMA_INVALID"
+  }
+]

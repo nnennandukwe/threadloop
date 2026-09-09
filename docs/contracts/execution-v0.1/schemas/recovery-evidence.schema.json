@@ -1,0 +1,220 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "evidence": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "0.1"
+        },
+        "id": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "request": {
+          "type": "object",
+          "properties": {
+            "idempotency_key": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "request_digest": {
+              "$ref": "#/$defs/__schema1"
+            }
+          },
+          "required": ["idempotency_key", "request_digest"],
+          "additionalProperties": false
+        },
+        "binding": {
+          "type": "object",
+          "properties": {
+            "workflow_run_id": {
+              "$ref": "#/$defs/__schema2"
+            },
+            "graph_schema_version": {
+              "type": "string",
+              "const": "0.1"
+            },
+            "graph_digest": {
+              "$ref": "#/$defs/__schema3"
+            },
+            "source_state": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{0,63}$"
+            },
+            "state_version": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "subject": {
+              "$ref": "#/$defs/__schema4"
+            }
+          },
+          "required": [
+            "workflow_run_id",
+            "graph_schema_version",
+            "graph_digest",
+            "source_state",
+            "state_version",
+            "subject"
+          ],
+          "additionalProperties": false
+        },
+        "execution_policy": {
+          "$ref": "#/$defs/__schema5"
+        },
+        "claim": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "version": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": ["id", "version"],
+          "additionalProperties": false
+        },
+        "attempt_id": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "executor": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "incarnation": {
+              "$ref": "#/$defs/__schema0"
+            }
+          },
+          "required": ["id", "incarnation"],
+          "additionalProperties": false
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["executor_stopped", "effect_occurred", "no_effect"]
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+        },
+        "resulting_subject": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/__schema4"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "verification_policy": {
+          "$ref": "#/$defs/__schema5"
+        },
+        "acceptance": {
+          "$ref": "#/$defs/__schema5"
+        }
+      },
+      "required": [
+        "schema_version",
+        "id",
+        "request",
+        "binding",
+        "execution_policy",
+        "claim",
+        "attempt_id",
+        "executor",
+        "kind",
+        "observed_at",
+        "resulting_subject",
+        "verification_policy",
+        "acceptance"
+      ],
+      "additionalProperties": false
+    },
+    "evidence_digest": {
+      "$ref": "#/$defs/__schema1"
+    }
+  },
+  "required": ["evidence", "evidence_digest"],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "type": "string",
+      "minLength": 1
+    },
+    "__schema1": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "__schema2": {
+      "type": "string",
+      "minLength": 1
+    },
+    "__schema3": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "__schema4": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "repository"
+            },
+            "repository_id": {
+              "$ref": "#/$defs/__schema2"
+            },
+            "revision": {
+              "$ref": "#/$defs/__schema2"
+            },
+            "content_digest": {
+              "$ref": "#/$defs/__schema3"
+            }
+          },
+          "required": ["kind", "repository_id", "revision", "content_digest"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "artifact"
+            },
+            "artifact_id": {
+              "$ref": "#/$defs/__schema2"
+            },
+            "content_digest": {
+              "$ref": "#/$defs/__schema3"
+            }
+          },
+          "required": ["kind", "artifact_id", "content_digest"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "__schema5": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "digest": {
+          "$ref": "#/$defs/__schema1"
+        }
+      },
+      "required": ["id", "digest"],
+      "additionalProperties": false
+    }
+  },
+  "$id": "https://github.com/nnennandukwe/threadloop/contracts/execution/0.1/recovery-evidence"
+}

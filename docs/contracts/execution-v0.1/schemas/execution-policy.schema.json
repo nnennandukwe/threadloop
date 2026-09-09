@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "id": {
+      "$ref": "#/$defs/__schema0"
+    },
+    "digest": {
+      "$ref": "#/$defs/__schema1"
+    },
+    "rules": {
+      "type": "object",
+      "properties": {
+        "request": {
+          "type": "object",
+          "properties": {
+            "idempotency_key": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "request_digest": {
+              "$ref": "#/$defs/__schema1"
+            }
+          },
+          "required": ["idempotency_key", "request_digest"],
+          "additionalProperties": false
+        },
+        "workflow_policy": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "digest": {
+              "$ref": "#/$defs/__schema1"
+            }
+          },
+          "required": ["id", "digest"],
+          "additionalProperties": false
+        },
+        "retry_safety": {
+          "type": "string",
+          "enum": ["reconciliation_required", "repeatable_after_stop", "repeatable_with_overlap"]
+        },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": ["request", "workflow_policy", "retry_safety", "max_attempts"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["id", "digest", "rules"],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "type": "string",
+      "minLength": 1
+    },
+    "__schema1": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  },
+  "$id": "https://github.com/nnennandukwe/threadloop/contracts/execution/0.1/execution-policy"
+}

@@ -1,0 +1,274 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "0.1"
+    },
+    "id": {
+      "$ref": "#/$defs/__schema0"
+    },
+    "request": {
+      "type": "object",
+      "properties": {
+        "idempotency_key": {
+          "$ref": "#/$defs/__schema1"
+        },
+        "request_digest": {
+          "$ref": "#/$defs/__schema1"
+        }
+      },
+      "required": ["idempotency_key", "request_digest"],
+      "additionalProperties": false
+    },
+    "binding": {
+      "type": "object",
+      "properties": {
+        "workflow_run_id": {
+          "$ref": "#/$defs/__schema2"
+        },
+        "graph_schema_version": {
+          "type": "string",
+          "const": "0.1"
+        },
+        "graph_digest": {
+          "$ref": "#/$defs/__schema3"
+        },
+        "source_state": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "state_version": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "subject": {
+          "$ref": "#/$defs/__schema4"
+        }
+      },
+      "required": [
+        "workflow_run_id",
+        "graph_schema_version",
+        "graph_digest",
+        "source_state",
+        "state_version",
+        "subject"
+      ],
+      "additionalProperties": false
+    },
+    "execution_policy": {
+      "$ref": "#/$defs/__schema5"
+    },
+    "claim": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": ["id", "version"],
+      "additionalProperties": false
+    },
+    "executor": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "incarnation": {
+          "$ref": "#/$defs/__schema0"
+        }
+      },
+      "required": ["id", "incarnation"],
+      "additionalProperties": false
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "running", "succeeded", "failed", "blocked", "interrupted", "cancelled", "unknown_outcome"]
+    },
+    "effect": {
+      "type": "string",
+      "enum": ["not_started", "none", "occurred", "unknown"]
+    },
+    "created_at": {
+      "$ref": "#/$defs/__schema6"
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/__schema6"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "ended_at": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/__schema6"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "receipt_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/__schema0"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "resulting_subject": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/__schema4"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "resolution": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "disposition": {
+              "type": "string",
+              "enum": ["effect_confirmed", "no_effect_confirmed", "abandon"]
+            },
+            "evidence_ids": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/__schema0"
+              }
+            },
+            "operator": {
+              "$ref": "#/$defs/__schema5"
+            },
+            "resolved_at": {
+              "$ref": "#/$defs/__schema6"
+            }
+          },
+          "required": ["operation_id", "disposition", "evidence_ids", "operator", "resolved_at"],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "id",
+    "request",
+    "binding",
+    "execution_policy",
+    "claim",
+    "executor",
+    "status",
+    "effect",
+    "created_at",
+    "started_at",
+    "ended_at",
+    "receipt_id",
+    "resulting_subject",
+    "resolution"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "type": "string",
+      "minLength": 1
+    },
+    "__schema1": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "__schema2": {
+      "type": "string",
+      "minLength": 1
+    },
+    "__schema3": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "__schema4": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "repository"
+            },
+            "repository_id": {
+              "$ref": "#/$defs/__schema2"
+            },
+            "revision": {
+              "$ref": "#/$defs/__schema2"
+            },
+            "content_digest": {
+              "$ref": "#/$defs/__schema3"
+            }
+          },
+          "required": ["kind", "repository_id", "revision", "content_digest"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "artifact"
+            },
+            "artifact_id": {
+              "$ref": "#/$defs/__schema2"
+            },
+            "content_digest": {
+              "$ref": "#/$defs/__schema3"
+            }
+          },
+          "required": ["kind", "artifact_id", "content_digest"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "__schema5": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "digest": {
+          "$ref": "#/$defs/__schema1"
+        }
+      },
+      "required": ["id", "digest"],
+      "additionalProperties": false
+    },
+    "__schema6": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+    }
+  },
+  "$id": "https://github.com/nnennandukwe/threadloop/contracts/execution/0.1/attempt"
+}

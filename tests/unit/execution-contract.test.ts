@@ -1,0 +1,872 @@
+import { describe, expect, it } from 'vitest';
+import {
+  applyExecutionOperation,
+  createExecutionJournal,
+  executionDigest,
+  replayExecutionJournal,
+  projectControllerExecution,
+} from '../../scripts/execution-contract/model.js';
+import { validateControllerDecision } from '../../scripts/controller-contract/decision.js';
+import type { ControllerDecision } from '../../scripts/controller-contract/contracts.js';
+import { readFile } from 'node:fs/promises';
+import { Ajv2020 } from 'ajv/dist/2020.js';
+import { z } from 'zod';
+import {
+  publishedExecutionSchemas,
+  type ExecutionOperation,
+  type ExecutionContext,
+  type RecoveryEvidence,
+} from '../../scripts/execution-contract/contracts.js';
+import {
+  executionFixture,
+  initialExecution,
+  operate,
+  operationFor,
+  executorA,
+  executorB,
+  grant,
+  target,
+  receiptFor,
+  controllerActor,
+  humanActor,
+  recoveryFor,
+} from '../fixtures/execution-contract.js';
+
+describe('Execution admission', () => {
+  it('does not grant an already invalidated claim identity', async () => {
+    const { journal, context } = await initialExecution();
+    const actor = { kind: 'executor' as const, executor: executorA };
+    const current = structuredClone(context);
+    current.actor = actor;
+    current.snapshot.invalidated_claims.push(target.claim);
+    const result = applyExecutionOperation(journal, current, operationFor(journal, actor, grant));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.result.code).toBe('CLAIM_FENCED');
+    expect(result.value.projection.claims).toEqual([]);
+    expect(result.value.projection.attempts).toEqual([]);
+  });
+
+  it('enforces the admitted attempt limit even when earlier work never started', async () => {
+    const fixture = await executionFixture();
+    fixture.policy.rules.max_attempts = 1;
+    fixture.policy.digest = executionDigest(fixture.policy.rules);
+    const created = createExecutionJournal(fixture.context, fixture.request, fixture.policy);
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const released = operate(operate(created.value, grant).journal, { kind: 'release', ...target });
+    const denied = operate(released.journal, {
+      kind: 'replace',
+      previous_claim: target.claim,
+      claim_id: 'claim_b',
+      attempt_id: 'attempt_b',
+      executor: executorA,
+      valid_until: '2026-09-10T10:05:00.000Z',
+      evidence_ids: [],
+    });
+    expect(denied.result.code).toBe('ATTEMPT_LIMIT_REACHED');
+    expect(denied.projection.claims).toEqual(released.projection.claims);
+    expect(denied.projection.attempts).toEqual(released.projection.attempts);
+  });
+
+  it('creates a bound empty journal without changing the snapshot or request', async () => {
+    const fixture = await executionFixture();
+    const original = structuredClone(fixture);
+    const result = createExecutionJournal(fixture.context, fixture.request, fixture.policy);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.execution.entries).toEqual([]);
+      expect(result.value.execution.action_request).toEqual(fixture.request);
+    }
+    expect(fixture).toEqual(original);
+  });
+});
+
+describe('Execution Claim identity and serialization', () => {
+  it('grants one pending Attempt and replays a lost grant acknowledgment without another append', async () => {
+    const { journal } = await initialExecution();
+    const first = operate(journal, grant);
+    expect(first.result.code).toBe('CLAIM_ACQUIRED');
+    expect(first.projection.claims).toHaveLength(1);
+    expect(first.projection.attempts[0]?.status).toBe('pending');
+    const duplicate = applyExecutionOperation(first.journal, first.context, first.operation);
+    expect(duplicate.ok).toBe(true);
+    if (duplicate.ok) {
+      expect(duplicate.value.replayed).toBe(true);
+      expect(duplicate.value.journal).toEqual(first.journal);
+      expect(duplicate.value.result).toEqual(first.result);
+    }
+    expect(replayExecutionJournal(first.journal)).toEqual({ ok: true, value: first.projection });
+  });
+
+  it.each(['a', 'b'] as const)('rejects stale competing proposals when executor %s acquires first', async (winner) => {
+    const { journal, context } = await initialExecution();
+    const grantB = { ...grant, executor: executorB, claim_id: 'claim_b', attempt_id: 'attempt_b' };
+    const competing = winner === 'a' ? grantB : grant;
+    const actor = { kind: 'executor' as const, executor: competing.executor };
+    const winning = winner === 'a' ? grant : grantB;
+    const operation = operationFor(journal, actor, competing, 'competitor');
+    const first = operate(journal, winning, { kind: 'executor', executor: winning.executor });
+    const result = applyExecutionOperation(first.journal, { ...context, actor }, operation);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.result.code).toBe('EXECUTION_VERSION_CONFLICT');
+    const retry = operate(result.value.journal, competing, actor);
+    expect(retry.result.code).toBe('CLAIM_HELD');
+    expect(retry.projection.claims).toEqual(first.projection.claims);
+    expect(retry.projection.attempts).toEqual(first.projection.attempts);
+  });
+
+  it('retains changed content under an operation identity as one replayable conflict', async () => {
+    const { journal } = await initialExecution();
+    const first = operate(journal, grant);
+    const changed = { ...first.operation, command: { ...grant, valid_until: '2026-09-10T10:07:00.000Z' } };
+    const result = applyExecutionOperation(first.journal, first.context, changed);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.result.code).toBe('IDENTITY_CONFLICT');
+    expect(result.value.projection.conflicts).toHaveLength(1);
+    expect(result.value.projection.claims).toEqual(first.projection.claims);
+    expect(result.value.journal.execution.entries.at(-1)?.operation).toEqual(changed);
+    const duplicate = applyExecutionOperation(result.value.journal, first.context, changed);
+    expect(duplicate.ok && duplicate.value.replayed).toBe(true);
+    if (duplicate.ok) expect(duplicate.value.journal).toEqual(result.value.journal);
+  });
+
+  it('rejects resealed journal tampering that violates actor and request binding', async () => {
+    const { journal } = await initialExecution();
+    const first = operate(journal, grant);
+    const tampered = structuredClone(first.journal);
+    tampered.execution.entries[0]!.context.actor = { kind: 'executor', executor: executorB };
+    tampered.execution_digest = executionDigest(tampered.execution);
+    expect(replayExecutionJournal(tampered).ok).toBe(false);
+  });
+});
+
+describe('Attempt lifecycle and time', () => {
+  it('starts once and renews without changing the claim generation or Attempt', async () => {
+    const { journal } = await initialExecution();
+    const claimed = operate(journal, grant);
+    const started = operate(claimed.journal, { kind: 'start', ...target });
+    expect(started.result.code).toBe('ATTEMPT_STARTED');
+    const duplicateStart = operate(started.journal, { kind: 'start', ...target });
+    expect(duplicateStart.result.code).toBe('ATTEMPT_ALREADY_STARTED');
+    const renewed = operate(duplicateStart.journal, {
+      kind: 'renew',
+      ...target,
+      valid_until: '2026-09-10T10:08:00.000Z',
+    });
+    expect(renewed.result.code).toBe('CLAIM_RENEWED');
+    expect(renewed.projection.claims[0]?.version).toBe(1);
+    expect(renewed.projection.attempts).toEqual(started.projection.attempts);
+  });
+
+  it('expires inclusively and cannot revive a running Attempt with a late renewal', async () => {
+    const { journal } = await initialExecution();
+    const started = operate(operate(journal, grant).journal, { kind: 'start', ...target });
+    const now = '2026-09-10T10:05:00.000Z';
+    const renewal = operate(
+      started.journal,
+      { kind: 'renew', ...target, valid_until: '2026-09-10T10:08:00.000Z' },
+      undefined,
+      now,
+    );
+    expect(renewal.result.code).toBe('CLAIM_FENCED');
+    const expired = operate(renewal.journal, { kind: 'expire', ...target }, controllerActor(journal), now);
+    expect(expired.result.code).toBe('CLAIM_EXPIRED');
+    expect(expired.projection.attempts[0]?.status).toBe('unknown_outcome');
+    expect(expired.projection.attempts[0]?.effect).toBe('unknown');
+    const replacement = operate(
+      expired.journal,
+      {
+        kind: 'replace',
+        previous_claim: target.claim,
+        claim_id: 'claim_b',
+        attempt_id: 'attempt_b',
+        executor: executorB,
+        valid_until: '2026-09-10T10:10:00.000Z',
+        evidence_ids: [],
+      },
+      { kind: 'executor', executor: executorB },
+      now,
+    );
+    expect(replacement.result.code).toBe('RECONCILIATION_REQUIRED');
+  });
+
+  it('can replace a claim whose executor died before admitted start, fencing its late evidence', async () => {
+    const { journal } = await initialExecution();
+    const claimed = operate(journal, grant);
+    const expired = operate(
+      claimed.journal,
+      { kind: 'expire', ...target },
+      controllerActor(journal),
+      '2026-09-10T10:05:00.000Z',
+    );
+    const replaced = operate(
+      expired.journal,
+      {
+        kind: 'replace',
+        previous_claim: target.claim,
+        claim_id: 'claim_b',
+        attempt_id: 'attempt_b',
+        executor: executorB,
+        valid_until: '2026-09-10T10:10:00.000Z',
+        evidence_ids: [],
+      },
+      { kind: 'executor', executor: executorB },
+      '2026-09-10T10:05:00.000Z',
+    );
+    expect(replaced.result.code).toBe('CLAIM_ACQUIRED');
+    expect(replaced.projection.claims.map((claim) => claim.version)).toEqual([1, 2]);
+    const late = operate(
+      replaced.journal,
+      { kind: 'submit_receipt', receipt: receiptFor(journal) },
+      undefined,
+      '2026-09-10T10:06:00.000Z',
+    );
+    expect(late.result.code).toBe('CLAIM_FENCED');
+    expect(late.projection.receipts).toHaveLength(1);
+    expect(late.projection.attempts).toEqual(replaced.projection.attempts);
+    expect(late.projection.claims).toEqual(replaced.projection.claims);
+  });
+});
+
+describe('Terminal receipts and non-repeatable recovery', () => {
+  it('accepts a current receipt once and replays it after claim closure and elapsed time', async () => {
+    const { journal } = await initialExecution();
+    const started = operate(operate(journal, grant).journal, { kind: 'start', ...target });
+    const receipt = receiptFor(journal);
+    const accepted = operate(
+      started.journal,
+      { kind: 'submit_receipt', receipt },
+      undefined,
+      '2026-09-10T10:01:00.000Z',
+    );
+    expect(accepted.result.code).toBe('RECEIPT_ACCEPTED');
+    expect(accepted.projection.request_status).toBe('satisfied');
+    const repeated = operate(
+      accepted.journal,
+      { kind: 'submit_receipt', receipt },
+      undefined,
+      '2026-09-10T11:00:00.000Z',
+    );
+    expect(repeated.result).toEqual(accepted.result);
+    expect(repeated.projection.receipts).toHaveLength(1);
+    expect(repeated.projection.invalidated_claims).toEqual([]);
+    const changedReceipt = receiptFor(journal, { status: 'failed' });
+    const conflict = operate(
+      repeated.journal,
+      { kind: 'submit_receipt', receipt: changedReceipt },
+      undefined,
+      '2026-09-10T11:00:00.000Z',
+    );
+    expect(conflict.result.code).toBe('IDENTITY_CONFLICT');
+    expect(conflict.projection.receipts).toEqual(accepted.projection.receipts);
+  });
+
+  it.each(['cancel', 'release', 'expire'] as const)(
+    'does not interpret %s during execution as proof of no effect',
+    async (kind) => {
+      const { journal } = await initialExecution();
+      const started = operate(operate(journal, grant).journal, { kind: 'start', ...target });
+      const stopped = operate(
+        started.journal,
+        kind === 'cancel' ? { kind, reason: 'operator stop' } : { kind, ...target },
+        kind === 'release' ? undefined : controllerActor(journal),
+        kind === 'release' ? '2026-09-10T10:04:00.000Z' : '2026-09-10T10:05:00.000Z',
+      );
+      expect(stopped.result.disposition).toBe('applied');
+      expect(stopped.projection.attempts[0]?.status).toBe('unknown_outcome');
+      expect(stopped.projection.attempts[0]?.effect).toBe('unknown');
+    },
+  );
+
+  it('requires a human decision and independent stopped/effect observations after a lost receipt', async () => {
+    const { journal } = await initialExecution();
+    const started = operate(operate(journal, grant).journal, { kind: 'start', ...target });
+    const expired = operate(
+      started.journal,
+      { kind: 'expire', ...target },
+      controllerActor(journal),
+      '2026-09-10T10:05:00.000Z',
+    );
+    const evidence = [recoveryFor(journal, 'executor_stopped'), recoveryFor(journal, 'effect_occurred')];
+    const command = {
+      kind: 'reconcile' as const,
+      ...target,
+      disposition: 'effect_confirmed' as const,
+      evidence_ids: evidence.map((item) => item.evidence.id),
+      reason: 'Publication independently observed',
+    };
+    const forbidden = operate(expired.journal, command, controllerActor(journal), '2026-09-10T10:06:00.000Z', evidence);
+    expect(forbidden.result.code).toBe('HUMAN_AUTHORITY_REQUIRED');
+    const resolved = operate(forbidden.journal, command, humanActor(journal), '2026-09-10T10:06:00.000Z', evidence);
+    expect(resolved.result.code).toBe('ATTEMPT_RECONCILED');
+    expect(resolved.projection.request_status).toBe('satisfied');
+    expect(resolved.projection.attempts[0]?.status).toBe('unknown_outcome');
+    expect(resolved.projection.attempts[0]?.resolution?.disposition).toBe('effect_confirmed');
+    expect(resolved.projection.receipts).toEqual([]);
+  });
+
+  it('cancels before acquisition without granting an Attempt', async () => {
+    const { journal } = await initialExecution();
+    const cancelled = operate(journal, { kind: 'cancel', reason: 'Work withdrawn' }, controllerActor(journal));
+    const refused = operate(cancelled.journal, grant);
+    expect(refused.result.code).toBe('REQUEST_CLOSED');
+    expect(refused.projection.attempts).toEqual([]);
+  });
+});
+
+describe('Controller projection and preserved bindings', () => {
+  it('feeds healthy waiting and inclusive expiry into the real #105 candidate validator', async () => {
+    const { journal, context } = await initialExecution();
+    const claimed = operate(journal, grant);
+    const projection = projectControllerExecution(claimed.journal, context.snapshot);
+    expect(projection.ok).toBe(true);
+    if (!projection.ok) return;
+    const snapshot = { ...context.snapshot, ...projection.value };
+    const decision: ControllerDecision['decision'] = {
+      schema_version: '0.1',
+      input_digest: executionDigest(snapshot),
+      binding: snapshot.binding,
+      outcome: 'waiting',
+      request: claimed.operation.request,
+      claim: target.claim,
+      attempt_id: target.attempt_id,
+    };
+    expect(validateControllerDecision(snapshot, { decision, decision_digest: executionDigest(decision) }).ok).toBe(
+      true,
+    );
+    const lateSnapshot = { ...context.snapshot, evaluation_time: '2026-09-10T10:05:00.000Z' };
+    const expired = projectControllerExecution(claimed.journal, lateSnapshot);
+    expect(expired.ok && expired.value.execution.status).toBe('reconciliation_required');
+    if (!expired.ok) return;
+    const blockedInput = { ...lateSnapshot, ...expired.value };
+    const blocked: ControllerDecision['decision'] = {
+      schema_version: '0.1',
+      input_digest: executionDigest(blockedInput),
+      binding: snapshot.binding,
+      outcome: 'blocked',
+      reasons: [
+        {
+          code: 'EXECUTION_RECONCILIATION_REQUIRED',
+          message: 'Claim expired',
+          recovery: 'Reconcile the retained Attempt',
+        },
+      ],
+    };
+    expect(
+      validateControllerDecision(blockedInput, { decision: blocked, decision_digest: executionDigest(blocked) }).ok,
+    ).toBe(true);
+  });
+
+  it.each(['state', 'subject', 'policy', 'fence'] as const)(
+    'refuses renewal and evidence after %s drift',
+    async (kind) => {
+      const { journal } = await initialExecution();
+      const started = operate(operate(journal, grant).journal, { kind: 'start', ...target });
+      const context = structuredClone(started.context);
+      context.snapshot.evaluation_time = '2026-09-10T10:01:00.000Z';
+      if (kind === 'state') {
+        context.snapshot.binding.state_version++;
+        context.snapshot.observation.state_version++;
+      }
+      if (kind === 'subject') {
+        context.snapshot.binding.subject.content_digest = executionDigest('other');
+        context.snapshot.observation.subject = context.snapshot.binding.subject;
+      }
+      if (kind === 'policy') context.snapshot.policy.id = 'other_policy';
+      if (kind === 'fence') context.snapshot.invalidated_claims = [target.claim];
+      const operation = operationFor(
+        started.journal,
+        { kind: 'executor', executor: executorA },
+        { kind: 'submit_receipt', receipt: receiptFor(journal) },
+      );
+      const result = applyExecutionOperation(started.journal, context, operation);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.result.disposition).toBe('rejected');
+        expect(result.value.projection.attempts).toEqual(started.projection.attempts);
+      }
+      const projected = projectControllerExecution(started.journal, context.snapshot);
+      expect(projected.ok && projected.value.execution.status).toBe('reconciliation_required');
+    },
+  );
+});
+
+describe('Published execution contract corpus', () => {
+  const bundle = new URL('../../docs/contracts/execution-v0.1/', import.meta.url);
+  const stepName = z.enum([
+    'acquire',
+    'repeat_acquire',
+    'compete',
+    'start',
+    'renew',
+    'expire',
+    'replace',
+    'replace_with_stop',
+    'receipt',
+    'repeat_receipt',
+    'late_receipt',
+    'receipt_collision',
+    'reconcile_effect',
+    'reconcile_no_effect',
+    'cancel',
+    'release',
+    'invalidate',
+  ]);
+
+  it('publishes offline schemas matching the strict typed definitions', async () => {
+    for (const [name, schema] of Object.entries(publishedExecutionSchemas())) {
+      const saved = z
+        .record(z.string(), z.unknown())
+        .parse(JSON.parse(await readFile(new URL(`schemas/${name}.schema.json`, bundle), 'utf8')));
+      expect(saved).toEqual(schema);
+      expect(new Ajv2020({ strict: true, strictTypes: false, validateFormats: false }).validateSchema(saved)).toBe(
+        true,
+      );
+    }
+  });
+
+  it('checks independently specified lifecycle sequences against schemas and reconstructed history', async () => {
+    const scenarios = z
+      .array(
+        z.strictObject({
+          id: z.string(),
+          profile: z.enum(['governed-pr', 'release-to-publish']),
+          retry_safety: z.enum(['reconciliation_required', 'repeatable_after_stop', 'repeatable_with_overlap']),
+          steps: z.array(stepName),
+          codes: z.array(z.string()),
+          claims: z.array(z.string()),
+          attempts: z.array(z.string()),
+          request_status: z.string(),
+          receipt_count: z.number().int(),
+          projection: z.string(),
+        }),
+      )
+      .parse(JSON.parse(await readFile(new URL('fixtures/scenarios.json', bundle), 'utf8')));
+    expect(new Set(scenarios.map((scenario) => scenario.id)).size).toBe(scenarios.length);
+    const schemas = publishedExecutionSchemas();
+    const ajv = new Ajv2020({ strict: true, strictTypes: false, validateFormats: false });
+    const checkJournal = ajv.compile(schemas['execution-journal']!);
+    const checkClaim = ajv.compile(schemas['execution-claim']!);
+    const checkAttempt = ajv.compile(schemas.attempt!);
+    const checkReceipt = ajv.compile(schemas['attempt-receipt']!);
+    for (const scenario of scenarios) {
+      const initial = await initialExecution(scenario.retry_safety, scenario.profile);
+      let journal = initial.journal;
+      const codes: string[] = [];
+      let time = '2026-09-10T10:00:00.000Z';
+      for (const name of scenario.steps) {
+        let actor: ExecutionContext['actor'] = { kind: 'executor', executor: executorA };
+        let command: ExecutionOperation['command'];
+        let evidence: RecoveryEvidence[] = [];
+        switch (name) {
+          case 'acquire':
+          case 'repeat_acquire':
+            command = grant;
+            break;
+          case 'compete':
+            command = { ...grant, executor: executorB, claim_id: 'claim_b', attempt_id: 'attempt_b' };
+            actor = { kind: 'executor', executor: executorB };
+            break;
+          case 'start':
+            command = { kind: 'start', ...target };
+            break;
+          case 'renew':
+            command = { kind: 'renew', ...target, valid_until: '2026-09-10T10:08:00.000Z' };
+            break;
+          case 'expire':
+            command = { kind: 'expire', ...target };
+            actor = controllerActor(journal);
+            time = '2026-09-10T10:05:00.000Z';
+            break;
+          case 'replace':
+          case 'replace_with_stop':
+            if (name === 'replace_with_stop') {
+              evidence = [recoveryFor(journal, 'executor_stopped')];
+              time = '2026-09-10T10:06:00.000Z';
+            }
+            command = {
+              kind: 'replace',
+              previous_claim: target.claim,
+              claim_id: 'claim_b',
+              attempt_id: 'attempt_b',
+              executor: executorB,
+              valid_until: '2026-09-10T10:10:00.000Z',
+              evidence_ids: evidence.map((item) => item.evidence.id),
+            };
+            actor = { kind: 'executor', executor: executorB };
+            break;
+          case 'receipt':
+          case 'repeat_receipt':
+          case 'receipt_collision':
+          case 'late_receipt':
+            time = name === 'late_receipt' ? '2026-09-10T10:06:00.000Z' : '2026-09-10T10:01:00.000Z';
+            command = {
+              kind: 'submit_receipt',
+              receipt: receiptFor(journal, name === 'receipt_collision' ? { status: 'failed' } : {}),
+            };
+            break;
+          case 'reconcile_effect':
+          case 'reconcile_no_effect':
+            evidence = [
+              recoveryFor(journal, 'executor_stopped'),
+              recoveryFor(journal, name === 'reconcile_effect' ? 'effect_occurred' : 'no_effect'),
+            ];
+            time = '2026-09-10T10:06:00.000Z';
+            actor = humanActor(journal);
+            command = {
+              kind: 'reconcile',
+              ...target,
+              disposition: name === 'reconcile_effect' ? 'effect_confirmed' : 'no_effect_confirmed',
+              evidence_ids: evidence.map((item) => item.evidence.id),
+              reason: 'Independent observation checked by the operator',
+            };
+            break;
+          case 'cancel':
+            command = { kind: 'cancel', reason: 'Work withdrawn' };
+            actor = controllerActor(journal);
+            break;
+          case 'release':
+            command = { kind: 'release', ...target };
+            break;
+          case 'invalidate':
+            command = { kind: 'invalidate', reason: 'authority_revoked' };
+            actor = controllerActor(journal);
+            break;
+        }
+        const result = operate(journal, command, actor, time, evidence);
+        codes.push(result.result.code);
+        journal = result.journal;
+      }
+      expect(codes, scenario.id).toEqual(scenario.codes);
+      expect(checkJournal(journal), scenario.id + ': journal schema').toBe(true);
+      const replayed = replayExecutionJournal(journal);
+      expect(replayed.ok, scenario.id).toBe(true);
+      if (!replayed.ok) continue;
+      const state = replayed.value;
+      expect(
+        state.claims.map((claim) => claim.status),
+        scenario.id,
+      ).toEqual(scenario.claims);
+      expect(
+        state.attempts.map((attempt) => attempt.status),
+        scenario.id,
+      ).toEqual(scenario.attempts);
+      expect(state.request_status, scenario.id).toBe(scenario.request_status);
+      expect(state.receipts.length, scenario.id).toBe(scenario.receipt_count);
+      for (const claim of state.claims) expect(checkClaim(claim), scenario.id).toBe(true);
+      for (const attempt of state.attempts) expect(checkAttempt(attempt), scenario.id).toBe(true);
+      for (const receipt of state.receipts) expect(checkReceipt(receipt.envelope), scenario.id).toBe(true);
+      const projected = projectControllerExecution(journal, { ...initial.context.snapshot, evaluation_time: time });
+      expect(projected.ok && projected.value.execution.status, scenario.id).toBe(scenario.projection);
+    }
+  });
+
+  it('rejects schema errors and semantically invalid resealed receipts with retained dispositions', async () => {
+    const fixtures = z
+      .array(
+        z.strictObject({
+          id: z.string(),
+          path: z.array(z.string()),
+          value: z.unknown(),
+          reseal: z.boolean(),
+          code: z.string(),
+        }),
+      )
+      .parse(JSON.parse(await readFile(new URL('fixtures/rejections.json', bundle), 'utf8')));
+    const { journal } = await initialExecution();
+    const started = operate(operate(journal, grant).journal, { kind: 'start', ...target });
+    for (const fixture of fixtures) {
+      const context = structuredClone(started.context);
+      context.snapshot.evaluation_time = '2026-09-10T10:01:00.000Z';
+      const operation = operationFor(started.journal, context.actor, {
+        kind: 'submit_receipt',
+        receipt: receiptFor(journal),
+      });
+      let parent = operation as unknown as Record<string, unknown>;
+      for (const part of fixture.path.slice(0, -1)) {
+        if (['__proto__', 'prototype', 'constructor'].includes(part) || !(part in parent))
+          throw new Error('Invalid fixture path');
+        parent = parent[part] as Record<string, unknown>;
+      }
+      const key = fixture.path.at(-1)!;
+      if (['__proto__', 'prototype', 'constructor'].includes(key)) throw new Error('Invalid fixture key');
+      parent[key] = fixture.value;
+      if (fixture.reseal && operation.command.kind === 'submit_receipt')
+        operation.command.receipt.receipt_digest = executionDigest(operation.command.receipt.receipt);
+      const result = applyExecutionOperation(started.journal, context, operation);
+      const codes = result.ok ? [result.value.result.code] : result.diagnostics.map((diagnostic) => diagnostic.code);
+      expect(codes, fixture.id).toContain(fixture.code);
+      if (result.ok) {
+        expect(result.value.projection.claims, fixture.id).toEqual(started.projection.claims);
+        expect(result.value.projection.attempts, fixture.id).toEqual(started.projection.attempts);
+        expect(result.value.journal.execution.entries.at(-1)?.operation, fixture.id).toEqual(operation);
+      }
+    }
+  });
+
+  it('matches independently authored claim and Attempt digest vectors', async () => {
+    const expected = z
+      .strictObject({ claim_digest: z.string(), attempt_digest: z.string() })
+      .parse(JSON.parse(await readFile(new URL('fixtures/golden-digests.json', bundle), 'utf8')));
+    const { journal } = await initialExecution();
+    const claimed = operate(journal, grant);
+    expect(executionDigest(claimed.projection.claims[0])).toBe(expected.claim_digest);
+    expect(executionDigest(claimed.projection.attempts[0])).toBe(expected.attempt_digest);
+  });
+});
+
+describe('Durable conflicts and bounded recovery', () => {
+  it('retains changed recovery observations even when the reconciliation operation is replayed exactly', async () => {
+    const { journal } = await initialExecution();
+    const started = operate(operate(journal, grant).journal, { kind: 'start', ...target });
+    const expired = operate(
+      started.journal,
+      { kind: 'expire', ...target },
+      controllerActor(journal),
+      '2026-09-10T10:05:00.000Z',
+    );
+    const evidence = [recoveryFor(journal, 'executor_stopped'), recoveryFor(journal, 'no_effect')];
+    const resolved = operate(
+      expired.journal,
+      {
+        kind: 'reconcile',
+        ...target,
+        disposition: 'no_effect_confirmed',
+        evidence_ids: evidence.map((item) => item.evidence.id),
+        reason: 'Independently verified no effect',
+      },
+      humanActor(journal),
+      '2026-09-10T10:06:00.000Z',
+      evidence,
+    );
+    const changed = structuredClone(resolved.context);
+    changed.recovery_evidence[1]!.evidence.kind = 'effect_occurred';
+    changed.recovery_evidence[1]!.evidence_digest = executionDigest(changed.recovery_evidence[1]!.evidence);
+    const conflicted = applyExecutionOperation(resolved.journal, changed, resolved.operation);
+    expect(conflicted.ok).toBe(true);
+    if (!conflicted.ok) return;
+    expect(conflicted.value.result.code).toBe('IDENTITY_CONFLICT');
+    expect(conflicted.value.projection.conflicts[0]?.namespace).toBe('recovery_evidence');
+    expect(conflicted.value.projection.attempts).toEqual(resolved.projection.attempts);
+    expect(replayExecutionJournal(conflicted.value.journal)).toEqual({ ok: true, value: conflicted.value.projection });
+    const repeated = applyExecutionOperation(conflicted.value.journal, changed, resolved.operation);
+    expect(repeated.ok && repeated.value.replayed).toBe(true);
+    if (repeated.ok) expect(repeated.value.journal).toEqual(conflicted.value.journal);
+  });
+
+  it('keeps replaced execution uncertainty visible when its pending replacement is cancelled', async () => {
+    const { journal, context } = await initialExecution('repeatable_with_overlap');
+    const started = operate(operate(journal, grant).journal, { kind: 'start', ...target });
+    const expired = operate(
+      started.journal,
+      { kind: 'expire', ...target },
+      controllerActor(journal),
+      '2026-09-10T10:05:00.000Z',
+    );
+    const replaced = operate(
+      expired.journal,
+      {
+        kind: 'replace',
+        previous_claim: target.claim,
+        claim_id: 'claim_b',
+        attempt_id: 'attempt_b',
+        executor: executorB,
+        valid_until: '2026-09-10T10:10:00.000Z',
+        evidence_ids: [],
+      },
+      { kind: 'executor', executor: executorB },
+      '2026-09-10T10:05:00.000Z',
+    );
+    const cancelled = operate(
+      replaced.journal,
+      { kind: 'cancel', reason: 'Stop all execution' },
+      controllerActor(journal),
+      '2026-09-10T10:06:00.000Z',
+    );
+    const snapshot = { ...context.snapshot, evaluation_time: '2026-09-10T10:06:00.000Z' };
+    const stopped = recoveryFor(journal, 'executor_stopped');
+    const abandoned = operate(
+      replaced.journal,
+      {
+        kind: 'reconcile',
+        ...target,
+        disposition: 'abandon',
+        evidence_ids: [stopped.evidence.id],
+        reason: 'Abandon this request',
+      },
+      humanActor(journal),
+      snapshot.evaluation_time,
+      [stopped],
+    );
+    expect(abandoned.projection.request_status).toBe('cancelled');
+    expect(abandoned.projection.claims[1]?.status).toBe('cancelled');
+    expect(abandoned.projection.attempts[1]?.status).toBe('cancelled');
+    const unresolved = projectControllerExecution(cancelled.journal, snapshot);
+    expect(unresolved.ok && unresolved.value.execution.status).toBe('reconciliation_required');
+    if (unresolved.ok && unresolved.value.execution.status === 'reconciliation_required')
+      expect(unresolved.value.execution.attempt_id).toBe('attempt_a');
+    const evidence = [recoveryFor(journal, 'executor_stopped'), recoveryFor(journal, 'no_effect')];
+    const resolved = operate(
+      cancelled.journal,
+      {
+        kind: 'reconcile',
+        ...target,
+        disposition: 'no_effect_confirmed',
+        evidence_ids: evidence.map((item) => item.evidence.id),
+        reason: 'Old executor stopped without effect',
+      },
+      humanActor(journal),
+      snapshot.evaluation_time,
+      evidence,
+    );
+    expect(resolved.result.code).toBe('ATTEMPT_RECONCILED');
+    const finished = projectControllerExecution(resolved.journal, snapshot);
+    expect(finished.ok && finished.value.execution.status).toBe('idle');
+    expect(resolved.projection.request_status).toBe('cancelled');
+  });
+  it('records a valid changed Action Request under the existing logical identity as a durable conflict', async () => {
+    const { journal } = await initialExecution();
+    const proposal = structuredClone(journal.execution.action_request);
+    proposal.request.inputs.push({
+      role: 'release_manifest',
+      artifact: { id: 'another_input', digest: executionDigest('input') },
+    });
+    proposal.request_digest = executionDigest(proposal.request);
+    const conflicted = operate(journal, { kind: 'register_request', request: proposal }, controllerActor(journal));
+    expect(conflicted.result.code).toBe('IDENTITY_CONFLICT');
+    expect(conflicted.projection.conflicts[0]?.namespace).toBe('request');
+    const denied = operate(conflicted.journal, grant);
+    expect(denied.result.code).toBe('UNRESOLVED_CONFLICT');
+    const record = conflicted.projection.conflicts[0]!;
+    const resolved = operate(
+      denied.journal,
+      {
+        kind: 'resolve_conflict',
+        conflict_id: record.id,
+        original_digest: record.original_digest,
+        reason: 'Keep the originally admitted request',
+      },
+      humanActor(journal),
+    );
+    expect(resolved.result.code).toBe('CONFLICT_RESOLVED');
+    expect(resolved.journal.execution.action_request).toEqual(journal.execution.action_request);
+    expect(resolved.projection.conflicts[0]?.incoming_digest).toBe(proposal.request_digest);
+    expect(operate(resolved.journal, grant).result.code).toBe('CLAIM_ACQUIRED');
+  });
+
+  it('does not clear an unknown effect when the human resolves only an identity conflict', async () => {
+    const { journal } = await initialExecution();
+    const started = operate(operate(journal, grant).journal, { kind: 'start', ...target });
+    const collided = operate(started.journal, { ...grant, valid_until: '2026-09-10T10:07:00.000Z' });
+    expect(collided.result.code).toBe('IDENTITY_CONFLICT');
+    const expired = operate(
+      collided.journal,
+      { kind: 'expire', ...target },
+      controllerActor(journal),
+      '2026-09-10T10:05:00.000Z',
+    );
+    const record = collided.projection.conflicts[0]!;
+    const resolved = operate(
+      expired.journal,
+      {
+        kind: 'resolve_conflict',
+        conflict_id: record.id,
+        original_digest: record.original_digest,
+        reason: 'Keep original',
+      },
+      humanActor(journal),
+      '2026-09-10T10:05:00.000Z',
+    );
+    expect(resolved.projection.attempts[0]?.resolution).toBeNull();
+    const projection = projectControllerExecution(resolved.journal, {
+      ...started.context.snapshot,
+      evaluation_time: '2026-09-10T10:05:00.000Z',
+    });
+    expect(projection.ok && projection.value.execution.status).toBe('reconciliation_required');
+  });
+
+  it.each(['missing_stop', 'wrong_attempt', 'wrong_subject', 'bad_digest', 'contradictory'] as const)(
+    'rejects %s recovery evidence without altering the unknown Attempt',
+    async (mode) => {
+      const { journal } = await initialExecution('reconciliation_required', 'release-to-publish');
+      const started = operate(operate(journal, grant).journal, { kind: 'start', ...target });
+      const expired = operate(
+        started.journal,
+        { kind: 'expire', ...target },
+        controllerActor(journal),
+        '2026-09-10T10:05:00.000Z',
+      );
+      const fact = structuredClone(recoveryFor(journal, 'no_effect'));
+      if (mode === 'wrong_attempt') fact.evidence.attempt_id = 'other_attempt';
+      if (mode === 'wrong_subject') fact.evidence.binding.subject.content_digest = executionDigest('other');
+      fact.evidence_digest = mode === 'bad_digest' ? executionDigest('tampered') : executionDigest(fact.evidence);
+      const evidence = mode === 'missing_stop' ? [fact] : [fact, recoveryFor(journal, 'executor_stopped')];
+      if (mode === 'contradictory') evidence.push(recoveryFor(journal, 'effect_occurred'));
+      const result = operate(
+        expired.journal,
+        {
+          kind: 'reconcile',
+          ...target,
+          disposition: 'no_effect_confirmed',
+          evidence_ids: evidence.map((item) => item.evidence.id),
+          reason: 'Request retry',
+        },
+        humanActor(journal),
+        '2026-09-10T10:06:00.000Z',
+        evidence,
+      );
+      expect(result.result.disposition).toBe('rejected');
+      expect(result.projection.attempts).toEqual(expired.projection.attempts);
+      expect(result.projection.request_status).toBe('open');
+    },
+  );
+
+  it('preserves accepted proof on normal closure but projects explicit integrity invalidation', async () => {
+    const { journal } = await initialExecution();
+    const started = operate(operate(journal, grant).journal, { kind: 'start', ...target });
+    const accepted = operate(
+      started.journal,
+      { kind: 'submit_receipt', receipt: receiptFor(journal) },
+      undefined,
+      '2026-09-10T10:01:00.000Z',
+    );
+    const invalidated = operate(
+      accepted.journal,
+      { kind: 'invalidate', reason: 'integrity_failure' },
+      controllerActor(journal),
+      '2026-09-10T10:02:00.000Z',
+    );
+    expect(invalidated.result.code).toBe('REQUEST_INVALIDATED');
+    expect(invalidated.projection.invalidated_claims).toEqual([target.claim]);
+    expect(invalidated.projection.receipts).toEqual(accepted.projection.receipts);
+  });
+
+  it('caps renewal at immutable request validity and rejects time reversal without an append', async () => {
+    const fixture = await executionFixture();
+    fixture.request.request.constraints.valid_until = '2026-09-10T10:06:00.000Z';
+    fixture.request.request_digest = executionDigest(fixture.request.request);
+    fixture.policy.rules.request.request_digest = fixture.request.request_digest;
+    fixture.policy.digest = executionDigest(fixture.policy.rules);
+    const initial = createExecutionJournal(fixture.context, fixture.request, fixture.policy);
+    expect(initial.ok).toBe(true);
+    if (!initial.ok) return;
+    const claimed = operate(initial.value, grant);
+    expect(
+      operate(claimed.journal, { kind: 'renew', ...target, valid_until: '2026-09-10T10:07:00.000Z' }).result.code,
+    ).toBe('INVALID_CLAIM_DEADLINE');
+    const context = {
+      ...claimed.context,
+      snapshot: { ...claimed.context.snapshot, evaluation_time: '2026-09-10T09:59:59.999Z' },
+    };
+    const reversed = applyExecutionOperation(
+      claimed.journal,
+      context,
+      operationFor(claimed.journal, context.actor, { kind: 'start', ...target }),
+    );
+    expect(reversed.ok).toBe(false);
+    if (!reversed.ok) expect(reversed.diagnostics[0]?.code).toBe('TIME_REVERSED');
+  });
+});
