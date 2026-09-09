@@ -169,6 +169,11 @@ export function projectControllerExecution(
   if (!registered) existing.push(requestReference(request));
   const claim = state.claims.at(-1);
   const attempt = state.attempts.at(-1);
+  const unresolved = state.attempts.find(
+    (item) =>
+      item.resolution === null &&
+      (item.effect === 'unknown' || (item.effect === 'occurred' && item.status !== 'succeeded')),
+  );
   const envelope = { request: request.request, request_digest: request.request_digest };
   let execution: ControllerInput['execution'] = { status: 'idle' };
   const blocked = (
@@ -182,7 +187,7 @@ export function projectControllerExecution(
     reason,
   });
   if (state.conflicts.some((record) => record.resolved_by === null) || state.request_status === 'invalidated')
-    execution = blocked('conflict');
+    execution = blocked('conflict', unresolved ?? attempt);
   else if (claim?.status === 'active' && attempt) {
     if (fenced(claim, input, now)) execution = blocked(deadlinePassed(claim.valid_until, now) ? 'expired' : 'conflict');
     else if (!validateRequestInSnapshot(input, request, 'in_flight').ok) execution = blocked('conflict');
@@ -194,11 +199,6 @@ export function projectControllerExecution(
         attempt: { id: attempt.id, status: attempt.status },
       };
   } else {
-    const unresolved = state.attempts.find(
-      (item) =>
-        item.resolution === null &&
-        (item.effect === 'unknown' || (item.effect === 'occurred' && item.status !== 'succeeded')),
-    );
     if (unresolved)
       execution = blocked(state.request_status === 'cancelled' ? 'cancelled' : 'unknown_outcome', unresolved);
   }
@@ -298,7 +298,10 @@ function step(
       incoming_digest: digest,
     };
   else if (command.kind === 'reconcile' || command.kind === 'replace') {
-    const previous = journal.execution.entries.flatMap((entry) => entry.context.recovery_evidence);
+    const previous = [
+      ...journal.execution.initial_context.recovery_evidence,
+      ...journal.execution.entries.flatMap((entry) => entry.context.recovery_evidence),
+    ];
     for (const evidence of context.recovery_evidence.filter((item) =>
       command.evidence_ids.includes(item.evidence.id),
     )) {

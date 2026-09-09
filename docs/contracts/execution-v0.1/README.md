@@ -120,11 +120,16 @@ read-only work may correctly report `effect: none`; the request is satisfied bec
 Effect knowledge describes external effects, independently of action success. A failed or interrupted no-effect outcome
 can instead leave an open request eligible for replacement.
 
-Every new state-changing operation carries `expected_revision` and `expected_execution_digest`. Revision counts retained
-journal entries, including rejections/conflicts; it does not change Workflow Run state version or repair budgets. Claim
-`version` is the fencing generation, increasing across replacement/retry and never reset by executor restart. Renewal
-changes journal revision and timestamps but preserves that generation. Closed generations never become active again,
-even for the same executor.
+Every operation carries `expected_revision` and `expected_execution_digest`. Fresh execution and lifecycle mutations
+enforce them. Identity observations are intentionally evaluated first: request registration, historical redelivery, and
+changed identity reuse can retain their result despite stale operation preconditions. They cannot create new claim
+authority, admit another receipt, or replace the original request; a collision intentionally blocks fresh work until
+human disposition. The resulting append proposal still requires an atomic comparison against its returned
+`expected_execution_digest`, which identifies the current supplied journal. Stale operation preconditions never
+authorize committing against stale storage. Revision counts retained journal entries, including rejections/conflicts; it
+does not change Workflow Run state version or repair budgets. Claim `version` is the fencing generation, increasing
+across replacement/retry and never reset by executor restart. Renewal changes journal revision and timestamps but
+preserves that generation. Closed generations never become active again, even for the same executor.
 
 The future atomic acceptance operation is **compare the committed journal digest and append the complete operation,
 context, resulting disposition, and any admission/conflict records as one transaction**. Only after that acceptance may
@@ -151,11 +156,17 @@ Expiry is inclusive: `now >= valid_until`. Start, renewal, and new receipt accep
 projection independently reports expired work as requiring reconciliation. Renewal must strictly extend the current
 deadline and cannot exceed immutable request validity. A deadline cannot resurrect a closed generation.
 
-New operation authority rechecks request bindings, prerequisites, policy, capability support, subject freshness, and
+Fresh execution authority rechecks request bindings, prerequisites, policy, capability support, subject freshness, and
 claim invalidation. Drift produces a rejected operation or a reconciliation projection; it never rebinds the request. An
 expired request cannot be extended under its old idempotency identity. A permanently invalidated/expired request may
 require a separately authorized new Workflow Run; do not invent a state version, alter a subject, or randomize an action
 identity to evade the old slot. The journal does not implement Workflow Run creation/recovery.
+
+Closure and recovery deliberately retain the original request binding even when the current lifecycle has drifted.
+Expiry requires the exact existing claim/Attempt, current ThreadLoop authority, current journal preconditions, and
+authority time at/past the recorded deadline. It does not require obsolete request prerequisites to become true again.
+The admitted current policy must still authorize that actor; a revoked actor cannot close the claim. Snapshot freshness
+and anti-rollback admission remain mandatory for every operation, including closure.
 
 `binding_changed` and `request_expired` invalidations require the corresponding explicit facts. `authority_revoked` is
 an authorized revocation command. `integrity_failure` is an explicit retrospective invalidation: it adds claim
@@ -183,7 +194,8 @@ accepted unsuccessful terminal no-effect receipt or human-confirmed no-effect ou
 override request satisfaction, cancellation, invalidation, or exhaustion. Successful no-effect work is not retried.
 
 Recovery observations are separate, already-admitted records for `executor_stopped`, `effect_occurred`, or `no_effect`.
-They bind the original request, claim, Attempt, executor incarnation, and subject; include their own digest, accepted
+Identities retained in the initial context participate in the same collision checks as later entries. Observations bind
+the original request, claim, Attempt, executor incarnation, and subject; include their own digest, accepted
 verification-policy identity, and acceptance identity; and must be observed at/after recorded claim closure and no later
 than evaluation time. A late executor receipt cannot be relabeled as one of these independent observations. The
 acceptance adapter must verify actual provenance, artifacts, effect identity/destination, and the observer's authority
@@ -245,10 +257,14 @@ repeat would instead replay that historical acceptance; closure is not retrospec
 ## Controller projection and compatibility
 
 Projection supplies only #105's existing `execution`, `invalidated_claims`, and `existing_requests` fields. It never
-produces accepted normalized receipts or Controller Decisions. Healthy pending/running work becomes `in_flight`;
-expired/fenced work, unresolved effects, identity conflicts, or invalidation become `reconciliation_required`. Detailed
-causes remain in this journal while #105's coarser reason vocabulary is preserved. Resolved execution may become `idle`;
-that does not cancel, recover, advance, approve, merge, or complete a Workflow Run.
+produces accepted normalized receipts or Controller Decisions. Healthy pending/running work becomes `in_flight`. For an
+explicitly permitted replacement, this single #105 slot describes the current claim while older unknown outcomes remain
+visible in the full execution journal/projection. Waiting cannot advance the lifecycle. Once active work closes,
+unresolved older effects require reconciliation before any lifecycle progress. Expired/fenced current work, identity
+conflicts, or invalidation also become `reconciliation_required`; conflict/invalidation projections prefer an unresolved
+Attempt over a newer resolved replacement when one exists. Detailed causes remain in this journal while #105's coarser
+reason vocabulary is preserved. Resolved execution may become `idle`; that does not cancel, recover, advance, approve,
+merge, or complete a Workflow Run.
 
 The projection refuses another run/graph or a different outstanding Action Request rather than overwriting it. A future
 authority must serialize execution obligations across a Workflow Run as required by #105, even though this bounded

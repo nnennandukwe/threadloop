@@ -4,7 +4,7 @@ import { format, resolveConfig } from 'prettier';
 
 const directory = new URL('../../docs/contracts/execution-v0.1/schemas/', import.meta.url);
 await mkdir(directory, { recursive: true });
-const options = await resolveConfig(directory.pathname);
+const options = await resolveConfig(directory);
 for (const [name, schema] of Object.entries(publishedExecutionSchemas())) {
   await writeFile(
     new URL(`${name}.schema.json`, directory),

@@ -343,6 +343,28 @@ describe('Terminal receipts and non-repeatable recovery', () => {
 });
 
 describe('Controller projection and preserved bindings', () => {
+  it('rejects expiry from an authority revoked by the current admitted policy', async () => {
+    const { journal } = await initialExecution();
+    const claimed = operate(journal, grant);
+    const context = structuredClone(claimed.context);
+    context.actor = controllerActor(journal);
+    context.snapshot.evaluation_time = '2026-09-10T10:05:00.000Z';
+    context.snapshot.policy.rules.authorities = context.snapshot.policy.rules.authorities.map((authority) =>
+      authority.type === 'threadloop'
+        ? { ...authority, identity: { id: 'new_controller', digest: executionDigest('new controller') } }
+        : authority,
+    );
+    context.snapshot.policy.digest = executionDigest(context.snapshot.policy.rules);
+    const result = applyExecutionOperation(
+      claimed.journal,
+      context,
+      operationFor(claimed.journal, context.actor, { kind: 'expire', ...target }),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.result.code).toBe('AUTHORITY_MISMATCH');
+    expect(result.value.projection.claims).toEqual(claimed.projection.claims);
+  });
   it('feeds healthy waiting and inclusive expiry into the real #105 candidate validator', async () => {
     const { journal, context } = await initialExecution();
     const claimed = operate(journal, grant);
@@ -415,6 +437,27 @@ describe('Controller projection and preserved bindings', () => {
       }
       const projected = projectControllerExecution(started.journal, context.snapshot);
       expect(projected.ok && projected.value.execution.status).toBe('reconciliation_required');
+      const renewal = applyExecutionOperation(
+        started.journal,
+        context,
+        operationFor(started.journal, context.actor, {
+          kind: 'renew',
+          ...target,
+          valid_until: '2026-09-10T10:08:00.000Z',
+        }),
+      );
+      expect(renewal.ok && renewal.value.result.disposition).toBe('rejected');
+      const closure = structuredClone(context);
+      closure.actor = controllerActor(journal);
+      closure.snapshot.evaluation_time = '2026-09-10T10:05:00.000Z';
+      const expired = applyExecutionOperation(
+        started.journal,
+        closure,
+        operationFor(started.journal, closure.actor, { kind: 'expire', ...target }),
+      );
+      expect(expired.ok && expired.value.result.code).toBe('CLAIM_EXPIRED');
+      if (expired.ok)
+        expect(expired.value.projection.claims[0]?.binding).toEqual(journal.execution.action_request.request.binding);
     },
   );
 });
@@ -644,6 +687,67 @@ describe('Published execution contract corpus', () => {
 });
 
 describe('Durable conflicts and bounded recovery', () => {
+  it.each([false, true])(
+    'records request identity observations despite stale operation preconditions (changed=%s)',
+    async (changed) => {
+      const { journal, context } = await initialExecution();
+      const request = structuredClone(journal.execution.action_request);
+      if (changed)
+        request.request.inputs.push({
+          role: 'release_manifest',
+          artifact: { id: 'other_input', digest: executionDigest('other input') },
+        });
+      request.request_digest = executionDigest(request.request);
+      const operation = operationFor(journal, context.actor, { kind: 'register_request', request }, 'registration');
+      const acquired = operate(journal, grant);
+      const result = applyExecutionOperation(acquired.journal, context, operation);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.result.code).toBe(changed ? 'IDENTITY_CONFLICT' : 'REQUEST_ALREADY_REGISTERED');
+      expect(result.value.expected_execution_digest).toBe(acquired.journal.execution_digest);
+      expect(result.value.projection.claims).toEqual(acquired.projection.claims);
+      expect(result.value.projection.attempts).toEqual(acquired.projection.attempts);
+      expect(result.value.journal.execution.action_request).toEqual(journal.execution.action_request);
+      expect(replayExecutionJournal(result.value.journal)).toEqual({ ok: true, value: result.value.projection });
+    },
+  );
+  it('retains observation identities from the initial context', async () => {
+    const fixture = await initialExecution();
+    const original = structuredClone(recoveryFor(fixture.journal, 'executor_stopped'));
+    original.evidence.claim.id = 'earlier_claim';
+    original.evidence.observed_at = '2026-09-10T09:59:00.000Z';
+    original.evidence_digest = executionDigest(original.evidence);
+    fixture.context.recovery_evidence = [original];
+    const created = createExecutionJournal(fixture.context, fixture.request, fixture.policy);
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const journal = created.value;
+    const started = operate(operate(journal, grant).journal, { kind: 'start', ...target });
+    const expired = operate(
+      started.journal,
+      { kind: 'expire', ...target },
+      controllerActor(journal),
+      '2026-09-10T10:05:00.000Z',
+    );
+    const evidence = [recoveryFor(journal, 'executor_stopped')];
+    const result = operate(
+      expired.journal,
+      {
+        kind: 'reconcile',
+        ...target,
+        disposition: 'abandon',
+        evidence_ids: ['executor_stopped'],
+        reason: 'Stop verified',
+      },
+      humanActor(journal),
+      '2026-09-10T10:06:00.000Z',
+      evidence,
+    );
+    expect(result.result.code).toBe('IDENTITY_CONFLICT');
+    expect(result.projection.conflicts[0]?.namespace).toBe('recovery_evidence');
+    expect(result.projection.attempts).toEqual(expired.projection.attempts);
+  });
+
   it.each(['governed-pr', 'release-to-publish'] as const)(
     'binds receipt and recovery results to the original %s subject identity',
     async (profile) => {
@@ -827,6 +931,19 @@ describe('Durable conflicts and bounded recovery', () => {
       '2026-09-10T10:06:00.000Z',
     );
     const snapshot = { ...context.snapshot, evaluation_time: '2026-09-10T10:06:00.000Z' };
+    const whileActive = projectControllerExecution(replaced.journal, snapshot);
+    expect(whileActive.ok && whileActive.value.execution.status).toBe('in_flight');
+    expect(replaced.projection.attempts[0]?.status).toBe('unknown_outcome');
+    const invalidated = operate(
+      cancelled.journal,
+      { kind: 'invalidate', reason: 'integrity_failure' },
+      controllerActor(journal),
+      snapshot.evaluation_time,
+    );
+    const afterInvalidation = projectControllerExecution(invalidated.journal, snapshot);
+    expect(afterInvalidation.ok && afterInvalidation.value.execution.status).toBe('reconciliation_required');
+    if (afterInvalidation.ok && afterInvalidation.value.execution.status === 'reconciliation_required')
+      expect(afterInvalidation.value.execution.attempt_id).toBe('attempt_a');
     const stopped = recoveryFor(journal, 'executor_stopped');
     const abandoned = operate(
       replaced.journal,
