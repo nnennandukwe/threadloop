@@ -244,7 +244,9 @@ export function projectControllerExecution(
         attempt: { id: attempt.id, status: attempt.status },
       };
   } else {
-    if (unresolved)
+    if (!validateRequestInSnapshot(input, request, 'in_flight').ok)
+        execution = blocked('conflict', unresolved ?? attempt);
+      else if (unresolved)
       execution = blocked(state.request_status === 'cancelled' ? 'cancelled' : 'unknown_outcome', unresolved);
   }
   return { ok: true, value: { execution, invalidated_claims: invalidated, existing_requests: existing } };
