@@ -3,48 +3,27 @@
   "type": "object",
   "properties": {
     "id": {
-      "$ref": "#/$defs/__schema0"
+      "$ref": "#/$defs/NonEmptyText"
     },
     "digest": {
-      "$ref": "#/$defs/__schema1"
+      "$ref": "#/$defs/Sha256Digest"
     },
     "rules": {
       "type": "object",
       "properties": {
         "request": {
-          "type": "object",
-          "properties": {
-            "idempotency_key": {
-              "$ref": "#/$defs/__schema1"
-            },
-            "request_digest": {
-              "$ref": "#/$defs/__schema1"
-            }
-          },
-          "required": ["idempotency_key", "request_digest"],
-          "additionalProperties": false
+          "$ref": "#/$defs/RequestReference"
         },
         "workflow_policy": {
-          "type": "object",
-          "properties": {
-            "id": {
-              "$ref": "#/$defs/__schema0"
-            },
-            "digest": {
-              "$ref": "#/$defs/__schema1"
-            }
-          },
-          "required": ["id", "digest"],
-          "additionalProperties": false
+          "$ref": "#/$defs/Identity"
         },
         "retry_safety": {
           "type": "string",
           "enum": ["reconciliation_required", "repeatable_after_stop", "repeatable_with_overlap"]
         },
         "max_attempts": {
-          "type": "integer",
           "minimum": 1,
-          "maximum": 9007199254740991
+          "$ref": "#/$defs/SafeCounter"
         }
       },
       "required": ["request", "workflow_policy", "retry_safety", "max_attempts"],
@@ -54,13 +33,44 @@
   "required": ["id", "digest", "rules"],
   "additionalProperties": false,
   "$defs": {
-    "__schema0": {
+    "NonEmptyText": {
       "type": "string",
       "minLength": 1
     },
-    "__schema1": {
+    "Sha256Digest": {
       "type": "string",
       "pattern": "^[a-f0-9]{64}$"
+    },
+    "RequestReference": {
+      "type": "object",
+      "properties": {
+        "idempotency_key": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "request_digest": {
+          "$ref": "#/$defs/Sha256Digest"
+        }
+      },
+      "required": ["idempotency_key", "request_digest"],
+      "additionalProperties": false
+    },
+    "Identity": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/NonEmptyText"
+        },
+        "digest": {
+          "$ref": "#/$defs/Sha256Digest"
+        }
+      },
+      "required": ["id", "digest"],
+      "additionalProperties": false
+    },
+    "SafeCounter": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
     }
   },
   "$id": "https://github.com/nnennandukwe/threadloop/contracts/execution/0.1/execution-policy"

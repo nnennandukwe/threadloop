@@ -170,6 +170,28 @@ export type AttemptReceipt = z.infer<typeof attemptReceiptSchema>;
 export type RecoveryEvidence = z.infer<typeof recoveryEvidenceSchema>;
 
 export function publishedExecutionSchemas() {
+  const metadata = z.registry<{ id: string }>();
+  for (const [id, schema] of Object.entries({
+    NonEmptyText: text,
+    Sha256Digest: digest,
+    SafeCounter: counter,
+    AuthorityTime: timestamp,
+    Identity: identity,
+    RequestReference: requestReference,
+    RequestBinding: binding,
+    Subject: subjectSchema,
+    ClaimReference: claimReference,
+    Executor: executor,
+    Actor: actor,
+    ActionRequest: actionRequestSchema,
+    ControllerInput: controllerInputSchema,
+    ExecutionPolicy: executionPolicySchema,
+    AttemptReceipt: attemptReceiptSchema,
+    RecoveryEvidence: recoveryEvidenceSchema,
+    ExecutionContext: executionContextSchema,
+    ExecutionOperation: executionOperationSchema,
+  }))
+    metadata.add(schema, { id });
   return Object.fromEntries(
     Object.entries({
       'execution-journal': executionJournalSchema,
@@ -182,7 +204,7 @@ export function publishedExecutionSchemas() {
     }).map(([name, schema]) => [
       name,
       {
-        ...z.toJSONSchema(schema, { target: 'draft-2020-12', reused: 'ref' }),
+        ...z.toJSONSchema(schema, { target: 'draft-2020-12', metadata, reused: 'inline' }),
         $id: `https://github.com/nnennandukwe/threadloop/contracts/execution/0.1/${name}`,
       },
     ]),

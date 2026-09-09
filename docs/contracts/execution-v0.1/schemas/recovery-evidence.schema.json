@@ -10,104 +10,37 @@
           "const": "0.1"
         },
         "id": {
-          "$ref": "#/$defs/__schema0"
+          "$ref": "#/$defs/NonEmptyText"
         },
         "request": {
-          "type": "object",
-          "properties": {
-            "idempotency_key": {
-              "$ref": "#/$defs/__schema1"
-            },
-            "request_digest": {
-              "$ref": "#/$defs/__schema1"
-            }
-          },
-          "required": ["idempotency_key", "request_digest"],
-          "additionalProperties": false
+          "$ref": "#/$defs/RequestReference"
         },
         "binding": {
-          "type": "object",
-          "properties": {
-            "workflow_run_id": {
-              "$ref": "#/$defs/__schema2"
-            },
-            "graph_schema_version": {
-              "type": "string",
-              "const": "0.1"
-            },
-            "graph_digest": {
-              "$ref": "#/$defs/__schema3"
-            },
-            "source_state": {
-              "type": "string",
-              "pattern": "^[a-z][a-z0-9_]{0,63}$"
-            },
-            "state_version": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 9007199254740991
-            },
-            "subject": {
-              "$ref": "#/$defs/__schema4"
-            }
-          },
-          "required": [
-            "workflow_run_id",
-            "graph_schema_version",
-            "graph_digest",
-            "source_state",
-            "state_version",
-            "subject"
-          ],
-          "additionalProperties": false
+          "$ref": "#/$defs/RequestBinding"
         },
         "execution_policy": {
-          "$ref": "#/$defs/__schema5"
+          "$ref": "#/$defs/Identity"
         },
         "claim": {
-          "type": "object",
-          "properties": {
-            "id": {
-              "$ref": "#/$defs/__schema0"
-            },
-            "version": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 9007199254740991
-            }
-          },
-          "required": ["id", "version"],
-          "additionalProperties": false
+          "$ref": "#/$defs/ClaimReference"
         },
         "attempt_id": {
-          "$ref": "#/$defs/__schema0"
+          "$ref": "#/$defs/NonEmptyText"
         },
         "executor": {
-          "type": "object",
-          "properties": {
-            "id": {
-              "$ref": "#/$defs/__schema0"
-            },
-            "incarnation": {
-              "$ref": "#/$defs/__schema0"
-            }
-          },
-          "required": ["id", "incarnation"],
-          "additionalProperties": false
+          "$ref": "#/$defs/Executor"
         },
         "kind": {
           "type": "string",
           "enum": ["executor_stopped", "effect_occurred", "no_effect"]
         },
         "observed_at": {
-          "type": "string",
-          "format": "date-time",
-          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+          "$ref": "#/$defs/AuthorityTime"
         },
         "resulting_subject": {
           "anyOf": [
             {
-              "$ref": "#/$defs/__schema4"
+              "$ref": "#/$defs/Subject"
             },
             {
               "type": "null"
@@ -115,10 +48,10 @@
           ]
         },
         "verification_policy": {
-          "$ref": "#/$defs/__schema5"
+          "$ref": "#/$defs/Identity"
         },
         "acceptance": {
-          "$ref": "#/$defs/__schema5"
+          "$ref": "#/$defs/Identity"
         }
       },
       "required": [
@@ -139,29 +72,72 @@
       "additionalProperties": false
     },
     "evidence_digest": {
-      "$ref": "#/$defs/__schema1"
+      "$ref": "#/$defs/Sha256Digest"
     }
   },
   "required": ["evidence", "evidence_digest"],
   "additionalProperties": false,
   "$defs": {
-    "__schema0": {
+    "NonEmptyText": {
       "type": "string",
       "minLength": 1
     },
-    "__schema1": {
+    "RequestReference": {
+      "type": "object",
+      "properties": {
+        "idempotency_key": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "request_digest": {
+          "$ref": "#/$defs/Sha256Digest"
+        }
+      },
+      "required": ["idempotency_key", "request_digest"],
+      "additionalProperties": false
+    },
+    "Sha256Digest": {
       "type": "string",
       "pattern": "^[a-f0-9]{64}$"
     },
-    "__schema2": {
-      "type": "string",
-      "minLength": 1
+    "RequestBinding": {
+      "type": "object",
+      "properties": {
+        "workflow_run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "graph_schema_version": {
+          "type": "string",
+          "const": "0.1"
+        },
+        "graph_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "source_state": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "state_version": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "subject": {
+          "$ref": "#/$defs/Subject"
+        }
+      },
+      "required": [
+        "workflow_run_id",
+        "graph_schema_version",
+        "graph_digest",
+        "source_state",
+        "state_version",
+        "subject"
+      ],
+      "additionalProperties": false
     },
-    "__schema3": {
-      "type": "string",
-      "pattern": "^[a-f0-9]{64}$"
-    },
-    "__schema4": {
+    "Subject": {
       "oneOf": [
         {
           "type": "object",
@@ -171,13 +147,16 @@
               "const": "repository"
             },
             "repository_id": {
-              "$ref": "#/$defs/__schema2"
+              "type": "string",
+              "minLength": 1
             },
             "revision": {
-              "$ref": "#/$defs/__schema2"
+              "type": "string",
+              "minLength": 1
             },
             "content_digest": {
-              "$ref": "#/$defs/__schema3"
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
             }
           },
           "required": ["kind", "repository_id", "revision", "content_digest"],
@@ -191,10 +170,12 @@
               "const": "artifact"
             },
             "artifact_id": {
-              "$ref": "#/$defs/__schema2"
+              "type": "string",
+              "minLength": 1
             },
             "content_digest": {
-              "$ref": "#/$defs/__schema3"
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
             }
           },
           "required": ["kind", "artifact_id", "content_digest"],
@@ -202,18 +183,55 @@
         }
       ]
     },
-    "__schema5": {
+    "Identity": {
       "type": "object",
       "properties": {
         "id": {
-          "$ref": "#/$defs/__schema0"
+          "$ref": "#/$defs/NonEmptyText"
         },
         "digest": {
-          "$ref": "#/$defs/__schema1"
+          "$ref": "#/$defs/Sha256Digest"
         }
       },
       "required": ["id", "digest"],
       "additionalProperties": false
+    },
+    "ClaimReference": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/NonEmptyText"
+        },
+        "version": {
+          "minimum": 1,
+          "$ref": "#/$defs/SafeCounter"
+        }
+      },
+      "required": ["id", "version"],
+      "additionalProperties": false
+    },
+    "SafeCounter": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "Executor": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/NonEmptyText"
+        },
+        "incarnation": {
+          "$ref": "#/$defs/NonEmptyText"
+        }
+      },
+      "required": ["id", "incarnation"],
+      "additionalProperties": false
+    },
+    "AuthorityTime": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
     }
   },
   "$id": "https://github.com/nnennandukwe/threadloop/contracts/execution/0.1/recovery-evidence"

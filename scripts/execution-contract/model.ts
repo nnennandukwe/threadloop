@@ -320,7 +320,7 @@ function step(
     ? executionDigest([collision.namespace, collision.identity, collision.original_digest, collision.incoming_digest])
     : null;
   const priorConflict = state.conflicts.find((record) => record.id === conflictId);
-  if (priorConflict) return { ok: true, value: { result: priorConflict.result, replayed: true } };
+  if (priorConflict && known) return { ok: true, value: { result: priorConflict.result, replayed: true } };
   if (time.value < state.evaluated_at) return invalid('TIME_REVERSED', 'Authority time cannot move backwards.');
   state.revision += 1;
   state.evaluated_at = time.value;
@@ -444,12 +444,16 @@ function execute(
           );
   }
   if (command.kind === 'acquire' || command.kind === 'replace') {
+    if (context.actor.kind !== 'executor' || !same(context.actor.executor, command.executor))
+      return fail('EXECUTOR_MISMATCH');
     const previous = journal.execution.entries.find((entry) => {
       const prior = entry.operation.command;
       return (
         (prior.kind === 'acquire' || prior.kind === 'replace') &&
         prior.claim_id === command.claim_id &&
-        state.operations.some((record) => record.id === entry.operation.id && record.result.code === 'CLAIM_ACQUIRED')
+        state.operations.some(
+          (record) => record.id === entry.operation.id && record.digest === executionDigest(entry.operation),
+        )
       );
     });
     if (previous)
@@ -467,7 +471,9 @@ function execute(
       return (
         (prior.kind === 'acquire' || prior.kind === 'replace') &&
         prior.attempt_id === command.attempt_id &&
-        state.operations.some((record) => record.id === entry.operation.id && record.result.code === 'CLAIM_ACQUIRED')
+        state.operations.some(
+          (record) => record.id === entry.operation.id && record.digest === executionDigest(entry.operation),
+        )
       );
     });
     if (attemptGrant)
@@ -613,8 +619,6 @@ function acquire(
   const command = operation.command;
   if (command.kind !== 'acquire' && command.kind !== 'replace') throw new Error('Invalid grant dispatch');
   const fail = (code: string) => outcome(code, state.revision);
-  if (context.actor.kind !== 'executor' || !same(context.actor.executor, command.executor))
-    return fail('EXECUTOR_MISMATCH');
   if (state.claims.some((claim) => claim.status === 'active')) return fail('CLAIM_HELD');
   const previous = state.claims.at(-1);
   if ((command.kind === 'acquire') !== (previous === undefined)) return fail('REPLACEMENT_REQUIRED');
@@ -720,6 +724,7 @@ function submit(
     receipt.finished_at < attempt.started_at ||
     receipt.finished_at > now ||
     !realTime(receipt.finished_at) ||
+    !sameSubjectIdentity(receipt.resulting_subject, receipt.binding.subject) ||
     new Set(receipt.evidence.map((item) => item.id)).size !== receipt.evidence.length ||
     (receipt.status === 'succeeded' && (receipt.effect === 'unknown' || receipt.evidence.length === 0)) ||
     (receipt.effect === 'none' &&
@@ -773,6 +778,7 @@ function recoveryFacts(
       fact.observed_at < (claim.closed_at ?? claim.acquired_at) ||
       fact.observed_at > now ||
       !realTime(fact.observed_at) ||
+      !sameSubjectIdentity(fact.resulting_subject, claim.binding.subject) ||
       !context.snapshot.policy.rules.evidence_policies.some((policy) => same(policy, fact.verification_policy)) ||
       (fact.kind !== 'effect_occurred' && fact.resulting_subject !== null)
     )
@@ -783,6 +789,17 @@ function recoveryFacts(
     facts.push(fact);
   }
   return { ok: true, value: facts };
+}
+
+function sameSubjectIdentity(
+  result: ControllerInput['binding']['subject'] | null,
+  original: ControllerInput['binding']['subject'],
+): boolean {
+  if (result === null) return true;
+  if (result.kind === 'repository' && original.kind === 'repository')
+    return result.repository_id === original.repository_id;
+  if (result.kind === 'artifact' && original.kind === 'artifact') return result.artifact_id === original.artifact_id;
+  return false;
 }
 
 function reconcile(

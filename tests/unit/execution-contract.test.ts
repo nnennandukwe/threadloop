@@ -83,6 +83,27 @@ describe('Execution admission', () => {
 });
 
 describe('Execution Claim identity and serialization', () => {
+  it.each(['claim', 'attempt'] as const)(
+    'retains rejected grant %s identities instead of reassigning them',
+    async (identity) => {
+      const { journal } = await initialExecution();
+      const first = operate(journal, grant);
+      const proposed = { ...grant, claim_id: 'claim_b', attempt_id: 'attempt_b' };
+      const rejected = operate(first.journal, proposed);
+      expect(rejected.result.code).toBe('CLAIM_HELD');
+      const duplicate = operate(rejected.journal, proposed);
+      expect(duplicate.result).toEqual(rejected.result);
+      const altered =
+        identity === 'claim'
+          ? { ...proposed, valid_until: '2026-09-10T10:07:00.000Z' }
+          : { ...proposed, claim_id: 'claim_c' };
+      const conflicted = operate(duplicate.journal, altered);
+      expect(conflicted.result.code).toBe('IDENTITY_CONFLICT');
+      expect(conflicted.projection.conflicts[0]?.namespace).toBe(identity);
+      expect(conflicted.projection.claims).toEqual(first.projection.claims);
+      expect(conflicted.projection.attempts).toEqual(first.projection.attempts);
+    },
+  );
   it('grants one pending Attempt and replays a lost grant acknowledgment without another append', async () => {
     const { journal } = await initialExecution();
     const first = operate(journal, grant);
@@ -112,7 +133,11 @@ describe('Execution Claim identity and serialization', () => {
     if (!result.ok) return;
     expect(result.value.result.code).toBe('EXECUTION_VERSION_CONFLICT');
     const retry = operate(result.value.journal, competing, actor);
-    expect(retry.result.code).toBe('CLAIM_HELD');
+    expect(retry.result).toEqual(result.value.result);
+    const fresh = operate(retry.journal, { ...competing, claim_id: 'fresh_claim', attempt_id: 'fresh_attempt' }, actor);
+    expect(fresh.result.code).toBe('CLAIM_HELD');
+    const changed = operate(retry.journal, { ...competing, valid_until: '2026-09-10T10:07:00.000Z' }, actor);
+    expect(changed.result.code).toBe('IDENTITY_CONFLICT');
     expect(retry.projection.claims).toEqual(first.projection.claims);
     expect(retry.projection.attempts).toEqual(first.projection.attempts);
   });
@@ -490,8 +515,8 @@ describe('Published execution contract corpus', () => {
             command = {
               kind: 'replace',
               previous_claim: target.claim,
-              claim_id: 'claim_b',
-              attempt_id: 'attempt_b',
+              claim_id: name === 'replace_with_stop' ? 'claim_c' : 'claim_b',
+              attempt_id: name === 'replace_with_stop' ? 'attempt_c' : 'attempt_b',
               executor: executorB,
               valid_until: '2026-09-10T10:10:00.000Z',
               evidence_ids: evidence.map((item) => item.evidence.id),
@@ -619,6 +644,99 @@ describe('Published execution contract corpus', () => {
 });
 
 describe('Durable conflicts and bounded recovery', () => {
+  it.each(['governed-pr', 'release-to-publish'] as const)(
+    'binds receipt and recovery results to the original %s subject identity',
+    async (profile) => {
+      const { journal } = await initialExecution('reconciliation_required', profile);
+      const started = operate(operate(journal, grant).journal, { kind: 'start', ...target });
+      const original = journal.execution.action_request.request.binding.subject;
+      const foreign =
+        original.kind === 'repository'
+          ? { ...original, repository_id: 'foreign_repository' }
+          : { ...original, artifact_id: 'foreign_artifact' };
+      const changedKind =
+        original.kind === 'repository'
+          ? { kind: 'artifact' as const, artifact_id: 'foreign_artifact', content_digest: executionDigest('foreign') }
+          : {
+              kind: 'repository' as const,
+              repository_id: 'foreign_repository',
+              revision: 'other',
+              content_digest: executionDigest('foreign'),
+            };
+      const successor = { ...original, content_digest: executionDigest('changed content') };
+      const expired = operate(
+        started.journal,
+        { kind: 'expire', ...target },
+        controllerActor(journal),
+        '2026-09-10T10:05:00.000Z',
+      );
+      for (const subject of [foreign, changedKind, successor]) {
+        const valid = subject === successor;
+        const reported = operate(
+          started.journal,
+          {
+            kind: 'submit_receipt',
+            receipt: receiptFor(journal, { effect: 'occurred', resulting_subject: subject }),
+          },
+          undefined,
+          '2026-09-10T10:01:00.000Z',
+        );
+        expect(reported.result.code).toBe(valid ? 'RECEIPT_ACCEPTED' : 'INVALID_ATTEMPT_OUTCOME');
+        if (!valid) expect(reported.projection.attempts).toEqual(started.projection.attempts);
+        const observation = structuredClone(recoveryFor(journal, 'effect_occurred'));
+        observation.evidence.resulting_subject = subject;
+        observation.evidence_digest = executionDigest(observation.evidence);
+        const evidence = [recoveryFor(journal, 'executor_stopped'), observation];
+        const recovered = operate(
+          expired.journal,
+          {
+            kind: 'reconcile',
+            ...target,
+            disposition: 'effect_confirmed',
+            evidence_ids: evidence.map((item) => item.evidence.id),
+            reason: 'Verify resulting subject',
+          },
+          humanActor(journal),
+          '2026-09-10T10:06:00.000Z',
+          evidence,
+        );
+        expect(recovered.result.code).toBe(valid ? 'ATTEMPT_RECONCILED' : 'RECOVERY_EVIDENCE_MISMATCH');
+        expect(recovered.journal.execution.action_request.request.binding.subject).toEqual(original);
+        if (!valid) expect(recovered.projection.attempts).toEqual(expired.projection.attempts);
+      }
+    },
+  );
+
+  it.each(['succeeded', 'failed'] as const)(
+    'treats a %s no-effect receipt according to action outcome',
+    async (status) => {
+      const { journal } = await initialExecution();
+      const started = operate(operate(journal, grant).journal, { kind: 'start', ...target });
+      const reported = operate(
+        started.journal,
+        { kind: 'submit_receipt', receipt: receiptFor(journal, { status, effect: 'none' }) },
+        undefined,
+        '2026-09-10T10:01:00.000Z',
+      );
+      expect(reported.result.code).toBe('RECEIPT_ACCEPTED');
+      const replacement = operate(
+        reported.journal,
+        {
+          kind: 'replace',
+          previous_claim: target.claim,
+          claim_id: 'claim_b',
+          attempt_id: 'attempt_b',
+          executor: executorA,
+          valid_until: '2026-09-10T10:05:00.000Z',
+          evidence_ids: [],
+        },
+        undefined,
+        '2026-09-10T10:01:00.000Z',
+      );
+      expect(replacement.result.code).toBe(status === 'succeeded' ? 'REQUEST_CLOSED' : 'CLAIM_ACQUIRED');
+      expect(replacement.projection.request_status).toBe(status === 'succeeded' ? 'satisfied' : 'open');
+    },
+  );
   it('retains changed recovery observations even when the reconciliation operation is replayed exactly', async () => {
     const { journal } = await initialExecution();
     const started = operate(operate(journal, grant).journal, { kind: 'start', ...target });
@@ -655,6 +773,28 @@ describe('Durable conflicts and bounded recovery', () => {
     const repeated = applyExecutionOperation(conflicted.value.journal, changed, resolved.operation);
     expect(repeated.ok && repeated.value.replayed).toBe(true);
     if (repeated.ok) expect(repeated.value.journal).toEqual(conflicted.value.journal);
+    const delivery = operationFor(
+      conflicted.value.journal,
+      changed.actor,
+      resolved.operation.command,
+      'new_recovery_delivery',
+    );
+    const redelivered = applyExecutionOperation(conflicted.value.journal, changed, delivery);
+    expect(redelivered.ok).toBe(true);
+    if (!redelivered.ok) return;
+    expect(redelivered.value.replayed).toBe(false);
+    expect(redelivered.value.result).toEqual(conflicted.value.result);
+    expect(redelivered.value.projection.operations.at(-1)?.id).toBe(delivery.id);
+    expect(replayExecutionJournal(redelivered.value.journal)).toEqual({
+      ok: true,
+      value: redelivered.value.projection,
+    });
+    const collision = applyExecutionOperation(redelivered.value.journal, changed, {
+      ...delivery,
+      command: { kind: 'cancel', reason: 'Changed intent' },
+    });
+    expect(collision.ok && collision.value.result.code).toBe('IDENTITY_CONFLICT');
+    if (collision.ok) expect(collision.value.projection.conflicts.at(-1)?.namespace).toBe('operation');
   });
 
   it('keeps replaced execution uncertainty visible when its pending replacement is cancelled', async () => {
@@ -754,7 +894,13 @@ describe('Durable conflicts and bounded recovery', () => {
     expect(resolved.result.code).toBe('CONFLICT_RESOLVED');
     expect(resolved.journal.execution.action_request).toEqual(journal.execution.action_request);
     expect(resolved.projection.conflicts[0]?.incoming_digest).toBe(proposal.request_digest);
-    expect(operate(resolved.journal, grant).result.code).toBe('CLAIM_ACQUIRED');
+    expect(
+      operate(resolved.journal, {
+        ...grant,
+        claim_id: 'claim_after_resolution',
+        attempt_id: 'attempt_after_resolution',
+      }).result.code,
+    ).toBe('CLAIM_ACQUIRED');
   });
 
   it('does not clear an unknown effect when the human resolves only an identity conflict', async () => {

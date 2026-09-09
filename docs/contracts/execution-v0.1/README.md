@@ -57,7 +57,10 @@ Every operation, claim, Attempt, receipt, and recovery observation retains:
 
 The original Action Request retains its action, capability, actor, transition, guards, inputs, constraints, required
 evidence, Workflow policy, and authority identities. Human Action Requests cannot enter this model. A resulting subject
-is additional evidence: it cannot overwrite the original binding or make an earlier approval current for new content.
+is additional evidence: it cannot overwrite the original binding or make an earlier approval current for new content. A
+non-null resulting subject is a successor of that bound subject: its kind and repository/artifact identity must match.
+Changed content or repository revision is permitted for an occurred effect; a no-effect receipt must retain the complete
+original subject. Other output artifacts belong in evidence references and #107's output protocol.
 
 An executor incarnation identifies one bounded process/run identity. A restarted process does not silently inherit the
 old incarnation's permission to repeat work. Delivery identities confer no authority. ThreadLoop admits the request and
@@ -78,6 +81,12 @@ admission obligation; evaluating two independent copies in memory cannot enforce
 
 Referenced recovery observations are checked for identity collisions before returning an earlier operation result.
 Replaying an unchanged reconciliation operation cannot conceal changed observation content under a reused identity.
+
+Rejected grant proposals also reserve their proposed claim and Attempt identities. Exact redelivery returns the original
+rejection; changing a deadline, executor, or recovery evidence under those identities produces a conflict. After
+refreshing a stale execution precondition or adding missing evidence, submit a new operation with fresh proposed claim
+and Attempt identities. This does not consume Attempt capacity until acquisition is accepted. Conflicting reuse of an
+operation identity is retained as an operation conflict, without admitting its alternate grant identities.
 
 `register_request` tests request-registry reuse against an existing journal. It requires a complete valid candidate,
 never just an alleged digest. Exact content reports `REQUEST_ALREADY_REGISTERED`; different valid content under the same
@@ -106,7 +115,10 @@ start was accepted, not that a process is known alive. Attempt terminal statuses
 `interrupted`, `cancelled`, and `unknown_outcome`. Effect knowledge is separately `not_started`, `none`, `occurred`, or
 `unknown`. An interrupted process does not imply `none`. A raw terminal receipt with `effect: unknown` stays intact
 while the Attempt projects `unknown_outcome`; a successful receipt cannot claim an unknown effect or omit all supporting
-evidence references. One accepted terminal receipt closes the Attempt; another identity cannot reopen it.
+evidence references. One accepted terminal receipt closes the Attempt; another identity cannot reopen it. Successful
+read-only work may correctly report `effect: none`; the request is satisfied because the bounded action succeeded.
+Effect knowledge describes external effects, independently of action success. A failed or interrupted no-effect outcome
+can instead leave an open request eligible for replacement.
 
 Every new state-changing operation carries `expected_revision` and `expected_execution_digest`. Revision counts retained
 journal entries, including rejections/conflicts; it does not change Workflow Run state version or repair budgets. Claim
@@ -167,8 +179,8 @@ more. There is no inference that a test command, capability name, or HTTP method
 All cases still require closure/fencing of the old claim, current request authority, new identities/generation, and
 remaining Attempt capacity. Only policy explicitly safe under overlapping execution permits overlap. Before admitted
 start, replacement needs no external no-effect observation because compliant executors cannot act before start. An
-accepted terminal no-effect receipt or human-confirmed no-effect outcome also permits retry; it cannot override request
-cancellation, invalidation, or exhaustion.
+accepted unsuccessful terminal no-effect receipt or human-confirmed no-effect outcome also permits retry; it cannot
+override request satisfaction, cancellation, invalidation, or exhaustion. Successful no-effect work is not retried.
 
 Recovery observations are separate, already-admitted records for `executor_stopped`, `effect_occurred`, or `no_effect`.
 They bind the original request, claim, Attempt, executor incarnation, and subject; include their own digest, accepted
@@ -177,16 +189,17 @@ than evaluation time. A late executor receipt cannot be relabeled as one of thes
 acceptance adapter must verify actual provenance, artifacts, effect identity/destination, and the observer's authority
 before use. The core does not define provider-specific queries or #107's receipt normalization.
 
-Human reconciliation requires `executor_stopped` plus the corresponding effect observation. Contradictory observations,
-missing stop proof, changed bindings, or bad hashes do not clear uncertainty. For the latest Attempt, `effect_confirmed`
-closes the request against repetition and retains evidence; it does not manufacture a successful executor receipt or
-satisfy lifecycle guards. `no_effect_confirmed` allows a separately acquired replacement if all other conditions hold.
-`abandon` requires stopped execution, cancels any active replacement, prevents another Attempt, and preserves the
-unresolved historical effect report. Abandonment is a human acceptance of an unresolved historical outcome, not proof of
-no effect. It cannot satisfy a proof or completion guard. Replaced Attempts retain their unresolved effects. Once active
-work closes, all unresolved generations remain visible until individually reconciled, including after cancellation of a
-replacement. Conflict resolution does not resolve unknown effects. There is no repeat-despite-unknown override for a
-non-repeatable action in v0.1.
+Human reconciliation requires `executor_stopped`. `effect_confirmed` additionally requires `effect_occurred`, and
+`no_effect_confirmed` additionally requires `no_effect`; `abandon` needs stop evidence alone. Contradictory
+observations, missing stop proof, changed bindings, or bad hashes do not clear uncertainty. For the latest Attempt,
+`effect_confirmed` closes the request against repetition and retains evidence; it does not manufacture a successful
+executor receipt or satisfy lifecycle guards. `no_effect_confirmed` allows a separately acquired replacement if all
+other conditions hold. `abandon` requires stopped execution, cancels any active replacement, prevents another Attempt,
+and preserves the unresolved historical effect report. Abandonment is a human acceptance of an unresolved historical
+outcome, not proof of no effect. It cannot satisfy a proof or completion guard. Replaced Attempts retain their
+unresolved effects. Once active work closes, all unresolved generations remain visible until individually reconciled,
+including after cancellation of a replacement. Conflict resolution does not resolve unknown effects. There is no
+repeat-despite-unknown override for a non-repeatable action in v0.1.
 
 ## Failure and recovery matrix
 
