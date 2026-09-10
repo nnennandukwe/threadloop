@@ -18,6 +18,10 @@ For the canonical SDLC graph vocabulary, see the
 [authority-model ADR](https://github.com/nnennandukwe/threadloop/blob/main/docs/adr/0001-sdlc-graph-authority-model.md)
 records the boundaries between ThreadLoop, agent harnesses, conformance systems, executors, and delivery infrastructure.
 
+The [executor interface and GAAP mapping v0.1](docs/contracts/executor-v0.1/README.md) specify the provider-neutral
+process contract with offline schemas and examples. Runtime process execution and authenticated receipt ingestion remain
+future work.
+
 ## Three layers: harness, loop, graph
 
 An agent system that touches production separates three concerns that are easy to conflate:

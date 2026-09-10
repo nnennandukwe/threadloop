@@ -7,3 +7,5 @@ node_modules
 package-lock.json
 # Intentionally invalid YAML is a parser rejection corpus.
 docs/contracts/workflow-graph-v0.1/fixtures/invalid/*.yaml
+# Exact upstream bytes are checksum-pinned; reformatting would invalidate provenance.
+docs/contracts/executor-v0.1/upstream/gaap/*.json
