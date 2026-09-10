@@ -385,6 +385,15 @@ installation. See the [contribution guide](CONTRIBUTING.md) for hook behavior an
 - [Audit export and OpenTelemetry](docs/observability.md)
 - [Contribution guide](CONTRIBUTING.md)
 
+## Shared research
+
+The
+[harness engineering review](https://github.com/nnennandukwe/governed-agent-autonomy-patterns/blob/84fb12dae4fed69c684e59eb52c9272b14acac30/docs/research/2026-09-10-harness-engineering-review.md)
+is the shared research snapshot dated September 10, 2026, for GAAP, ThreadLoop, and RunInvariant. The
+[adoption decision tracker](https://github.com/nnennandukwe/governed-agent-autonomy-patterns/issues/29) records
+candidate owners, prerequisites, next experiments, and implementation links. Candidates remain research proposals until
+explicitly accepted into a repository roadmap.
+
 ## License
 
 Licensed under the [Apache License, Version 2.0](LICENSE). See [NOTICE](NOTICE) for attribution.
