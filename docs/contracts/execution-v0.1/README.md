@@ -115,7 +115,8 @@ receipt submission, registration, and controller projection still reject a diffe
 An admitted new policy can revoke old actors and authorize current actors to cancel or invalidate an old-bound request.
 An executor-added authority, admission record, acceptance identity, or modified command changes the admission digest and
 cannot inherit a prior approval. This defines and enforces the development trust seam; the production
-identity/provenance provider and underlying artifact verification belong to #107 and later runtime work.
+identity/provenance provider and underlying artifact verification are specified by #107 and remain future runtime work
+in #111.
 
 Request identities are globally unique logical slots under #105. Within a slot, operation, receipt, receipt-admission,
 claim, Attempt, and recovery-evidence identities cannot be reassigned. Runtime claim identities must also be unique
@@ -188,7 +189,7 @@ subject/effect scope, and the asserted outcome/effect knowledge before issuing t
 validator checks the bound record only inside an independently admitted operation context. A fabricated record changes
 that context's admission digest and fails the authority lookup, even when all record hashes are valid. Hashes and
 acceptance identities alone are not authentication. [#107](../executor-v0.1/README.md) specifies the underlying
-artifact/provenance verification obligations; #111 implements runtime verification before the authority approves an
+artifact/provenance verification obligations; #111 will implement runtime verification before the authority approves an
 admission digest. The test fixture helper populates a synthetic admission store; separate trust-boundary tests use the
 raw public API and a protected test allowlist to reject executor modifications.
 

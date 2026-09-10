@@ -117,6 +117,8 @@ export const executorResultSchema = z.strictObject({
   }),
   result_digest: digest,
 });
+const evidenceFamily = action.shape.evidence_requirements.element.shape.family;
+const evidenceFamilies = [...evidenceFamily.options[0].options, evidenceFamily.options[1].value];
 export const gaapMappingPolicySchema = z.strictObject({
   policy: z.strictObject({
     schema_version: z.literal('threadloop.gaap-mapping/0.1'),
@@ -127,11 +129,21 @@ export const gaapMappingPolicySchema = z.strictObject({
     evidence_mapping: z
       .array(
         z.strictObject({
-          family: action.shape.evidence_requirements.element.shape.family,
+          family: evidenceFamily,
           evidence_types: uniqueArray(evidenceTypeSchema),
         }),
       )
-      .min(1),
+      .min(1)
+      .refine((entries) => new Set(entries.map((entry) => entry.family)).size === entries.length, {
+        message: 'Evidence mapping families must be unique.',
+      })
+      .meta({
+        allOf: evidenceFamilies.map((family) => ({
+          contains: { type: 'object', properties: { family: { const: family } }, required: ['family'] },
+          minContains: 0,
+          maxContains: 1,
+        })),
+      }),
   }),
   policy_digest: digest,
 });

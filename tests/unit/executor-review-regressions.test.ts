@@ -9,9 +9,11 @@ import {
   type ExecutorResult,
   type GaapMappingPolicy,
 } from '../../scripts/executor-contract/contracts.js';
-import { mapGaapResult } from '../../scripts/executor-contract/gaap.js';
+import { buildGaapRequest, mapGaapResult } from '../../scripts/executor-contract/gaap.js';
 import { validateGaapReceipt, validateGaapRequest } from '../../scripts/executor-contract/gaap-validation.js';
 import type { GaapEvent, GaapReceipt, GaapRequest } from '../../scripts/executor-contract/gaap-types.js';
+import { executorFixture } from '../fixtures/executor-contract.js';
+import { operate } from '../fixtures/execution-contract.js';
 import { validateExecutorRequest, validateExecutorResult } from '../../scripts/executor-contract/validation.js';
 
 const root = new URL('../../docs/contracts/executor-v0.1/', import.meta.url);
@@ -44,6 +46,172 @@ async function nativeFixture() {
 }
 
 describe('Reproduced executor review boundaries', () => {
+  it.each(['null', 'custom', 'subclass'])('rejects %s array prototypes without executing inherited code', (kind) => {
+    const array: unknown[] = [1, 2];
+    let called = false;
+    class ArraySubclass extends Array<unknown> {}
+    const prototype =
+      kind === 'null'
+        ? null
+        : kind === 'subclass'
+          ? ArraySubclass.prototype
+          : (Object.create(Array.prototype) as object);
+    if (prototype)
+      Object.defineProperty(prototype, 'map', {
+        value: () => {
+          called = true;
+          throw new Error('Inherited map executed');
+        },
+      });
+    Object.setPrototypeOf(array, prototype);
+    expect(canonicalExecutorJson(array).ok).toBe(false);
+    expect(called).toBe(false);
+  });
+  it('rejects proxies before invoking object traps', () => {
+    let called = false;
+    const proxy = new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          called = true;
+          throw new Error('Proxy trap executed');
+        },
+      },
+    );
+    expect(canonicalExecutorJson(proxy).ok).toBe(false);
+    const revoked = Proxy.revocable([], {});
+    revoked.revoke();
+    expect(canonicalExecutorJson(revoked.proxy).ok).toBe(false);
+    expect(called).toBe(false);
+  });
+  it.each(['\n', '\r', '\r\n', '\u2028', '\u2029'])(
+    'rejects a digest ending in a line separator %j (existing regex behavior)',
+    async (suffix) => {
+      const { request } = await mappingFixture();
+      request.request.mapping_policy.digest += suffix;
+      request.request_digest = executionDigest(request.request);
+      const validate = new Ajv2020({ strict: true, validateFormats: false }).compile(
+        publishedExecutorSchemas()['executor-request']!,
+      );
+      expect(validate(request)).toBe(false);
+      expect(validateExecutorRequest(request).ok).toBe(false);
+    },
+  );
+  it('rejects duplicate mapping families even with different evidence types in schema and mapper', async () => {
+    const fixture = await mappingFixture();
+    fixture.mapping.policy.evidence_mapping.push({
+      ...fixture.mapping.policy.evidence_mapping[0]!,
+      evidence_types: ['artifact'],
+    });
+    fixture.mapping.policy_digest = executionDigest(fixture.mapping.policy);
+    fixture.request.request.mapping_policy.digest = fixture.mapping.policy_digest;
+    fixture.request.request_digest = executionDigest(fixture.request.request);
+    const validate = new Ajv2020({ strict: true, validateFormats: false }).compile(
+      publishedExecutorSchemas()['gaap-mapping-policy']!,
+    );
+    expect(validate(fixture.mapping)).toBe(false);
+    expect(buildGaapRequest(fixture.request, fixture.mapping).ok).toBe(false);
+  });
+  it.each(['nonterminal', 'approval', 'tool_execution', 'mutation', 'interruption'])(
+    'requires semantic checks beyond the immutable upstream schema: %s',
+    async (kind) => {
+      const { request } = await nativeFixture();
+      const receipt = await json<GaapReceipt>(
+        `upstream/gaap/${kind === 'interruption' ? 'interrupted' : 'completed'}.json`,
+      );
+      if (kind === 'nonterminal') receipt.body.terminal_status = 'executing';
+      for (const event of receipt.body.events) {
+        if (kind === 'approval' && event.event_type === 'approval_recorded')
+          event.approval.evidence.evidence_type = 'artifact';
+        if (
+          (kind === 'tool_execution' && event.event_type === 'tool_execution') ||
+          (kind === 'mutation' && event.event_type === 'mutation')
+        )
+          event.evidence.forEach((entry) => {
+            entry.evidence_type = 'command_output';
+          });
+        if (kind === 'interruption' && event.event_type === 'interruption') event.evidence.evidence_type = 'artifact';
+      }
+      reseal(receipt);
+      const schema = await json<object>('upstream/gaap/terminal-run-receipt.schema.json');
+      const validate = new Ajv2020({ strict: true, validateFormats: false }).compile(schema);
+      expect(validate(receipt)).toBe(true);
+      expect(validateGaapReceipt(receipt, request).ok).toBe(false);
+    },
+  );
+  it('rejects duplicate native approval identities', async () => {
+    const { request, receipt } = await nativeFixture();
+    const approval = receipt.body.events.find((event) => event.event_type === 'approval_recorded');
+    if (!approval || approval.event_type !== 'approval_recorded') throw new Error('Missing approval');
+    request.approval_context = [approval.approval, structuredClone(approval.approval)];
+    expect(validateGaapRequest(request).ok).toBe(false);
+  });
+  it('requires recorded approvals to target the subject current at that event', async () => {
+    const { request, receipt } = await nativeFixture();
+    const approval = receipt.body.events.find((event) => event.event_type === 'approval_recorded');
+    if (!approval || approval.event_type !== 'approval_recorded') throw new Error('Missing approval');
+    const later = structuredClone(approval);
+    later.approval.approval_id = 'later_approval';
+    later.approval.subject_digest = receipt.body.resulting_subject_digest;
+    receipt.body.events.splice(-1, 0, later);
+    expect(validateGaapReceipt(reseal(receipt), request).ok).toBe(true);
+    later.approval.subject_digest = 'sha256:' + '9'.repeat(64);
+    expect(validateGaapReceipt(reseal(receipt), request).ok).toBe(false);
+  });
+  it('invalidates a passing verification when the same subject later fails verification', async () => {
+    const { request, receipt } = await nativeFixture();
+    const index = receipt.body.events.findIndex((event) => event.event_type === 'verification');
+    const verification = receipt.body.events[index]!;
+    if (verification.event_type !== 'verification') throw new Error('Missing verification');
+    receipt.body.events.splice(index + 1, 0, { ...structuredClone(verification), verdict: 'FAIL' });
+    expect(validateGaapReceipt(reseal(receipt), request).ok).toBe(false);
+  });
+  it.each(['missing', 'same_actor', 'missing_evidence', 'later_failure', 'source_id', 'source_digest'])(
+    'rejects inconsistent direct success evidence: %s',
+    async (mutation) => {
+      const fixture = await mappingFixture();
+      const mapped = mapGaapResult(fixture.request, fixture.mapping, bytes(fixture.receipt), fixture.observation);
+      if (!mapped.ok) throw new Error(JSON.stringify(mapped));
+      const envelope = mapped.value;
+      const result = envelope.result;
+      if (mutation === 'missing') result.verification = [];
+      if (mutation === 'same_actor') result.verification[0]!.actor_id = fixture.request.request.executor.id;
+      if (mutation === 'missing_evidence')
+        result.verification[0]!.evidence = result.verification[0]!.evidence.filter(
+          (evidence) => evidence.evidence_type !== 'command_output',
+        );
+      if (mutation === 'later_failure')
+        result.verification.push({ ...structuredClone(result.verification[0]!), verdict: 'FAIL' });
+      if (mutation === 'source_id') result.source_receipt.id = 'another_receipt';
+      if (mutation === 'source_digest') result.source_receipt.digest = 'f'.repeat(64);
+      envelope.result_digest = executionDigest(result);
+      expect(validateExecutorResult(envelope, fixture.request).ok).toBe(false);
+    },
+  );
+  it('retains an unknown-effect changed-subject report solely for recovery', async () => {
+    const fixture = await mappingFixture();
+    const history = await executorFixture();
+    const mapped = mapGaapResult(fixture.request, fixture.mapping, bytes(fixture.receipt), fixture.observation);
+    if (!mapped.ok) throw new Error(JSON.stringify(mapped));
+    const envelope = mapped.value;
+    const receipt = envelope.result.attempt_receipt;
+    receipt.receipt.status = 'failed';
+    receipt.receipt.effect = 'unknown';
+    receipt.receipt.resulting_subject!.content_digest = 'f'.repeat(64);
+    envelope.result.reason.code = 'failed';
+    receipt.receipt_digest = executionDigest(receipt.receipt);
+    envelope.result_digest = executionDigest(envelope.result);
+    expect(validateExecutorResult(envelope, fixture.request).ok).toBe(true);
+    // The executor did not observe an attributable mutation. Synthetic admission still requires recovery.
+    const admitted = operate(
+      history.started.journal,
+      { kind: 'submit_receipt', receipt },
+      undefined,
+      '2026-09-10T10:01:00.000Z',
+    );
+    expect(admitted.projection.attempts.at(-1)?.status).toBe('unknown_outcome');
+  });
+
   it('rejects identical policy identities with different property insertion order', async () => {
     const { request } = await nativeFixture();
     const policy = request.policies[0]!;

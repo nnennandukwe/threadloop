@@ -70,9 +70,10 @@ graph, lifecycle state/version, subject, authorities, constraints, inputs, and e
 
 Parameters contain an exact subject locator, named/versioned/digested capability, task instructions and ordered
 constraints, exact supported policies, explicit resource budget, approval evidence, and independent-verification types.
-No policy, capability, budget, locator, approval, or evidence mapping is guessed. Array order is significant. Duplicate
-policies, approval IDs, or required evidence types are invalid. Empty approval context is explicit and grants nothing.
-Every approval binds the initial subject and uses approval evidence.
+Each evidence family has at most one mapping, enforced in both the published mapping schema and the mapper. No policy,
+capability, budget, locator, approval, or evidence mapping is guessed. Array order is significant. Duplicate policies,
+approval IDs, or required evidence types are invalid. Empty approval context is explicit and grants nothing. Every
+approval binds the initial subject and uses approval evidence.
 
 Published schemas express structural rules and full-value array uniqueness; cross-field hashes, approval identity
 uniqueness, and authoritative context still require the corresponding validation functions.
@@ -138,11 +139,16 @@ under their digest: summaries never replace the source ledger's decisions, plans
 chronology. Omitted optional upstream evidence locators become explicit `null` in the executor result; supplied locators
 are preserved.
 
-GAAP receipt types are checked against the pinned schema. The mapping verifies request/run/initial-subject digests,
-contiguous valid lifecycle transitions, matching terminal status/reason, effects in `executing`, verification in
-`verifying`, ordered allow/effect bindings, mutation chaining, current-subject completion verification, cumulative
-usage, and completion budget consistency. This checks reported consistency only. It does not verify artifacts,
-signatures, policy contents, actual tool execution, or independent actor identity.
+GAAP receipt types are checked against the pinned schema. Those immutable upstream schemas describe structural shapes;
+they deliberately retain broader enums and generic evidence references. The semantic validators additionally require
+terminal outcomes, approval evidence in approvals, and event-specific evidence categories. Schema-only validation is
+insufficient for a candidate, and no pinned upstream file is rewritten to incorporate these checks. The mapping verifies
+request/run/initial-subject digests, contiguous valid lifecycle transitions, matching terminal status/reason, effects in
+`executing`, verification in `verifying`, ordered allow/effect bindings, mutation chaining, current-subject completion
+verification, cumulative usage, and completion budget consistency. This checks reported consistency only. It does not
+verify artifacts, signatures, policy contents, actual tool execution, or independent actor identity. Recorded approvals
+must target the subject current at their event; a later failed verification of the current subject invalidates its
+earlier pass.
 
 | GAAP terminal outcome                    | Attempt candidate | Reason               |
 | ---------------------------------------- | ----------------- | -------------------- |
@@ -163,12 +169,18 @@ resume this Attempt; ThreadLoop must determine permitted recovery and a new Atte
 GAAP v0.1.0 has no terminal `cancelled`; the neutral executor contract preserves it for compatible producers, and the
 mapping never invents a GAAP cancellation receipt.
 
+A direct successful executor candidate also requires a latest-subject passing verification record with every requested
+evidence type and an actor ID different from the executor ID. The source receipt ID/digest must appear in the retained
+Attempt evidence. These are correlation checks, not authentication of identities or evidence.
+
 Usage consists of non-negative safe integers: cost in micros, elapsed milliseconds, model tokens, and tool calls. An
 `effect: occurred` report requires a mutation summary. An `effect: none` report permits no mutations and must retain the
 complete original subject if a resulting subject is supplied. Completed candidates report the mutations in their ledger,
 or `effect: none` when none are reported. All non-completed GAAP candidates conservatively report `effect: unknown`,
 retaining any observed partial mutations. Stopping the process or failing before an observed mutation is not independent
-proof of no effect.
+proof of no effect. A neutral producer with `effect: unknown` may retain an observed changed subject even when it could
+not observe attributable mutations. That incomplete report remains `unknown_outcome` under #106 and requires independent
+recovery; the validator does not invent a mutation summary.
 
 `mapGaapResult` requires an explicit completion-time/result-subject observation because those complete ThreadLoop fields
 do not exist in GAAP's terminal body. The observed digest must match the receipt; repository/artifact identity must be
@@ -191,9 +203,10 @@ historical contract hashes. The closed executor and GAAP schemas have fixed nonn
 agreement on that accepted domain.
 
 Messages are limited to 16 MiB plus one framing LF, 64 nesting levels, and 1,000,000 JSON values using #106's
-development bounds. Values are checked before recursive schema cloning and canonicalization. These are development input
-limits, not runtime scheduling or retention policies. Raw artifacts/tool output remain outside the receipt as digest
-references.
+development bounds. Arrays must use the ordinary array prototype; proxies and custom, subclass, or null array prototypes
+are refused before inherited methods can run. Values are checked before recursive schema cloning and canonicalization.
+These are development input limits, not runtime scheduling or retention policies. Raw artifacts/tool output remain
+outside the receipt as digest references.
 
 ## Admission, failure, and recovery
 

@@ -172,6 +172,30 @@ export function validateExecutorResult(value: unknown, requestValue: unknown): V
     (receipt.status === 'succeeded' && resultingSubject !== null && resultingSubject.content_digest !== currentDigest)
   )
     return invalid('RESULT_EFFECT_MISMATCH', 'Effect claims and resulting subject disagree with the mutation summary.');
+  if (
+    !receipt.evidence.some(
+      (entry) => entry.id === result.source_receipt.id && entry.digest === result.source_receipt.digest,
+    )
+  )
+    return invalid(
+      'RESULT_SOURCE_MISMATCH',
+      'The source receipt identity and digest must be retained in Attempt receipt evidence.',
+    );
+  if (receipt.status === 'succeeded') {
+    const verification = result.verification.filter((entry) => entry.subject_digest === currentDigest).at(-1);
+    if (
+      !verification ||
+      verification.verdict !== 'PASS' ||
+      verification.actor_id === input.executor.id ||
+      !input.parameters.required_verification.evidence_types.every((type) =>
+        verification.evidence.some((entry) => entry.evidence_type === type),
+      )
+    )
+      return invalid(
+        'RESULT_VERIFICATION_MISMATCH',
+        'Success requires latest-subject passing verification by a different actor with every requested evidence type.',
+      );
+  }
   const budget = input.parameters.resource_budget;
   if (
     receipt.status === 'succeeded' &&

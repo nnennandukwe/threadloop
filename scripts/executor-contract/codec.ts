@@ -1,3 +1,4 @@
+import { isProxy } from 'node:util/types';
 import { diagnostic, type ValidationResult } from '../workflow-graph/contracts.js';
 import { executionLimits, withinExecutionLimits } from '../execution-contract/limits.js';
 
@@ -43,10 +44,11 @@ export function validateJsonValue(value: unknown): ValidationResult<unknown> {
         return invalid('INVALID_JSON_VALUE', 'Numbers must be non-negative safe integers.');
     } else if (item !== null && typeof item === 'object') {
       if (
+        isProxy(item) ||
         seen.has(item) ||
-        (!Array.isArray(item) &&
-          Object.getPrototypeOf(item) !== Object.prototype &&
-          Object.getPrototypeOf(item) !== null)
+        (Array.isArray(item)
+          ? Object.getPrototypeOf(item) !== Array.prototype
+          : Object.getPrototypeOf(item) !== Object.prototype && Object.getPrototypeOf(item) !== null)
       )
         return invalid('INVALID_JSON_VALUE', 'Supply a plain JSON tree without cycles or shared object references.');
       seen.add(item);

@@ -41,9 +41,13 @@ export function validateGaapRequest(value: unknown): ValidationResult<GaapReques
   }
   if (
     policies.size !== value.policies.length ||
+    new Set(value.approval_context.map((approval) => approval.approval_id)).size !== value.approval_context.length ||
     new Set(value.required_verification.evidence_types).size !== value.required_verification.evidence_types.length
   )
-    return invalid('GAAP_SCHEMA_INVALID', 'GAAP policy identities and required evidence types must be unique.');
+    return invalid(
+      'GAAP_SCHEMA_INVALID',
+      'GAAP policy identities, approval IDs, and required evidence types must be unique.',
+    );
   if (
     value.approval_context.some(
       (approval) => approval.subject_digest !== value.subject.digest || approval.evidence.evidence_type !== 'approval',
@@ -114,8 +118,8 @@ export function validateGaapReceipt(value: unknown, requestValue: unknown): Vali
       case 'plan_recorded':
         break;
       case 'approval_recorded':
-        if (event.approval.evidence.evidence_type !== 'approval')
-          return fail('Approval records require approval evidence.');
+        if (event.approval.evidence.evidence_type !== 'approval' || event.approval.subject_digest !== subject)
+          return fail('Approval records require approval evidence for the subject current at that event.');
         break;
       case 'protected_effect_decision':
         if (decisions.has(event.decision_id) || event.subject_digest !== subject)
@@ -171,8 +175,8 @@ export function validateGaapReceipt(value: unknown, requestValue: unknown): Vali
             )
           )
             return fail('Passing verification requires a different actor and every requested evidence type.');
-          if (event.subject_digest === subject) verifiedAt = event.sequence;
         }
+        if (event.subject_digest === subject) verifiedAt = event.verdict === 'PASS' ? event.sequence : 0;
         break;
       case 'usage':
         if ((Object.keys(usage) as (keyof typeof usage)[]).some((key) => event.usage[key] < usage[key]))

@@ -127,7 +127,152 @@
             },
             "required": ["family", "evidence_types"],
             "additionalProperties": false
-          }
+          },
+          "allOf": [
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "family": {
+                    "const": "proof_plan"
+                  }
+                },
+                "required": ["family"]
+              },
+              "minContains": 0,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "family": {
+                    "const": "local_proof"
+                  }
+                },
+                "required": ["family"]
+              },
+              "minContains": 0,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "family": {
+                    "const": "independent_proof"
+                  }
+                },
+                "required": ["family"]
+              },
+              "minContains": 0,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "family": {
+                    "const": "pre_pr_review"
+                  }
+                },
+                "required": ["family"]
+              },
+              "minContains": 0,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "family": {
+                    "const": "review"
+                  }
+                },
+                "required": ["family"]
+              },
+              "minContains": 0,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "family": {
+                    "const": "human_approval"
+                  }
+                },
+                "required": ["family"]
+              },
+              "minContains": 0,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "family": {
+                    "const": "completion_observed"
+                  }
+                },
+                "required": ["family"]
+              },
+              "minContains": 0,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "family": {
+                    "const": "block_evidence"
+                  }
+                },
+                "required": ["family"]
+              },
+              "minContains": 0,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "family": {
+                    "const": "stop_requested"
+                  }
+                },
+                "required": ["family"]
+              },
+              "minContains": 0,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "family": {
+                    "const": "artifact"
+                  }
+                },
+                "required": ["family"]
+              },
+              "minContains": 0,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "family": {
+                    "const": "repository_observation"
+                  }
+                },
+                "required": ["family"]
+              },
+              "minContains": 0,
+              "maxContains": 1
+            }
+          ]
         }
       },
       "required": ["schema_version", "id", "action_capability", "capability", "policies", "evidence_mapping"],

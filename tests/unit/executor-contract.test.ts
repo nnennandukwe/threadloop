@@ -36,11 +36,23 @@ describe('Executor contract candidates', () => {
       attempt_receipt: receiptFor(fixture.journal),
       source_receipt: { type: 'terminal_run_receipt', id: 'source_a', digest: 'a'.repeat(64) },
       effects: [],
-      verification: [],
+      verification: [
+        {
+          actor_id: 'independent_verifier',
+          subject_digest: fixture.envelope.request.action_request.request.binding.subject.content_digest,
+          verdict: 'PASS',
+          evidence: [{ evidence_type: 'command_output', digest: 'b'.repeat(64), locator: null }],
+        },
+      ],
       evidence: [],
       usage: { cost_micros: 0, elapsed_ms: 1, model_tokens: 0, tool_calls: 0 },
       reason: { code: 'completed', message: 'Completed the requested gates.' },
     };
+    result.attempt_receipt.receipt.evidence.push({
+      id: result.source_receipt.id,
+      digest: result.source_receipt.digest,
+    });
+    result.attempt_receipt.receipt_digest = executionDigest(result.attempt_receipt.receipt);
     const envelope = { result, result_digest: executionDigest(result) };
     expect(validateExecutorResult(envelope, fixture.envelope).ok).toBe(true);
     result.attempt_receipt.receipt.claim.version++;
