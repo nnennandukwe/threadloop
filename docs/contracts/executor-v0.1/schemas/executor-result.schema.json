@@ -1,0 +1,540 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "result": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "threadloop.executor/0.1"
+        },
+        "kind": {
+          "type": "string",
+          "const": "result"
+        },
+        "request_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "attempt_receipt": {
+          "type": "object",
+          "properties": {
+            "receipt": {
+              "type": "object",
+              "properties": {
+                "schema_version": {
+                  "type": "string",
+                  "const": "0.1"
+                },
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "request": {
+                  "type": "object",
+                  "properties": {
+                    "idempotency_key": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "request_digest": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    }
+                  },
+                  "required": ["idempotency_key", "request_digest"],
+                  "additionalProperties": false
+                },
+                "binding": {
+                  "type": "object",
+                  "properties": {
+                    "workflow_run_id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "graph_schema_version": {
+                      "type": "string",
+                      "const": "0.1"
+                    },
+                    "graph_digest": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "source_state": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                    },
+                    "state_version": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "subject": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "repository"
+                            },
+                            "repository_id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "revision": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "content_digest": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            }
+                          },
+                          "required": ["kind", "repository_id", "revision", "content_digest"],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "artifact"
+                            },
+                            "artifact_id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "content_digest": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            }
+                          },
+                          "required": ["kind", "artifact_id", "content_digest"],
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "workflow_run_id",
+                    "graph_schema_version",
+                    "graph_digest",
+                    "source_state",
+                    "state_version",
+                    "subject"
+                  ],
+                  "additionalProperties": false
+                },
+                "execution_policy": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "digest": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    }
+                  },
+                  "required": ["id", "digest"],
+                  "additionalProperties": false
+                },
+                "claim": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": ["id", "version"],
+                  "additionalProperties": false
+                },
+                "attempt_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "executor": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "incarnation": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": ["id", "incarnation"],
+                  "additionalProperties": false
+                },
+                "status": {
+                  "type": "string",
+                  "enum": ["succeeded", "failed", "blocked", "interrupted", "cancelled"]
+                },
+                "effect": {
+                  "type": "string",
+                  "enum": ["none", "occurred", "unknown"]
+                },
+                "resulting_subject": {
+                  "anyOf": [
+                    {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "repository"
+                            },
+                            "repository_id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "revision": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "content_digest": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            }
+                          },
+                          "required": ["kind", "repository_id", "revision", "content_digest"],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "artifact"
+                            },
+                            "artifact_id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "content_digest": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            }
+                          },
+                          "required": ["kind", "artifact_id", "content_digest"],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "finished_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "digest": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      }
+                    },
+                    "required": ["id", "digest"],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "schema_version",
+                "id",
+                "request",
+                "binding",
+                "execution_policy",
+                "claim",
+                "attempt_id",
+                "executor",
+                "status",
+                "effect",
+                "resulting_subject",
+                "finished_at",
+                "evidence"
+              ],
+              "additionalProperties": false
+            },
+            "receipt_digest": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "required": ["receipt", "receipt_digest"],
+          "additionalProperties": false
+        },
+        "source_receipt": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "terminal_run_receipt"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "required": ["type", "id", "digest"],
+          "additionalProperties": false
+        },
+        "effects": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "effect_digest": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "before_subject_digest": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "after_subject_digest": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "evidence": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "evidence_type": {
+                      "type": "string",
+                      "enum": [
+                        "approval",
+                        "command_output",
+                        "artifact",
+                        "tool_execution",
+                        "verification_attestation",
+                        "resource_usage",
+                        "interruption"
+                      ]
+                    },
+                    "digest": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "locator": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": ["evidence_type", "digest", "locator"],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": ["effect_digest", "before_subject_digest", "after_subject_digest", "evidence"],
+            "additionalProperties": false
+          }
+        },
+        "verification": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "actor_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "subject_digest": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "verdict": {
+                "type": "string",
+                "enum": ["PASS", "FAIL"]
+              },
+              "evidence": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "evidence_type": {
+                      "type": "string",
+                      "enum": [
+                        "approval",
+                        "command_output",
+                        "artifact",
+                        "tool_execution",
+                        "verification_attestation",
+                        "resource_usage",
+                        "interruption"
+                      ]
+                    },
+                    "digest": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "locator": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": ["evidence_type", "digest", "locator"],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": ["actor_id", "subject_digest", "verdict", "evidence"],
+            "additionalProperties": false
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "evidence_type": {
+                "type": "string",
+                "enum": [
+                  "approval",
+                  "command_output",
+                  "artifact",
+                  "tool_execution",
+                  "verification_attestation",
+                  "resource_usage",
+                  "interruption"
+                ]
+              },
+              "digest": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "locator": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": ["evidence_type", "digest", "locator"],
+            "additionalProperties": false
+          }
+        },
+        "usage": {
+          "type": "object",
+          "properties": {
+            "cost_micros": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "elapsed_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "model_tokens": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "tool_calls": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": ["cost_micros", "elapsed_ms", "model_tokens", "tool_calls"],
+          "additionalProperties": false
+        },
+        "reason": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "enum": [
+                "completed",
+                "authority_required",
+                "effect_denied",
+                "blocked",
+                "failed",
+                "interrupted",
+                "cancelled",
+                "budget_exhausted"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["code", "message"],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_digest",
+        "attempt_receipt",
+        "source_receipt",
+        "effects",
+        "verification",
+        "evidence",
+        "usage",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "result_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  },
+  "required": ["result", "result_digest"],
+  "additionalProperties": false,
+  "$id": "https://github.com/nnennandukwe/threadloop/contracts/executor/0.1/executor-result"
+}

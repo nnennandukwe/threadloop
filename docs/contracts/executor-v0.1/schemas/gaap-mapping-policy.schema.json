@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "policy": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "threadloop.gaap-mapping/0.1"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "action_capability": {
+          "type": "string",
+          "enum": [
+            "frame_change",
+            "bind_proof_plan",
+            "implement_change",
+            "commit_change",
+            "run_local_gates",
+            "obtain_independent_proof",
+            "record_pre_pr_review",
+            "obtain_review_evidence",
+            "repair_change",
+            "correct_gate_setup",
+            "restore_proof_authority",
+            "restore_repository",
+            "restore_evidence",
+            "prepare_release",
+            "verify_release",
+            "publish_release",
+            "verify_publication"
+          ]
+        },
+        "capability": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "required": ["name", "version", "digest"],
+          "additionalProperties": false
+        },
+        "policies": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "version": {
+                "type": "string",
+                "minLength": 1
+              },
+              "digest": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            },
+            "required": ["name", "version", "digest"],
+            "additionalProperties": false
+          }
+        },
+        "evidence_mapping": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "family": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "proof_plan",
+                      "local_proof",
+                      "independent_proof",
+                      "pre_pr_review",
+                      "review",
+                      "human_approval",
+                      "completion_observed",
+                      "block_evidence",
+                      "stop_requested",
+                      "artifact"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "const": "repository_observation"
+                  }
+                ]
+              },
+              "evidence_types": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "approval",
+                    "command_output",
+                    "artifact",
+                    "tool_execution",
+                    "verification_attestation",
+                    "resource_usage",
+                    "interruption"
+                  ]
+                }
+              }
+            },
+            "required": ["family", "evidence_types"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["schema_version", "id", "action_capability", "capability", "policies", "evidence_mapping"],
+      "additionalProperties": false
+    },
+    "policy_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  },
+  "required": ["policy", "policy_digest"],
+  "additionalProperties": false,
+  "$id": "https://github.com/nnennandukwe/threadloop/contracts/executor/0.1/gaap-mapping-policy"
+}
