@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { actionRequestSchema, subjectSchema } from '../controller-contract/contracts.js';
+import { executionDigest } from '../execution-contract/model.js';
 import { attemptReceiptSchema } from '../execution-contract/contracts.js';
 
 const text = z.string().min(1);
@@ -29,11 +30,21 @@ export const usageSchema = z.strictObject({
   model_tokens: counter,
   tool_calls: counter,
 });
+function uniqueArray<T extends z.ZodType>(element: T) {
+  return z
+    .array(element)
+    .min(1)
+    .refine((items) => new Set(items.map(executionDigest)).size === items.length, {
+      message: 'Array entries must be unique.',
+    })
+    .meta({ uniqueItems: true });
+}
+
 export const parametersSchema = z.strictObject({
   subject_locator: text,
   capability: versionedIdentitySchema,
   task: z.strictObject({ instructions: text, constraints: z.array(text) }),
-  policies: z.array(versionedIdentitySchema).min(1),
+  policies: uniqueArray(versionedIdentitySchema),
   resource_budget: budgetSchema,
   approval_context: z.array(
     z.strictObject({
@@ -46,15 +57,16 @@ export const parametersSchema = z.strictObject({
   ),
   required_verification: z.strictObject({
     independence: z.literal('different_actor'),
-    evidence_types: z.array(evidenceTypeSchema).min(1),
+    evidence_types: uniqueArray(evidenceTypeSchema),
   }),
 });
 const report = attemptReceiptSchema.shape.receipt;
+const action = actionRequestSchema.shape.request.options[0];
 export const executorRequestSchema = z.strictObject({
   request: z.strictObject({
     schema_version: z.literal('threadloop.executor/0.1'),
     kind: z.literal('execute'),
-    action_request: actionRequestSchema,
+    action_request: actionRequestSchema.extend({ request: action }),
     execution_policy: report.shape.execution_policy,
     claim: report.shape.claim,
     attempt_id: report.shape.attempt_id,
@@ -105,19 +117,18 @@ export const executorResultSchema = z.strictObject({
   }),
   result_digest: digest,
 });
-const action = actionRequestSchema.shape.request.options[0];
 export const gaapMappingPolicySchema = z.strictObject({
   policy: z.strictObject({
     schema_version: z.literal('threadloop.gaap-mapping/0.1'),
     id: text,
     action_capability: action.shape.capability,
     capability: versionedIdentitySchema,
-    policies: z.array(versionedIdentitySchema).min(1),
+    policies: uniqueArray(versionedIdentitySchema),
     evidence_mapping: z
       .array(
         z.strictObject({
           family: action.shape.evidence_requirements.element.shape.family,
-          evidence_types: z.array(evidenceTypeSchema).min(1),
+          evidence_types: uniqueArray(evidenceTypeSchema),
         }),
       )
       .min(1),

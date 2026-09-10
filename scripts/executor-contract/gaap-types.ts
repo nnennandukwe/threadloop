@@ -1,6 +1,10 @@
 import type { Evidence, ExecutorRequest, ExecutorResult } from './contracts.js';
 
 // Type projections of the pinned upstream JSON schemas, not a shared runtime dependency.
+export type GaapEvidence = Omit<Evidence, 'locator'> & { locator?: string | null };
+type GaapApproval = Omit<ExecutorRequest['request']['parameters']['approval_context'][number], 'evidence'> & {
+  evidence: GaapEvidence;
+};
 type Parameters = ExecutorRequest['request']['parameters'];
 export interface GaapRequest {
   schema_version: 'gaap.agent-run-request/0.1.0';
@@ -11,7 +15,7 @@ export interface GaapRequest {
   task: Parameters['task'];
   policies: Parameters['policies'];
   resource_budget: Parameters['resource_budget'];
-  approval_context: Parameters['approval_context'];
+  approval_context: GaapApproval[];
   required_verification: Parameters['required_verification'];
 }
 type Status =
@@ -28,7 +32,7 @@ type Usage = ExecutorResult['result']['usage'];
 export type GaapEvent = { sequence: number } & (
   | { event_type: 'status_transition'; from: Status; to: Status; reason: string | null }
   | { event_type: 'plan_recorded'; plan_digest: string }
-  | { event_type: 'approval_recorded'; approval: Parameters['approval_context'][number] }
+  | { event_type: 'approval_recorded'; approval: GaapApproval }
   | {
       event_type: 'protected_effect_decision';
       decision_id: string;
@@ -43,7 +47,7 @@ export type GaapEvent = { sequence: number } & (
       protected_effect_digest: string;
       action_digest: string;
       capability_digest: string;
-      evidence: Evidence[];
+      evidence: GaapEvidence[];
     }
   | {
       event_type: 'mutation';
@@ -51,7 +55,7 @@ export type GaapEvent = { sequence: number } & (
       protected_effect_digest: string;
       before_subject_digest: string;
       after_subject_digest: string;
-      evidence: Evidence[];
+      evidence: GaapEvidence[];
     }
   | {
       event_type: 'verification';
@@ -59,10 +63,10 @@ export type GaapEvent = { sequence: number } & (
       implementer_id: string;
       verifier_id: string;
       verdict: 'PASS' | 'FAIL';
-      evidence: Evidence[];
+      evidence: GaapEvidence[];
     }
   | { event_type: 'usage'; usage: Usage }
-  | { event_type: 'interruption'; actor_id: string | null; reason: string; evidence: Evidence }
+  | { event_type: 'interruption'; actor_id: string | null; reason: string; evidence: GaapEvidence }
 );
 export interface GaapReceipt {
   receipt_digest: string;

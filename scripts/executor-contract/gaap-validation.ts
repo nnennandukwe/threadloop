@@ -33,8 +33,14 @@ export function validateGaapRequest(value: unknown): ValidationResult<GaapReques
   if (!requestSchema(value)) return invalid('GAAP_SCHEMA_INVALID', ajv.errorsText(requestSchema.errors));
   if (hasBlankText(value))
     return invalid('GAAP_SCHEMA_INVALID', 'GAAP text values must contain non-whitespace characters.');
+  const policies = new Set<string>();
+  for (const policy of value.policies) {
+    const canonical = canonicalExecutorJson(policy);
+    if (!canonical.ok) return canonical;
+    policies.add(canonical.value);
+  }
   if (
-    new Set(value.policies.map((policy) => JSON.stringify(policy))).size !== value.policies.length ||
+    policies.size !== value.policies.length ||
     new Set(value.required_verification.evidence_types).size !== value.required_verification.evidence_types.length
   )
     return invalid('GAAP_SCHEMA_INVALID', 'GAAP policy identities and required evidence types must be unique.');
@@ -82,6 +88,7 @@ export function validateGaapReceipt(value: unknown, requestValue: unknown): Vali
   };
   let state: GaapReceipt['body']['terminal_status'] = 'accepted';
   let subject = body.initial_subject_digest;
+  let terminalReason: string | null = null;
   let verifiedAt = 0;
   let completionAt = 0;
   let completionSubject: string | null = null;
@@ -102,6 +109,7 @@ export function validateGaapReceipt(value: unknown, requestValue: unknown): Vali
         )
           return fail('Ledger contains an invalid lifecycle transition.');
         state = event.to;
+        if (terminal(state)) terminalReason = event.reason;
         break;
       case 'plan_recorded':
         break;
@@ -126,6 +134,7 @@ export function validateGaapReceipt(value: unknown, requestValue: unknown): Vali
         break;
       case 'tool_execution':
       case 'mutation': {
+        if (state !== 'executing') return fail('Tool execution and mutation events require the executing state.');
         const decision = decisions.get(event.decision_id);
         if (
           !decision ||
@@ -153,6 +162,7 @@ export function validateGaapReceipt(value: unknown, requestValue: unknown): Vali
         break;
       }
       case 'verification':
+        if (state !== 'verifying') return fail('Verification events require the verifying state.');
         if (event.verdict === 'PASS') {
           if (
             event.verifier_id === event.implementer_id ||
@@ -183,11 +193,12 @@ export function validateGaapReceipt(value: unknown, requestValue: unknown): Vali
   }
   if (
     state !== body.terminal_status ||
+    terminalReason !== body.terminal_reason ||
     subject !== body.resulting_subject_digest ||
     !usageSeen ||
     !same(usage, body.usage)
   )
-    return fail('Terminal status, resulting subject, and final usage must agree with the retained ledger.');
+    return fail('Terminal status and reason, resulting subject, and final usage must agree with the retained ledger.');
   if (body.terminal_status === 'interrupted' && !interruptionSeen)
     return fail('Interrupted receipts require interruption evidence.');
   if (body.terminal_status === 'completed') {

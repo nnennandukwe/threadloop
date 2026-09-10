@@ -75,7 +75,8 @@
             },
             "required": ["name", "version", "digest"],
             "additionalProperties": false
-          }
+          },
+          "uniqueItems": true
         },
         "evidence_mapping": {
           "minItems": 1,
@@ -120,7 +121,8 @@
                     "resource_usage",
                     "interruption"
                   ]
-                }
+                },
+                "uniqueItems": true
               }
             },
             "required": ["family", "evidence_types"],

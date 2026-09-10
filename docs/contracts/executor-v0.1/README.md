@@ -74,6 +74,9 @@ No policy, capability, budget, locator, approval, or evidence mapping is guessed
 policies, approval IDs, or required evidence types are invalid. Empty approval context is explicit and grants nothing.
 Every approval binds the initial subject and uses approval evidence.
 
+Published schemas express structural rules and full-value array uniqueness; cross-field hashes, approval identity
+uniqueness, and authoritative context still require the corresponding validation functions.
+
 `validateExecutorRequest` checks immutable shape, hashes, action identity, executor actor, and parameter consistency.
 `validateExecutorContext` additionally uses #106's independently admitted journal replay and controller projection to
 require an exact, current, started Attempt. Pending work cannot pass preflight. It rejects subject/state/policy drift,
@@ -132,13 +135,14 @@ The executor envelope is `{ result, result_digest }`. It contains the exact exec
 Attempt receipt envelope, original receipt descriptor/digest, ordered observed mutations, verification records,
 supporting evidence references, resource usage, and a structured reason. The original GAAP bytes must remain available
 under their digest: summaries never replace the source ledger's decisions, plans, approvals, tool execution, or
-chronology.
+chronology. Omitted optional upstream evidence locators become explicit `null` in the executor result; supplied locators
+are preserved.
 
 GAAP receipt types are checked against the pinned schema. The mapping verifies request/run/initial-subject digests,
-contiguous valid lifecycle transitions, terminal status, ordered allow/effect bindings, mutation chaining,
-current-subject completion verification, cumulative usage, and completion budget consistency. This checks reported
-consistency only. It does not verify artifacts, signatures, policy contents, actual tool execution, or independent actor
-identity.
+contiguous valid lifecycle transitions, matching terminal status/reason, effects in `executing`, verification in
+`verifying`, ordered allow/effect bindings, mutation chaining, current-subject completion verification, cumulative
+usage, and completion budget consistency. This checks reported consistency only. It does not verify artifacts,
+signatures, policy contents, actual tool execution, or independent actor identity.
 
 | GAAP terminal outcome                    | Attempt candidate | Reason               |
 | ---------------------------------------- | ----------------- | -------------------- |
@@ -150,17 +154,21 @@ identity.
 | `failed`                                 | `failed`          | `failed`             |
 | `interrupted`                            | `interrupted`     | `interrupted`        |
 
-The exact upstream terminal reason is retained as the reason message. Historical asks do not replace a later terminal
-cause. GAAP's contract permits resumable `awaiting_authority`, but it is not terminal and cannot be returned alone. This
-mapping follows GAAP's bounded one-shot engine: an ask terminates as blocked, never allow. Obtaining authority does not
+The exact upstream terminal reason is retained as the reason message. Denial classification uses the matching causal
+decision, even if an unrelated allow appears later. GAAP's native contract permits resumable `awaiting_authority`, but
+it is not terminal and cannot be returned alone. The native receipt consistency validator preserves that contract. The
+one-shot mapper rejects resumed asks: after an ask only usage accounting and transitions to `awaiting_authority` or
+terminal `blocked` are permitted, with an authority-required reason matching that ask. Obtaining authority does not
 resume this Attempt; ThreadLoop must determine permitted recovery and a new Attempt. No interactive protocol is added.
 GAAP v0.1.0 has no terminal `cancelled`; the neutral executor contract preserves it for compatible producers, and the
 mapping never invents a GAAP cancellation receipt.
 
-Usage consists of non-negative safe integers: cost in micros, elapsed milliseconds, model tokens, and tool calls.
-Completed candidates report the mutations in their ledger, or `effect: none` when none are reported. All non-completed
-GAAP candidates conservatively report `effect: unknown`, retaining any observed partial mutations. Stopping the process
-or failing before an observed mutation is not independent proof of no effect.
+Usage consists of non-negative safe integers: cost in micros, elapsed milliseconds, model tokens, and tool calls. An
+`effect: occurred` report requires a mutation summary. An `effect: none` report permits no mutations and must retain the
+complete original subject if a resulting subject is supplied. Completed candidates report the mutations in their ledger,
+or `effect: none` when none are reported. All non-completed GAAP candidates conservatively report `effect: unknown`,
+retaining any observed partial mutations. Stopping the process or failing before an observed mutation is not independent
+proof of no effect.
 
 `mapGaapResult` requires an explicit completion-time/result-subject observation because those complete ThreadLoop fields
 do not exist in GAAP's terminal body. The observed digest must match the receipt; repository/artifact identity must be
@@ -225,26 +233,28 @@ them. Receipt inputs were adapted from the pinned GAAP examples with matching re
 successful local-gates example is read-only; its derived ledger removes mutation events. All artifacts and actors are
 synthetic.
 
-| Example                                                | Expected behavior                                                                                                |
-| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| [Completed](fixtures/completed.json)                   | Consistent read-only success candidate, no admission                                                             |
-| [Authority required](fixtures/blocked.json)            | Ask evidence retained; blocked one-shot result                                                                   |
-| [Denied effect](fixtures/denied-effect.json)           | Block remains distinct from failure                                                                              |
-| [Interrupted](fixtures/interrupted.json)               | Interruption evidence retained; effect remains unknown                                                           |
-| [Failed](fixtures/failed.json)                         | Failure remains distinct from malformed output                                                                   |
-| [Budget exhausted](fixtures/budget-exhausted.json)     | Blocked with explicit resource reason                                                                            |
-| [Stale verification](fixtures/stale-verification.json) | Retained blocked evidence cannot become successful verification                                                  |
-| Stale subject / expired claim                          | Corpus tests reuse each result with changed current subject or expiry time; preflight/admission refuses progress |
+| Example                                                                                     | Expected behavior                                                                                                |
+| ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| [Completed](fixtures/completed.json)                                                        | Consistent read-only success candidate, no admission                                                             |
+| [Authority required](fixtures/blocked.json)                                                 | Ask evidence retained; blocked one-shot result                                                                   |
+| [Denied effect](fixtures/denied-effect.json)                                                | Block remains distinct from failure                                                                              |
+| [Interrupted](fixtures/interrupted.json)                                                    | Interruption evidence retained; effect remains unknown                                                           |
+| [Failed](fixtures/failed.json)                                                              | Failure remains distinct from malformed output                                                                   |
+| [Budget exhausted](fixtures/budget-exhausted.json)                                          | Blocked with explicit resource reason                                                                            |
+| [Stale verification](fixtures/stale-verification.json)                                      | Retained blocked evidence cannot become successful verification                                                  |
+| [Stale subject](fixtures/stale-subject.json) / [expired claim](fixtures/expired-claim.json) | Corpus tests reuse each result with changed current subject or expiry time; preflight/admission refuses progress |
 
 `executor-admission.test.ts` also changes every binding with recomputed hashes and verifies lease renewal, independent
 parameter approval, and untrusted history rejection. `executor-corpus.test.ts` proves mapped reports alone fail receipt
 admission and only separately supplied synthetic trusted admissions can close an Attempt. It checks exact upstream
 checksums, published schema parity, Unicode key order, and resealed semantic failures. Existing #106 tests continue to
 own replacement, duplicate receipt, changed identity, cancellation, and recovery behavior.
+`executor-review-regressions.test.ts` covers optional evidence locators, schema uniqueness and executor-only actors,
+terminal cause consistency, event ordering, one-shot resume refusal, and no-effect/occurred-effect summaries.
 
 ```bash
 npm run spec:executor:schemas
-npm test -- tests/unit/executor-codec.test.ts tests/unit/executor-contract.test.ts tests/unit/executor-admission.test.ts tests/unit/executor-corpus.test.ts tests/unit/gaap-mapping.test.ts
+npm test -- tests/unit/executor-codec.test.ts tests/unit/executor-contract.test.ts tests/unit/executor-admission.test.ts tests/unit/executor-corpus.test.ts tests/unit/gaap-mapping.test.ts tests/unit/executor-review-regressions.test.ts
 npm run check
 npm run security:dependencies
 ```
@@ -259,3 +269,18 @@ These checks prove specification consistency and refusal behavior in development
 isolation, live provider behavior, authenticated observations, crash durability, cross-process interoperability, or
 exactly-once execution. #108 owns external conformance; #111 owns the later current-TypeScript runtime integration.
 Existing CLI, SQLite v8, packaged runtime, runner, and graph/controller/execution golden artifacts remain unchanged.
+
+## Issue #107 acceptance coverage
+
+| Acceptance criterion                                                   | Contract section                                                                    | Evidence                                                                                      |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Versioned canonical JSON process boundary                              | [Process exchange](#one-shot-process-protocol)                                      | `executor-codec.test.ts`, request golden bytes                                                |
+| Provider-neutral ThreadLoop interface                                  | [Published interface](#published-interface)                                         | Strict executor schemas and `executor-contract.test.ts`                                       |
+| No ThreadLoop lifecycle vocabulary in GAAP core                        | [GAAP request mapping](#gaap-mapping-policy-and-request)                            | `gaap-mapping.test.ts` checks explicit mapped fields against the pinned schema                |
+| One Attempt maps to one Agent Run                                      | [GAAP request mapping](#gaap-mapping-policy-and-request)                            | Stable redelivery and replacement identity tests                                              |
+| Completion remains evidence subject to independent admission           | [Trust and admission](#admission-failure-and-recovery)                              | `executor-admission.test.ts` and synthetic admission composition in `executor-corpus.test.ts` |
+| Blocked, failed, interrupted, and malformed stay distinct              | [Results and one-shot authority handling](#results-and-one-shot-authority-handling) | Outcome corpus and malformed-frame tests                                                      |
+| Unknown versions, capabilities, receipt types, and digests fail closed | [Published interface](#published-interface)                                         | Strict-shape, unsupported-mapping, and digest-tampering tests                                 |
+| Independent release lifecycles without a shared Rust crate             | [Examples and proof limits](#examples-verification-and-proof-limits)                | Checksummed offline JSON snapshots; unchanged dependencies and runtime source                 |
+| All six required examples                                              | [Examples and proof limits](#examples-verification-and-proof-limits)                | Completed, authority, denied-effect, interruption, stale-subject, and expired-claim fixtures  |
+| Complete GAAP runtime integration remains unimplemented                | [Examples and proof limits](#examples-verification-and-proof-limits)                | Explicit pinned-release and #111 boundary statement; no live interoperability claim           |

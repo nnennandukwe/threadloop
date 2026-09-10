@@ -7,6 +7,7 @@ import type { ExecutionJournal } from '../../scripts/execution-contract/contract
 
 export async function executorFixture() {
   const initial = await initialExecution();
+  if (initial.request.request.actor !== 'executor') throw new Error('Executor fixture requires an executor action.');
   const acquired = operate(initial.journal, grant);
   const started = operate(acquired.journal, { kind: 'start', ...target });
   const capability = { name: 'run-local-gates', version: '1', digest: 'c'.repeat(64) };
@@ -23,7 +24,7 @@ export async function executorFixture() {
   const request: ExecutorRequest['request'] = {
     schema_version: 'threadloop.executor/0.1',
     kind: 'execute',
-    action_request: initial.request,
+    action_request: { ...initial.request, request: initial.request.request },
     execution_policy: { id: initial.policy.id, digest: initial.policy.digest },
     ...target,
     executor: executorA,

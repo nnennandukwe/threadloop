@@ -1,6 +1,6 @@
 import { validateShape, type ValidationResult } from '../workflow-graph/contracts.js';
 import { gaapMappingPolicySchema, resultObservationSchema, type Evidence, type ExecutorResult } from './contracts.js';
-import type { GaapRequest } from './gaap-types.js';
+import type { GaapEvidence, GaapRequest } from './gaap-types.js';
 import { invalid, parseExecutorMessage, validateJsonValue } from './codec.js';
 import { validateExecutorRequest, validateExecutorResult } from './validation.js';
 import { executionDigest, requestReference } from '../execution-contract/model.js';
@@ -100,6 +100,26 @@ export function mapGaapResult(
   const observation = validateShape(resultObservationSchema, observationValue);
   if (!observation.ok) return observation;
   const { body, receipt_digest: sourceDigest } = validated.value;
+  const firstAsk = body.events
+    .filter((event) => event.event_type === 'protected_effect_decision')
+    .find((event) => event.decision.outcome === 'ask');
+  if (
+    firstAsk &&
+    (body.terminal_status !== 'blocked' ||
+      !['authority.required', firstAsk.decision.code].includes(body.terminal_reason) ||
+      body.events.some(
+        (event) =>
+          event.sequence > firstAsk.sequence &&
+          !(
+            event.event_type === 'usage' ||
+            (event.event_type === 'status_transition' && ['awaiting_authority', 'blocked'].includes(event.to))
+          ),
+      ))
+  )
+    return invalid(
+      'GAAP_ONESHOT_AUTHORITY',
+      'An ask must stop this one-shot Attempt as blocked; obtain authority through a new ThreadLoop recovery decision.',
+    );
   const input = request.value.request;
   const initial = input.action_request.request.binding.subject;
   const resulting = observation.value.resulting_subject;
@@ -119,7 +139,11 @@ export function mapGaapResult(
   const evidence: Evidence[] = [];
   const effects: ExecutorResult['result']['effects'] = [];
   const verification: ExecutorResult['result']['verification'] = [];
-  const convert = (entry: Evidence): Evidence => ({ ...entry, digest: entry.digest.slice(7) });
+  const convert = (entry: GaapEvidence): Evidence => ({
+    ...entry,
+    locator: entry.locator ?? null,
+    digest: entry.digest.slice(7),
+  });
   for (const event of body.events) {
     switch (event.event_type) {
       case 'mutation':
@@ -177,14 +201,22 @@ export function mapGaapResult(
       break;
     case 'blocked': {
       status = 'blocked';
-      const lastDecision = body.events.filter((event) => event.event_type === 'protected_effect_decision').at(-1);
+      const causalDecision = body.events
+        .filter((event) => event.event_type === 'protected_effect_decision')
+        .filter(
+          (event) =>
+            (event.decision.outcome === 'ask' &&
+              ['authority.required', event.decision.code].includes(body.terminal_reason)) ||
+            (event.decision.outcome === 'block' && body.terminal_reason === event.decision.code),
+        )
+        .at(-1);
       reason =
         body.terminal_reason === 'runtime.hard_stop'
           ? 'budget_exhausted'
-          : lastDecision?.decision.outcome === 'ask' &&
-              ['authority.required', lastDecision.decision.code].includes(body.terminal_reason)
+          : causalDecision?.decision.outcome === 'ask' &&
+              ['authority.required', causalDecision.decision.code].includes(body.terminal_reason)
             ? 'authority_required'
-            : lastDecision?.decision.outcome === 'block' && body.terminal_reason === lastDecision.decision.code
+            : causalDecision?.decision.outcome === 'block' && body.terminal_reason === causalDecision.decision.code
               ? 'effect_denied'
               : 'blocked';
       break;

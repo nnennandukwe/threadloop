@@ -165,7 +165,9 @@ export function validateExecutorResult(value: unknown, requestValue: unknown): V
     currentDigest = effect.after_subject_digest;
   }
   if (
-    (receipt.effect === 'none' && result.effects.length > 0) ||
+    (receipt.effect === 'none' &&
+      (result.effects.length > 0 || (resultingSubject !== null && !same(resultingSubject, initialSubject)))) ||
+    (receipt.effect === 'occurred' && result.effects.length === 0) ||
     (result.effects.length > 0 && resultingSubject?.content_digest !== currentDigest) ||
     (receipt.status === 'succeeded' && resultingSubject !== null && resultingSubject.content_digest !== currentDigest)
   )
