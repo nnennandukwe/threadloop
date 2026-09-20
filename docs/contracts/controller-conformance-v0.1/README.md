@@ -94,9 +94,10 @@ corpus identity. Source provenance is pinned by the Git revision; storage versio
 compaction preserves all 38 original fixtures, their expectations, manifest, and golden wire bytes exactly.
 
 To edit a case, follow its references in `shared.json`. Change shared content only when all referencing cases should
-change; otherwise inline the value or give the changed value a separate name. Run `spec:conformance:check` to see stale
-case/digest diagnostics. Intentional behavior changes require explicit review of affected expectations and manifest
-entries; no command regenerates expected answers. Tests enforce a 384 KiB source-data budget to catch duplication.
+change; otherwise inline the value or give the changed value a separate name. Run `npm run spec:conformance:check` to
+see stale case/digest diagnostics. Intentional behavior changes require explicit review of affected expectations and
+manifest entries; no command regenerates expected answers. Tests enforce a 384 KiB source-data budget to catch
+duplication.
 
 ## One-case process exchange
 

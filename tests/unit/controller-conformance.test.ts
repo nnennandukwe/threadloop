@@ -39,6 +39,8 @@ import {
 import {
   compatibilitySchema,
   fixtureSchema,
+  requestSchema,
+  executionScenarioSchema,
   manifestSchema,
   publishedConformanceSchemas,
   versions,
@@ -537,4 +539,33 @@ describe('Shared artifact integrity', () => {
       }
     },
   );
+});
+
+it('published request, fixture and scenario schemas enforce canonical numeric bounds (79286eab)', () => {
+  const ajv = new Ajv2020({ strict: true, strictTypes: false, formats: { 'date-time': true } });
+  const schemas = publishedConformanceSchemas();
+  const request = value(buildSubjectRequest(fixtures[0], manifest));
+  const execution = fixtures.find((fixture) => fixture.operation === 'execution_scenario')!;
+  for (const number of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    const malformedRequest = { ...request, request: { ...request.request, input: { nested: [number] } } };
+    const malformedFixture = { ...fixtures[0], input: { nested: [number] } };
+    const malformedScenario = { ...(execution.input as object), projection_snapshot: { nested: [number] } };
+    for (const [name, schema, document] of [
+      ['request', requestSchema, malformedRequest],
+      ['fixture', fixtureSchema, malformedFixture],
+      ['execution-scenario', executionScenarioSchema, malformedScenario],
+    ] as const) {
+      expect(schema.safeParse(document).success).toBe(false);
+      expect(ajv.compile(schemas[name]!)(document)).toBe(false);
+    }
+  }
+});
+
+it('admits only exact authority facts with a large irrelevant digest list (bcbea046)', () => {
+  const fixture = structuredClone(fixtures.find((item) => item.id === 'case_034')!);
+  const input = executionScenarioSchema.parse(fixture.input);
+  input.admitted_digests.push(...Array.from({ length: 4096 }, (_, index) => index.toString(16).padStart(64, '0')));
+  fixture.input = input;
+  const altered = { ...corpus.fixtures, 'fixtures/case_034.json': fixture };
+  expect(validateCorpus(listed(fixture), altered, corpus.compatibility).ok).toBe(true);
 });

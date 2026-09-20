@@ -65,9 +65,10 @@ function executionResult(input: unknown): ValidationResult<CaseResult> {
   const scenario = parse(executionScenarioSchema, input);
   if (!scenario.ok) return scenario;
   const { initial, steps, projection_snapshot: snapshot, admitted_digests: admitted } = scenario.value;
-  if (new Set(admitted).size !== admitted.length)
+  const admittedDigests = new Set(admitted);
+  if (admittedDigests.size !== admitted.length)
     return failure('DUPLICATE_ADMISSION', 'Synthetic admission digests must be unique.');
-  const authority = { isAdmitted: (digest: string) => admitted.includes(digest) };
+  const authority = { isAdmitted: (digest: string) => admittedDigests.has(digest) };
   const created = createExecutionJournal(initial.context, initial.request, initial.policy, authority);
   if (!created.ok) return { ok: true, value: diagnostics(created) };
   let journal = created.value;

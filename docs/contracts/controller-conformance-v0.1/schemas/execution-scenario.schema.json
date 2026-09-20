@@ -9,10 +9,10 @@
           "$ref": "#/$defs/__schema0"
         },
         "request": {
-          "$ref": "#/$defs/__schema1"
+          "$ref": "#/$defs/__schema0"
         },
         "policy": {
-          "$ref": "#/$defs/__schema2"
+          "$ref": "#/$defs/__schema0"
         }
       },
       "required": ["context", "request", "policy"],
@@ -22,7 +22,7 @@
       "maxItems": 256,
       "type": "array",
       "items": {
-        "$ref": "#/$defs/__schema3"
+        "$ref": "#/$defs/__schema1"
       }
     },
     "admitted_digests": {
@@ -33,7 +33,7 @@
       }
     },
     "projection_snapshot": {
-      "$ref": "#/$defs/__schema6"
+      "$ref": "#/$defs/__schema0"
     }
   },
   "required": ["initial", "steps", "admitted_digests", "projection_snapshot"],
@@ -42,16 +42,18 @@
     "__schema0": {
       "anyOf": [
         {
-          "type": "string"
-        },
-        {
-          "type": "number"
+          "type": "null"
         },
         {
           "type": "boolean"
         },
         {
-          "type": "null"
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "string"
         },
         {
           "type": "array",
@@ -71,172 +73,17 @@
       ]
     },
     "__schema1": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "number"
-        },
-        {
-          "type": "boolean"
-        },
-        {
-          "type": "null"
-        },
-        {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/__schema1"
-          }
-        },
-        {
-          "type": "object",
-          "propertyNames": {
-            "type": "string"
-          },
-          "additionalProperties": {
-            "$ref": "#/$defs/__schema1"
-          }
-        }
-      ]
-    },
-    "__schema2": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "number"
-        },
-        {
-          "type": "boolean"
-        },
-        {
-          "type": "null"
-        },
-        {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/__schema2"
-          }
-        },
-        {
-          "type": "object",
-          "propertyNames": {
-            "type": "string"
-          },
-          "additionalProperties": {
-            "$ref": "#/$defs/__schema2"
-          }
-        }
-      ]
-    },
-    "__schema3": {
       "type": "object",
       "properties": {
         "context": {
-          "$ref": "#/$defs/__schema4"
+          "$ref": "#/$defs/__schema0"
         },
         "operation": {
-          "$ref": "#/$defs/__schema5"
+          "$ref": "#/$defs/__schema0"
         }
       },
       "required": ["context", "operation"],
       "additionalProperties": false
-    },
-    "__schema4": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "number"
-        },
-        {
-          "type": "boolean"
-        },
-        {
-          "type": "null"
-        },
-        {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/__schema4"
-          }
-        },
-        {
-          "type": "object",
-          "propertyNames": {
-            "type": "string"
-          },
-          "additionalProperties": {
-            "$ref": "#/$defs/__schema4"
-          }
-        }
-      ]
-    },
-    "__schema5": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "number"
-        },
-        {
-          "type": "boolean"
-        },
-        {
-          "type": "null"
-        },
-        {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/__schema5"
-          }
-        },
-        {
-          "type": "object",
-          "propertyNames": {
-            "type": "string"
-          },
-          "additionalProperties": {
-            "$ref": "#/$defs/__schema5"
-          }
-        }
-      ]
-    },
-    "__schema6": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "number"
-        },
-        {
-          "type": "boolean"
-        },
-        {
-          "type": "null"
-        },
-        {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/__schema6"
-          }
-        },
-        {
-          "type": "object",
-          "propertyNames": {
-            "type": "string"
-          },
-          "additionalProperties": {
-            "$ref": "#/$defs/__schema6"
-          }
-        }
-      ]
     }
   },
   "$id": "https://github.com/nnennandukwe/threadloop/contracts/controller-conformance/0.1/execution-scenario"

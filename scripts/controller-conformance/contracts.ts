@@ -6,6 +6,17 @@ const text = z.string().regex(/\S/);
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const caseId = z.string().regex(/^case_[0-9]{3}$/);
 const counter = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+const canonicalValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
+  z.union([
+    z.null(),
+    z.boolean(),
+    counter,
+    z.string(),
+    z.array(canonicalValueSchema),
+    z.record(z.string(), canonicalValueSchema),
+  ]),
+);
 const claimReference = z.strictObject({ id: text, version: counter.min(1) });
 const diagnosticSchema = z.strictObject({ code: text, path: text, identifier: text.nullable() });
 const invalidResult = z.strictObject({ status: z.literal('invalid'), diagnostics: z.array(diagnosticSchema).min(1) });
@@ -33,7 +44,7 @@ const requestPayload = z.strictObject({
   case_id: caseId,
   operation,
   // Invalid domain documents are intentional test inputs. The transport remains strict.
-  input: z.json(),
+  input: canonicalValueSchema,
   input_digest: digest,
 });
 export const requestSchema = z.strictObject({ request: requestPayload, request_digest: digest });
@@ -136,13 +147,12 @@ export const fixtureSchema = z.strictObject({
   coverage: z.array(z.enum([...requiredCoverage, 'positive_control'])).min(1),
   semantic_check: z.enum(['graph', 'candidate', 'execution', 'selection_pending']),
   operation,
-  input: z.json(),
+  input: canonicalValueSchema,
   expected: resultSchema,
 });
 // Storage identities are independent of the materialized fixture and wire protocol.
 const sharedName = z.string().regex(/^[a-z][a-z0-9_]{0,127}$/);
-type StorageValue = null | boolean | number | string | StorageValue[] | { [key: string]: StorageValue };
-const storageValueSchema: z.ZodType<StorageValue> = z.lazy(() =>
+const storageValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
   z.union([
     z.null(),
     z.boolean(),
@@ -195,10 +205,14 @@ export const compatibilitySchema = z.strictObject({
 });
 // Concrete independent-host simulation, never populated from executor assertions.
 export const executionScenarioSchema = z.strictObject({
-  initial: z.strictObject({ context: z.json(), request: z.json(), policy: z.json() }),
-  steps: z.array(z.strictObject({ context: z.json(), operation: z.json() })).max(256),
+  initial: z.strictObject({
+    context: canonicalValueSchema,
+    request: canonicalValueSchema,
+    policy: canonicalValueSchema,
+  }),
+  steps: z.array(z.strictObject({ context: canonicalValueSchema, operation: canonicalValueSchema })).max(256),
   admitted_digests: z.array(digest),
-  projection_snapshot: z.json(),
+  projection_snapshot: canonicalValueSchema,
 });
 export type Fixture = z.infer<typeof fixtureSchema>;
 export type Manifest = z.infer<typeof manifestSchema>;
