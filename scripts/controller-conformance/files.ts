@@ -20,7 +20,7 @@ async function readArtifact(path: string): Promise<Buffer> {
 
 async function readJson(path: string): Promise<unknown> {
   try {
-    const source = new TextDecoder('utf-8', { fatal: true }).decode(await readArtifact(path));
+    const source = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(await readArtifact(path));
     const value: unknown = JSON.parse(source);
     const parsed = parseDocument(source, { uniqueKeys: true });
     if (parsed.errors.length) throw new Error('Duplicate or invalid JSON keys.');

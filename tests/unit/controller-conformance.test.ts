@@ -569,3 +569,23 @@ it('admits only exact authority facts with a large irrelevant digest list (bcbea
   const altered = { ...corpus.fixtures, 'fixtures/case_034.json': fixture };
   expect(validateCorpus(listed(fixture), altered, corpus.compatibility).ok).toBe(true);
 });
+
+it.each([
+  'manifest.json',
+  'compatibility.json',
+  'shared.json',
+  'fixtures/case_001.json',
+  'schemas/request.schema.json',
+])('rejects a BOM in %s without silently repairing artifact bytes (0c5002cc)', async (artifact) => {
+  const directory = await mkdtemp(join(tmpdir(), 'threadloop-bom-'));
+  try {
+    await cp(corpusDirectory, directory, { recursive: true });
+    const path = join(directory, artifact);
+    await writeFile(path, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), await readFile(path)]));
+    await expect(
+      artifact.startsWith('schemas/') ? verifyPublishedSchemas(directory) : loadCorpus(directory),
+    ).rejects.toThrow();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
