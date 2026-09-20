@@ -75,6 +75,10 @@ capability, budget, locator, approval, or evidence mapping is guessed. Array ord
 approval IDs, or required evidence types are invalid. Empty approval context is explicit and grants nothing. Every
 approval binds the initial subject and uses approval evidence.
 
+Execution parameter and mapping-policy text must contain a non-whitespace character. Validation never trims text:
+meaningful whitespace is retained in the immutable request and its digest. This constraint is included in the published
+schemas; embedded #105/#106 fields retain their existing definitions.
+
 Published schemas express structural rules and full-value array uniqueness; cross-field hashes, approval identity
 uniqueness, and authoritative context still require the corresponding validation functions.
 
@@ -150,6 +154,20 @@ verify artifacts, signatures, policy contents, actual tool execution, or indepen
 must target the subject current at their event; a later failed verification of the current subject invalidates its
 earlier pass.
 
+Completion authorization must follow that pass, bind the current `subject_digest`, and explicitly grant
+`record_completion`. Its `protected_effect_digest` identifies the Protected Effect Request; it need not equal the
+subject digest. Tool-call usage must cover all preceding `tool_execution` events and the final usage must cover the
+whole ledger. This lower bound detects underreporting without assuming every tool call appears as a protected effect or
+making an authorization implicitly single-use. Accurate over-budget stopped reports remain available for recovery; they
+cannot claim successful completion.
+
+The pinned GAAP
+[prose contract](https://github.com/nnennandukwe/governed-agent-autonomy-patterns/blob/712875cbf4be6dd02093f50f93ae826f20cb4890/docs/contracts/agent-run-v0.1.md#L86-L89)
+defines the separate effect digest, while its
+[Rust validator](https://github.com/nnennandukwe/governed-agent-autonomy-patterns/blob/712875cbf4be6dd02093f50f93ae826f20cb4890/src/contracts/validation.rs#L711-L716)
+compares the completion effect digest to the subject digest. This mapping follows the documented identities. The
+compatibility tests do not establish runtime interoperability with that implementation.
+
 | GAAP terminal outcome                    | Attempt candidate | Reason               |
 | ---------------------------------------- | ----------------- | -------------------- |
 | `completed`                              | `succeeded`       | `completed`          |
@@ -171,7 +189,8 @@ mapping never invents a GAAP cancellation receipt.
 
 A direct successful executor candidate also requires a latest-subject passing verification record with every requested
 evidence type and an actor ID different from the executor ID. The source receipt ID/digest must appear in the retained
-Attempt evidence. These are correlation checks, not authentication of identities or evidence.
+Attempt evidence, whose entry IDs must be unique as required by #106 submission. These are correlation checks, not
+authentication of identities or evidence.
 
 Usage consists of non-negative safe integers: cost in micros, elapsed milliseconds, model tokens, and tool calls. An
 `effect: occurred` report requires a mutation summary. An `effect: none` report permits no mutations and must retain the
@@ -264,10 +283,13 @@ checksums, published schema parity, Unicode key order, and resealed semantic fai
 own replacement, duplicate receipt, changed identity, cancellation, and recovery behavior.
 `executor-review-regressions.test.ts` covers optional evidence locators, schema uniqueness and executor-only actors,
 terminal cause consistency, event ordering, one-shot resume refusal, and no-effect/occurred-effect summaries.
+`executor-pr-review.test.ts` covers non-whitespace schema/validator parity and unique Attempt evidence identities.
+`gaap-ledger-review.test.ts` covers distinct completion-effect identity, explicit completion grants, and tool
+accounting.
 
 ```bash
 npm run spec:executor:schemas
-npm test -- tests/unit/executor-codec.test.ts tests/unit/executor-contract.test.ts tests/unit/executor-admission.test.ts tests/unit/executor-corpus.test.ts tests/unit/gaap-mapping.test.ts tests/unit/executor-review-regressions.test.ts
+npm test -- tests/unit/executor-codec.test.ts tests/unit/executor-contract.test.ts tests/unit/executor-admission.test.ts tests/unit/executor-corpus.test.ts tests/unit/gaap-mapping.test.ts tests/unit/executor-review-regressions.test.ts tests/unit/executor-pr-review.test.ts tests/unit/gaap-ledger-review.test.ts
 npm run check
 npm run security:dependencies
 ```

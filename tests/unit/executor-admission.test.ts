@@ -105,10 +105,12 @@ describe('Executor request preflight authority', () => {
   });
   it('checks current time without mutating or extending the immutable request on renewal', async () => {
     const fixture = await executorFixture();
+    const requestBefore = JSON.stringify(fixture.envelope);
     const snapshot = fixture.context.snapshot;
     snapshot.evaluation_time = '2026-09-10T10:05:00.000Z';
     let authority = executorFixtureAuthority(fixture.started.journal, snapshot, fixture.envelope);
     expect(validateExecutorContext(fixture.envelope, fixture.started.journal, snapshot, authority).ok).toBe(false);
+    expect(JSON.stringify(fixture.envelope)).toBe(requestBefore);
     const renewed = operate(
       fixture.started.journal,
       { kind: 'renew', ...target, valid_until: '2026-09-10T10:07:00.000Z' },
@@ -117,15 +119,27 @@ describe('Executor request preflight authority', () => {
     );
     authority = executorFixtureAuthority(renewed.journal, snapshot, fixture.envelope);
     expect(validateExecutorContext(fixture.envelope, renewed.journal, snapshot, authority).ok).toBe(true);
+    expect(JSON.stringify(fixture.envelope)).toBe(requestBefore);
   });
-  it('rejects a current-subject change and never trusts a caller-created authority record', async () => {
+  it('rejects a current-subject change despite independently admitted request parameters', async () => {
     const fixture = await executorFixture();
     const snapshot = fixture.context.snapshot;
     snapshot.binding.state_version++;
     const authority = executorFixtureAuthority(fixture.started.journal, snapshot, fixture.envelope);
-    expect(validateExecutorContext(fixture.envelope, fixture.started.journal, snapshot, authority).ok).toBe(false);
-    expect(
-      validateExecutorContext(fixture.envelope, fixture.started.journal, snapshot, { isAdmitted: () => false }).ok,
-    ).toBe(false);
+    expect(validateExecutorContext(fixture.envelope, fixture.started.journal, snapshot, authority)).toMatchObject({
+      ok: false,
+      diagnostics: [{ code: 'EXECUTOR_CONTEXT_MISMATCH' }],
+    });
+  });
+  it('rejects unapproved executor parameters with otherwise matching admitted history and projection', async () => {
+    const fixture = await executorFixture();
+    const snapshot = fixture.context.snapshot;
+    const authority = executorFixtureAuthority(fixture.started.journal, snapshot);
+    expect(validateExecutorContext(fixture.envelope, fixture.started.journal, snapshot, authority)).toMatchObject({
+      ok: false,
+      diagnostics: [{ code: 'UNTRUSTED_EXECUTOR_REQUEST' }],
+    });
+    const approved = executorFixtureAuthority(fixture.started.journal, snapshot, fixture.envelope);
+    expect(validateExecutorContext(fixture.envelope, fixture.started.journal, snapshot, approved).ok).toBe(true);
   });
 });
