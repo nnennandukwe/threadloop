@@ -115,7 +115,8 @@ receipt submission, registration, and controller projection still reject a diffe
 An admitted new policy can revoke old actors and authorize current actors to cancel or invalidate an old-bound request.
 An executor-added authority, admission record, acceptance identity, or modified command changes the admission digest and
 cannot inherit a prior approval. This defines and enforces the development trust seam; the production
-identity/provenance provider and underlying artifact verification belong to #107 and later runtime work.
+identity/provenance provider and underlying artifact verification are specified by #107 and remain future runtime work
+in #111.
 
 Request identities are globally unique logical slots under #105. Within a slot, operation, receipt, receipt-admission,
 claim, Attempt, and recovery-evidence identities cannot be reassigned. Runtime claim identities must also be unique
@@ -187,9 +188,10 @@ subject/effect scope, and the asserted outcome/effect knowledge before issuing t
 `effect: none` requires that verification too: absence of a receipt or an executor assertion cannot authorize retry. The
 validator checks the bound record only inside an independently admitted operation context. A fabricated record changes
 that context's admission digest and fails the authority lookup, even when all record hashes are valid. Hashes and
-acceptance identities alone are not authentication. #107 implements the underlying artifact/provenance verification
-before the authority approves an admission digest. The test fixture helper populates a synthetic admission store;
-separate trust-boundary tests use the raw public API and a protected test allowlist to reject executor modifications.
+acceptance identities alone are not authentication. [#107](../executor-v0.1/README.md) specifies the underlying
+artifact/provenance verification obligations; #111 will implement runtime verification before the authority approves an
+admission digest. The test fixture helper populates a synthetic admission store; separate trust-boundary tests use the
+raw public API and a protected test allowlist to reject executor modifications.
 
 A missing, stale, mismatched, or bad-digest admission retains the raw report with `RECEIPT_ADMISSION_MISMATCH` and
 leaves the running Attempt, unknown effect knowledge, and open request unchanged. Exact redelivery preserves that
@@ -367,8 +369,8 @@ journal models one request. Exact normalized receipt IDs/sequences remain unique
 happens before normalization. Ordinary completed claims are not added to the evidence-invalidation list.
 
 [#107](https://github.com/nnennandukwe/threadloop/issues/107) owns process messages, observed-effect details, resource
-usage, provider trust/normalization, and the GAAP mapping. One ThreadLoop Attempt can map to one GAAP Agent Run, but
-this build imports no GAAP types and implements no adapter.
+usage, provider trust/normalization contracts, and the [GAAP mapping](../executor-v0.1/README.md). One ThreadLoop
+Attempt can map to one GAAP Agent Run, but this build imports no GAAP types and implements no adapter.
 [#108](https://github.com/nnennandukwe/threadloop/issues/108) owns the external implementation-independent subject
 protocol and expected-output isolation. The fixture corpus here is specification development evidence, not external
 conformance or runtime interoperability proof.
@@ -403,6 +405,6 @@ contract.
 
 Tests prove deterministic proposal/replay behavior, rejection rules, and consistency with the real controller candidate
 validator. They do not prove filesystem durability, transaction isolation, executor death, authenticated observations,
-external effect fencing, or exactly-once effects. Those remain mandatory runtime and adapter acceptance work under
-issues #107 and #108 and the later runtime milestone. No scheduler, queue, database, daemon, retry timer, or distributed
-test infrastructure is introduced.
+external effect fencing, or exactly-once effects. #107 specifies the executor seam, #108 owns external conformance, and
+issue #111 owns runtime adapter acceptance. No scheduler, queue, database, daemon, retry timer, or distributed test
+infrastructure is introduced.

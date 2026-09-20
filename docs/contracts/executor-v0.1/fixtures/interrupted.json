@@ -1,0 +1,17 @@
+{
+  "receipt_file": "interrupted.gaap.canonical",
+  "observation": {
+    "finished_at": "2026-09-10T10:01:00.000Z",
+    "resulting_subject": {
+      "kind": "repository",
+      "repository_id": "sample_repository",
+      "revision": "commit_b",
+      "content_digest": "46f155c90e515c97c0bf03967cb7e0be593e707a5054d1306da836cb99b51924"
+    }
+  },
+  "expected": {
+    "status": "interrupted",
+    "reason": "interrupted",
+    "effect": "unknown"
+  }
+}

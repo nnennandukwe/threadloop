@@ -43,7 +43,7 @@ export const attemptReceiptSchema = z.strictObject({
   receipt_digest: digest,
 });
 
-// ThreadLoop admits the whole report after independent evidence verification (#107).
+// ThreadLoop admits the whole report after independent evidence verification (specified by #107; future runtime #111).
 export const receiptAdmissionSchema = z.strictObject({
   admission: z.strictObject({
     schema_version: z.literal('0.1'),

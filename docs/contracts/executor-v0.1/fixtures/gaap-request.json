@@ -1,0 +1,37 @@
+{
+  "schema_version": "gaap.agent-run-request/0.1.0",
+  "request_id": "threadloop_request_daa5dc873f526306313090ed346847ecad2a2a3647858bce76e3c685a9e41fa9",
+  "run_id": "threadloop_attempt_93aff819356a26f463a52f5a9efada269ca5fe516285887a2e348f4281533c6b",
+  "subject": {
+    "kind": "repository",
+    "locator": "https://example.invalid/threadloop-contract-fixture",
+    "digest": "sha256:46f155c90e515c97c0bf03967cb7e0be593e707a5054d1306da836cb99b51924"
+  },
+  "requested_capability": {
+    "name": "run-local-gates",
+    "version": "1",
+    "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "task": {
+    "instructions": "Run the exact declared local gate and retain its output.",
+    "constraints": ["Do not modify or publish the subject."]
+  },
+  "policies": [
+    {
+      "name": "gaap.run-coordinator",
+      "version": "0.1.0",
+      "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "resource_budget": {
+    "max_cost_micros": 1000000,
+    "max_elapsed_ms": 60000,
+    "max_model_tokens": 100000,
+    "max_tool_calls": 100
+  },
+  "approval_context": [],
+  "required_verification": {
+    "independence": "different_actor",
+    "evidence_types": ["command_output"]
+  }
+}

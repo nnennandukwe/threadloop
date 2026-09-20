@@ -1,0 +1,56 @@
+{
+  "repository": "https://github.com/nnennandukwe/governed-agent-autonomy-patterns",
+  "commit": "712875cbf4be6dd02093f50f93ae826f20cb4890",
+  "files": [
+    {
+      "path": "agent-run-request.schema.json",
+      "source_path": "schemas/agent-run/v0.1.0/agent-run-request.schema.json",
+      "sha256": "a0e9af9ffc7c0814e3221d44ad8466071a1f5c443eb5527fac9030de5a246618"
+    },
+    {
+      "path": "terminal-run-receipt.schema.json",
+      "source_path": "schemas/agent-run/v0.1.0/terminal-run-receipt.schema.json",
+      "sha256": "6e0643f34d6ad767eb925f267cd6b8d5d284cfb8a74124885cbb0a2f05540026"
+    },
+    {
+      "path": "agent-run-request.json",
+      "source_path": "examples/contracts/v0.1.0/agent-run-request.json",
+      "sha256": "55cbfc6e8278f59135a5cf302007b050a2221dc72f13f45467efeed4c01e6152"
+    },
+    {
+      "path": "completed.json",
+      "source_path": "examples/contracts/v0.1.0/completed.json",
+      "sha256": "4e45f41564da0c38fa7c4c21805d4f6c6e82d410138efe7d4e62248fe53548c7"
+    },
+    {
+      "path": "blocked.json",
+      "source_path": "examples/contracts/v0.1.0/blocked.json",
+      "sha256": "50d4f791a6274fd3d0df1810c3ea541c46f008e4e64f2cc69ee5d901cfb5c0ce"
+    },
+    {
+      "path": "denied-effect.json",
+      "source_path": "examples/contracts/v0.1.0/denied-effect.json",
+      "sha256": "a9abf2f9d4c9d571f42fed1842b748245525e21da9df73a8444c6ebade4cefef"
+    },
+    {
+      "path": "failed.json",
+      "source_path": "examples/contracts/v0.1.0/failed.json",
+      "sha256": "a89bee692c75b421071e2415d2c45992259581510f528f8959b99bf6c0ac1ed7"
+    },
+    {
+      "path": "interrupted.json",
+      "source_path": "examples/contracts/v0.1.0/interrupted.json",
+      "sha256": "9f8a3cb7df0bf33929cf242bd650632524f78a2dafc7688e99dc2a4f3a06c673"
+    },
+    {
+      "path": "budget-exhausted.json",
+      "source_path": "examples/contracts/v0.1.0/budget-exhausted.json",
+      "sha256": "1d47ce944b2772a0c8183f32b43d8c81d72fff9611c99475114556debdbde85d"
+    },
+    {
+      "path": "stale-verification.json",
+      "source_path": "examples/contracts/v0.1.0/stale-verification.json",
+      "sha256": "673a8c9f95166f82cf82a5d982c42e7f2f0930ef86bfa77bf73b53f8b7593baf"
+    }
+  ]
+}

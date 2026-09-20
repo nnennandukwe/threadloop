@@ -1,0 +1,7 @@
+{
+  "input_file": "local-gates.json",
+  "receipt_file": "completed.gaap.canonical",
+  "current_subject_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "expected_preflight": "EXECUTOR_CONTEXT_MISMATCH",
+  "recovery": "Refresh authoritative context and evidence for the current subject before requesting another action."
+}

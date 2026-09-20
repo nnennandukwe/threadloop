@@ -14,3 +14,12 @@ regexTarget = "match"
 # Restrict this exception to that field in the published v0.1 positive fixtures.
 paths = ['''^docs/contracts/controller-v0\.1/fixtures/valid/[a-z_]+\.(json|request\.canonical|decision\.canonical)$''']
 regexes = ['''^idempotency_key":\s*"[a-f0-9]{64}"$''']
+
+[[rules.allowlists]]
+description = "Executor fixture idempotency keys are public SHA-256 Action Request identities"
+condition = "AND"
+regexTarget = "match"
+# These two fixtures retain the same requestIdentity() field as the controller corpus.
+# Allow only that digest field; credential fields in these files remain scanned.
+paths = ['''^docs/contracts/executor-v0\.1/fixtures/(executor-request\.canonical|local-gates\.json)$''']
+regexes = ['''^idempotency_key":\s*"[a-f0-9]{64}"$''']
