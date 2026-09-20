@@ -1,4 +1,5 @@
-import { lstat, readFile, opendir } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { lstat, open, opendir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseDocument } from 'yaml';
@@ -11,16 +12,42 @@ export const corpusDirectory = fileURLToPath(
   new URL('../../docs/contracts/controller-conformance-v0.1/', import.meta.url),
 );
 
-async function readArtifact(path: string): Promise<Buffer> {
-  const metadata = await lstat(path);
-  if (!metadata.isFile() || metadata.size > 16 * 1024 * 1024)
-    throw new Error(`${path}: expected a regular file no larger than 16 MiB.`);
-  return readFile(path);
+async function readArtifact(path: string, maxBytes = 16 * 1024 * 1024): Promise<Buffer> {
+  const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)).catch(
+    (error: unknown) => {
+      if (error instanceof Error && 'code' in error && error.code === 'ELOOP')
+        throw new Error(`${path}: expected a regular file, not a symlink.`, { cause: error });
+      throw error;
+    },
+  );
+  try {
+    const opened = await handle.stat();
+    const named = await lstat(path);
+    if (!opened.isFile() || !named.isFile() || opened.dev !== named.dev || opened.ino !== named.ino)
+      throw new Error(`${path}: expected the same regular file that was opened.`);
+    if (opened.size > maxBytes) throw new Error(`${path}: byte limit exceeded (${maxBytes} bytes).`);
+    const chunks: Buffer[] = [];
+    let size = 0;
+    // Read at most the budget plus one byte, even if the file grows after stat.
+    while (size <= maxBytes) {
+      const chunk = Buffer.alloc(Math.min(64 * 1024, maxBytes + 1 - size));
+      const { bytesRead } = await handle.read(chunk, 0, chunk.length, null);
+      if (!bytesRead) return Buffer.concat(chunks, size);
+      size += bytesRead;
+      if (size > maxBytes) throw new Error(`${path}: byte limit exceeded (${maxBytes} bytes).`);
+      chunks.push(chunk.subarray(0, bytesRead));
+    }
+    throw new Error(`${path}: byte limit exceeded (${maxBytes} bytes).`);
+  } finally {
+    await handle.close();
+  }
 }
 
-async function readJson(path: string): Promise<unknown> {
+async function readJson(path: string, sourceBudget?: { remaining: number }): Promise<unknown> {
   try {
-    const source = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(await readArtifact(path));
+    const bytes = await readArtifact(path, sourceBudget?.remaining);
+    if (sourceBudget) sourceBudget.remaining -= bytes.length;
+    const source = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
     const value: unknown = JSON.parse(source);
     const parsed = parseDocument(source, { uniqueKeys: true });
     if (parsed.errors.length) throw new Error('Duplicate or invalid JSON keys.');
@@ -63,12 +90,14 @@ export async function loadCorpus(directory = corpusDirectory) {
     sourceBytes += metadata.size;
     if (sourceBytes > 2 * 1024 * 1024) throw new Error('Corpus source-byte limit exceeded (2 MiB).');
   }
+  const sourceBudget = { remaining: 2 * 1024 * 1024 };
+  const shared = await readJson(join(directory, 'shared.json'), sourceBudget);
   const sources: Record<string, unknown> = {};
-  for (const entry of entries) sources[entry.path] = await readJson(join(directory, entry.path));
+  for (const entry of entries) sources[entry.path] = await readJson(join(directory, entry.path), sourceBudget);
   return {
     manifest,
     compatibility: await readJson(join(directory, 'compatibility.json')),
-    fixtures: materializeFixtureSources(sources, await readJson(join(directory, 'shared.json'))),
+    fixtures: materializeFixtureSources(sources, shared),
   };
 }
 
