@@ -172,6 +172,11 @@ export function validateExecutorResult(value: unknown, requestValue: unknown): V
     (receipt.status === 'succeeded' && resultingSubject !== null && resultingSubject.content_digest !== currentDigest)
   )
     return invalid('RESULT_EFFECT_MISMATCH', 'Effect claims and resulting subject disagree with the mutation summary.');
+  if (new Set(receipt.evidence.map((entry) => entry.id)).size !== receipt.evidence.length)
+    return invalid(
+      'DUPLICATE_RESULT_EVIDENCE',
+      'Attempt receipt evidence IDs must be unique; assign a distinct identity to each retained entry.',
+    );
   if (
     !receipt.evidence.some(
       (entry) => entry.id === result.source_receipt.id && entry.digest === result.source_receipt.digest,

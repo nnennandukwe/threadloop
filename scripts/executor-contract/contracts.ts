@@ -3,7 +3,7 @@ import { actionRequestSchema, subjectSchema } from '../controller-contract/contr
 import { executionDigest } from '../execution-contract/model.js';
 import { attemptReceiptSchema } from '../execution-contract/contracts.js';
 
-const text = z.string().min(1);
+const text = z.string().min(1).regex(/\S/, 'Text must contain a non-whitespace character.');
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const counter = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const identity = z.strictObject({ id: text, digest });

@@ -435,7 +435,8 @@
           "properties": {
             "id": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "pattern": "\\S"
             },
             "digest": {
               "type": "string",
@@ -450,18 +451,21 @@
           "properties": {
             "subject_locator": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "pattern": "\\S"
             },
             "capability": {
               "type": "object",
               "properties": {
                 "name": {
                   "type": "string",
-                  "minLength": 1
+                  "minLength": 1,
+                  "pattern": "\\S"
                 },
                 "version": {
                   "type": "string",
-                  "minLength": 1
+                  "minLength": 1,
+                  "pattern": "\\S"
                 },
                 "digest": {
                   "type": "string",
@@ -476,13 +480,15 @@
               "properties": {
                 "instructions": {
                   "type": "string",
-                  "minLength": 1
+                  "minLength": 1,
+                  "pattern": "\\S"
                 },
                 "constraints": {
                   "type": "array",
                   "items": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "pattern": "\\S"
                   }
                 }
               },
@@ -497,11 +503,13 @@
                 "properties": {
                   "name": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "pattern": "\\S"
                   },
                   "version": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "pattern": "\\S"
                   },
                   "digest": {
                     "type": "string",
@@ -547,15 +555,18 @@
                 "properties": {
                   "approval_id": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "pattern": "\\S"
                   },
                   "actor_id": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "pattern": "\\S"
                   },
                   "scope": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "pattern": "\\S"
                   },
                   "subject_digest": {
                     "type": "string",
@@ -584,7 +595,8 @@
                         "anyOf": [
                           {
                             "type": "string",
-                            "minLength": 1
+                            "minLength": 1,
+                            "pattern": "\\S"
                           },
                           {
                             "type": "null"

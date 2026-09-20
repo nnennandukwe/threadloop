@@ -296,7 +296,8 @@
             },
             "id": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "pattern": "\\S"
             },
             "digest": {
               "type": "string",
@@ -349,7 +350,8 @@
                       "anyOf": [
                         {
                           "type": "string",
-                          "minLength": 1
+                          "minLength": 1,
+                          "pattern": "\\S"
                         },
                         {
                           "type": "null"
@@ -373,7 +375,8 @@
             "properties": {
               "actor_id": {
                 "type": "string",
-                "minLength": 1
+                "minLength": 1,
+                "pattern": "\\S"
               },
               "subject_digest": {
                 "type": "string",
@@ -409,7 +412,8 @@
                       "anyOf": [
                         {
                           "type": "string",
-                          "minLength": 1
+                          "minLength": 1,
+                          "pattern": "\\S"
                         },
                         {
                           "type": "null"
@@ -451,7 +455,8 @@
                 "anyOf": [
                   {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "pattern": "\\S"
                   },
                   {
                     "type": "null"
@@ -508,7 +513,8 @@
             },
             "message": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "pattern": "\\S"
             }
           },
           "required": ["code", "message"],
