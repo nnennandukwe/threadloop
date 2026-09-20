@@ -13,7 +13,13 @@ import { buildGaapRequest, mapGaapResult } from '../../scripts/executor-contract
 import { gaapDigest, validateGaapReceipt } from '../../scripts/executor-contract/gaap-validation.js';
 import { validateExecutorContext } from '../../scripts/executor-contract/validation.js';
 import { executorFixture, executorFixtureAuthority } from '../fixtures/executor-contract.js';
-import { operate, projectControllerExecution } from '../fixtures/execution-contract.js';
+import {
+  applyExecutionOperation,
+  operate,
+  operationFor,
+  projectControllerExecution,
+  receiptAdmissionFor,
+} from '../fixtures/execution-contract.js';
 import type { ExecutionJournal } from '../../scripts/execution-contract/contracts.js';
 import type { ControllerInput } from '../../scripts/controller-contract/contracts.js';
 import type { GaapReceipt } from '../../scripts/executor-contract/gaap-types.js';
@@ -22,8 +28,8 @@ const root = new URL('../../docs/contracts/executor-v0.1/', import.meta.url);
 async function json(path: string): Promise<unknown> {
   return JSON.parse(await readFile(new URL(path, root), 'utf8')) as unknown;
 }
-async function input() {
-  return (await json('fixtures/local-gates.json')) as {
+async function input(filename = 'local-gates.json') {
+  return (await json(`fixtures/${filename}`)) as {
     request: ExecutorRequest;
     mapping: GaapMappingPolicy;
     journal: ExecutionJournal;
@@ -129,29 +135,113 @@ describe('Published executor corpus', () => {
     const schemas = publishedExecutorSchemas();
     const ajv = new Ajv2020({ strict: true, validateFormats: false });
     const fixture = await input();
+    const examples: Record<string, unknown[]> = {
+      'executor-request': [fixture.request],
+      'gaap-mapping-policy': [fixture.mapping],
+      'executor-result': [],
+      'result-observation': [],
+    };
+    for (const name of [
+      'completed',
+      'blocked',
+      'denied-effect',
+      'failed',
+      'interrupted',
+      'budget-exhausted',
+      'stale-verification',
+    ]) {
+      const scenario = (await json(`fixtures/${name}.json`)) as { receipt_file: string; observation: unknown };
+      const mapped = mapGaapResult(
+        fixture.request,
+        fixture.mapping,
+        await readFile(new URL(`fixtures/${scenario.receipt_file}`, root)),
+        scenario.observation,
+      );
+      expect(mapped.ok, JSON.stringify(mapped)).toBe(true);
+      if (!mapped.ok) return;
+      examples['executor-result']!.push(mapped.value);
+      examples['result-observation']!.push(scenario.observation);
+    }
+    expect(Object.keys(examples).sort()).toEqual(Object.keys(schemas).sort());
     for (const [name, schema] of Object.entries(schemas)) {
       expect(await json(`schemas/${name}.schema.json`)).toEqual(schema);
       const validate = ajv.compile(schema);
-      if (name === 'executor-request') expect(validate(fixture.request)).toBe(true);
-      if (name === 'gaap-mapping-policy') expect(validate(fixture.mapping)).toBe(true);
+      expect(examples[name]!.length).toBeGreaterThan(0);
+      for (const example of examples[name]!) {
+        expect(validate(example), `${name}: ${JSON.stringify(validate.errors)}`).toBe(true);
+        expect(validate({ ...(example as object), unrecognized_field: true }), name).toBe(false);
+      }
     }
   });
-  it.each(['expired-claim', 'stale-subject'])('rejects the published %s context', async (name) => {
-    const fixture = await input();
-    const scenario = (await json(`fixtures/${name}.json`)) as {
-      evaluation_time?: string;
-      current_subject_digest?: string;
-      expected_preflight: string;
-    };
-    if (scenario.evaluation_time) fixture.snapshot.evaluation_time = scenario.evaluation_time;
-    if (scenario.current_subject_digest)
-      fixture.snapshot.binding.subject.content_digest = scenario.current_subject_digest;
-    const authority = executorFixtureAuthority(fixture.journal, fixture.snapshot, fixture.request);
-    expect(validateExecutorContext(fixture.request, fixture.journal, fixture.snapshot, authority)).toMatchObject({
-      ok: false,
-      diagnostics: [{ code: scenario.expected_preflight }],
-    });
-  });
+  it.each(['expired-claim', 'stale-subject'])(
+    'rejects the published %s context and completed receipt',
+    async (name) => {
+      const scenario = (await json(`fixtures/${name}.json`)) as {
+        input_file: string;
+        receipt_file: string;
+        evaluation_time?: string;
+        current_subject_digest?: string;
+        expected_preflight: string;
+        expected_receipt_disposition?: string;
+      };
+      expect(typeof scenario.input_file).toBe('string');
+      const fixture = await input(scenario.input_file);
+      const admittedHistory = await executorFixture();
+      expect(fixture.journal).toEqual(admittedHistory.started.journal);
+      const completed = (await json('fixtures/completed.json')) as { receipt_file: string; observation: unknown };
+      expect(scenario.receipt_file).toBe(completed.receipt_file);
+      const mapped = mapGaapResult(
+        fixture.request,
+        fixture.mapping,
+        await readFile(new URL(`fixtures/${scenario.receipt_file}`, root)),
+        completed.observation,
+      );
+      expect(mapped.ok, JSON.stringify(mapped)).toBe(true);
+      if (!mapped.ok) return;
+      const receipt = mapped.value.result.attempt_receipt;
+      expect(receipt.receipt.status).toBe('succeeded');
+      // Synthetic admission proves this same report is otherwise admissible. No producer is authenticated here.
+      const fresh = operate(
+        fixture.journal,
+        { kind: 'submit_receipt', receipt },
+        undefined,
+        receipt.receipt.finished_at,
+      );
+      expect(fresh.result).toMatchObject({ disposition: 'applied', code: 'RECEIPT_ACCEPTED' });
+      fixture.snapshot.evaluation_time = scenario.evaluation_time ?? receipt.receipt.finished_at;
+      if (scenario.current_subject_digest)
+        fixture.snapshot.binding.subject.content_digest = scenario.current_subject_digest;
+      const authority = executorFixtureAuthority(fixture.journal, fixture.snapshot, fixture.request);
+      expect(validateExecutorContext(fixture.request, fixture.journal, fixture.snapshot, authority)).toMatchObject({
+        ok: false,
+        diagnostics: [{ code: scenario.expected_preflight }],
+      });
+      const context = structuredClone(fixture.journal.execution.initial_context);
+      context.actor = { kind: 'executor', executor: receipt.receipt.executor };
+      context.snapshot = fixture.snapshot;
+      context.receipt_admissions = [receiptAdmissionFor(fixture.journal, receipt)];
+      const submitted = applyExecutionOperation(
+        fixture.journal,
+        context,
+        operationFor(fixture.journal, context.actor, { kind: 'submit_receipt', receipt }),
+      );
+      expect(submitted.ok, JSON.stringify(submitted)).toBe(true);
+      if (!submitted.ok) return;
+      expect(submitted.value.result).toMatchObject({
+        disposition: 'rejected',
+        code: name === 'expired-claim' ? 'CLAIM_FENCED' : 'REQUEST_NOT_CURRENT',
+      });
+      if (name === 'expired-claim')
+        expect(submitted.value.result.disposition).toBe(scenario.expected_receipt_disposition);
+      expect(submitted.value.projection.request_status).toBe('open');
+      expect(submitted.value.projection.attempts.at(-1)?.status).toBe('running');
+      expect(submitted.value.projection.receipts.at(-1)?.envelope).toEqual(receipt);
+      const projected = projectControllerExecution(submitted.value.journal, fixture.snapshot);
+      expect(projected.ok, JSON.stringify(projected)).toBe(true);
+      if (!projected.ok) return;
+      expect(projected.value.execution.status).toBe('reconciliation_required');
+    },
+  );
   it('retains duplicate acceptance and detects changed content under the same receipt identity', async () => {
     const fixture = await executorFixture();
     const scenario = (await json('fixtures/completed.json')) as { observation: unknown };
@@ -207,7 +297,7 @@ describe('Published executor corpus', () => {
   });
   it.each([
     'ask_effect',
-    'wrong_completion_effect',
+    'wrong_completion_subject',
     'stale_verifier',
     'same_actor',
     'missing_evidence',
@@ -224,11 +314,11 @@ describe('Published executor corpus', () => {
       if (mutation === 'ask_effect' && event.event_type === 'protected_effect_decision' && event.gate === 'permission')
         event.decision.outcome = 'ask';
       if (
-        mutation === 'wrong_completion_effect' &&
+        mutation === 'wrong_completion_subject' &&
         event.event_type === 'protected_effect_decision' &&
         event.decision.code === 'workflow.completion_authorized'
       )
-        event.protected_effect_digest = 'sha256:' + '0'.repeat(64);
+        event.subject_digest = 'sha256:' + '0'.repeat(64);
       if (event.event_type === 'verification') {
         if (mutation === 'stale_verifier') event.subject_digest = body.initial_subject_digest;
         if (mutation === 'same_actor') event.verifier_id = event.implementer_id;

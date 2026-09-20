@@ -96,10 +96,10 @@ export function validateGaapReceipt(value: unknown, requestValue: unknown): Vali
   let verifiedAt = 0;
   let completionAt = 0;
   let completionSubject: string | null = null;
-  let completionEffect: string | null = null;
   let interruptionSeen = false;
   let usage = { cost_micros: 0, elapsed_ms: 0, model_tokens: 0, tool_calls: 0 };
   let usageSeen = false;
+  let observedToolCalls = 0;
   const decisions = new Map<string, Extract<GaapEvent, { event_type: 'protected_effect_decision' }>>();
   const fail = (message: string) => invalid('GAAP_LEDGER_INVALID', message);
   for (const [index, event] of body.events.entries()) {
@@ -131,9 +131,10 @@ export function validateGaapReceipt(value: unknown, requestValue: unknown): Vali
           event.decision.outcome === 'allow' &&
           event.decision.code === 'workflow.completion_authorized'
         ) {
+          if (!event.decision.effects.includes('record_completion'))
+            return fail('Completion authorization must grant the record_completion effect.');
           completionAt = event.sequence;
           completionSubject = event.subject_digest;
-          completionEffect = event.protected_effect_digest;
         }
         break;
       case 'tool_execution':
@@ -155,6 +156,7 @@ export function validateGaapReceipt(value: unknown, requestValue: unknown): Vali
             return fail('Tool execution capability differs from the request.');
           if (!event.evidence.some((entry) => entry.evidence_type === 'tool_execution'))
             return fail('Tool execution requires tool_execution evidence.');
+          observedToolCalls += 1;
         } else {
           if (event.before_subject_digest !== subject)
             return fail('Mutation chain must start from the latest subject.');
@@ -179,6 +181,8 @@ export function validateGaapReceipt(value: unknown, requestValue: unknown): Vali
         if (event.subject_digest === subject) verifiedAt = event.verdict === 'PASS' ? event.sequence : 0;
         break;
       case 'usage':
+        if (event.usage.tool_calls < observedToolCalls)
+          return fail('Cumulative tool usage must include every tool execution recorded so far.');
         if ((Object.keys(usage) as (keyof typeof usage)[]).some((key) => event.usage[key] < usage[key]))
           return fail('Resource usage must be cumulative and monotonic.');
         usage = event.usage;
@@ -195,6 +199,7 @@ export function validateGaapReceipt(value: unknown, requestValue: unknown): Vali
       }
     }
   }
+  if (usage.tool_calls < observedToolCalls) return fail('Final tool usage must include every recorded tool execution.');
   if (
     state !== body.terminal_status ||
     terminalReason !== body.terminal_reason ||
@@ -211,7 +216,6 @@ export function validateGaapReceipt(value: unknown, requestValue: unknown): Vali
       verifiedAt === 0 ||
       completionAt <= verifiedAt ||
       completionSubject !== subject ||
-      completionEffect !== subject ||
       usage.cost_micros > budget.max_cost_micros ||
       usage.elapsed_ms > budget.max_elapsed_ms ||
       usage.model_tokens > budget.max_model_tokens ||
