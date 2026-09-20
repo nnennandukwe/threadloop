@@ -171,3 +171,6 @@ specification-only; it does not publish anything.
 The [minimal release vector](fixtures/valid/minimal-release.yaml) provides a small independently inspectable
 canonicalization example. All three profiles, their bindings, and the [invalid corpus](fixtures/invalid/expected.json)
 are checked by the normal verification workflow.
+
+The [Controller Conformance Protocol and corpus v0.1](../controller-conformance-v0.1/README.md) define the external test
+contract and RunInvariant integration handoff. Internal corpus validation is not a current-runtime conformance result.

@@ -401,3 +401,7 @@ explicitly accepted into a repository roadmap.
 ## License
 
 Licensed under the [Apache License, Version 2.0](LICENSE). See [NOTICE](NOTICE) for attribution.
+
+The [Controller Conformance Protocol and corpus v0.1](docs/contracts/controller-conformance-v0.1/README.md) define the
+external test contract and RunInvariant integration handoff. Internal corpus validation is not a current-runtime
+conformance result.

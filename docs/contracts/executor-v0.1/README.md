@@ -326,3 +326,6 @@ Existing CLI, SQLite v8, packaged runtime, runner, and graph/controller/executio
 | Independent release lifecycles without a shared Rust crate             | [Examples and proof limits](#examples-verification-and-proof-limits)                | Checksummed offline JSON snapshots; unchanged dependencies and runtime source                 |
 | All six required examples                                              | [Examples and proof limits](#examples-verification-and-proof-limits)                | Completed, authority, denied-effect, interruption, stale-subject, and expired-claim fixtures  |
 | Complete GAAP runtime integration remains unimplemented                | [Examples and proof limits](#examples-verification-and-proof-limits)                | Explicit pinned-release and #111 boundary statement; no live interoperability claim           |
+
+The [Controller Conformance Protocol and corpus v0.1](../controller-conformance-v0.1/README.md) define the external test
+contract and RunInvariant integration handoff. Internal corpus validation is not a current-runtime conformance result.

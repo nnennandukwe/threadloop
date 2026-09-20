@@ -408,3 +408,6 @@ validator. They do not prove filesystem durability, transaction isolation, execu
 external effect fencing, or exactly-once effects. #107 specifies the executor seam, #108 owns external conformance, and
 issue #111 owns runtime adapter acceptance. No scheduler, queue, database, daemon, retry timer, or distributed test
 infrastructure is introduced.
+
+The [Controller Conformance Protocol and corpus v0.1](../controller-conformance-v0.1/README.md) define the external test
+contract and RunInvariant integration handoff. Internal corpus validation is not a current-runtime conformance result.
