@@ -210,6 +210,8 @@ export function validateGaapReceipt(value: unknown, requestValue: unknown): Vali
     return fail('Terminal status and reason, resulting subject, and final usage must agree with the retained ledger.');
   if (body.terminal_status === 'interrupted' && !interruptionSeen)
     return fail('Interrupted receipts require interruption evidence.');
+  if (interruptionSeen && body.terminal_status !== 'interrupted')
+    return fail('A ledger with interruption evidence must terminate as interrupted.');
   if (body.terminal_status === 'completed') {
     const budget = request.value.resource_budget;
     if (

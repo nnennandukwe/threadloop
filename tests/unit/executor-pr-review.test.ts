@@ -96,4 +96,50 @@ describe('Executor PR review regressions', () => {
     if (!checked.ok) expect(checked.diagnostics[0]?.code).toBe('DUPLICATE_RESULT_EVIDENCE');
     expect(result).toEqual(before);
   });
+  it.each(['supporting', 'effect', 'verification'])(
+    'requires reported %s evidence to survive in the submitted Attempt receipt',
+    async (kind) => {
+      const fixture = JSON.parse(await readFile(new URL('local-gates.json', root), 'utf8')) as {
+        request: ExecutorRequest;
+        mapping: GaapMappingPolicy;
+      };
+      const scenario = JSON.parse(await readFile(new URL('completed.json', root), 'utf8')) as { observation: unknown };
+      const mapped = mapGaapResult(
+        fixture.request,
+        fixture.mapping,
+        await readFile(new URL('completed.gaap.canonical', root)),
+        scenario.observation,
+      );
+      if (!mapped.ok) throw new Error(JSON.stringify(mapped));
+      const envelope = mapped.value;
+      const result = envelope.result;
+      const receipt = result.attempt_receipt;
+      const proof = { evidence_type: 'artifact' as const, digest: '9'.repeat(64), locator: null };
+      if (kind === 'supporting') result.evidence.push(proof);
+      if (kind === 'verification') result.verification[0]!.evidence.push(proof);
+      if (kind === 'effect') {
+        receipt.receipt.effect = 'occurred';
+        const subject = receipt.receipt.binding.subject.content_digest;
+        result.effects.push({
+          effect_digest: '8'.repeat(64),
+          before_subject_digest: subject,
+          after_subject_digest: subject,
+          evidence: [proof],
+        });
+      }
+      receipt.receipt.evidence.push({ id: 'retained_proof', digest: proof.digest });
+      receipt.receipt_digest = executionDigest(receipt.receipt);
+      envelope.result_digest = executionDigest(result);
+      expect(validateExecutorResult(envelope, fixture.request).ok).toBe(true);
+      receipt.receipt.evidence = receipt.receipt.evidence.filter((entry) => entry.digest !== proof.digest);
+      receipt.receipt_digest = executionDigest(receipt.receipt);
+      envelope.result_digest = executionDigest(result);
+      const before = structuredClone(envelope);
+      expect(validateExecutorResult(envelope, fixture.request)).toMatchObject({
+        ok: false,
+        diagnostics: [{ code: 'RESULT_EVIDENCE_MISMATCH' }],
+      });
+      expect(envelope).toEqual(before);
+    },
+  );
 });

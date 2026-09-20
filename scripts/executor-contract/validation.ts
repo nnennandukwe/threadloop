@@ -186,6 +186,17 @@ export function validateExecutorResult(value: unknown, requestValue: unknown): V
       'RESULT_SOURCE_MISMATCH',
       'The source receipt identity and digest must be retained in Attempt receipt evidence.',
     );
+  const retainedDigests = new Set(receipt.evidence.map((entry) => entry.digest));
+  const reportedEvidence = [
+    ...result.evidence,
+    ...result.effects.flatMap((effect) => effect.evidence),
+    ...result.verification.flatMap((verification) => verification.evidence),
+  ];
+  if (reportedEvidence.some((entry) => !retainedDigests.has(entry.digest)))
+    return invalid(
+      'RESULT_EVIDENCE_MISMATCH',
+      'Retain every reported supporting, effect, and verification evidence digest in the Attempt receipt.',
+    );
   if (receipt.status === 'succeeded') {
     const verification = result.verification.filter((entry) => entry.subject_digest === currentDigest).at(-1);
     if (

@@ -37,6 +37,11 @@ checks for offline corpus verification. They do not evaluate GAAP policies or au
 check in `buildGaapRequest` supplies the exact policy/capability allowlist; direct upstream shape validation does not
 supply it.
 
+These source-tree tools load and compile the fixed schema snapshots at module initialization, relative to the module's
+URL. The snapshot files must be present; schema loading is not injectable. Corpus tests intentionally use those exact
+artifacts. This development interface is not exported by the packaged CLI; #111 must revisit loading and composition
+when implementing a runtime consumer.
+
 ## One-shot process protocol
 
 Protocol identity: `threadloop.executor/0.1`. One process invocation receives one canonical UTF-8 executor request on
@@ -179,18 +184,20 @@ compatibility tests do not establish runtime interoperability with that implemen
 | `interrupted`                            | `interrupted`     | `interrupted`        |
 
 The exact upstream terminal reason is retained as the reason message. Denial classification uses the matching causal
-decision, even if an unrelated allow appears later. GAAP's native contract permits resumable `awaiting_authority`, but
-it is not terminal and cannot be returned alone. The native receipt consistency validator preserves that contract. The
-one-shot mapper rejects resumed asks: after an ask only usage accounting and transitions to `awaiting_authority` or
-terminal `blocked` are permitted, with an authority-required reason matching that ask. Obtaining authority does not
-resume this Attempt; ThreadLoop must determine permitted recovery and a new Attempt. No interactive protocol is added.
-GAAP v0.1.0 has no terminal `cancelled`; the neutral executor contract preserves it for compatible producers, and the
-mapping never invents a GAAP cancellation receipt.
+decision, even if an unrelated allow appears later. A ledger containing interruption evidence must terminate as
+`interrupted`; a different terminal outcome is inconsistent. GAAP's native contract permits resumable
+`awaiting_authority`, but it is not terminal and cannot be returned alone. The native receipt consistency validator
+preserves that contract. The one-shot mapper rejects resumed asks: after an ask only usage accounting and transitions to
+`awaiting_authority` or terminal `blocked` are permitted, with an authority-required reason matching that ask. Obtaining
+authority does not resume this Attempt; ThreadLoop must determine permitted recovery and a new Attempt. No interactive
+protocol is added. GAAP v0.1.0 has no terminal `cancelled`; the neutral executor contract preserves it for compatible
+producers, and the mapping never invents a GAAP cancellation receipt.
 
 A direct successful executor candidate also requires a latest-subject passing verification record with every requested
 evidence type and an actor ID different from the executor ID. The source receipt ID/digest must appear in the retained
-Attempt evidence, whose entry IDs must be unique as required by #106 submission. These are correlation checks, not
-authentication of identities or evidence.
+Attempt evidence, whose entry IDs must be unique as required by #106 submission. Every reported supporting, effect, and
+verification evidence digest must also remain in that receipt, so submitting it cannot discard the completion proof.
+These are correlation checks, not authentication of identities or evidence.
 
 Usage consists of non-negative safe integers: cost in micros, elapsed milliseconds, model tokens, and tool calls. An
 `effect: occurred` report requires a mutation summary. An `effect: none` report permits no mutations and must retain the

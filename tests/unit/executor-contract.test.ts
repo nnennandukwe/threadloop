@@ -52,6 +52,7 @@ describe('Executor contract candidates', () => {
       id: result.source_receipt.id,
       digest: result.source_receipt.digest,
     });
+    result.attempt_receipt.receipt.evidence.push({ id: 'verification_proof', digest: 'b'.repeat(64) });
     result.attempt_receipt.receipt_digest = executionDigest(result.attempt_receipt.receipt);
     const envelope = { result, result_digest: executionDigest(result) };
     expect(validateExecutorResult(envelope, fixture.envelope).ok).toBe(true);

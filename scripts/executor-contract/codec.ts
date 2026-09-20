@@ -53,7 +53,8 @@ export function validateJsonValue(value: unknown): ValidationResult<unknown> {
         return invalid('INVALID_JSON_VALUE', 'Supply a plain JSON tree without cycles or shared object references.');
       seen.add(item);
       const keys = Reflect.ownKeys(item);
-      if (keys.length + values + pending.length > executionLimits.values)
+      const childValues = keys.length - (Array.isArray(item) ? 1 : 0);
+      if (childValues + values + pending.length > executionLimits.values)
         return invalid('EXECUTOR_INPUT_LIMIT', 'JSON exceeds the value limit.');
       if (Array.isArray(item) && (keys.length !== item.length + 1 || item.length > executionLimits.values))
         return invalid('INVALID_JSON_VALUE', 'Arrays must be dense JSON arrays.');

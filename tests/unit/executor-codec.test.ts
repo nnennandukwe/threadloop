@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseExecutorMessage } from '../../scripts/executor-contract/codec.js';
+import { parseExecutorMessage, validateJsonValue } from '../../scripts/executor-contract/codec.js';
 
 describe('Executor process framing', () => {
   it('accepts canonical UTF-8 with one optional terminal LF', () => {
@@ -34,5 +34,13 @@ describe('Executor process framing', () => {
   it('bounds input bytes and nesting before recursive schema work', () => {
     expect(parseExecutorMessage(Buffer.alloc(16 * 1024 * 1024 + 2, 32)).ok).toBe(false);
     expect(parseExecutorMessage(Buffer.from('['.repeat(66) + '0' + ']'.repeat(66))).ok).toBe(false);
+  });
+  it('accepts exactly one million JSON values including an array root', () => {
+    const result = validateJsonValue(Array.from({ length: 999_999 }, () => 0));
+    expect(result.ok).toBe(true);
+  });
+  it('rejects one million array elements because the root also counts as a JSON value', () => {
+    const result = validateJsonValue(Array.from({ length: 1_000_000 }, () => 0));
+    expect(result).toMatchObject({ ok: false, diagnostics: [{ code: 'EXECUTOR_INPUT_LIMIT' }] });
   });
 });

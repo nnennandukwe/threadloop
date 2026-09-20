@@ -11,11 +11,11 @@ const root = new URL('../../docs/contracts/executor-v0.1/fixtures/', import.meta
 async function json<T>(path: string): Promise<T> {
   return JSON.parse(await readFile(new URL(path, root), 'utf8')) as T;
 }
-async function fixture() {
+async function fixture(name = 'completed') {
   const inputs = await json<{ request: ExecutorRequest; mapping: GaapMappingPolicy }>('local-gates.json');
-  const receipt = await json<GaapReceipt>('completed.gaap.canonical');
+  const receipt = await json<GaapReceipt>(`${name}.gaap.canonical`);
   const request = await json<GaapRequest>('gaap-request.json');
-  const { observation } = await json<{ observation: unknown }>('completed.json');
+  const { observation } = await json<{ observation: unknown }>(`${name}.json`);
   return { inputs, receipt, request, observation };
 }
 function seal(receipt: GaapReceipt) {
@@ -62,6 +62,33 @@ function map(fixtureValue: Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe('GAAP ledger review regressions', () => {
+  it.each(['completed', 'blocked', 'failed'])(
+    'rejects interruption evidence in a receipt that claims a %s outcome',
+    async (outcome) => {
+      const value = await fixture(outcome);
+      const interrupted = await fixture('interrupted');
+      const interruption = interrupted.receipt.body.events.find((event) => event.event_type === 'interruption');
+      if (!interruption) throw new Error('Missing interruption event');
+      value.receipt.body.events.splice(-1, 0, interruption);
+      const checked = validateGaapReceipt(seal(value.receipt), value.request);
+      expect(checked).toMatchObject({
+        ok: false,
+        diagnostics: [{ code: 'GAAP_LEDGER_INVALID' }],
+      });
+      if (!checked.ok) expect(checked.diagnostics[0]?.message).toContain('interrupted');
+      expect(map(value).ok).toBe(false);
+    },
+  );
+
+  it('retains an interrupted result with unknown effects as recovery evidence', async () => {
+    const value = await fixture('interrupted');
+    expect(validateGaapReceipt(value.receipt, value.request).ok).toBe(true);
+    expect(map(value)).toMatchObject({
+      ok: true,
+      value: { result: { attempt_receipt: { receipt: { status: 'interrupted', effect: 'unknown' } } } },
+    });
+  });
+
   it('maps completion when its protected effect digest differs from its verified subject digest', async () => {
     const value = await fixture();
     completion(value.receipt).protected_effect_digest = 'sha256:' + '5'.repeat(64);
