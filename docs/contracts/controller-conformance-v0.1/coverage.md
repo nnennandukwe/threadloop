@@ -44,7 +44,7 @@ second proposal receives `EXECUTION_VERSION_CONFLICT`; only the first claim/Atte
 
 ## Provenance and limits
 
-Cases 001 and 004–023 retain accepted #104/#105 expectations, with the graph embedded into each normalized input. Cases
+Cases 001 and 004–023 retain accepted #104/#105 expectations, with the graph expanded into each normalized input. Cases
 002–003 and 024–038 were authored from the accepted topology, selection, and execution rules. A one-time independent
 Python authoring calculation materialized journal/admission preimages and SHA-256 identities; no ThreadLoop validator
 produced their expected answers. Expiry expectations were checked against #106's distinction between claim closure and
@@ -59,3 +59,11 @@ Candidate checks are necessary but insufficient for selection. Case 024 delibera
 from the existing validator. Its expected blocked decision is a future subject requirement, not a skipped failing
 runtime test. Synthetic response tests exercise the checker with constructed responses and do not constitute evidence
 that an executable controller implements this protocol.
+
+## Storage equivalence
+
+The source corpus uses literal shared values to avoid repeating complete graphs and execution snapshots. All 38 expanded
+fixtures retain their original manifest digests from `49fbf87`; expectations and case membership did not change.
+`controller-conformance-sources.test.ts` rejects missing references, cycles, overrides, unused values, unknown storage
+versions, and expansion bombs. The corpus test checks the original corpus digest, schema parity, request isolation after
+expansion, and the 384 KiB source-data budget. None of these checks demonstrates runtime conformance.

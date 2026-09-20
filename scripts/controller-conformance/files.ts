@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { parseDocument } from 'yaml';
 import { compatibilitySchema, publishedConformanceSchemas } from './contracts.js';
 import { conformanceDigest } from './codec.js';
+import { materializeFixtureSources } from './sources.js';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
 
 export const corpusDirectory = fileURLToPath(
@@ -42,7 +43,7 @@ export async function loadCorpus(directory = corpusDirectory) {
   return {
     manifest: await readJson(join(directory, 'manifest.json')),
     compatibility: await readJson(join(directory, 'compatibility.json')),
-    fixtures,
+    fixtures: materializeFixtureSources(fixtures, await readJson(join(directory, 'shared.json'))),
   };
 }
 

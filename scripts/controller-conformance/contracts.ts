@@ -139,6 +139,15 @@ export const fixtureSchema = z.strictObject({
   input: z.json(),
   expected: resultSchema,
 });
+// Storage identities are independent of the materialized fixture and wire protocol.
+export const fixtureSourceSchema = z.strictObject({
+  schema: z.literal('threadloop.conformance-source/0.1'),
+  fixture: z.json(),
+});
+export const sharedValuesSchema = z.strictObject({
+  schema: z.literal('threadloop.conformance-shared/0.1'),
+  values: z.record(z.string().regex(/^[a-z][a-z0-9_]{0,127}$/), z.json()),
+});
 const fixturePath = z.string().regex(/^fixtures\/case_[0-9]{3}\.json$/);
 export const manifestSchema = z.strictObject({
   manifest: z.strictObject({
@@ -190,6 +199,8 @@ export function publishedConformanceSchemas() {
       request: requestSchema,
       response: responseSchema,
       fixture: fixtureSchema,
+      source: fixtureSourceSchema,
+      shared: sharedValuesSchema,
       manifest: manifestSchema,
       compatibility: compatibilitySchema,
       'execution-scenario': executionScenarioSchema,

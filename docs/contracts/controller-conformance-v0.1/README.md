@@ -11,8 +11,9 @@ selector, TypeScript runtime subject, or Rust subject in this build.
   interface.
 - [Fixture](schemas/fixture.schema.json), [manifest](schemas/manifest.schema.json), and
   [execution scenario](schemas/execution-scenario.schema.json) schemas define portable test material.
+- [Source](schemas/source.schema.json) and [shared-value](schemas/shared.schema.json) schemas define compact storage.
 - [Compatibility](compatibility.json) pins the raw bytes of every accepted upstream domain schema.
-- [Manifest](manifest.json) identifies all 38 materialized cases, input digests, and complete fixture digests.
+- [Manifest](manifest.json) identifies all 38 expanded cases, input digests, and complete fixture digests.
 - [Golden vectors](vectors/golden.json) and canonical request/response files pin the byte rules independently.
 - [Coverage](coverage.md) maps requirements to cases and separates available checks from future proof.
 - [RunInvariant follow-up](run-invariant-follow-up.md) is a ready-to-file integration specification, not an opened
@@ -22,7 +23,7 @@ From the repository root, with the documented Node version and `npm ci` complete
 
 ```bash
 npm run spec:conformance:check
-npm test -- tests/unit/controller-conformance.test.ts
+npm test -- tests/unit/controller-conformance.test.ts tests/unit/controller-conformance-sources.test.ts
 npm run check
 npm run security:dependencies
 ```
@@ -44,6 +45,8 @@ This command is development tooling, not a transactional runtime writer.
 | Request schema           | `threadloop.conformance-request/0.1`       |
 | Response schema          | `threadloop.conformance-response/0.1`      |
 | Fixture format           | `threadloop.conformance-fixture/0.1`       |
+| Fixture source storage   | `threadloop.conformance-source/0.1`        |
+| Shared-value storage     | `threadloop.conformance-shared/0.1`        |
 | Manifest format          | `threadloop.conformance-manifest/0.1`      |
 | Compatibility descriptor | `threadloop.conformance-compatibility/0.1` |
 | Canonicalization         | `threadloop.conformance-json/0.1`          |
@@ -53,6 +56,44 @@ These identities evolve independently. Matching numeric suffixes do not negotiat
 operations, result variants, or mismatched digests are rejected; no reader drops fields before hashing. The
 compatibility file separately pins graph, controller, execution, and executor `0.1` schemas. A schema-file change
 requires an intentional compatibility update and changes corpus identity through `compatibility_digest`.
+
+## Compact fixture storage
+
+The reviewed source corpus stores repeated literal JSON once in [shared.json](shared.json). Each file under `fixtures/`
+is a strict `{ "schema": "threadloop.conformance-source/0.1", "fixture": ... }` envelope. Expand its `fixture` member
+before applying the materialized fixture schema or manifest checks. This storage format is separate from the process
+protocol: subjects always receive complete inputs with no references.
+
+`shared.json` is a strict `{ "schema": "threadloop.conformance-shared/0.1", "values": { ... } }` envelope. Names match
+`^[a-z][a-z0-9_]{0,127}$`; they are opaque local labels, not paths, URLs, or digest assertions. For example:
+
+```json
+{
+  "compiled_graph": { "$fixture_ref": "compiled_graph_aff28371" }
+}
+```
+
+An object with the sole key `$fixture_ref` expands to a fresh copy of that named shared value, recursively. Other
+objects and arrays retain their keys, values, and order. The marker key is reserved: additional sibling fields, missing
+names, cycles, and unsupported storage versions are errors. There are no overrides, merges, substitutions, code
+execution, file resolution, or network lookups. Inputs and expected results are independently authored literal data;
+expansion never computes an expected answer or reads it to construct an input.
+
+Reject unused shared values across the complete corpus, duplicate JSON keys, and non-regular artifact files. Bound
+expansion to depth 64 (including reference hops), one million visits (including references), and 16 MiB of resulting
+canonical JSON per fixture. Enforce these limits during expansion, before allocating a large expanded document. Validate
+every expanded fixture and its embedded identities through the existing checks.
+
+Manifest `input_digest` and `fixture_digest` bind the **expanded** values. Every shared value must be reachable from a
+listed fixture, so a content change fails the existing manifest checks unless explicitly resealed. Formatting, renaming
+a shared label with all references updated, or moving identical literal content into shared storage preserves logical
+corpus identity. Source provenance is pinned by the Git revision; storage versions are checked independently. The
+compaction preserves all 38 original fixtures, their expectations, manifest, and golden wire bytes exactly.
+
+To edit a case, follow its references in `shared.json`. Change shared content only when all referencing cases should
+change; otherwise inline the value or give the changed value a separate name. Run `spec:conformance:check` to see stale
+case/digest diagnostics. Intentional behavior changes require explicit review of affected expectations and manifest
+entries; no command regenerates expected answers. Tests enforce a 384 KiB source-data budget to catch duplication.
 
 ## One-case process exchange
 
@@ -104,10 +145,11 @@ records that gap.
 ### `execution_scenario`
 
 Input contains `initial` context/request/policy, ordered `{ context, operation }` steps, `projection_snapshot`, and
-`admitted_digests`. Every value is materialized JSON: there are no recipe names, callbacks, fixture-file lookups, hidden
-clocks, or dependencies on TypeScript imports. Initial journal creation precedes the supplied steps; exact operation
-replays retain the accepted journal semantics. A structural validation failure stops the trace and returns `invalid`. A
-rejected or conflicting _operation result_ remains an observed trace step and is processed according to #106.
+`admitted_digests`. After source expansion, every transmitted value is materialized JSON: there are no recipe names,
+callbacks, fixture-file lookups, hidden clocks, or dependencies on TypeScript imports. Initial journal creation precedes
+the supplied steps; exact operation replays retain the accepted journal semantics. A structural validation failure stops
+the trace and returns `invalid`. A rejected or conflicting _operation result_ remains an observed trace step and is
+processed according to #106.
 
 `admitted_digests` is a closed synthetic host-authority allowlist using the #106 admission preimage. It models facts
 supplied by the test host, independently of an executor report. Missing admissions remain untrusted. A real adapter must

@@ -18,6 +18,9 @@ Agent Run suite and explicitly excludes ThreadLoop lifecycle tests. Do not repur
   fixtures, protocol bytes, or evidence packets.
 - Consume the published JSON artifacts without importing ThreadLoop's TypeScript modules, npm package, or future Rust
   types. Verify the pinned manifest, compatibility descriptor, fixture inventory, and all digests offline before launch.
+- Expand the versioned source envelopes and local shared values before fixture validation. Reject missing references,
+  overrides, cycles, unused values, and expansion limits. Manifest digests bind expanded content; subjects receive no
+  storage references. Keep the storage decoder independent of ThreadLoop implementation code.
 - Construct one allowlisted request per case. Never send expected results, titles, rationale, references, coverage
   labels, or recipe instructions to a subject. Retain expectations in the harness.
 - Apply ThreadLoop's compact canonical JSON, optional excluded framing LF, independently versioned identities, and
