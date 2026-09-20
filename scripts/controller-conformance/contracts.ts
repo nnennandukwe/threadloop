@@ -140,13 +140,26 @@ export const fixtureSchema = z.strictObject({
   expected: resultSchema,
 });
 // Storage identities are independent of the materialized fixture and wire protocol.
+const sharedName = z.string().regex(/^[a-z][a-z0-9_]{0,127}$/);
+type StorageValue = null | boolean | number | string | StorageValue[] | { [key: string]: StorageValue };
+const storageValueSchema: z.ZodType<StorageValue> = z.lazy(() =>
+  z.union([
+    z.null(),
+    z.boolean(),
+    counter,
+    z.string(),
+    z.array(storageValueSchema),
+    z.strictObject({ $fixture_ref: sharedName }),
+    z.record(z.string().regex(/^(?!\$fixture_ref(?![\s\S]))/), storageValueSchema),
+  ]),
+);
 export const fixtureSourceSchema = z.strictObject({
   schema: z.literal('threadloop.conformance-source/0.1'),
-  fixture: z.json(),
+  fixture: storageValueSchema,
 });
 export const sharedValuesSchema = z.strictObject({
   schema: z.literal('threadloop.conformance-shared/0.1'),
-  values: z.record(z.string().regex(/^[a-z][a-z0-9_]{0,127}$/), z.json()),
+  values: z.record(sharedName, storageValueSchema),
 });
 const fixturePath = z.string().regex(/^fixtures\/case_[0-9]{3}\.json$/);
 export const manifestSchema = z.strictObject({

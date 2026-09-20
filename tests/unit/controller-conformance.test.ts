@@ -325,7 +325,11 @@ describe('Read-only fixture loader', () => {
     const directory = await mkdtemp(join(tmpdir(), 'threadloop-conformance-'));
     try {
       await mkdir(join(directory, 'fixtures'));
-      await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest));
+      const single = structuredClone(manifest);
+      single.manifest.entries = single.manifest.entries.slice(0, 1);
+      single.corpus_digest = conformanceDigest(single.manifest);
+      await writeFile(join(directory, 'manifest.json'), JSON.stringify(single));
+      await writeFile(join(directory, 'shared.json'), JSON.stringify(shared));
       await writeFile(join(directory, 'compatibility.json'), JSON.stringify(corpus.compatibility));
       const path = join(directory, 'fixtures', 'case_001.json');
       await writeFile(path, '{"id":"case_001","id":"case_002"}');
@@ -498,7 +502,7 @@ describe('Compact corpus regression', () => {
 });
 
 describe('Shared artifact integrity', () => {
-  it.each(['changed', 'missing', 'duplicate-key', 'symlink', 'unused'])(
+  it.each(['changed', 'missing', 'duplicate-key', 'symlink', 'unused', 'oversized', 'unlisted'])(
     'rejects a %s shared artifact without changing committed data',
     async (mutation) => {
       const directory = await mkdtemp(join(tmpdir(), 'threadloop-shared-'));
@@ -513,6 +517,8 @@ describe('Shared artifact integrity', () => {
         if (mutation === 'unused') document.values.unused = null;
         await writeFile(path, JSON.stringify(document));
         if (mutation === 'missing') await rm(path);
+        if (mutation === 'oversized') await writeFile(path, Buffer.alloc(2 * 1024 * 1024 + 1));
+        if (mutation === 'unlisted') await writeFile(join(directory, 'fixtures/case_999.json'), 'NOT JSON');
         if (mutation === 'duplicate-key')
           await writeFile(path, '{"schema":"duplicate",' + JSON.stringify(document).slice(1));
         if (mutation === 'symlink') {
@@ -523,7 +529,9 @@ describe('Shared artifact integrity', () => {
           const loaded = await loadCorpus(directory);
           value(validateCorpus(loaded.manifest, loaded.fixtures, loaded.compatibility));
         };
-        await expect(check()).rejects.toThrow();
+        await expect(check()).rejects.toThrow(
+          mutation === 'unlisted' ? /Unlisted/ : mutation === 'oversized' ? /source-byte limit/ : undefined,
+        );
       } finally {
         await rm(directory, { recursive: true, force: true });
       }

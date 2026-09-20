@@ -1,3 +1,9 @@
+import { Ajv2020 } from 'ajv/dist/2020.js';
+import {
+  fixtureSourceSchema,
+  sharedValuesSchema,
+  publishedConformanceSchemas,
+} from '../../scripts/controller-conformance/contracts.js';
 import { describe, expect, it } from 'vitest';
 import { materializeFixtureSources } from '../../scripts/controller-conformance/sources.js';
 
@@ -69,4 +75,37 @@ describe('Portable fixture sources', () => {
     }
     expect(() => materializeFixtureSources({ test: source(ref(name)) }, shared(deep))).toThrow(/limit/);
   });
+});
+
+it('Zod and published Ajv schemas reject malformed reference objects consistently', () => {
+  const ajv = new Ajv2020({ strict: true });
+  const schemas = publishedConformanceSchemas();
+  const sourceValidator = ajv.compile(schemas.source!);
+  const sharedValidator = ajv.compile(schemas.shared!);
+  for (const invalid of [
+    { $fixture_ref: 'graph', extra: true },
+    { $fixture_ref: 1 },
+    { $fixture_ref: '../graph' },
+    { nested: [{ $fixture_ref: null }] },
+  ]) {
+    expect(fixtureSourceSchema.safeParse(source(invalid)).success).toBe(false);
+    expect(sourceValidator(source(invalid))).toBe(false);
+    expect(sharedValuesSchema.safeParse(shared({ graph: invalid })).success).toBe(false);
+    expect(sharedValidator(shared({ graph: invalid }))).toBe(false);
+  }
+  expect(sourceValidator(source({ '$fixture_ref\n': null }))).toBe(true);
+  expect(fixtureSourceSchema.safeParse(source({ '$fixture_ref\n': null })).success).toBe(true);
+  expect(sourceValidator(source({ nested: [ref('graph'), { name: 'literal' }] }))).toBe(true);
+});
+
+it('bounds total expansion across individually bounded cases (c8752963, 66bba7a2)', () => {
+  const values: Record<string, unknown> = { leaf: 'x'.repeat(1024) };
+  let name = 'leaf';
+  for (let index = 0; index < 13; index++) {
+    values[`level_${index}`] = [ref(name), ref(name)];
+    name = `level_${index}`;
+  }
+  const one = source(ref(name));
+  expect(() => materializeFixtureSources({ first: one }, shared(values))).not.toThrow();
+  expect(() => materializeFixtureSources({ first: one, second: one }, shared(values))).toThrow(/byte limit/);
 });

@@ -9,11 +9,10 @@
     "values": {
       "type": "object",
       "propertyNames": {
-        "type": "string",
-        "pattern": "^[a-z][a-z0-9_]{0,127}$"
+        "$ref": "#/$defs/__schema0"
       },
       "additionalProperties": {
-        "$ref": "#/$defs/__schema0"
+        "$ref": "#/$defs/__schema1"
       }
     }
   },
@@ -21,32 +20,49 @@
   "additionalProperties": false,
   "$defs": {
     "__schema0": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,127}$"
+    },
+    "__schema1": {
       "anyOf": [
         {
-          "type": "string"
-        },
-        {
-          "type": "number"
+          "type": "null"
         },
         {
           "type": "boolean"
         },
         {
-          "type": "null"
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "string"
         },
         {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/__schema0"
+            "$ref": "#/$defs/__schema1"
           }
         },
         {
           "type": "object",
+          "properties": {
+            "$fixture_ref": {
+              "$ref": "#/$defs/__schema0"
+            }
+          },
+          "required": ["$fixture_ref"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
           "propertyNames": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^(?!\\$fixture_ref(?![\\s\\S]))"
           },
           "additionalProperties": {
-            "$ref": "#/$defs/__schema0"
+            "$ref": "#/$defs/__schema1"
           }
         }
       ]

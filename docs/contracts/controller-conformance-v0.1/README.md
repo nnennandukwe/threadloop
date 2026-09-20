@@ -81,8 +81,11 @@ expansion never computes an expected answer or reads it to construct an input.
 
 Reject unused shared values across the complete corpus, duplicate JSON keys, and non-regular artifact files. Bound
 expansion to depth 64 (including reference hops), one million visits (including references), and 16 MiB of resulting
-canonical JSON per fixture. Enforce these limits during expansion, before allocating a large expanded document. Validate
-every expanded fixture and its embedded identities through the existing checks.
+canonical JSON across the entire expanded corpus (and therefore each fixture). Check exact manifest inventory before
+reading fixtures, enumerate directories with bounded memory, and reject more than 2 MiB of total stored source bytes
+(shared.json plus all fixture source files) before parsing them. Enforce these limits during expansion, before
+allocating a large expanded corpus. Validate every expanded fixture and its embedded identities through the existing
+checks.
 
 Manifest `input_digest` and `fixture_digest` bind the **expanded** values. Every shared value must be reachable from a
 listed fixture, so a content change fails the existing manifest checks unless explicitly resealed. Formatting, renaming

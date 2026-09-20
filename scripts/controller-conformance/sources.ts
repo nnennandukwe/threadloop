@@ -13,20 +13,20 @@ export function materializeFixtureSources(
   bounded(sharedDocument, 'shared.json');
   const { values } = sharedValuesSchema.parse(sharedDocument);
   const used = new Set<string>();
+  let visits = 0;
+  let bytes = 0;
   const fixtures: Record<string, unknown> = {};
   for (const [path, document] of Object.entries(sources)) {
     try {
       bounded(document, path);
       const source = fixtureSourceSchema.parse(document);
-      let visits = 0;
-      let bytes = 0;
       const active = new Set<string>();
       function expand(value: unknown, depth: number): unknown {
-        if (++visits > 1_000_000 || depth > 64) throw new Error('Fixture expansion depth/value limit exceeded.');
+        if (++visits > 1_000_000 || depth > 64) throw new Error('Corpus expansion depth/value limit exceeded.');
         // Account for canonical bytes while expanding, before allocating an oversized result.
         function charge(count: number) {
           bytes += count;
-          if (bytes > 16 * 1024 * 1024) throw new Error('Fixture expansion byte limit exceeded.');
+          if (bytes > 16 * 1024 * 1024) throw new Error('Corpus expansion byte limit exceeded.');
         }
         if (Array.isArray(value)) {
           charge(2 + Math.max(0, value.length - 1));
@@ -58,7 +58,10 @@ export function materializeFixtureSources(
       }
       fixtures[path] = expand(source.fixture, 0);
     } catch (error) {
-      throw new Error(`${path}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+      throw new Error(
+        `${path}: invalid fixture source/reference: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
     }
   }
   const unused = Object.keys(values).filter((name) => !used.has(name));

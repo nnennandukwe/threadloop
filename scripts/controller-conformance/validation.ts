@@ -324,6 +324,7 @@ export function validateSubjectResponse(
 
 function machineResult(result: CaseResult): unknown {
   if (result.status !== 'decision') return result;
+  // Compare the payload; its enclosing decision_digest also covers informational prose.
   const decision = result.decision.decision;
   if (decision.outcome !== 'blocked') return result;
   return {
