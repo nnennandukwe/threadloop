@@ -1,0 +1,84 @@
+{
+  "schema": "threadloop.conformance-fixture/0.1",
+  "id": "case_003",
+  "title": "Cycle without control is rejected",
+  "rationale": "Cycle without control is rejected",
+  "references": ["workflow-graph-v0.1/README.md"],
+  "coverage": ["uncontrolled_cycle"],
+  "semantic_check": "graph",
+  "operation": "compile_graph",
+  "input": {
+    "schema_version": "0.1",
+    "profile": {
+      "id": "minimal_release",
+      "revision": 1
+    },
+    "initial_state": "prepared",
+    "states": [
+      {
+        "id": "completed",
+        "kind": "terminal"
+      },
+      {
+        "id": "prepared",
+        "kind": "active"
+      }
+    ],
+    "transitions": [
+      {
+        "id": "finish",
+        "from": "prepared",
+        "to": "completed",
+        "guard_refs": ["approval", "published"],
+        "authority": ["human", "threadloop"],
+        "priority": 1
+      },
+      {
+        "id": "repeat",
+        "from": "prepared",
+        "to": "prepared",
+        "priority": 0,
+        "guard_refs": [],
+        "authority": ["threadloop"]
+      }
+    ],
+    "guards": [
+      {
+        "capability": "human_approval",
+        "parameters": {
+          "scope": "current_subject"
+        },
+        "id": "approval",
+        "required_actions": ["approve"]
+      },
+      {
+        "capability": "completion_observed",
+        "parameters": {
+          "kind": "publication"
+        },
+        "id": "published",
+        "required_actions": []
+      }
+    ],
+    "required_actions": [
+      {
+        "capability": "approve_change",
+        "authority": "human",
+        "parameters": {},
+        "id": "approve"
+      }
+    ],
+    "budgets": [],
+    "cycle_controls": []
+  },
+  "expected": {
+    "status": "invalid",
+    "diagnostics": [
+      {
+        "code": "UNCONTROLLED_CYCLE",
+        "path": "$.cycle_controls",
+        "identifier": null
+      }
+    ]
+  }
+}

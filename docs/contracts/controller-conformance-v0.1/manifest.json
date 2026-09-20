@@ -1,0 +1,265 @@
+{
+  "manifest": {
+    "protocol": "threadloop.controller-conformance/0.1",
+    "fixture_schema": "threadloop.conformance-fixture/0.1",
+    "canonicalization": "threadloop.conformance-json/0.1",
+    "digest_profile": "threadloop.conformance-sha256/0.1",
+    "schema": "threadloop.conformance-manifest/0.1",
+    "compatibility_digest": "9590ab51c9081ee2c43f67c0ed1b3453588acdda0e63f259827625971643eadf",
+    "entries": [
+      {
+        "id": "case_001",
+        "operation": "compile_graph",
+        "path": "fixtures/case_001.json",
+        "input_digest": "972653336fc62879ed8d9a97dce96b08a17ff2ee9204a5f0aa062c1317d27a09",
+        "fixture_digest": "c6608a869775dd6f32f99fe387a29efcf415a9dc71aec15f921ccca722a70b58"
+      },
+      {
+        "id": "case_002",
+        "operation": "compile_graph",
+        "path": "fixtures/case_002.json",
+        "input_digest": "02da8764491ebde4d55e12625613feb1b55bf47c7fcba16a891225721b157940",
+        "fixture_digest": "a7890e9e3cf34057e581e8cc37911f08f67a2e2a47d6116db2c636478f6f1b9d"
+      },
+      {
+        "id": "case_003",
+        "operation": "compile_graph",
+        "path": "fixtures/case_003.json",
+        "input_digest": "82f2a2894c00ff8d181368b9937b499df152845df749ab79ddbecd2916cd2fb7",
+        "fixture_digest": "8e2ff213aee97691c79056ee6d123c0fa55ebf70a5020b7550d00c6632daf191"
+      },
+      {
+        "id": "case_004",
+        "operation": "decide",
+        "path": "fixtures/case_004.json",
+        "input_digest": "4fc69aeb9217ce579feba1482b2a567b17331ce2485aaa2f9837ca8b800f9a8a",
+        "fixture_digest": "00998d5db8454b5ad1a961689ad292b8c89c95b733a82497b3ba68f554919afb"
+      },
+      {
+        "id": "case_005",
+        "operation": "decide",
+        "path": "fixtures/case_005.json",
+        "input_digest": "377bb73f16f25573384ea65ffc8bb0d21b4421c6d696b8bd162014ee9880dc2e",
+        "fixture_digest": "a858937bb9d4d2aaa2d52a5f5a421221a6c36a5cf18a1552e8a17d8411d3ea96"
+      },
+      {
+        "id": "case_006",
+        "operation": "decide",
+        "path": "fixtures/case_006.json",
+        "input_digest": "fd3dad363f866460e24add65448dd83566352d6e60364c97bec47f23bc7aa728",
+        "fixture_digest": "40ffd6d47691dcfde0bbd148e32c349f705789b23938b550dd52b48db64ab182"
+      },
+      {
+        "id": "case_007",
+        "operation": "decide",
+        "path": "fixtures/case_007.json",
+        "input_digest": "a1f7d0f07f86cd985797dcf59256b70404fbdc1c4845e1f822acf2c9f3242afd",
+        "fixture_digest": "01c0763fc3f4ce5b323415437aa2f4c60ead5b477ca78207ac1e4d8ee92e6c85"
+      },
+      {
+        "id": "case_008",
+        "operation": "decide",
+        "path": "fixtures/case_008.json",
+        "input_digest": "1bb46a569ca1ae967edebdcf9834303bdd781a502fd74f22677f58262ff28e29",
+        "fixture_digest": "c5dab871027c8c7c8ed7611d8b48f7d2dd6844cb73333d0fb7c07d86c73d1b69"
+      },
+      {
+        "id": "case_009",
+        "operation": "decide",
+        "path": "fixtures/case_009.json",
+        "input_digest": "dc17d19fd2b7ffca47bcee1402d1adef1206b09b48a4a626d9f8e505c65e597c",
+        "fixture_digest": "6a2d3a5b45525f81119426525d26f6456748d7b78efad94414e43d48826074c9"
+      },
+      {
+        "id": "case_010",
+        "operation": "decide",
+        "path": "fixtures/case_010.json",
+        "input_digest": "c1054a22f131a233040a9cfcb35b237030d1bc4cb0f4fba2085826e10c1b09a6",
+        "fixture_digest": "1362d53007d03b80c939c30e28d027b6c71fff4b8aa100df6ead3a13416e7e53"
+      },
+      {
+        "id": "case_011",
+        "operation": "decide",
+        "path": "fixtures/case_011.json",
+        "input_digest": "818a1e935ecb1bd973a2b9ff1bbbe0b03405b086cbfa02dc2cc8fec5c1775c07",
+        "fixture_digest": "e79ef14cc4552e7e81a87b8150f1e71d0b1c48e664e2c33f31406b9cb8130445"
+      },
+      {
+        "id": "case_012",
+        "operation": "decide",
+        "path": "fixtures/case_012.json",
+        "input_digest": "2ce0dd060ab7e789c6c43a515556d32dd3c022e515298ef15541fe8c4688bfdd",
+        "fixture_digest": "1ec6b78173fd36a11a5e14b43086c25a13e0be52a3d8c011f3173ee2767ffaba"
+      },
+      {
+        "id": "case_013",
+        "operation": "decide",
+        "path": "fixtures/case_013.json",
+        "input_digest": "5248ad02fdf843ccd2cfe89b8a3ba657665af54de55aab2b0efa1ae1708e766a",
+        "fixture_digest": "5cd480a6662947c6c77c4e09edecc329b39ebbeec4341ced3ae023797259cfd5"
+      },
+      {
+        "id": "case_014",
+        "operation": "decide",
+        "path": "fixtures/case_014.json",
+        "input_digest": "3ebd341855e49c77e016b4242145f879f53662d3e4155307f7ddff3e280b56c3",
+        "fixture_digest": "f1563be9d9219e7cd8ffa0f2cd55b3c522aeabfd2419109d32df8eb6eefaefb3"
+      },
+      {
+        "id": "case_015",
+        "operation": "decide",
+        "path": "fixtures/case_015.json",
+        "input_digest": "8ac09d295ee0a6fb3270d8904b664c10d93994ff14343d744da11cf967c52638",
+        "fixture_digest": "8ffbed4e5de5c50a00f8f9677dd79e1ff88666cb58b3d7bc12852d806b22fbdb"
+      },
+      {
+        "id": "case_016",
+        "operation": "decide",
+        "path": "fixtures/case_016.json",
+        "input_digest": "eaa3055cfd5ef19f60c65c9a59c514f86a1968a63aa68d557ea498a84e6b7b7e",
+        "fixture_digest": "d002ed8260d9a138f082a9f7dc7b7929bf9ea90ea2dd12b80b3cd0ee3d224f41"
+      },
+      {
+        "id": "case_017",
+        "operation": "decide",
+        "path": "fixtures/case_017.json",
+        "input_digest": "2b818114b8c3792a1fc872f0a50a4c891e250d240b683e9a60eb79fa75d016aa",
+        "fixture_digest": "90fd7119e8b9b8800e2963ca231f43cb290fa89a2bf2233a7ae67b7fa4ea5c0a"
+      },
+      {
+        "id": "case_018",
+        "operation": "decide",
+        "path": "fixtures/case_018.json",
+        "input_digest": "42e8b4aabb04af175d6844d538b2c89fb660b2e88b7318aa67da577e9bd57cd8",
+        "fixture_digest": "4fd485c6ce2c738beb2baf6be9f8094cb59b95e52fe283432dcc704d3fd0ff03"
+      },
+      {
+        "id": "case_019",
+        "operation": "decide",
+        "path": "fixtures/case_019.json",
+        "input_digest": "ab5483361f102a88496335518e1a69fb2d63c63882120ec3dda5e4d6a6f4f0a1",
+        "fixture_digest": "b933dcefab8924f239b9970ca775bdf4b4af8c9e2873ff5b4dd144217112ce3a"
+      },
+      {
+        "id": "case_020",
+        "operation": "decide",
+        "path": "fixtures/case_020.json",
+        "input_digest": "c5d7ebd2c7a8c99ac0a29e21a0f32f20fff7fef606b8c9ca757bacb07fdda6e9",
+        "fixture_digest": "4fbd9eed9c20ee5cc2ff20ba4d74164f7898698964521956ed958cd7a180e024"
+      },
+      {
+        "id": "case_021",
+        "operation": "decide",
+        "path": "fixtures/case_021.json",
+        "input_digest": "2c55df3ffad427a48e202b842715db54df08c8173ac944209035253d2cfd6974",
+        "fixture_digest": "8ac335cbaf8ae4bf18e9bc762deeef1cb2c6f51e96a694cc87089d9dcb3e1c36"
+      },
+      {
+        "id": "case_022",
+        "operation": "decide",
+        "path": "fixtures/case_022.json",
+        "input_digest": "b4572d424ec68cd132a1df3b6068ec1b96781d8e17c43cb83eb7f63475b2a606",
+        "fixture_digest": "f960f59dea819f02f45ac0248e35d75f03ee68f36bcadde2c90da80579e227bc"
+      },
+      {
+        "id": "case_023",
+        "operation": "decide",
+        "path": "fixtures/case_023.json",
+        "input_digest": "365e6bbbf0aa447c2b6ebdb1d19062263d7635f022c500fe18faaea6c380cc35",
+        "fixture_digest": "ab7362a1f0fe06f56f0c60718c7c5aa73a4fdeb91459b1078b887552734b923f"
+      },
+      {
+        "id": "case_024",
+        "operation": "decide",
+        "path": "fixtures/case_024.json",
+        "input_digest": "aa8b8253c6e57c596cd3f26ac5525899e8b3f098bcc2f03a27c80ae0379be87f",
+        "fixture_digest": "ba2b8efc62b30ecb521c995fe3ee0f7f1119c2d3dd7c94aed60ea4351b9ed509"
+      },
+      {
+        "id": "case_025",
+        "operation": "decide",
+        "path": "fixtures/case_025.json",
+        "input_digest": "1f5d343fea49a7703f7eed579c79e706b4d369c2a7d53b223f872d4f1448c8c0",
+        "fixture_digest": "55d536a986bfbc4f41c2bafd22a229d5d296f956e25029a26ceef8df1691a233"
+      },
+      {
+        "id": "case_026",
+        "operation": "decide",
+        "path": "fixtures/case_026.json",
+        "input_digest": "c03df0a67c2b56be784825a7475a935516d5cc159f5bc22952eb23fcfd35ad40",
+        "fixture_digest": "d921a6a79609c68c57118d3db622aab8085c42b076404a16402650dbebe85ee9"
+      },
+      {
+        "id": "case_027",
+        "operation": "decide",
+        "path": "fixtures/case_027.json",
+        "input_digest": "b3a27114e40213bef35ad1fd56294a146de950d5817b8c59106a3d8fe8b15d12",
+        "fixture_digest": "37d2225ce49567b4e5e1f34d97cdc4a5c068ad8e34582a02d0c5ca0f449e8eaa"
+      },
+      {
+        "id": "case_028",
+        "operation": "execution_scenario",
+        "path": "fixtures/case_028.json",
+        "input_digest": "3990c2edb6410696ff93f9bf44a3a9da27c51cb1e91a2c94a53a1fdbfc7a09f5",
+        "fixture_digest": "c755278847864eee235592f177904d8342dab31c02fb358a5d6cc66ca0f90583"
+      },
+      {
+        "id": "case_029",
+        "operation": "execution_scenario",
+        "path": "fixtures/case_029.json",
+        "input_digest": "179d5351cc698d53ab3b2e322239ec574ac8f26a8ce1c1f30c82843a89cccaee",
+        "fixture_digest": "d0aac580a617b44f9b12fe8913a198f2012c9a683488bf3a00368a80988acbf1"
+      },
+      {
+        "id": "case_030",
+        "operation": "execution_scenario",
+        "path": "fixtures/case_030.json",
+        "input_digest": "a606173f56d1904c423262b75d45822f1d307025e301c981a439a3b6e58bef58",
+        "fixture_digest": "89094e226e3a2f923219d15a441ab622c8a197856c7bd1188f7a29e48243d7be"
+      },
+      {
+        "id": "case_031",
+        "operation": "execution_scenario",
+        "path": "fixtures/case_031.json",
+        "input_digest": "5d92521e67019af62bd5d9fee75e1d893f459ff6c41bd83d5aa7d8eb9b5013d4",
+        "fixture_digest": "041bbee057417b18227d4e2de735ecb85cb2c0348aa97d036ffe8b218b74d8a8"
+      },
+      {
+        "id": "case_032",
+        "operation": "execution_scenario",
+        "path": "fixtures/case_032.json",
+        "input_digest": "23f923ea3dd7040ef44192f60eaacfc92438c8adaf38b1ad32d9d6dd9c3b0503",
+        "fixture_digest": "3ecb25d10a8e50f1ce7cb1493f7f8bc1e5f71a72543b0912f92275d7775ea94c"
+      },
+      {
+        "id": "case_033",
+        "operation": "execution_scenario",
+        "path": "fixtures/case_033.json",
+        "input_digest": "7f3a6e85ec1eb3a6427009b32f086c33137c451b669d4094d533d7e7ef0a5ad1",
+        "fixture_digest": "696346c478b1a9ffb8407dba2650a54318b30484bbd65886aa310ee9764f3c60"
+      },
+      {
+        "id": "case_034",
+        "operation": "execution_scenario",
+        "path": "fixtures/case_034.json",
+        "input_digest": "0973db062cbcdffa8b1b65f8c03bb9fdbcc13baf97d548156756131666c9ae74",
+        "fixture_digest": "6990d436e906b7dd874cb7dd6dfa40f7b704dd077d62766e4901eab6d13eb9b0"
+      },
+      {
+        "id": "case_035",
+        "operation": "execution_scenario",
+        "path": "fixtures/case_035.json",
+        "input_digest": "87dd301051c315223a5530ff34e86824ee919665109ee712b460a89a1bcf9986",
+        "fixture_digest": "c3c6c1af30038d371c55e0459d5ea138827a5e80ca3d4c9e719d4139e4223c4e"
+      },
+      {
+        "id": "case_036",
+        "operation": "decide",
+        "path": "fixtures/case_036.json",
+        "input_digest": "a8ea7aa8630e97ea6543aef4dce4e3a03ee64e52acb1626b05ee553d9253bb5a",
+        "fixture_digest": "6a2cfdf998368cd892e46647189404e2aeae5f833391e7f996e8a63b884f0318"
+      }
+    ]
+  },
+  "corpus_digest": "a11cb1df826f6332951bc3bef6353936b1095d2498d945632db5f3d13c4241a7"
+}

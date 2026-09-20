@@ -1,0 +1,101 @@
+{
+  "schema": "threadloop.conformance-compatibility/0.1",
+  "contracts": [
+    {
+      "name": "workflow-graph",
+      "version": "0.1",
+      "schemas": [
+        {
+          "path": "compiled-graph.schema.json",
+          "sha256": "ef4b407ab91d7f25951a350e07524833ca5bc7bbc2e397da121050073465cd61"
+        },
+        {
+          "path": "graph-binding.schema.json",
+          "sha256": "69de7cbe7d84086a8830cd06fb813ce57a1e8a51d6d8e0dc7ee56a089a37bde3"
+        },
+        {
+          "path": "workflow-profile.schema.json",
+          "sha256": "b5897fbeed24588decb16fbfce48144bee5dca3fab98050bb4d1c1ae0880ee56"
+        }
+      ]
+    },
+    {
+      "name": "controller",
+      "version": "0.1",
+      "schemas": [
+        {
+          "path": "action-request.schema.json",
+          "sha256": "aa3823530512ed9e294ed963fa1468d9055f2beedf55a5288e2a9709deb8b744"
+        },
+        {
+          "path": "controller-decision.schema.json",
+          "sha256": "72aabc5a8f5552bf2064d67d0349f8b479c0af992d20f99f2c20b9d1458fb41a"
+        },
+        {
+          "path": "controller-input.schema.json",
+          "sha256": "36ef91f4b37d4dabdd3cef7f6dada18f1494361967971f9076bf179cc2a2c953"
+        }
+      ]
+    },
+    {
+      "name": "execution",
+      "version": "0.1",
+      "schemas": [
+        {
+          "path": "attempt-receipt.schema.json",
+          "sha256": "5ad06cb999653d53ffb89322507ed403a2145076d74ae0ea0e6fe6b6a51a58d2"
+        },
+        {
+          "path": "attempt.schema.json",
+          "sha256": "3bf679f0779594fcbaa27a62c871f8e742980cb1ceb0e5370079db82b6eaf6ab"
+        },
+        {
+          "path": "execution-claim.schema.json",
+          "sha256": "1cfc65d6df1abd4bd3c9aff993038c31c0bdf16e23603ed1a7203eb9b47bad7d"
+        },
+        {
+          "path": "execution-journal.schema.json",
+          "sha256": "cf1a4af7e92aa9a713fe5d577870c5d4f11dab4f4ef2c1694fe309ca18ae0692"
+        },
+        {
+          "path": "execution-operation.schema.json",
+          "sha256": "47dd2e3e231f6da50537552afda3e7b31fa91789fedc899ffd3889c6e0b60455"
+        },
+        {
+          "path": "execution-policy.schema.json",
+          "sha256": "8f2436fa8acd528ba99bab767a695e9b9e55fd73785f8368f85006a9dfc4b4a6"
+        },
+        {
+          "path": "receipt-admission.schema.json",
+          "sha256": "e0790c9cc8423c7a6a47f0d28da75e1dc5159d5ec29d8037f325cba72bb9ce27"
+        },
+        {
+          "path": "recovery-evidence.schema.json",
+          "sha256": "3eb4a15b53b65a67f423b7c56d0d5d5c7648b4365db2146865285a537c9d2575"
+        }
+      ]
+    },
+    {
+      "name": "executor",
+      "version": "0.1",
+      "schemas": [
+        {
+          "path": "executor-request.schema.json",
+          "sha256": "e4a300796e4d155b361d574b2b915e3869bd95d83beb5adf8fdb3ca5cc567176"
+        },
+        {
+          "path": "executor-result.schema.json",
+          "sha256": "e80862cd118d27eab46a4d75efe96d61be25683d98c81b908e0d288e41a03fb3"
+        },
+        {
+          "path": "gaap-mapping-policy.schema.json",
+          "sha256": "27d96515de315c9935b202ba36a31715fc97a4e1630d3c7f89c7def712fa2e52"
+        },
+        {
+          "path": "result-observation.schema.json",
+          "sha256": "9e31a30801e474dcb1d4986f299a0215f3c5be2f406fd810bdc5dd8e940ccec3"
+        }
+      ]
+    }
+  ]
+}
