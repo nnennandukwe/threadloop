@@ -326,10 +326,12 @@ function machineResult(result: CaseResult): unknown {
   if (result.status !== 'decision') return result;
   const decision = result.decision.decision;
   if (decision.outcome !== 'blocked') return result;
+  const { decision_digest: _decisionDigest, ...decisionWithoutDigest } = decision;
+  void _decisionDigest;
   return {
     status: result.status,
     decision: {
-      ...decision,
+      ...decisionWithoutDigest,
       reasons: decision.reasons.map((reason) =>
         Object.fromEntries(Object.entries(reason).filter(([key]) => key !== 'message' && key !== 'recovery')),
       ),
