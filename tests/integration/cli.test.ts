@@ -159,7 +159,7 @@ async function runConcurrentMutationBurst(repoDir: string, sessionId: string, la
   }
 }
 
-describe('threadloop CLI', { timeout: 15_000 }, () => {
+describe('threadloop CLI', () => {
   let repoDir: string;
 
   beforeEach(async () => {
