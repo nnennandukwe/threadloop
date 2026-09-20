@@ -12,7 +12,7 @@ selector, TypeScript runtime subject, or Rust subject in this build.
 - [Fixture](schemas/fixture.schema.json), [manifest](schemas/manifest.schema.json), and
   [execution scenario](schemas/execution-scenario.schema.json) schemas define portable test material.
 - [Compatibility](compatibility.json) pins the raw bytes of every accepted upstream domain schema.
-- [Manifest](manifest.json) identifies all 36 materialized cases, input digests, and complete fixture digests.
+- [Manifest](manifest.json) identifies all 38 materialized cases, input digests, and complete fixture digests.
 - [Golden vectors](vectors/golden.json) and canonical request/response files pin the byte rules independently.
 - [Coverage](coverage.md) maps requirements to cases and separates available checks from future proof.
 - [RunInvariant follow-up](run-invariant-follow-up.md) is a ready-to-file integration specification, not an opened
@@ -121,10 +121,10 @@ This is a deliberate projection schema, not the full journal or every historical
 input material. Omitted journal details, actual executor death, persistence, and true concurrent transaction isolation
 are not proven by matching this projection.
 
-Competing claims are represented in both serialized arrival orders. An expired claim is not automatically an explicit
-evidence invalidation. A fenced late receipt cannot change its replacement Attempt. The GAAP cases use synthetic #107
-report evidence and #106 admission semantics; they do not execute GAAP or prove receipt authentication. Completing an
-Attempt supplies neither outer proof nor human approval.
+Competing claims are represented in both serialized arrival orders, including proposals prepared against the same
+journal revision. An expired claim is not automatically an explicit evidence invalidation. A fenced late receipt cannot
+change its replacement Attempt. The GAAP cases use synthetic #107 report evidence and #106 admission semantics; they do
+not execute GAAP or prove receipt authentication. Completing an Attempt supplies neither outer proof nor human approval.
 
 ## Canonical bytes and digest preimages
 

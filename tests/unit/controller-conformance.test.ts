@@ -24,7 +24,12 @@ import { readFile, readdir, mkdtemp, mkdir, writeFile, symlink, rm } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Ajv2020 } from 'ajv/dist/2020.js';
-import { loadCorpus, corpusDirectory, verifyCompatibility } from '../../scripts/controller-conformance/files.js';
+import {
+  loadCorpus,
+  corpusDirectory,
+  verifyCompatibility,
+  verifyPublishedSchemas,
+} from '../../scripts/controller-conformance/files.js';
 import {
   buildSubjectRequest,
   compareCaseResult,
@@ -32,6 +37,7 @@ import {
   validateSubjectResponse,
 } from '../../scripts/controller-conformance/validation.js';
 import {
+  compatibilitySchema,
   fixtureSchema,
   manifestSchema,
   publishedConformanceSchemas,
@@ -85,7 +91,7 @@ function listed(fixture: Fixture) {
 describe('Published controller corpus', () => {
   it('validates all required coverage without asserting external conformance', async () => {
     const checked = value(validateCorpus(corpus.manifest, corpus.fixtures, corpus.compatibility));
-    expect(checked.fixtures).toHaveLength(36);
+    expect(checked.fixtures).toHaveLength(38);
     await verifyCompatibility(corpus.compatibility);
     const pending = fixtures.filter((fixture) => fixture.semantic_check === 'selection_pending');
     expect(pending).toHaveLength(1);
@@ -98,6 +104,7 @@ describe('Published controller corpus', () => {
   });
 
   it('publishes schemas matching strict definitions and validates artifacts independently with Ajv', async () => {
+    await verifyPublishedSchemas();
     const ajv = new Ajv2020({ strict: true, strictTypes: false, formats: { 'date-time': true } });
     const schemas = publishedConformanceSchemas();
     expect((await readdir(join(corpusDirectory, 'schemas'))).sort()).toEqual(
@@ -199,11 +206,14 @@ describe('Published controller corpus', () => {
 
   it('preserves selected claim, receipt, and human-authority expectations', () => {
     const find = (id: string) => fixtures.find((fixture) => fixture.id === id)!;
-    for (const id of ['case_029', 'case_030']) {
+    for (const id of ['case_029', 'case_030', 'case_037', 'case_038']) {
       const result = find(id).expected;
       if (result.status !== 'execution') throw new Error('Expected execution fixture');
       expect(result.projection.claims).toHaveLength(1);
-      expect(result.steps.map((step) => step.code)).toEqual(['CLAIM_ACQUIRED', 'CLAIM_HELD']);
+      expect(result.steps.map((step) => step.code)).toEqual([
+        'CLAIM_ACQUIRED',
+        ['case_037', 'case_038'].includes(id) ? 'EXECUTION_VERSION_CONFLICT' : 'CLAIM_HELD',
+      ]);
     }
     const late = find('case_032').expected;
     if (late.status !== 'execution') throw new Error('Expected execution fixture');
@@ -312,7 +322,7 @@ describe('Read-only fixture loader', () => {
       await expect(loadCorpus(directory)).rejects.toThrow('Duplicate');
       await rm(path);
       await symlink(join(directory, 'manifest.json'), path);
-      await expect(loadCorpus(directory)).rejects.toThrow('regular JSON');
+      await expect(loadCorpus(directory)).rejects.toThrow('regular');
       await rm(path);
       await writeFile(join(directory, 'fixtures', 'unexpected.json'), '{}');
       await expect(loadCorpus(directory)).rejects.toThrow('Unlisted');
@@ -412,5 +422,50 @@ describe('Negative domain documents and independent artifact versions', () => {
     resealed.manifest.compatibility_digest = conformanceDigest(changedCompatibility);
     resealed.corpus_digest = conformanceDigest(resealed.manifest);
     expect(validateCorpus(resealed, corpus.fixtures, changedCompatibility).ok).toBe(false);
+  });
+});
+
+describe('Qodo artifact-integrity regressions', () => {
+  it('rejects duplicate published-schema keys even when ordinary JSON parsing matches the definition (e042b489)', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'threadloop-schema-keys-'));
+    try {
+      await mkdir(join(directory, 'schemas'));
+      for (const [name, schema] of Object.entries(publishedConformanceSchemas())) {
+        let source = JSON.stringify(schema);
+        if (name === 'request') source = '{"type":"string",' + source.slice(1);
+        await writeFile(join(directory, 'schemas', `${name}.schema.json`), source);
+        expect(JSON.parse(source)).toEqual(schema);
+      }
+      await expect(verifyPublishedSchemas(directory)).rejects.toThrow('Duplicate');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects compatibility-schema symlinks even when their target has the pinned bytes (7f7b3946)', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'threadloop-compatibility-links-'));
+    try {
+      const compatibility = compatibilitySchema.parse(corpus.compatibility);
+      for (const contract of compatibility.contracts) {
+        const target = join(directory, `${contract.name}-v0.1`, 'schemas');
+        await mkdir(target, { recursive: true });
+        for (const schema of contract.schemas) {
+          await writeFile(
+            join(target, schema.path),
+            await readFile(join(corpusDirectory, '..', `${contract.name}-v0.1`, 'schemas', schema.path)),
+          );
+        }
+      }
+      await verifyCompatibility(compatibility, directory);
+      const contract = compatibility.contracts[0]!;
+      const path = join(directory, `${contract.name}-v0.1`, 'schemas', contract.schemas[0]!.path);
+      const target = join(directory, 'matching-schema.json');
+      await writeFile(target, await readFile(path));
+      await rm(path);
+      await symlink(target, path);
+      await expect(verifyCompatibility(compatibility, directory)).rejects.toThrow('regular');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });

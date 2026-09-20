@@ -258,8 +258,22 @@
         "path": "fixtures/case_036.json",
         "input_digest": "a8ea7aa8630e97ea6543aef4dce4e3a03ee64e52acb1626b05ee553d9253bb5a",
         "fixture_digest": "6a2cfdf998368cd892e46647189404e2aeae5f833391e7f996e8a63b884f0318"
+      },
+      {
+        "id": "case_037",
+        "operation": "execution_scenario",
+        "path": "fixtures/case_037.json",
+        "input_digest": "5e19ed1338af86c4be657d0863f49aabcf47653c817d5bf1d9fc29d6b30f42d8",
+        "fixture_digest": "d611f08feb74485285457194d080c52d7be5678c5e33bd99cc1f8aaa008f1f46"
+      },
+      {
+        "id": "case_038",
+        "operation": "execution_scenario",
+        "path": "fixtures/case_038.json",
+        "input_digest": "b9b9e03c1894936cf9d5ccc02648300833aa2fbb3bc4bd94cba443dfac5d54ae",
+        "fixture_digest": "6fd1e621e8ca0d0ce7328ba655055b8df4585782807c9c61ae00b34042d221bc"
       }
     ]
   },
-  "corpus_digest": "a11cb1df826f6332951bc3bef6353936b1095d2498d945632db5f3d13c4241a7"
+  "corpus_digest": "11620588c6f4b39353ea9f77e361a50b5cb0dc970410b1ac10aa8bef13efad84"
 }

@@ -24,6 +24,9 @@ what the existing development tooling can establish. No row represents an extern
 | 035     | Changed content under reused identity          | Original request retained; conflict requires reconciliation           | Durable conflict retention                       |
 | 036     | Outer state after completed Agent Run          | Missing outer proof still requires collection                         | Full selector and human completion               |
 
+Cases 037–038 add both arrival orders for acquisition proposals prepared against the same revision-zero journal. The
+second proposal receives `EXECUTION_VERSION_CONFLICT`; only the first claim/Attempt exists.
+
 ## Acceptance mapping
 
 | Issue #108 criterion                                                           | Artifact and automated evidence                                                    |
@@ -42,7 +45,7 @@ what the existing development tooling can establish. No row represents an extern
 ## Provenance and limits
 
 Cases 001 and 004–023 retain accepted #104/#105 expectations, with the graph embedded into each normalized input. Cases
-002–003 and 024–036 were authored from the accepted topology, selection, and execution rules. A one-time independent
+002–003 and 024–038 were authored from the accepted topology, selection, and execution rules. A one-time independent
 Python authoring calculation materialized journal/admission preimages and SHA-256 identities; no ThreadLoop validator
 produced their expected answers. Expiry expectations were checked against #106's distinction between claim closure and
 explicit evidence invalidation. The reviewed result fields are listed in the protocol's execution projection schema.

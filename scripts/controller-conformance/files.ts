@@ -10,12 +10,16 @@ export const corpusDirectory = fileURLToPath(
   new URL('../../docs/contracts/controller-conformance-v0.1/', import.meta.url),
 );
 
-async function readJson(path: string): Promise<unknown> {
+async function readArtifact(path: string): Promise<Buffer> {
   const metadata = await lstat(path);
   if (!metadata.isFile() || metadata.size > 16 * 1024 * 1024)
-    throw new Error(`${path}: expected a regular JSON file no larger than 16 MiB.`);
+    throw new Error(`${path}: expected a regular file no larger than 16 MiB.`);
+  return readFile(path);
+}
+
+async function readJson(path: string): Promise<unknown> {
   try {
-    const source = new TextDecoder('utf-8', { fatal: true }).decode(await readFile(path));
+    const source = new TextDecoder('utf-8', { fatal: true }).decode(await readArtifact(path));
     const value: unknown = JSON.parse(source);
     const parsed = parseDocument(source, { uniqueKeys: true });
     if (parsed.errors.length) throw new Error('Duplicate or invalid JSON keys.');
@@ -27,6 +31,7 @@ async function readJson(path: string): Promise<unknown> {
 
 /** I/O belongs only to development tooling. No subject is loaded or executed. */
 export async function loadCorpus(directory = corpusDirectory) {
+  if (!(await lstat(directory)).isDirectory()) throw new Error('Corpus directory must be a real directory.');
   const fixtures: Record<string, unknown> = {};
   const fixtureDirectory = join(directory, 'fixtures');
   if (!(await lstat(fixtureDirectory)).isDirectory()) throw new Error('Fixture directory must be a real directory.');
@@ -41,15 +46,23 @@ export async function loadCorpus(directory = corpusDirectory) {
   };
 }
 
-export async function verifyCompatibility(value: unknown): Promise<void> {
+export async function verifyCompatibility(
+  value: unknown,
+  contractsDirectory = fileURLToPath(new URL('../../docs/contracts/', import.meta.url)),
+): Promise<void> {
   const compatibility = compatibilitySchema.parse(value);
   for (const contract of compatibility.contracts) {
-    const directory = fileURLToPath(new URL(`../../docs/contracts/${contract.name}-v0.1/schemas/`, import.meta.url));
+    const directory = join(contractsDirectory, `${contract.name}-v0.1`, 'schemas');
+    if (
+      !(await lstat(join(contractsDirectory, `${contract.name}-v0.1`))).isDirectory() ||
+      !(await lstat(directory)).isDirectory()
+    )
+      throw new Error(`${contract.name}: expected real contract and schema directories.`);
     const names = (await readdir(directory)).sort();
     if (JSON.stringify(names) !== JSON.stringify(contract.schemas.map((schema) => schema.path).sort()))
       throw new Error(`${contract.name}: schema inventory drift; review compatibility before updating the descriptor.`);
     for (const schema of contract.schemas) {
-      if (sha256(await readFile(join(directory, schema.path))) !== schema.sha256)
+      if (sha256(await readArtifact(join(directory, schema.path))) !== schema.sha256)
         throw new Error(`${contract.name}/${schema.path}: pinned schema bytes changed.`);
     }
   }
@@ -59,6 +72,8 @@ export async function verifyCompatibility(value: unknown): Promise<void> {
 export async function verifyPublishedSchemas(directory = corpusDirectory): Promise<void> {
   const generated = publishedConformanceSchemas();
   const schemaDirectory = join(directory, 'schemas');
+  if (!(await lstat(directory)).isDirectory() || !(await lstat(schemaDirectory)).isDirectory())
+    throw new Error('Expected real corpus and schema directories.');
   const expectedNames = Object.keys(generated)
     .map((name) => `${name}.schema.json`)
     .sort();
