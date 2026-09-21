@@ -20,6 +20,7 @@ async function readArtifact(path: string, maxBytes = 16 * 1024 * 1024): Promise<
       throw error;
     },
   );
+  let content: Buffer;
   try {
     const opened = await handle.stat();
     const named = await lstat(path);
@@ -29,18 +30,32 @@ async function readArtifact(path: string, maxBytes = 16 * 1024 * 1024): Promise<
     const chunks: Buffer[] = [];
     let size = 0;
     // Read at most the budget plus one byte, even if the file grows after stat.
-    while (size <= maxBytes) {
+    while (true) {
       const chunk = Buffer.alloc(Math.min(64 * 1024, maxBytes + 1 - size));
       const { bytesRead } = await handle.read(chunk, 0, chunk.length, null);
-      if (!bytesRead) return Buffer.concat(chunks, size);
+      if (!bytesRead) {
+        content = Buffer.concat(chunks, size);
+        break;
+      }
       size += bytesRead;
       if (size > maxBytes) throw new Error(`${path}: byte limit exceeded (${maxBytes} bytes).`);
       chunks.push(chunk.subarray(0, bytesRead));
     }
-    throw new Error(`${path}: byte limit exceeded (${maxBytes} bytes).`);
-  } finally {
-    await handle.close();
+  } catch (error) {
+    const closeFailure = await handle.close().then(
+      () => undefined,
+      (closeError: unknown) => ({ error: closeError }),
+    );
+    if (closeFailure)
+      throw new AggregateError(
+        [error, closeFailure.error],
+        `${path}: ${error instanceof Error ? error.message : String(error)}; descriptor close also failed.`,
+        { cause: error },
+      );
+    throw error;
   }
+  await handle.close();
+  return content;
 }
 
 async function readJson(path: string, sourceBudget?: { remaining: number }): Promise<unknown> {

@@ -139,3 +139,23 @@ it('enforces the corpus source budget on consumed bytes after the inventory size
   await expect(loadCorpus(directory)).rejects.toThrow(/shared.json.*byte limit/);
   expect(inspections).toBe(2);
 });
+
+it.each([false, true])('preserves close failure diagnostics when read also fails: %s (0a9f240b)', async (readFails) => {
+  const readFailure = new Error('primary artifact read failure');
+  const closeFailure = new Error('descriptor close failure');
+  vi.mocked(fs.open).mockImplementation(async (...args: Parameters<typeof fs.open>) => {
+    const handle = await actual.open(...args);
+    handles.push(handle);
+    if (readFails) vi.spyOn(handle, 'read').mockRejectedValue(readFailure);
+    const close = handle.close.bind(handle);
+    vi.spyOn(handle, 'close').mockImplementationOnce(async () => {
+      await close();
+      throw closeFailure;
+    });
+    return handle;
+  });
+  await expect(loadCorpus(directory)).rejects.toMatchObject({
+    cause: readFails ? { cause: readFailure, errors: [readFailure, closeFailure] } : closeFailure,
+  });
+  expect(handles).toHaveLength(1);
+});
