@@ -261,3 +261,6 @@ The corpus proves specification consistency and request determinism, not signatu
 crash recovery, durable handoffs, complete selector conformance, or production interoperability. Those remain
 obligations under #106-#108 and the later runtime milestone in
 [#110](https://github.com/nnennandukwe/threadloop/issues/110).
+
+The [Controller Conformance Protocol and corpus v0.1](../controller-conformance-v0.1/README.md) define the external test
+contract and RunInvariant integration handoff. Internal corpus validation is not a current-runtime conformance result.

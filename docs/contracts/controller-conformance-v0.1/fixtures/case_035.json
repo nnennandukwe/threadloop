@@ -1,0 +1,177 @@
+{
+  "schema": "threadloop.conformance-source/0.1",
+  "fixture": {
+    "schema": "threadloop.conformance-fixture/0.1",
+    "id": "case_035",
+    "title": "Changed request under existing idempotency slot is retained as conflict",
+    "rationale": "Explicit #106 serialized trace with independent synthetic host admissions. Checks only the published projection fields, not persistence or real concurrency.",
+    "references": ["execution-v0.1/README.md"],
+    "coverage": ["idempotency_conflict"],
+    "semantic_check": "execution",
+    "operation": "execution_scenario",
+    "input": {
+      "initial": {
+        "$fixture_ref": "initial_3d870ced"
+      },
+      "steps": [
+        {
+          "context": {
+            "$fixture_ref": "context_4bb55462"
+          },
+          "operation": {
+            "schema_version": "0.1",
+            "id": "operation_0",
+            "request": {
+              "idempotency_key": "47cd853e3793d3686567c379a7e8b911b9f7b66076383315457f017aef4ca2d3",
+              "request_digest": "b516444bf29e9d380e43fd399af654f2ddbfa47e2a04a542d39561904e3c9f5a"
+            },
+            "binding": {
+              "$fixture_ref": "binding_a05b1b25"
+            },
+            "execution_policy": {
+              "id": "execution_policy",
+              "digest": "682fdfae0f759888068446cd4c887279a500723c433f7fc3112adbd2cb7becaa"
+            },
+            "actor": {
+              "kind": "threadloop",
+              "identity": {
+                "id": "controller",
+                "digest": "c1472135b14c77c8bef98e73f70208325fa0dcf1e6bd668ae9b31a9cea295fe7"
+              }
+            },
+            "expected_revision": 0,
+            "expected_execution_digest": "49e7ac5cdc70320a5d0c2e2e56b559a3c96c83a5c90b665a1ddfba051ded3eb9",
+            "command": {
+              "kind": "register_request",
+              "request": {
+                "request": {
+                  "schema_version": "0.1",
+                  "binding": {
+                    "$fixture_ref": "binding_a05b1b25"
+                  },
+                  "capability_catalog": "threadloop.sdlc/0.1",
+                  "action_id": "run_gates",
+                  "transition_id": "human_handoff",
+                  "guard_ids": ["review_set"],
+                  "inputs": [
+                    {
+                      "role": "proof_plan",
+                      "artifact": {
+                        "id": "proof_plan",
+                        "digest": "48e495abf2fafe5cbce913542f66fe23924b726f79bbbee82f999cb55dc21225"
+                      }
+                    },
+                    {
+                      "role": "release_manifest",
+                      "artifact": {
+                        "id": "other_input",
+                        "digest": "3813379a65116728be3d66aada8d604806df660b2dd4b26e6c074f5147cf5c78"
+                      }
+                    }
+                  ],
+                  "evidence_ids": [],
+                  "constraints": {
+                    "require_current_subject": true,
+                    "lifecycle_mutation": false,
+                    "valid_until": null
+                  },
+                  "policy": {
+                    "id": "workflow_policy",
+                    "digest": "bb0fa886e09f2af7c187fd66844caee2cc6750258a7b9fef7fac827cca0d878a"
+                  },
+                  "authorities": [
+                    {
+                      "type": "threadloop",
+                      "identity": {
+                        "id": "controller",
+                        "digest": "c1472135b14c77c8bef98e73f70208325fa0dcf1e6bd668ae9b31a9cea295fe7"
+                      }
+                    },
+                    {
+                      "type": "human",
+                      "identity": {
+                        "id": "maintainer",
+                        "digest": "9c5646b582f10531c791dd2372854409c96e8276f979c0aa4a505ec760e06100"
+                      }
+                    }
+                  ],
+                  "evidence_requirements": [
+                    {
+                      "family": "local_proof",
+                      "guard_id": "review_set",
+                      "subject": {
+                        "kind": "repository",
+                        "repository_id": "sample_repository",
+                        "revision": "commit_b",
+                        "content_digest": "46f155c90e515c97c0bf03967cb7e0be593e707a5054d1306da836cb99b51924"
+                      }
+                    }
+                  ],
+                  "idempotency_key": "47cd853e3793d3686567c379a7e8b911b9f7b66076383315457f017aef4ca2d3",
+                  "actor": "executor",
+                  "capability": "run_local_gates"
+                },
+                "request_digest": "af50f39971b9c19c467a4c65d77cfbd9554e0e13553f395f0fe4ff3352337f13"
+              }
+            }
+          }
+        }
+      ],
+      "admitted_digests": [
+        "e0690ac9cd7da8ceb06b7f855dd91b0aa974e8397ae6689e55c422a152bce5c9",
+        "98899b724ec6c6bc7fffb6ae9965c0d9c0752e43cae0bc879ac33f1a188b04b8",
+        "52d5a248d47497074cc7316cb621748c68bd8d1d19688cb34b9dd554ee9584b6"
+      ],
+      "projection_snapshot": {
+        "$fixture_ref": "snapshot_ab1f304c"
+      }
+    },
+    "expected": {
+      "status": "execution",
+      "steps": [
+        {
+          "disposition": "conflict",
+          "code": "IDENTITY_CONFLICT",
+          "revision": 1,
+          "claim": null,
+          "attempt_id": null,
+          "replayed": false
+        }
+      ],
+      "projection": {
+        "revision": 1,
+        "request_status": "open",
+        "claims": [],
+        "attempts": [],
+        "receipts": [],
+        "conflicts": [
+          {
+            "namespace": "request",
+            "identity": "47cd853e3793d3686567c379a7e8b911b9f7b66076383315457f017aef4ca2d3",
+            "original_digest": "b516444bf29e9d380e43fd399af654f2ddbfa47e2a04a542d39561904e3c9f5a",
+            "incoming_digest": "af50f39971b9c19c467a4c65d77cfbd9554e0e13553f395f0fe4ff3352337f13",
+            "resolved_by": null
+          }
+        ],
+        "controller": {
+          "execution": {
+            "status": "reconciliation_required",
+            "request": {
+              "$fixture_ref": "action_request_893dd3ab"
+            },
+            "claim": null,
+            "attempt_id": null,
+            "reason": "conflict"
+          },
+          "invalidated_claims": [],
+          "existing_requests": [
+            {
+              "idempotency_key": "47cd853e3793d3686567c379a7e8b911b9f7b66076383315457f017aef4ca2d3",
+              "request_digest": "b516444bf29e9d380e43fd399af654f2ddbfa47e2a04a542d39561904e3c9f5a"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

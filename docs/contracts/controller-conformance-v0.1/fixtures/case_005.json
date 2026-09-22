@@ -1,0 +1,107 @@
+{
+  "schema": "threadloop.conformance-source/0.1",
+  "fixture": {
+    "schema": "threadloop.conformance-fixture/0.1",
+    "id": "case_005",
+    "title": "Stale evidence refresh",
+    "rationale": "Materialized accepted #105 input and independently authored expectation; candidate validity does not prove exhaustive selection.",
+    "references": ["controller-v0.1/fixtures/valid/stale_evidence_refresh.json"],
+    "coverage": ["stale_receipt"],
+    "semantic_check": "candidate",
+    "operation": "decide",
+    "input": {
+      "schema_version": "0.1",
+      "binding": {
+        "$fixture_ref": "binding_a05b1b25"
+      },
+      "observation": {
+        "$fixture_ref": "observation_5922f2c9"
+      },
+      "history": {
+        "status": "verified",
+        "digest": "d31caa5a33b5c6edb4901d35bfa6db686989c324821892ad8e26f4bab717fc27",
+        "phase": "post_pr",
+        "budget_counts": [
+          {
+            "budget_id": "repair_entries",
+            "used": 0
+          }
+        ],
+        "prior_state": null,
+        "implementation_basis": null,
+        "proof_plan_bound": true,
+        "repair_admission": null
+      },
+      "policy": {
+        "$fixture_ref": "policy_ec83c736"
+      },
+      "available_capabilities": {
+        "$fixture_ref": "available_capabilities_b73e90d7"
+      },
+      "receipts": [
+        {
+          "id": "local_b",
+          "workflow_run_id": "workflow_1",
+          "graph_digest": "7df5f3b655e61bc872f83de08c6ce7b0c0c714de15256ada7b13127264bcd2dc",
+          "source_state_version": 3,
+          "subject": {
+            "kind": "repository",
+            "repository_id": "sample_repository",
+            "revision": "commit_b",
+            "content_digest": "bba99ec9cbb7640ff73acff79ca59f8441f2efb5168b11f95aa501b1b2c97c8c"
+          },
+          "sequence": 1,
+          "policy": {
+            "id": "trusted_evidence",
+            "digest": "997c333585c7d8794eed32314bb36f7b81037f58425b7a5cb0d51ca75cf9f392"
+          },
+          "workflow_policy": {
+            "id": "workflow_policy",
+            "digest": "bb0fa886e09f2af7c187fd66844caee2cc6750258a7b9fef7fac827cca0d878a"
+          },
+          "acceptance": {
+            "id": "acceptance_local_b",
+            "digest": "a1c6b0a2879221918fbfb54f4f3eb5b51e1c7f8971b9a868a6f3da3b67ed60f1"
+          },
+          "valid_until": null,
+          "origin": {
+            "kind": "observation"
+          },
+          "payload": {
+            "type": "local_proof",
+            "gate_id": "check",
+            "result": "passed",
+            "clean": true
+          },
+          "payload_digest": "61e1d892f69bb3da8b2d72adf1f3944b259f25baabc0dcc94753b08c6684fdd2"
+        }
+      ],
+      "invalidated_claims": [],
+      "execution": {
+        "status": "idle"
+      },
+      "existing_requests": [],
+      "evaluation_time": null,
+      "compiled_graph": {
+        "$fixture_ref": "compiled_graph_4c1e4e66"
+      }
+    },
+    "expected": {
+      "status": "decision",
+      "decision": {
+        "decision": {
+          "schema_version": "0.1",
+          "input_digest": "377bb73f16f25573384ea65ffc8bb0d21b4421c6d696b8bd162014ee9880dc2e",
+          "binding": {
+            "$fixture_ref": "binding_a05b1b25"
+          },
+          "outcome": "engineering_action_required",
+          "action_request": {
+            "$fixture_ref": "action_request_893dd3ab"
+          }
+        },
+        "decision_digest": "2d0d445300126f43231ad6225bdbe9c89f1e341e0882cb916ad9f02520e9bac1"
+      }
+    }
+  }
+}

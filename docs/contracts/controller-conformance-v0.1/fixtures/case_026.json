@@ -1,0 +1,77 @@
+{
+  "schema": "threadloop.conformance-source/0.1",
+  "fixture": {
+    "schema": "threadloop.conformance-fixture/0.1",
+    "id": "case_026",
+    "title": "Expired higher-sequence proof supersedes older pass despite arrival order",
+    "rationale": "Expired higher-sequence proof supersedes older pass despite arrival order",
+    "references": ["controller-v0.1/selection.md"],
+    "coverage": ["out_of_order_receipt"],
+    "semantic_check": "candidate",
+    "operation": "decide",
+    "input": {
+      "schema_version": "0.1",
+      "binding": {
+        "$fixture_ref": "binding_a05b1b25"
+      },
+      "observation": {
+        "$fixture_ref": "observation_5922f2c9"
+      },
+      "history": {
+        "status": "verified",
+        "digest": "d31caa5a33b5c6edb4901d35bfa6db686989c324821892ad8e26f4bab717fc27",
+        "phase": "post_pr",
+        "budget_counts": [
+          {
+            "budget_id": "repair_entries",
+            "used": 0
+          }
+        ],
+        "prior_state": null,
+        "implementation_basis": null,
+        "proof_plan_bound": true,
+        "repair_admission": null
+      },
+      "policy": {
+        "$fixture_ref": "policy_ec83c736"
+      },
+      "available_capabilities": {
+        "$fixture_ref": "available_capabilities_b73e90d7"
+      },
+      "receipts": [
+        {
+          "$fixture_ref": "receipts_0_59063dbd"
+        },
+        {
+          "$fixture_ref": "receipts_1_58b2c706"
+        }
+      ],
+      "invalidated_claims": [],
+      "execution": {
+        "status": "idle"
+      },
+      "existing_requests": [],
+      "evaluation_time": "2026-09-10T10:00:00.000Z",
+      "compiled_graph": {
+        "$fixture_ref": "compiled_graph_4c1e4e66"
+      }
+    },
+    "expected": {
+      "status": "decision",
+      "decision": {
+        "decision": {
+          "schema_version": "0.1",
+          "input_digest": "c03df0a67c2b56be784825a7475a935516d5cc159f5bc22952eb23fcfd35ad40",
+          "binding": {
+            "$fixture_ref": "binding_a05b1b25"
+          },
+          "outcome": "engineering_action_required",
+          "action_request": {
+            "$fixture_ref": "action_request_893dd3ab"
+          }
+        },
+        "decision_digest": "29910adbf0290a6d1afe703c62ebb12181e5b07e16bfede14e5fc1cec1cd3c54"
+      }
+    }
+  }
+}

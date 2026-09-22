@@ -1,0 +1,139 @@
+{
+  "schema": "threadloop.conformance-source/0.1",
+  "fixture": {
+    "schema": "threadloop.conformance-fixture/0.1",
+    "id": "case_022",
+    "title": "Admitted repair",
+    "rationale": "Materialized accepted #105 input and independently authored expectation; candidate validity does not prove exhaustive selection.",
+    "references": ["controller-v0.1/fixtures/valid/admitted_repair.json"],
+    "coverage": ["positive_control"],
+    "semantic_check": "candidate",
+    "operation": "decide",
+    "input": {
+      "schema_version": "0.1",
+      "binding": {
+        "$fixture_ref": "binding_d0ab6a25"
+      },
+      "observation": {
+        "$fixture_ref": "observation_5922f2c9"
+      },
+      "history": {
+        "status": "verified",
+        "digest": "d31caa5a33b5c6edb4901d35bfa6db686989c324821892ad8e26f4bab717fc27",
+        "phase": "post_pr",
+        "budget_counts": [
+          {
+            "budget_id": "repair_entries",
+            "used": 3
+          }
+        ],
+        "prior_state": null,
+        "implementation_basis": null,
+        "proof_plan_bound": true,
+        "repair_admission": {
+          "action_id": "repair",
+          "transition_id": "repair_review",
+          "entry_state_version": 5,
+          "bound_state_version": 5,
+          "budget_id": "repair_entries",
+          "consumed": 3
+        }
+      },
+      "policy": {
+        "$fixture_ref": "policy_ec83c736"
+      },
+      "available_capabilities": {
+        "$fixture_ref": "available_capabilities_b73e90d7"
+      },
+      "receipts": {
+        "$fixture_ref": "receipts_cdc9da3b"
+      },
+      "invalidated_claims": [],
+      "execution": {
+        "status": "idle"
+      },
+      "existing_requests": [],
+      "evaluation_time": null,
+      "compiled_graph": {
+        "$fixture_ref": "compiled_graph_4c1e4e66"
+      }
+    },
+    "expected": {
+      "status": "decision",
+      "decision": {
+        "decision": {
+          "schema_version": "0.1",
+          "input_digest": "b4572d424ec68cd132a1df3b6068ec1b96781d8e17c43cb83eb7f63475b2a606",
+          "binding": {
+            "$fixture_ref": "binding_d0ab6a25"
+          },
+          "outcome": "engineering_action_required",
+          "action_request": {
+            "request": {
+              "action_id": "repair",
+              "transition_id": "verify_repair",
+              "guard_ids": ["repair_committed"],
+              "inputs": [
+                {
+                  "role": "proof_plan",
+                  "artifact": {
+                    "id": "proof_plan",
+                    "digest": "48e495abf2fafe5cbce913542f66fe23924b726f79bbbee82f999cb55dc21225"
+                  }
+                }
+              ],
+              "evidence_ids": ["local_b"],
+              "evidence_requirements": [
+                {
+                  "family": "repository_observation",
+                  "guard_id": "repair_committed",
+                  "subject": {
+                    "kind": "repository",
+                    "repository_id": "sample_repository",
+                    "revision": "commit_b",
+                    "content_digest": "46f155c90e515c97c0bf03967cb7e0be593e707a5054d1306da836cb99b51924"
+                  }
+                }
+              ],
+              "schema_version": "0.1",
+              "binding": {
+                "$fixture_ref": "binding_d0ab6a25"
+              },
+              "capability_catalog": "threadloop.sdlc/0.1",
+              "capability": "repair_change",
+              "actor": "executor",
+              "constraints": {
+                "require_current_subject": true,
+                "lifecycle_mutation": false,
+                "valid_until": null
+              },
+              "policy": {
+                "id": "workflow_policy",
+                "digest": "bb0fa886e09f2af7c187fd66844caee2cc6750258a7b9fef7fac827cca0d878a"
+              },
+              "authorities": [
+                {
+                  "type": "threadloop",
+                  "identity": {
+                    "id": "controller",
+                    "digest": "c1472135b14c77c8bef98e73f70208325fa0dcf1e6bd668ae9b31a9cea295fe7"
+                  }
+                },
+                {
+                  "type": "human",
+                  "identity": {
+                    "id": "maintainer",
+                    "digest": "9c5646b582f10531c791dd2372854409c96e8276f979c0aa4a505ec760e06100"
+                  }
+                }
+              ],
+              "idempotency_key": "e2d8e5b3dfad5cba4954d96d3e6c0635632349b935c11df5b84edb1fb4cf7ae7"
+            },
+            "request_digest": "b83a8281509661457e64559276c5b9b8647e727158386154c271f49de4413a8b"
+          }
+        },
+        "decision_digest": "5b915ecf0577b014d000e5c7a77d07e62077c976394071f0659e1756c22eba22"
+      }
+    }
+  }
+}

@@ -1,0 +1,109 @@
+{
+  "schema": "threadloop.conformance-source/0.1",
+  "fixture": {
+    "schema": "threadloop.conformance-fixture/0.1",
+    "id": "case_002",
+    "title": "Unreachable terminal is rejected",
+    "rationale": "Unreachable terminal is rejected",
+    "references": ["workflow-graph-v0.1/README.md"],
+    "coverage": ["unreachable_terminal"],
+    "semantic_check": "graph",
+    "operation": "compile_graph",
+    "input": {
+      "schema_version": "0.1",
+      "profile": {
+        "id": "governed_pr",
+        "revision": 1
+      },
+      "initial_state": "queued",
+      "states": [
+        {
+          "id": "blocked",
+          "kind": "suspended",
+          "handoff": "recover"
+        },
+        {
+          "id": "completed",
+          "kind": "terminal"
+        },
+        {
+          "id": "framed",
+          "kind": "active"
+        },
+        {
+          "id": "implementing",
+          "kind": "active"
+        },
+        {
+          "id": "pre_pr_reviewing",
+          "kind": "active"
+        },
+        {
+          "id": "proof_ready",
+          "kind": "active"
+        },
+        {
+          "id": "queued",
+          "kind": "active"
+        },
+        {
+          "id": "ready_for_human",
+          "kind": "active"
+        },
+        {
+          "id": "repairing",
+          "kind": "active"
+        },
+        {
+          "id": "reviewing",
+          "kind": "active"
+        },
+        {
+          "id": "verifying",
+          "kind": "active"
+        },
+        {
+          "id": "orphan_terminal",
+          "kind": "terminal"
+        }
+      ],
+      "transitions": {
+        "$fixture_ref": "transitions_8aa15304"
+      },
+      "guards": {
+        "$fixture_ref": "guards_a8d1b54b"
+      },
+      "required_actions": {
+        "$fixture_ref": "required_actions_249476be"
+      },
+      "budgets": [
+        {
+          "id": "repair_entries",
+          "limit": 3,
+          "transition_refs": ["repair_failed_proof", "repair_late_review", "repair_review"]
+        }
+      ],
+      "cycle_controls": {
+        "$fixture_ref": "cycle_controls_dbf57eb2"
+      },
+      "phase_policy": {
+        "kind": "entered_state",
+        "state_refs": ["completed", "ready_for_human", "reviewing"],
+        "initial": "pre_pr",
+        "advanced": "post_pr",
+        "monotonic": true,
+        "include_audit_genesis": true
+      }
+    },
+    "expected": {
+      "status": "invalid",
+      "diagnostics": [
+        {
+          "code": "UNREACHABLE_STATE",
+          "path": "$.states[11]",
+          "identifier": "orphan_terminal"
+        }
+      ]
+    }
+  }
+}

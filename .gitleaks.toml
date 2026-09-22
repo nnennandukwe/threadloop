@@ -23,3 +23,12 @@ regexTarget = "match"
 # Allow only that digest field; credential fields in these files remain scanned.
 paths = ['''^docs/contracts/executor-v0\.1/fixtures/(executor-request\.canonical|local-gates\.json)$''']
 regexes = ['''^idempotency_key":\s*"[a-f0-9]{64}"$''']
+
+[[rules.allowlists]]
+description = "Conformance fixture idempotency keys are public SHA-256 Action Request identities"
+condition = "AND"
+regexTarget = "match"
+# Include historical materialized cases as well as the compact shared literals.
+# Keep credential fields and all paths outside this versioned corpus scanned.
+paths = ['''^docs/contracts/controller-conformance-v0\.1/(fixtures/case_[0-9]{3}\.json|shared\.json)$''']
+regexes = ['''^idempotency_key":\s*"[a-f0-9]{64}"$''']

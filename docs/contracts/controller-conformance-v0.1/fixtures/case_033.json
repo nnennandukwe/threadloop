@@ -1,0 +1,135 @@
+{
+  "schema": "threadloop.conformance-source/0.1",
+  "fixture": {
+    "schema": "threadloop.conformance-fixture/0.1",
+    "id": "case_033",
+    "title": "GAAP success report cannot admit itself",
+    "rationale": "Explicit #106 serialized trace with independent synthetic host admissions. Checks only the published projection fields, not persistence or real concurrency.",
+    "references": ["execution-v0.1/README.md"],
+    "coverage": ["gaap_without_authority"],
+    "semantic_check": "execution",
+    "operation": "execution_scenario",
+    "input": {
+      "initial": {
+        "$fixture_ref": "initial_3d870ced"
+      },
+      "steps": [
+        {
+          "$fixture_ref": "steps_0_900e798d"
+        },
+        {
+          "$fixture_ref": "steps_1_29172c70"
+        },
+        {
+          "context": {
+            "$fixture_ref": "context_a3e500ae"
+          },
+          "operation": {
+            "$fixture_ref": "operation_2f5e7402"
+          }
+        }
+      ],
+      "admitted_digests": [
+        "e0690ac9cd7da8ceb06b7f855dd91b0aa974e8397ae6689e55c422a152bce5c9",
+        "18a967671c0938a28ad4d819e83cfa574806e28f3f6d3536c5d4ebb937de800b",
+        "7b241d1c87745fec914bcf8c7952489a81a6bd4cda5c99d13db2347048412c47",
+        "4b784237d01d867ddc00b895bfd62bf3821ea4f85a5ac399ff7e3c44ee4bb4db",
+        "121c52f98d5b60a6ae93592f3d62954eab6f31ae8a1537c357b7e69a4492409c"
+      ],
+      "projection_snapshot": {
+        "$fixture_ref": "snapshot_ab1f304c"
+      }
+    },
+    "expected": {
+      "status": "execution",
+      "steps": [
+        {
+          "disposition": "applied",
+          "code": "CLAIM_ACQUIRED",
+          "revision": 1,
+          "claim": {
+            "id": "claim_a",
+            "version": 1
+          },
+          "attempt_id": "attempt_a",
+          "replayed": false
+        },
+        {
+          "disposition": "applied",
+          "code": "ATTEMPT_STARTED",
+          "revision": 2,
+          "claim": {
+            "id": "claim_a",
+            "version": 1
+          },
+          "attempt_id": "attempt_a",
+          "replayed": false
+        },
+        {
+          "disposition": "rejected",
+          "code": "RECEIPT_ADMISSION_MISMATCH",
+          "revision": 3,
+          "claim": null,
+          "attempt_id": null,
+          "replayed": false
+        }
+      ],
+      "projection": {
+        "revision": 3,
+        "request_status": "open",
+        "claims": [
+          {
+            "id": "claim_a",
+            "version": 1,
+            "attempt_id": "attempt_a",
+            "status": "active"
+          }
+        ],
+        "attempts": [
+          {
+            "id": "attempt_a",
+            "claim": {
+              "id": "claim_a",
+              "version": 1
+            },
+            "status": "running",
+            "effect": "unknown",
+            "receipt_id": null
+          }
+        ],
+        "receipts": [
+          {
+            "id": "receipt_a",
+            "receipt_digest": "c2fabcfd4e96d84d2ca5e8973ad6ff4d51c58038854596d8d86cc688c2a2d51c",
+            "code": "RECEIPT_ADMISSION_MISMATCH"
+          }
+        ],
+        "conflicts": [],
+        "controller": {
+          "execution": {
+            "status": "in_flight",
+            "request": {
+              "$fixture_ref": "action_request_893dd3ab"
+            },
+            "claim": {
+              "id": "claim_a",
+              "version": 1,
+              "valid_until": "2026-09-10T10:05:00.000Z"
+            },
+            "attempt": {
+              "id": "attempt_a",
+              "status": "running"
+            }
+          },
+          "invalidated_claims": [],
+          "existing_requests": [
+            {
+              "idempotency_key": "47cd853e3793d3686567c379a7e8b911b9f7b66076383315457f017aef4ca2d3",
+              "request_digest": "b516444bf29e9d380e43fd399af654f2ddbfa47e2a04a542d39561904e3c9f5a"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

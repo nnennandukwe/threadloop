@@ -1,0 +1,76 @@
+{
+  "schema": "threadloop.conformance-source/0.1",
+  "fixture": {
+    "schema": "threadloop.conformance-fixture/0.1",
+    "id": "case_028",
+    "title": "Exact request redelivery and operation replay create no claim",
+    "rationale": "Explicit #106 serialized trace with independent synthetic host admissions. Checks only the published projection fields, not persistence or real concurrency.",
+    "references": ["execution-v0.1/README.md"],
+    "coverage": ["duplicate_request"],
+    "semantic_check": "execution",
+    "operation": "execution_scenario",
+    "input": {
+      "initial": {
+        "$fixture_ref": "initial_3d870ced"
+      },
+      "steps": [
+        {
+          "$fixture_ref": "steps_0_6fb5e2c5"
+        },
+        {
+          "$fixture_ref": "steps_0_6fb5e2c5"
+        }
+      ],
+      "admitted_digests": [
+        "e0690ac9cd7da8ceb06b7f855dd91b0aa974e8397ae6689e55c422a152bce5c9",
+        "023be417196dc64286ab07fd6cf97036db0a0a58c66595f945bb7744ad763183",
+        "8f5861fa23f4f9edbc8d405ef5719e9eb5f7724947fe31cb8e1687788c19d7b3",
+        "f8943945631e3ee393d94af7f23569d045763414c3a1e21b4dbcde5843184228"
+      ],
+      "projection_snapshot": {
+        "$fixture_ref": "snapshot_ab1f304c"
+      }
+    },
+    "expected": {
+      "status": "execution",
+      "steps": [
+        {
+          "disposition": "applied",
+          "code": "REQUEST_ALREADY_REGISTERED",
+          "revision": 1,
+          "claim": null,
+          "attempt_id": null,
+          "replayed": false
+        },
+        {
+          "disposition": "applied",
+          "code": "REQUEST_ALREADY_REGISTERED",
+          "revision": 1,
+          "claim": null,
+          "attempt_id": null,
+          "replayed": true
+        }
+      ],
+      "projection": {
+        "revision": 1,
+        "request_status": "open",
+        "claims": [],
+        "attempts": [],
+        "receipts": [],
+        "conflicts": [],
+        "controller": {
+          "execution": {
+            "status": "idle"
+          },
+          "invalidated_claims": [],
+          "existing_requests": [
+            {
+              "idempotency_key": "47cd853e3793d3686567c379a7e8b911b9f7b66076383315457f017aef4ca2d3",
+              "request_digest": "b516444bf29e9d380e43fd399af654f2ddbfa47e2a04a542d39561904e3c9f5a"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

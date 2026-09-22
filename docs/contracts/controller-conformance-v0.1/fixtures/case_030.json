@@ -1,0 +1,98 @@
+{
+  "schema": "threadloop.conformance-source/0.1",
+  "fixture": {
+    "schema": "threadloop.conformance-fixture/0.1",
+    "id": "case_030",
+    "title": "Competing executors: executor_b arrives first",
+    "rationale": "Explicit #106 serialized trace with independent synthetic host admissions. Checks only the published projection fields, not persistence or real concurrency.",
+    "references": ["execution-v0.1/README.md"],
+    "coverage": ["concurrent_claims"],
+    "semantic_check": "execution",
+    "operation": "execution_scenario",
+    "input": {
+      "initial": {
+        "$fixture_ref": "initial_3d870ced"
+      },
+      "steps": [
+        {
+          "$fixture_ref": "steps_0_b11fbeb4"
+        },
+        {
+          "context": {
+            "$fixture_ref": "context_a3e500ae"
+          },
+          "operation": {
+            "schema_version": "0.1",
+            "id": "operation_1",
+            "request": {
+              "idempotency_key": "47cd853e3793d3686567c379a7e8b911b9f7b66076383315457f017aef4ca2d3",
+              "request_digest": "b516444bf29e9d380e43fd399af654f2ddbfa47e2a04a542d39561904e3c9f5a"
+            },
+            "binding": {
+              "$fixture_ref": "binding_a05b1b25"
+            },
+            "execution_policy": {
+              "id": "execution_policy",
+              "digest": "682fdfae0f759888068446cd4c887279a500723c433f7fc3112adbd2cb7becaa"
+            },
+            "actor": {
+              "kind": "executor",
+              "executor": {
+                "id": "executor_a",
+                "incarnation": "process_a"
+              }
+            },
+            "expected_revision": 1,
+            "expected_execution_digest": "c760888601bdf139e36f875c52163e66cf0328f0bb8b68c9445d6aed5e427ed4",
+            "command": {
+              "kind": "acquire",
+              "claim_id": "claim_a",
+              "attempt_id": "attempt_a",
+              "executor": {
+                "id": "executor_a",
+                "incarnation": "process_a"
+              },
+              "valid_until": "2026-09-10T10:05:00.000Z"
+            }
+          }
+        }
+      ],
+      "admitted_digests": [
+        "e0690ac9cd7da8ceb06b7f855dd91b0aa974e8397ae6689e55c422a152bce5c9",
+        "a9bbb164d9d8ea617426f749b332c2a82ef83ac1d8796c399b6f647fa9d65026",
+        "40b672c1bb50d9beeb5827c0935cd7f2327e63f8cb1e8422c8fcacae60f92ce2",
+        "153e73e366ed824634a2f703100b2101ff4c71e3b3fd39f5468e57e25303f672"
+      ],
+      "projection_snapshot": {
+        "$fixture_ref": "snapshot_ab1f304c"
+      }
+    },
+    "expected": {
+      "status": "execution",
+      "steps": [
+        {
+          "disposition": "applied",
+          "code": "CLAIM_ACQUIRED",
+          "revision": 1,
+          "claim": {
+            "id": "claim_b",
+            "version": 1
+          },
+          "attempt_id": "attempt_b",
+          "replayed": false
+        },
+        {
+          "disposition": "rejected",
+          "code": "CLAIM_HELD",
+          "revision": 2,
+          "claim": null,
+          "attempt_id": null,
+          "replayed": false
+        }
+      ],
+      "projection": {
+        "$fixture_ref": "projection_58d336a6"
+      }
+    }
+  }
+}

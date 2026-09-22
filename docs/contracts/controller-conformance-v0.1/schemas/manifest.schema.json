@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "manifest": {
+      "type": "object",
+      "properties": {
+        "protocol": {
+          "type": "string",
+          "const": "threadloop.controller-conformance/0.1"
+        },
+        "fixture_schema": {
+          "type": "string",
+          "const": "threadloop.conformance-fixture/0.1"
+        },
+        "canonicalization": {
+          "type": "string",
+          "const": "threadloop.conformance-json/0.1"
+        },
+        "digest_profile": {
+          "type": "string",
+          "const": "threadloop.conformance-sha256/0.1"
+        },
+        "schema": {
+          "type": "string",
+          "const": "threadloop.conformance-manifest/0.1"
+        },
+        "compatibility_digest": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "entries": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema1"
+          }
+        }
+      },
+      "required": [
+        "protocol",
+        "fixture_schema",
+        "canonicalization",
+        "digest_profile",
+        "schema",
+        "compatibility_digest",
+        "entries"
+      ],
+      "additionalProperties": false
+    },
+    "corpus_digest": {
+      "$ref": "#/$defs/__schema0"
+    }
+  },
+  "required": ["manifest", "corpus_digest"],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "__schema1": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^case_[0-9]{3}$"
+        },
+        "operation": {
+          "type": "string",
+          "enum": ["compile_graph", "decide", "execution_scenario"]
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^fixtures\\/case_[0-9]{3}\\.json$"
+        },
+        "input_digest": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "fixture_digest": {
+          "$ref": "#/$defs/__schema0"
+        }
+      },
+      "required": ["id", "operation", "path", "input_digest", "fixture_digest"],
+      "additionalProperties": false
+    }
+  },
+  "$id": "https://github.com/nnennandukwe/threadloop/contracts/controller-conformance/0.1/manifest"
+}

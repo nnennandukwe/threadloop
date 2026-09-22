@@ -1,0 +1,68 @@
+{
+  "schema": "threadloop.conformance-source/0.1",
+  "fixture": {
+    "schema": "threadloop.conformance-fixture/0.1",
+    "id": "case_012",
+    "title": "Terminal",
+    "rationale": "Materialized accepted #105 input and independently authored expectation; candidate validity does not prove exhaustive selection.",
+    "references": ["controller-v0.1/fixtures/valid/terminal.json"],
+    "coverage": ["positive_control"],
+    "semantic_check": "candidate",
+    "operation": "decide",
+    "input": {
+      "schema_version": "0.1",
+      "binding": {
+        "$fixture_ref": "binding_30f6fda1"
+      },
+      "observation": {
+        "$fixture_ref": "observation_5922f2c9"
+      },
+      "history": {
+        "status": "verified",
+        "digest": "d31caa5a33b5c6edb4901d35bfa6db686989c324821892ad8e26f4bab717fc27",
+        "phase": "post_pr",
+        "budget_counts": [
+          {
+            "budget_id": "repair_entries",
+            "used": 0
+          }
+        ],
+        "prior_state": null,
+        "implementation_basis": null,
+        "proof_plan_bound": true,
+        "repair_admission": null
+      },
+      "policy": {
+        "$fixture_ref": "policy_ec83c736"
+      },
+      "available_capabilities": {
+        "$fixture_ref": "available_capabilities_b73e90d7"
+      },
+      "receipts": [],
+      "invalidated_claims": [],
+      "execution": {
+        "status": "idle"
+      },
+      "existing_requests": [],
+      "evaluation_time": null,
+      "compiled_graph": {
+        "$fixture_ref": "compiled_graph_4c1e4e66"
+      }
+    },
+    "expected": {
+      "status": "decision",
+      "decision": {
+        "decision": {
+          "schema_version": "0.1",
+          "input_digest": "2ce0dd060ab7e789c6c43a515556d32dd3c022e515298ef15541fe8c4688bfdd",
+          "binding": {
+            "$fixture_ref": "binding_30f6fda1"
+          },
+          "outcome": "terminal",
+          "terminal_state": "completed"
+        },
+        "decision_digest": "8d5ab6985e5ff6b8cce315cda62b3b2d8a1da724e6a533019bdc29ea49d547fd"
+      }
+    }
+  }
+}

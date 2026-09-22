@@ -1,0 +1,57 @@
+{
+  "schema": "threadloop.conformance-source/0.1",
+  "fixture": {
+    "schema": "threadloop.conformance-fixture/0.1",
+    "id": "case_001",
+    "title": "Governed PR graph preserves compiled identity",
+    "rationale": "Governed PR graph preserves compiled identity",
+    "references": ["workflow-graph-v0.1/README.md"],
+    "coverage": ["valid_graph"],
+    "semantic_check": "graph",
+    "operation": "compile_graph",
+    "input": {
+      "schema_version": "0.1",
+      "profile": {
+        "id": "governed_pr",
+        "revision": 1
+      },
+      "initial_state": "queued",
+      "states": {
+        "$fixture_ref": "states_447cd5ce"
+      },
+      "transitions": {
+        "$fixture_ref": "transitions_8aa15304"
+      },
+      "guards": {
+        "$fixture_ref": "guards_a8d1b54b"
+      },
+      "required_actions": {
+        "$fixture_ref": "required_actions_249476be"
+      },
+      "budgets": [
+        {
+          "id": "repair_entries",
+          "limit": 3,
+          "transition_refs": ["repair_failed_proof", "repair_late_review", "repair_review"]
+        }
+      ],
+      "cycle_controls": {
+        "$fixture_ref": "cycle_controls_dbf57eb2"
+      },
+      "phase_policy": {
+        "kind": "entered_state",
+        "state_refs": ["completed", "ready_for_human", "reviewing"],
+        "initial": "pre_pr",
+        "advanced": "post_pr",
+        "monotonic": true,
+        "include_audit_genesis": true
+      }
+    },
+    "expected": {
+      "status": "compiled",
+      "compiled_graph": {
+        "$fixture_ref": "compiled_graph_4c1e4e66"
+      }
+    }
+  }
+}

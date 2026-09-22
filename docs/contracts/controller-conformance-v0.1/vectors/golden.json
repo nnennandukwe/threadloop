@@ -1,0 +1,38 @@
+{
+  "provenance": "Independently authored with Python JSON, explicit UTF-16 key ordering, and hashlib SHA-256; tests never regenerate these values.",
+  "vectors": [
+    {
+      "value": {},
+      "canonical": "{}",
+      "digest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "value": {
+        "2": 2,
+        "10": 10
+      },
+      "canonical": "{\"10\":10,\"2\":2}",
+      "digest": "5355e5c9c48ddb40379a8a11e74e08cf4c2a364f10bf4b2324e32d5d20489385"
+    },
+    {
+      "value": {
+        "": 1,
+        "𐀀": 2
+      },
+      "canonical": "{\"𐀀\":2,\"\":1}",
+      "digest": "9d4cdc71dda603c42f9b21d88d0c2ffc31a76cd1bd461d7359406cf169845f1e"
+    },
+    {
+      "value": {
+        "text": "é\n\t\"\\",
+        "integer": 9007199254740991,
+        "array": [false, null, 0]
+      },
+      "canonical": "{\"array\":[false,null,0],\"integer\":9007199254740991,\"text\":\"é\\n\\t\\\"\\\\\"}",
+      "digest": "7ff62d42bd4870f7f127d4883e297970c561075545db264e6094bfddbad593d1"
+    }
+  ],
+  "request_digest": "7000a6b6db163a53b79742ec2d3302bc776fafe19611d1230a8a12dca5851865",
+  "response_digest": "67787d4da4c5f0ebcdca7e49d072e630f7b7769772d89664bf6daa5713856d56",
+  "legacy_graph_digest": "7df5f3b655e61bc872f83de08c6ce7b0c0c714de15256ada7b13127264bcd2dc"
+}

@@ -1,0 +1,326 @@
+{
+  "schema": "threadloop.conformance-source/0.1",
+  "fixture": {
+    "schema": "threadloop.conformance-fixture/0.1",
+    "id": "case_032",
+    "title": "Replacement fences late receipt without disturbing new Attempt",
+    "rationale": "Explicit #106 serialized trace with independent synthetic host admissions. Checks only the published projection fields, not persistence or real concurrency.",
+    "references": ["execution-v0.1/README.md"],
+    "coverage": ["replaced_claim", "late_receipt"],
+    "semantic_check": "execution",
+    "operation": "execution_scenario",
+    "input": {
+      "initial": {
+        "$fixture_ref": "initial_3d870ced"
+      },
+      "steps": [
+        {
+          "$fixture_ref": "steps_0_900e798d"
+        },
+        {
+          "context": {
+            "$fixture_ref": "context_d89069f8"
+          },
+          "operation": {
+            "schema_version": "0.1",
+            "id": "operation_1",
+            "request": {
+              "idempotency_key": "47cd853e3793d3686567c379a7e8b911b9f7b66076383315457f017aef4ca2d3",
+              "request_digest": "b516444bf29e9d380e43fd399af654f2ddbfa47e2a04a542d39561904e3c9f5a"
+            },
+            "binding": {
+              "$fixture_ref": "binding_a05b1b25"
+            },
+            "execution_policy": {
+              "id": "execution_policy",
+              "digest": "682fdfae0f759888068446cd4c887279a500723c433f7fc3112adbd2cb7becaa"
+            },
+            "actor": {
+              "kind": "threadloop",
+              "identity": {
+                "id": "controller",
+                "digest": "c1472135b14c77c8bef98e73f70208325fa0dcf1e6bd668ae9b31a9cea295fe7"
+              }
+            },
+            "expected_revision": 1,
+            "expected_execution_digest": "bc2f47392884d202a7b570d49d5f6592714118fce84e617cf4ef4715b524ed7e",
+            "command": {
+              "kind": "expire",
+              "claim": {
+                "id": "claim_a",
+                "version": 1
+              },
+              "attempt_id": "attempt_a"
+            }
+          }
+        },
+        {
+          "context": {
+            "snapshot": {
+              "$fixture_ref": "snapshot_02490ab7"
+            },
+            "actor": {
+              "kind": "executor",
+              "executor": {
+                "id": "executor_b",
+                "incarnation": "process_b"
+              }
+            },
+            "recovery_evidence": [],
+            "receipt_admissions": []
+          },
+          "operation": {
+            "schema_version": "0.1",
+            "id": "operation_2",
+            "request": {
+              "idempotency_key": "47cd853e3793d3686567c379a7e8b911b9f7b66076383315457f017aef4ca2d3",
+              "request_digest": "b516444bf29e9d380e43fd399af654f2ddbfa47e2a04a542d39561904e3c9f5a"
+            },
+            "binding": {
+              "$fixture_ref": "binding_a05b1b25"
+            },
+            "execution_policy": {
+              "id": "execution_policy",
+              "digest": "682fdfae0f759888068446cd4c887279a500723c433f7fc3112adbd2cb7becaa"
+            },
+            "actor": {
+              "kind": "executor",
+              "executor": {
+                "id": "executor_b",
+                "incarnation": "process_b"
+              }
+            },
+            "expected_revision": 2,
+            "expected_execution_digest": "4544a3f3bd95c29ddeb89711ce122e0a2a45682867cde1bc59a2a240ec7dafe0",
+            "command": {
+              "kind": "replace",
+              "claim_id": "claim_b",
+              "attempt_id": "attempt_b",
+              "executor": {
+                "id": "executor_b",
+                "incarnation": "process_b"
+              },
+              "valid_until": "2026-09-10T10:10:00.000Z",
+              "previous_claim": {
+                "id": "claim_a",
+                "version": 1
+              },
+              "evidence_ids": []
+            }
+          }
+        },
+        {
+          "context": {
+            "snapshot": {
+              "$fixture_ref": "snapshot_02490ab7"
+            },
+            "actor": {
+              "kind": "executor",
+              "executor": {
+                "id": "executor_a",
+                "incarnation": "process_a"
+              }
+            },
+            "recovery_evidence": [],
+            "receipt_admissions": []
+          },
+          "operation": {
+            "schema_version": "0.1",
+            "id": "operation_3",
+            "request": {
+              "idempotency_key": "47cd853e3793d3686567c379a7e8b911b9f7b66076383315457f017aef4ca2d3",
+              "request_digest": "b516444bf29e9d380e43fd399af654f2ddbfa47e2a04a542d39561904e3c9f5a"
+            },
+            "binding": {
+              "$fixture_ref": "binding_a05b1b25"
+            },
+            "execution_policy": {
+              "id": "execution_policy",
+              "digest": "682fdfae0f759888068446cd4c887279a500723c433f7fc3112adbd2cb7becaa"
+            },
+            "actor": {
+              "kind": "executor",
+              "executor": {
+                "id": "executor_a",
+                "incarnation": "process_a"
+              }
+            },
+            "expected_revision": 3,
+            "expected_execution_digest": "166b7efcd683e6705ba3a41ab9cae3da07202a6ee7586aa20dbb4c9e25ed263d",
+            "command": {
+              "kind": "submit_receipt",
+              "receipt": {
+                "receipt": {
+                  "schema_version": "0.1",
+                  "id": "receipt_a",
+                  "request": {
+                    "idempotency_key": "47cd853e3793d3686567c379a7e8b911b9f7b66076383315457f017aef4ca2d3",
+                    "request_digest": "b516444bf29e9d380e43fd399af654f2ddbfa47e2a04a542d39561904e3c9f5a"
+                  },
+                  "binding": {
+                    "$fixture_ref": "binding_a05b1b25"
+                  },
+                  "execution_policy": {
+                    "id": "execution_policy",
+                    "digest": "682fdfae0f759888068446cd4c887279a500723c433f7fc3112adbd2cb7becaa"
+                  },
+                  "claim": {
+                    "id": "claim_a",
+                    "version": 1
+                  },
+                  "attempt_id": "attempt_a",
+                  "executor": {
+                    "id": "executor_a",
+                    "incarnation": "process_a"
+                  },
+                  "status": "succeeded",
+                  "effect": "none",
+                  "resulting_subject": {
+                    "kind": "repository",
+                    "repository_id": "sample_repository",
+                    "revision": "commit_b",
+                    "content_digest": "46f155c90e515c97c0bf03967cb7e0be593e707a5054d1306da836cb99b51924"
+                  },
+                  "finished_at": "2026-09-10T10:05:00.000Z",
+                  "evidence": [
+                    {
+                      "id": "gaap_terminal_report",
+                      "digest": "144825f6c81caafff5ccfbe46443bcdee150e8cc14eb1667c2866ff56d44617a"
+                    }
+                  ]
+                },
+                "receipt_digest": "0d6e1a6f824dc476f0ed06dd5b15b9601abaead7fb235813f5d61c730fbbadf8"
+              }
+            }
+          }
+        }
+      ],
+      "admitted_digests": [
+        "e0690ac9cd7da8ceb06b7f855dd91b0aa974e8397ae6689e55c422a152bce5c9",
+        "18a967671c0938a28ad4d819e83cfa574806e28f3f6d3536c5d4ebb937de800b",
+        "e69cd2e43562b604e169e235fbd711876e4f38b2be2daaf89dd9b81d221e63a0",
+        "0f26b0eef09dd3b21a1fa645cc16f31d37128f4c6985444cb70f3ae087cb2350",
+        "72f8253e0352e4dce87b067e3ab401220e53de72cbbf9c5d807075bab58cdd65",
+        "85c4579a50f1806dcdeb6dbfcf23e97e892b4c7e2d78841208422bbc4e0ab009"
+      ],
+      "projection_snapshot": {
+        "$fixture_ref": "snapshot_02490ab7"
+      }
+    },
+    "expected": {
+      "status": "execution",
+      "steps": [
+        {
+          "disposition": "applied",
+          "code": "CLAIM_ACQUIRED",
+          "revision": 1,
+          "claim": {
+            "id": "claim_a",
+            "version": 1
+          },
+          "attempt_id": "attempt_a",
+          "replayed": false
+        },
+        {
+          "disposition": "applied",
+          "code": "CLAIM_EXPIRED",
+          "revision": 2,
+          "claim": null,
+          "attempt_id": null,
+          "replayed": false
+        },
+        {
+          "disposition": "applied",
+          "code": "CLAIM_ACQUIRED",
+          "revision": 3,
+          "claim": {
+            "id": "claim_b",
+            "version": 2
+          },
+          "attempt_id": "attempt_b",
+          "replayed": false
+        },
+        {
+          "disposition": "rejected",
+          "code": "CLAIM_FENCED",
+          "revision": 4,
+          "claim": null,
+          "attempt_id": null,
+          "replayed": false
+        }
+      ],
+      "projection": {
+        "revision": 4,
+        "request_status": "open",
+        "claims": [
+          {
+            "id": "claim_a",
+            "version": 1,
+            "attempt_id": "attempt_a",
+            "status": "replaced"
+          },
+          {
+            "id": "claim_b",
+            "version": 2,
+            "attempt_id": "attempt_b",
+            "status": "active"
+          }
+        ],
+        "attempts": [
+          {
+            "id": "attempt_a",
+            "claim": {
+              "id": "claim_a",
+              "version": 1
+            },
+            "status": "interrupted",
+            "effect": "not_started",
+            "receipt_id": null
+          },
+          {
+            "id": "attempt_b",
+            "claim": {
+              "id": "claim_b",
+              "version": 2
+            },
+            "status": "pending",
+            "effect": "not_started",
+            "receipt_id": null
+          }
+        ],
+        "receipts": [
+          {
+            "id": "receipt_a",
+            "receipt_digest": "0d6e1a6f824dc476f0ed06dd5b15b9601abaead7fb235813f5d61c730fbbadf8",
+            "code": "CLAIM_FENCED"
+          }
+        ],
+        "conflicts": [],
+        "controller": {
+          "execution": {
+            "status": "in_flight",
+            "request": {
+              "$fixture_ref": "action_request_893dd3ab"
+            },
+            "claim": {
+              "id": "claim_b",
+              "version": 2,
+              "valid_until": "2026-09-10T10:10:00.000Z"
+            },
+            "attempt": {
+              "id": "attempt_b",
+              "status": "pending"
+            }
+          },
+          "invalidated_claims": [],
+          "existing_requests": [
+            {
+              "idempotency_key": "47cd853e3793d3686567c379a7e8b911b9f7b66076383315457f017aef4ca2d3",
+              "request_digest": "b516444bf29e9d380e43fd399af654f2ddbfa47e2a04a542d39561904e3c9f5a"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

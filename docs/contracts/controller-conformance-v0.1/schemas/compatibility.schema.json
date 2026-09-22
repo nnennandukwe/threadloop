@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "threadloop.conformance-compatibility/0.1"
+    },
+    "contracts": {
+      "minItems": 4,
+      "maxItems": 4,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema0"
+      }
+    }
+  },
+  "required": ["schema", "contracts"],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "enum": ["workflow-graph", "controller", "execution", "executor"]
+        },
+        "version": {
+          "type": "string",
+          "const": "0.1"
+        },
+        "schemas": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema1"
+          }
+        }
+      },
+      "required": ["name", "version", "schemas"],
+      "additionalProperties": false
+    },
+    "__schema1": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^[a-z-]+\\.schema\\.json$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": ["path", "sha256"],
+      "additionalProperties": false
+    }
+  },
+  "$id": "https://github.com/nnennandukwe/threadloop/contracts/controller-conformance/0.1/compatibility"
+}

@@ -1,0 +1,134 @@
+{
+  "schema": "threadloop.conformance-source/0.1",
+  "fixture": {
+    "schema": "threadloop.conformance-fixture/0.1",
+    "id": "case_020",
+    "title": "Release human handoff",
+    "rationale": "Materialized accepted #105 input and independently authored expectation; candidate validity does not prove exhaustive selection.",
+    "references": ["controller-v0.1/fixtures/valid/release_human_handoff.json"],
+    "coverage": ["positive_control"],
+    "semantic_check": "candidate",
+    "operation": "decide",
+    "input": {
+      "schema_version": "0.1",
+      "binding": {
+        "$fixture_ref": "binding_e4f23b8b"
+      },
+      "observation": {
+        "id": "observation_b",
+        "subject": {
+          "kind": "artifact",
+          "artifact_id": "sample_release",
+          "content_digest": "54e9bc4df5e24ba97fad28ff0afbbd9af2239f1d14065e81a894d3fbd14e7510"
+        },
+        "state_version": 5,
+        "status": "verified",
+        "valid_until": null,
+        "repository": null
+      },
+      "history": {
+        "status": "verified",
+        "digest": "d31caa5a33b5c6edb4901d35bfa6db686989c324821892ad8e26f4bab717fc27",
+        "phase": null,
+        "budget_counts": [
+          {
+            "budget_id": "remediation_entries",
+            "used": 0
+          }
+        ],
+        "prior_state": null,
+        "implementation_basis": null,
+        "proof_plan_bound": false,
+        "repair_admission": null
+      },
+      "policy": {
+        "$fixture_ref": "policy_656b4fa0"
+      },
+      "available_capabilities": {
+        "$fixture_ref": "available_capabilities_db685fb1"
+      },
+      "receipts": [
+        {
+          "$fixture_ref": "receipts_0_5445ab4b"
+        }
+      ],
+      "invalidated_claims": [],
+      "execution": {
+        "status": "idle"
+      },
+      "existing_requests": [],
+      "evaluation_time": null,
+      "compiled_graph": {
+        "$fixture_ref": "compiled_graph_aff28371"
+      }
+    },
+    "expected": {
+      "status": "decision",
+      "decision": {
+        "decision": {
+          "schema_version": "0.1",
+          "input_digest": "c5d7ebd2c7a8c99ac0a29e21a0f32f20fff7fef606b8c9ca757bacb07fdda6e9",
+          "binding": {
+            "$fixture_ref": "binding_e4f23b8b"
+          },
+          "outcome": "human_action_required",
+          "action_request": {
+            "request": {
+              "schema_version": "0.1",
+              "binding": {
+                "$fixture_ref": "binding_e4f23b8b"
+              },
+              "capability_catalog": "threadloop.sdlc/0.1",
+              "action_id": "approve",
+              "actor": "human",
+              "capability": "approve_change",
+              "transition_id": "authorize_publication",
+              "guard_ids": ["approval"],
+              "inputs": [],
+              "evidence_ids": ["release_verified"],
+              "constraints": {
+                "require_current_subject": true,
+                "lifecycle_mutation": false,
+                "valid_until": null
+              },
+              "policy": {
+                "id": "workflow_policy",
+                "digest": "419fba51ca9d338e94ed76027b163ed426d940ecd823ce18b1c257d08f5ae066"
+              },
+              "authorities": [
+                {
+                  "type": "threadloop",
+                  "identity": {
+                    "id": "controller",
+                    "digest": "c1472135b14c77c8bef98e73f70208325fa0dcf1e6bd668ae9b31a9cea295fe7"
+                  }
+                },
+                {
+                  "type": "human",
+                  "identity": {
+                    "id": "maintainer",
+                    "digest": "9c5646b582f10531c791dd2372854409c96e8276f979c0aa4a505ec760e06100"
+                  }
+                }
+              ],
+              "evidence_requirements": [
+                {
+                  "family": "human_approval",
+                  "guard_id": "approval",
+                  "subject": {
+                    "kind": "artifact",
+                    "artifact_id": "sample_release",
+                    "content_digest": "54e9bc4df5e24ba97fad28ff0afbbd9af2239f1d14065e81a894d3fbd14e7510"
+                  }
+                }
+              ],
+              "idempotency_key": "e25c15a7c5564217c78f8ee714a2af23682debd7ecd7bdbd5001a2793ea7773c"
+            },
+            "request_digest": "7716c4486f2742275ba972727378ae28203b0804daf0245792027d8ad8dbd819"
+          }
+        },
+        "decision_digest": "dd73a793e4dc4e136c1d4c1312c516bf8d884955fad09fa8c3f462b6b2278510"
+      }
+    }
+  }
+}

@@ -1,0 +1,139 @@
+{
+  "schema": "threadloop.conformance-source/0.1",
+  "fixture": {
+    "schema": "threadloop.conformance-fixture/0.1",
+    "id": "case_011",
+    "title": "Completion available",
+    "rationale": "Materialized accepted #105 input and independently authored expectation; candidate validity does not prove exhaustive selection.",
+    "references": ["controller-v0.1/fixtures/valid/completion_available.json"],
+    "coverage": ["human_completion"],
+    "semantic_check": "candidate",
+    "operation": "decide",
+    "input": {
+      "schema_version": "0.1",
+      "binding": {
+        "$fixture_ref": "binding_e4e262f9"
+      },
+      "observation": {
+        "$fixture_ref": "observation_5922f2c9"
+      },
+      "history": {
+        "status": "verified",
+        "digest": "d31caa5a33b5c6edb4901d35bfa6db686989c324821892ad8e26f4bab717fc27",
+        "phase": "post_pr",
+        "budget_counts": [
+          {
+            "budget_id": "repair_entries",
+            "used": 0
+          }
+        ],
+        "prior_state": null,
+        "implementation_basis": null,
+        "proof_plan_bound": true,
+        "repair_admission": null
+      },
+      "policy": {
+        "$fixture_ref": "policy_ec83c736"
+      },
+      "available_capabilities": {
+        "$fixture_ref": "available_capabilities_b73e90d7"
+      },
+      "receipts": [
+        {
+          "$fixture_ref": "receipts_0_02ca6384"
+        },
+        {
+          "$fixture_ref": "receipts_1_f9cd1835"
+        },
+        {
+          "$fixture_ref": "receipts_2_aef40c3b"
+        },
+        {
+          "$fixture_ref": "receipts_3_ad4dc905"
+        },
+        {
+          "id": "merged_b",
+          "workflow_run_id": "workflow_1",
+          "graph_digest": "7df5f3b655e61bc872f83de08c6ce7b0c0c714de15256ada7b13127264bcd2dc",
+          "source_state_version": 3,
+          "subject": {
+            "kind": "repository",
+            "repository_id": "sample_repository",
+            "revision": "commit_b",
+            "content_digest": "46f155c90e515c97c0bf03967cb7e0be593e707a5054d1306da836cb99b51924"
+          },
+          "sequence": 5,
+          "policy": {
+            "id": "trusted_evidence",
+            "digest": "997c333585c7d8794eed32314bb36f7b81037f58425b7a5cb0d51ca75cf9f392"
+          },
+          "workflow_policy": {
+            "id": "workflow_policy",
+            "digest": "bb0fa886e09f2af7c187fd66844caee2cc6750258a7b9fef7fac827cca0d878a"
+          },
+          "acceptance": {
+            "id": "acceptance_merged_b",
+            "digest": "c08cfd166b689d42607980ce1455139b571386ee1e095cac4a945fae2e4ccaa3"
+          },
+          "valid_until": null,
+          "origin": {
+            "kind": "observation"
+          },
+          "payload": {
+            "type": "completion_observed",
+            "kind": "merge",
+            "destination": "main"
+          },
+          "payload_digest": "2c6872158f68dfe55d00269998ccf72e3a97405915fa3a69cbf213d18a5fcc99"
+        }
+      ],
+      "invalidated_claims": [],
+      "execution": {
+        "status": "idle"
+      },
+      "existing_requests": [],
+      "evaluation_time": null,
+      "compiled_graph": {
+        "$fixture_ref": "compiled_graph_4c1e4e66"
+      }
+    },
+    "expected": {
+      "status": "decision",
+      "decision": {
+        "decision": {
+          "schema_version": "0.1",
+          "input_digest": "818a1e935ecb1bd973a2b9ff1bbbe0b03405b086cbfa02dc2cc8fec5c1775c07",
+          "binding": {
+            "$fixture_ref": "binding_e4e262f9"
+          },
+          "outcome": "transition_available",
+          "transition_id": "complete",
+          "target_state": "completed",
+          "checks": [
+            {
+              "guard_id": "review_current",
+              "evidence_ids": ["review_b"]
+            },
+            {
+              "guard_id": "review_clear",
+              "evidence_ids": ["review_b"]
+            },
+            {
+              "guard_id": "review_set",
+              "evidence_ids": ["independent_b", "local_b", "review_b"]
+            },
+            {
+              "guard_id": "approval",
+              "evidence_ids": ["approval_b"]
+            },
+            {
+              "guard_id": "merged",
+              "evidence_ids": ["merged_b"]
+            }
+          ]
+        },
+        "decision_digest": "3606d9b9b19f85dd2b92ca75a0a28b3c3e246bb212a20227a92da8ab0af4a158"
+      }
+    }
+  }
+}

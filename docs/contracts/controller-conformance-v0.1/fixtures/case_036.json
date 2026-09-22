@@ -1,0 +1,75 @@
+{
+  "schema": "threadloop.conformance-source/0.1",
+  "fixture": {
+    "schema": "threadloop.conformance-fixture/0.1",
+    "id": "case_036",
+    "title": "Completed Agent Run does not supply outer proof or human approval",
+    "rationale": "Completed Agent Run does not supply outer proof or human approval",
+    "references": ["controller-v0.1/selection.md"],
+    "coverage": ["gaap_without_authority"],
+    "semantic_check": "candidate",
+    "operation": "decide",
+    "input": {
+      "schema_version": "0.1",
+      "binding": {
+        "$fixture_ref": "binding_a05b1b25"
+      },
+      "observation": {
+        "$fixture_ref": "observation_5922f2c9"
+      },
+      "history": {
+        "status": "verified",
+        "digest": "d31caa5a33b5c6edb4901d35bfa6db686989c324821892ad8e26f4bab717fc27",
+        "phase": "post_pr",
+        "budget_counts": [
+          {
+            "budget_id": "repair_entries",
+            "used": 0
+          }
+        ],
+        "prior_state": null,
+        "implementation_basis": null,
+        "proof_plan_bound": true,
+        "repair_admission": null
+      },
+      "policy": {
+        "$fixture_ref": "policy_ec83c736"
+      },
+      "available_capabilities": {
+        "$fixture_ref": "available_capabilities_b73e90d7"
+      },
+      "receipts": [],
+      "invalidated_claims": [],
+      "execution": {
+        "status": "idle"
+      },
+      "existing_requests": [
+        {
+          "idempotency_key": "47cd853e3793d3686567c379a7e8b911b9f7b66076383315457f017aef4ca2d3",
+          "request_digest": "b516444bf29e9d380e43fd399af654f2ddbfa47e2a04a542d39561904e3c9f5a"
+        }
+      ],
+      "evaluation_time": null,
+      "compiled_graph": {
+        "$fixture_ref": "compiled_graph_4c1e4e66"
+      }
+    },
+    "expected": {
+      "status": "decision",
+      "decision": {
+        "decision": {
+          "schema_version": "0.1",
+          "input_digest": "a8ea7aa8630e97ea6543aef4dce4e3a03ee64e52acb1626b05ee553d9253bb5a",
+          "binding": {
+            "$fixture_ref": "binding_a05b1b25"
+          },
+          "outcome": "engineering_action_required",
+          "action_request": {
+            "$fixture_ref": "action_request_893dd3ab"
+          }
+        },
+        "decision_digest": "f4a22be44c4ff558315daf4de7d02385fdfe8de582671b7c2a6bb23104e2a940"
+      }
+    }
+  }
+}

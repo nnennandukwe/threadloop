@@ -1,0 +1,95 @@
+{
+  "schema": "threadloop.conformance-source/0.1",
+  "fixture": {
+    "schema": "threadloop.conformance-fixture/0.1",
+    "id": "case_013",
+    "title": "Stale observation",
+    "rationale": "Materialized accepted #105 input and independently authored expectation; candidate validity does not prove exhaustive selection.",
+    "references": ["controller-v0.1/fixtures/valid/stale_observation.json"],
+    "coverage": ["positive_control"],
+    "semantic_check": "candidate",
+    "operation": "decide",
+    "input": {
+      "schema_version": "0.1",
+      "binding": {
+        "$fixture_ref": "binding_a05b1b25"
+      },
+      "observation": {
+        "id": "observation_b",
+        "subject": {
+          "kind": "repository",
+          "repository_id": "sample_repository",
+          "revision": "commit_b",
+          "content_digest": "46f155c90e515c97c0bf03967cb7e0be593e707a5054d1306da836cb99b51924"
+        },
+        "state_version": 4,
+        "status": "verified",
+        "valid_until": null,
+        "repository": {
+          "branch": "feature",
+          "clean": true,
+          "basis": {
+            "kind": "repository",
+            "repository_id": "sample_repository",
+            "revision": "commit_b",
+            "content_digest": "46f155c90e515c97c0bf03967cb7e0be593e707a5054d1306da836cb99b51924"
+          },
+          "relationship": "equal",
+          "change_scope": "unknown"
+        }
+      },
+      "history": {
+        "status": "verified",
+        "digest": "d31caa5a33b5c6edb4901d35bfa6db686989c324821892ad8e26f4bab717fc27",
+        "phase": "post_pr",
+        "budget_counts": [
+          {
+            "budget_id": "repair_entries",
+            "used": 0
+          }
+        ],
+        "prior_state": null,
+        "implementation_basis": null,
+        "proof_plan_bound": true,
+        "repair_admission": null
+      },
+      "policy": {
+        "$fixture_ref": "policy_ec83c736"
+      },
+      "available_capabilities": {
+        "$fixture_ref": "available_capabilities_b73e90d7"
+      },
+      "receipts": [],
+      "invalidated_claims": [],
+      "execution": {
+        "status": "idle"
+      },
+      "existing_requests": [],
+      "evaluation_time": null,
+      "compiled_graph": {
+        "$fixture_ref": "compiled_graph_4c1e4e66"
+      }
+    },
+    "expected": {
+      "status": "decision",
+      "decision": {
+        "decision": {
+          "schema_version": "0.1",
+          "input_digest": "5248ad02fdf843ccd2cfe89b8a3ba657665af54de55aab2b0efa1ae1708e766a",
+          "binding": {
+            "$fixture_ref": "binding_a05b1b25"
+          },
+          "outcome": "blocked",
+          "reasons": [
+            {
+              "code": "STALE_OBSERVATION",
+              "message": "stale observation",
+              "recovery": "Refresh the explicit snapshot or reconcile the existing execution before reevaluation."
+            }
+          ]
+        },
+        "decision_digest": "80f2d87e3ef8e024f28f630242f78eefd2c9e99532c760f38df126e52c1b864e"
+      }
+    }
+  }
+}

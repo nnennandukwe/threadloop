@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "threadloop.conformance-source/0.1"
+    },
+    "fixture": {
+      "$ref": "#/$defs/__schema0"
+    }
+  },
+  "required": ["schema", "fixture"],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema0"
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "$fixture_ref": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{0,127}$"
+            }
+          },
+          "required": ["$fixture_ref"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^(?!\\$fixture_ref(?![\\s\\S]))"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/__schema0"
+          }
+        }
+      ]
+    }
+  },
+  "$id": "https://github.com/nnennandukwe/threadloop/contracts/controller-conformance/0.1/source"
+}

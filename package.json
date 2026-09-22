@@ -34,7 +34,9 @@
     "sensor:ci-gate:run": "tsx scripts/run-ci-gate-sensor.ts",
     "sensor:ci-gate:sign": "tsx scripts/sign-ci-gate-receipt.ts",
     "sensor:github-review:collect": "tsx scripts/collect-github-review-snapshot.ts",
-    "sensor:github-review:sign": "tsx scripts/sign-github-review-receipt.ts"
+    "sensor:github-review:sign": "tsx scripts/sign-github-review-receipt.ts",
+    "spec:conformance:schemas": "tsx scripts/controller-conformance/publish-schemas.ts",
+    "spec:conformance:check": "tsx scripts/controller-conformance/check.ts"
   },
   "keywords": [
     "cli",
