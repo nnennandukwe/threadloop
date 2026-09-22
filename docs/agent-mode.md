@@ -1,9 +1,14 @@
 # ThreadLoop Agent Mode
 
-ThreadLoop v2 is a repo-local control plane for orchestrated coding workflows.
+**Implemented now:** ThreadLoop's TypeScript/Node CLI governs a fixed PR lifecycle in a repository.
 
-The external orchestrator owns task selection, agent launch, and policy. ThreadLoop owns durable session state,
-Git-derived snapshots, structured notes, and review artifacts.
+The external orchestrator selects tasks, prepares execution context and policy inputs, and launches agents. ThreadLoop
+stores durable lifecycle state and evidence, evaluates the applicable policy and guards, and applies explicit transition
+requests. Orchestrators and agents cannot bypass those guards. Git snapshots, structured notes, and review artifacts
+support that workflow.
+
+See the [architecture guide](architecture.md) for the accepted Controller Contract v0.1 and deferred configurable graph,
+Execution Claim, GAAP integration, and Rust work. This guide describes the current session CLI.
 
 ## Mental model
 

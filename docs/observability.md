@@ -1,7 +1,11 @@
 # Audit export and OpenTelemetry
 
-ThreadLoop's audit ledger is the lifecycle authority. OpenTelemetry is an optional export consumer: it may ship, retain,
-and query verified JSONL records, but telemetry input can never authorize or alter a ThreadLoop transition.
+**Implemented now:** ThreadLoop applies guarded lifecycle transitions and records their decisions in its durable audit
+ledger. A verified export is a read-only projection of that ledger. OpenTelemetry is an optional export consumer;
+telemetry input cannot authorize or alter a ThreadLoop transition.
+
+See the [architecture guide](architecture.md) for the lifecycle authority boundary and the distinction between current
+exports and planned export alignment in [#88](https://github.com/nnennandukwe/threadloop/issues/88).
 
 ## Export
 
@@ -29,7 +33,11 @@ unchanged.
 
 ## Collector recipe
 
-The OpenTelemetry Collector `filelog` receiver can consume completed exports:
+The OpenTelemetry Collector `filelog` receiver can consume completed exports. This recipe forwards full canonical
+records, not a sanitized viewer projection. Use it only with a destination authorized to receive those payloads;
+retaining an export for verification does not itself authorize copying its contents into a generic telemetry backend.
+
+The recipe illustrates transport, not the standardized record shape or privacy projection planned in #88:
 
 ```yaml
 receivers:
@@ -71,3 +79,15 @@ new filename; do not modify or append to a published ThreadLoop export.
 - `threadloop audit export` is a verified projection.
 - The Collector and downstream telemetry store are read-only consumers of that projection.
 - A dashboard, alert, missing log, or ingested JSONL record is never evidence for a lifecycle transition.
+
+## Planned export alignment
+
+[#88](https://github.com/nnennandukwe/threadloop/issues/88) owns a standardized completed-export envelope and the
+privacy boundary for optional viewer projections. Neither that envelope nor a sanitized viewer is implemented here.
+Preserve canonical hash-covered records under the controlled verifiable-export contract. A future viewer projection
+should expose selected correlation identities, namespaced governance outcomes, and safe evidence references, with raw
+content absent by default and provenance/completeness limits visible.
+
+Dashboard deletion, eviction, sampling, and restart must not change the durable ledger, evidence freshness, or lifecycle
+state. Trace success and trace identity do not establish evidence admission. This work adds no live telemetry,
+dashboard, or authority channel.

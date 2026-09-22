@@ -1,7 +1,12 @@
 # ThreadLoop CLI
 
-ThreadLoop is a repo-local CLI for preserving task intent, decisions, risks, validation notes, and reviewer guidance
-while you work. The canonical operator surface is session-first; root commands remain only for compatibility.
+**Implemented now:** ThreadLoop's repo-local CLI stores task context and lifecycle state, reports required work, checks
+explicit transitions against current evidence, and generates review artifacts. The canonical operator surface is
+session-first; root commands remain only for compatibility.
+
+These commands operate the fixed governed PR lifecycle. The [architecture guide](architecture.md) distinguishes them
+from accepted Controller Contract v0.1 specifications and source-tree development tooling. There is no packaged profile
+compiler, configurable graph executor, or GAAP process adapter command.
 
 ## Commands
 

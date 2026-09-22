@@ -1,124 +1,33 @@
 # ThreadLoop
 
-ThreadLoop is a local-first CLI that models an AI-assisted software-delivery task as a governed lifecycle graph. It
-stores lifecycle state in repo-local SQLite, returns a deterministic next-action candidate, validates explicit
-transition requests against current policy and evidence, and renders review artifacts under `.threadloop/artifacts/`.
+ThreadLoop stores a software-delivery task's lifecycle state, checks evidence before allowing transitions, and generates
+Markdown review artifacts. Its local CLI uses repo-local SQLite, returns a read-only next-action candidate, and applies
+explicit transition requests only when the current repository, proof, review, repair, and recovery requirements pass.
 
-Agents can execute work, but policy and evidence determine which lifecycle transition is allowed next. A caller must
-request each transition; ThreadLoop applies it idempotently only when its structural, repository, proof, repair-budget,
-and recovery requirements are satisfied.
+Repository maintainers and developer-tooling teams use ThreadLoop to govern AI-assisted coding work from intent through
+verification, review, and human completion. Agents perform work; ThreadLoop owns advancement through the outer software
+development lifecycle (SDLC). Completion requires current evidence of same-HEAD human approval and the merged PR.
 
-ThreadLoop is for repository maintainers and developer-tooling teams that run AI-assisted coding work and need lifecycle
-advancement to remain explicit, inspectable, and evidence-bound.
+ThreadLoop currently runs a fixed governed PR lifecycle. It is neither an agent harness nor a general-purpose DAG
+engine. It does not supply a model/tool loop, model routing, or protected-effect permission enforcement.
 
-For the orchestrated v2 workflow, see [docs/agent-mode.md](docs/agent-mode.md).
+## Capability status
 
-For the canonical SDLC graph vocabulary, see the
-[glossary](https://github.com/nnennandukwe/threadloop/blob/main/CONTEXT.md). The
-[authority-model ADR](https://github.com/nnennandukwe/threadloop/blob/main/docs/adr/0001-sdlc-graph-authority-model.md)
-records the boundaries between ThreadLoop, agent harnesses, conformance systems, executors, and delivery infrastructure.
+| Status                                           | What it covers                                                                                                                                                                                                                                              |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Implemented now**                              | Fixed PR lifecycle, durable SQLite state, current-HEAD proof and signed review checks, bounded post-PR repair, human completion, review artifacts, and verified audit export. Source-tree development tools compile and validate contract examples offline. |
+| **Accepted in Controller Contract v0.1**         | Workflow Profile and Compiled Graph, Controller Decision and Action Request, Execution Claim and Attempt, executor/GAAP mapping, and controller conformance specifications.                                                                                 |
+| **Deferred to the controller-runtime milestone** | Configurable graph execution, durable Execution Claim enforcement, GAAP process invocation and authenticated receipt admission, and external execution of the controller conformance suite.                                                                 |
+| **Deferred to the Rust migration**               | A Rust ThreadLoop replacement, after the contract freeze and separate runtime milestone demonstrate the required behavior.                                                                                                                                  |
 
-The [executor interface and GAAP mapping v0.1](docs/contracts/executor-v0.1/README.md) specify the provider-neutral
-process contract with offline schemas and examples. Runtime process execution and authenticated receipt ingestion remain
-future work.
+The offline compiler is implemented development tooling; its output is not executable through the packaged CLI. Existing
+sessions do not acquire graph bindings or Execution Claims from the accepted specifications.
 
-## Three layers: harness, loop, graph
+The [architecture guide](docs/architecture.md) explains the four system roles, the YAML-to-canonical-JSON contract, and
+the relationship between a ThreadLoop Workflow Run and a GAAP Agent Run. It links the normative contracts and separates
+current usage from future runtime obligations.
 
-An agent system that touches production separates three concerns that are easy to conflate:
-
-- **Harness engineering** builds the environment the model operates in: context, action surfaces, permission,
-  persistence, and observability.
-- **Loop engineering** designs the work-and-feedback cycle, and above all its stop rule.
-- **Graph engineering** makes topology explicit: which step is allowed to happen next, and on whose authority.
-
-ThreadLoop is the graph layer plus the outer loop's stop rule. It encodes lifecycle states as nodes, permitted
-transitions as edges, and repository, proof, review, and repair-budget requirements as transition guards. Verification,
-bounded repair, re-entry, blocking, and recovery are explicit parts of that graph rather than ad hoc retry logic.
-
-The "loop" in ThreadLoop is the outer verify -> repair -> re-enter cycle whose stop condition is a guard decision. It is
-not the inner tool-use loop of an agent turn.
-
-```mermaid
-flowchart LR
-  subgraph HARNESS["Harness layer: Governed Agent Autonomy Patterns"]
-    G1["planning"] --> G2["permission"] --> G3["tool trust"] --> W["agent executes work"]
-    W -. "observed by" .-> G5["runtime accountability"]
-  end
-
-  subgraph LOOP["Loop layer: stop on evidence, not confidence"]
-    G4["independent verification"] --> E["content-addressed evidence"]
-  end
-
-  subgraph TL["Graph layer: ThreadLoop governed lifecycle"]
-    Q["queued"] --> F["framed"] --> P["proof_ready"] --> I["implementing"] --> V["verifying"]
-    V -- "pre-PR proof fails" --> I
-    V -- "pre-PR proof passes" --> L["pre_pr_reviewing"]
-    V -- "current pre-PR finding" --> I
-    L -- "changes required" --> I
-    L -- "clean outcome" --> R["reviewing"]
-    V -- "post-PR proof fails" --> X["repairing"]
-    X -- "committed repair" --> V
-    R -. "review blocker" .-> X
-    R -. "review clear" .-> H["ready_for_human"]
-    H -. "approval and merge" .-> C["completed"]
-    A["recorded active state"] -. "complete block evidence" .-> B["blocked"]
-    B -. "human-approved recovery to recorded prior state" .-> A
-  end
-
-  I -. "bounded execution" .-> G1
-  W --> G4
-  G4 -. "reported through" .-> G5
-  E -. "potential evidence adapter" .-> V
-```
-
-The solid lifecycle edges are executable when their guards pass. Pre-PR implementation may repeat for as many
-task-scoped commits as necessary; every commit makes earlier proof and review evidence stale. Those iterations never
-enter `repairing` or consume its budget. Entering `reviewing` closes the pre-PR phase permanently. The dashed post-PR
-review-owned edges remain fail-closed until ThreadLoop has authoritative signed review, approval, and merge evidence.
-The post-PR repair loop is limited to three entries. Entering `blocked` requires complete block evidence, and recovery
-requires explicit human approval to return to the recorded prior state.
-
-### Node boundaries are authority boundaries
-
-The lifecycle graph is not a diagram of imagined workflow steps. Each node exists because the right to advance changes
-hands there, which is why the topology is knowable before any work runs:
-
-| Boundary                        | Authority that must act                                      |
-| ------------------------------- | ------------------------------------------------------------ |
-| `implementing -> verifying`     | The agent, by producing one clean descendant commit          |
-| `verifying -> pre_pr_reviewing` | Local gates and independently signed CI, at the current HEAD |
-| `pre_pr_reviewing -> reviewing` | A reviewer, by recording a current-HEAD clean outcome        |
-| `reviewing -> ready_for_human`  | Verified signed-review evidence without blockers             |
-| `ready_for_human -> completed`  | A human `User` approval plus an observed merge at that HEAD  |
-| any active state `-> blocked`   | Complete block evidence, with human-approved recovery only   |
-
-What is deliberately not fixed in advance is iteration count. The number of implement/verify/review cycles is unbounded
-before the PR boundary; only the post-PR repair budget is capped.
-
-### Evidence must be current, not merely present
-
-A stop rule that accepts "the tests passed" accepts a stale claim. ThreadLoop binds every guard to an exact commit:
-receipts record stdout, stderr, and output-artifact digests, signed CI and review packages are verified against an
-immutable policy, and any new commit stales earlier local, signed-CI, pre-PR review, and signed-review evidence unless
-the evidence contract binds the new HEAD. Guard decisions and applied transitions land in a hash-linked, append-only
-audit ledger with a verified no-overwrite export.
-
-### Harness engineering is an explicit non-goal
-
-ThreadLoop supplies no tools, no context injection, no model routing, and no permission enforcement. It consumes a
-harness instead of being one, and refuses to advance when that harness cannot produce current evidence. Two harness
-concerns are hardened as a byproduct: persistence, through repo-local SQLite, append-only receipts, and the audit
-ledger; and observability, through verified JSONL export documented in [docs/observability.md](docs/observability.md). A
-gate whose provisioning fails is reported as a distinct `setup_failed` result precisely so a harness problem cannot
-consume loop-layer repair budget.
-
-[Governed Agent Autonomy Patterns](https://github.com/nnennandukwe/governed-agent-autonomy-patterns) defines the
-harness-layer controls around an agent run: planning, permission, tool trust, independent verification, and runtime
-accountability. Four of those five are harness concerns. Independent verification is the seam where a harness produces
-the evidence a graph can consume, which is where the two projects meet. This is an architectural relationship, not a
-runtime dependency: ThreadLoop does not currently ingest BoundaryBench receipts.
-
-### Primary interfaces and outputs
+## Primary interfaces and outputs
 
 | Interface                                          | Output or state change                                              |
 | -------------------------------------------------- | ------------------------------------------------------------------- |
@@ -242,11 +151,9 @@ npm run smoke:pack
 - ensures `.threadloop/state/` and `.threadloop/artifacts/receipts/` are ignored via `.git/info/exclude`
 - leaves normal `.threadloop/artifacts/*.md` review artifacts visible
 
-## SQLite migration status
+## Implemented now: fixed lifecycle and storage
 
-The current SQLite work is the storage foundation for ThreadLoop v2 autonomous agent mode.
-
-What is implemented now:
+The current TypeScript/Node implementation provides:
 
 - SQLite-backed durable state
 - transactional writes for core mutations
@@ -269,23 +176,35 @@ What is implemented now:
   audit, and next-human-action projections
 - protocol v4 and governed handoff v3
 
-What is not implemented yet in this slice:
-
-- same-checkout autonomous multi-task concurrency hardening
+Use one autonomous task per checkout or worktree. The current operator model does not promise safe concurrent autonomous
+tasks in one checkout.
 
 ## Quick start
 
+After using either local install flow above, run this in the consumer Git repository. Start on a dedicated task branch
+from updated `main`; ThreadLoop does not create the branch for you. With the tarball install, prefix `threadloop` with
+`npx`.
+
 ```bash
-npx threadloop session start "Add retry logic to job runner" --goal "Reduce transient failure rate" --base main --actor agent --json
+threadloop session start "Add retry logic to job runner" --goal "Reduce transient failure rate" --base main --actor agent --json
 session_id="session_123" # replace with the session_id returned from session start
-npx threadloop session capture decision "Retry only idempotent jobs" --session "$session_id" --because "Non-idempotent replay is unsafe" --actor agent
-npx threadloop session capture validation "Ran targeted tests for retry backoff and cancellation" --session "$session_id"
-npx threadloop session next --session "$session_id" --json
-npx threadloop session transition framed --session "$session_id" --expected-state-version 0 --idempotency-key "quickstart:$session_id:0" --actor agent --input '{}' --json
-npx threadloop session status --session "$session_id" --json
-npx threadloop protocol --json
-npx threadloop artifact generate change-brief --session "$session_id"
+threadloop session capture decision "Retry only idempotent jobs" --session "$session_id" --because "Non-idempotent replay is unsafe" --actor agent
+threadloop session capture note "Verification will use the declared proof plan" --session "$session_id"
+threadloop session next --session "$session_id" --json
+threadloop session transition framed --session "$session_id" --expected-state-version 0 --idempotency-key "quickstart:$session_id:0" --actor agent --input '{}' --json
+threadloop session status --session "$session_id" --json
+threadloop protocol --json
+threadloop artifact generate change-brief --session "$session_id"
 ```
+
+The first command returns a `session_id` and creates `.threadloop/state/state.db` when needed. Replace the example ID
+with that returned value. `session next` reports the candidate and missing work without advancing state; the explicit
+transition enters `framed`. The final command renders a change brief under `.threadloop/artifacts/` for you to inspect.
+Captured notes and generated artifacts do not satisfy proof guards by themselves.
+
+Continue with the [agent-mode flow](docs/agent-mode.md) and [consumer onboarding](docs/consumer-onboarding.md): bind a
+proof plan, run its declared gates, import trusted signed evidence, and follow review and human-completion guards. The
+quickstart does not complete a governed PR.
 
 ## Autonomous agent mode
 
@@ -381,11 +300,14 @@ installation. See the [contribution guide](CONTRIBUTING.md) for hook behavior an
 
 ## Docs
 
+- [Architecture and capability status](docs/architecture.md)
+- [Domain glossary](CONTEXT.md)
+- [Authority-model ADR](docs/adr/0001-sdlc-graph-authority-model.md)
 - [CLI reference](docs/cli.md)
 - [Consumer onboarding](docs/consumer-onboarding.md)
 - [Autonomous agent mode](docs/agent-mode.md)
 - [Governed lifecycle](docs/lifecycle.md)
-- [Current lifecycle graph mapping](https://github.com/nnennandukwe/threadloop/blob/main/docs/current-lifecycle-graph-mapping.md)
+- [Current lifecycle graph mapping](docs/current-lifecycle-graph-mapping.md)
 - [Audit export and OpenTelemetry](docs/observability.md)
 - [Contribution guide](CONTRIBUTING.md)
 
@@ -401,7 +323,3 @@ explicitly accepted into a repository roadmap.
 ## License
 
 Licensed under the [Apache License, Version 2.0](LICENSE). See [NOTICE](NOTICE) for attribution.
-
-The [Controller Conformance Protocol and corpus v0.1](docs/contracts/controller-conformance-v0.1/README.md) define the
-external test contract and RunInvariant integration handoff. Internal corpus validation is not a current-runtime
-conformance result.

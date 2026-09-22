@@ -1,6 +1,11 @@
 # Governed lifecycle
 
-ThreadLoop stores lifecycle state on the task. A session remains the execution record attached to that task.
+**Implemented now:** ThreadLoop stores the fixed governed PR lifecycle state on the task. A session remains the
+execution record attached to that task. These compatibility terms do not mean the accepted Execution Claim and Attempt
+contracts are implemented in current sessions.
+
+The [architecture guide](architecture.md) separates current runtime behavior from accepted Controller Contract v0.1
+specifications and deferred runtime/Rust work.
 
 For the current-state compatibility map from this fixed lifecycle to the planned Workflow Profile and Compiled Graph
 language, see [Current lifecycle graph mapping](current-lifecycle-graph-mapping.md).
