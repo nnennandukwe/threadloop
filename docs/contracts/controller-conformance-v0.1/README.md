@@ -1,9 +1,10 @@
 # Controller Conformance Protocol v0.1
 
 Status: contract and internally validated corpus for [#108](https://github.com/nnennandukwe/threadloop/issues/108). The
-corpus lives in ThreadLoop. [RunInvariant](https://github.com/nnennandukwe/run-invariant) is the intended external
-execution harness; its current release does **not** consume this suite. There is no new process runner, controller
-selector, TypeScript runtime subject, or Rust subject in this build.
+corpus lives in ThreadLoop. [RunInvariant PR #4](https://github.com/nnennandukwe/run-invariant/pull/4) merged the
+external execution harness for this suite. Synthetic subjects validate harness behavior; no real ThreadLoop controller
+has demonstrated conformance. ThreadLoop's contract tooling includes no process runner, complete controller selector,
+TypeScript runtime subject, or Rust subject. Merged harness support is not a release or runtime-integration claim.
 
 ## Artifacts and development commands
 
@@ -16,8 +17,8 @@ selector, TypeScript runtime subject, or Rust subject in this build.
 - [Manifest](manifest.json) identifies all 38 expanded cases, input digests, and complete fixture digests.
 - [Golden vectors](vectors/golden.json) and canonical request/response files pin the byte rules independently.
 - [Coverage](coverage.md) maps requirements to cases and separates available checks from future proof.
-- [RunInvariant follow-up](run-invariant-follow-up.md) is a ready-to-file integration specification, not an opened
-  issue.
+- [RunInvariant integration handoff](run-invariant-follow-up.md) records the requirements implemented by merged
+  RunInvariant PR #4 and the remaining real-controller proof.
 
 From the repository root, with the documented Node version and `npm ci` completed:
 
@@ -101,7 +102,7 @@ duplication.
 
 ## One-case process exchange
 
-A future harness starts the executable directly, without a shell, and sends exactly one request on stdin followed by
+The external harness starts the executable directly, without a shell, and sends exactly one request on stdin followed by
 EOF. The executable writes exactly one response to stdout followed by EOF, sends diagnostics to stderr, and exits zero.
 A scenario contains multiple ordered operations, but remains one independently evaluated case. Processes must not share
 state between cases. No handshake, environment-derived clock, implicit policy lookup, or provider access is part of this
@@ -119,8 +120,8 @@ must pin an expected subject identity independently and compare it exactly; self
 binary attestation. The conformance checker accepts that expected identity explicitly.
 
 Transport failure, timeout, nonzero exit, missing/truncated output, or more than one response must not be interpreted as
-a controller decision. The future harness must bound execution time and stderr and record those runner settings in its
-packet. This build defines the message limits below but does not implement or certify process isolation or termination.
+a controller decision. The harness must bound execution time and stderr and record those runner settings in its packet.
+This build defines the message limits below but does not implement or certify process isolation or termination.
 
 ## Operations and normalized results
 
@@ -200,8 +201,8 @@ strict envelope shape binds every variable field. Embedded graph, controller, Ac
 retain their accepted algorithms and prefixes. Never recompute them using the new profile as a migration shortcut.
 
 The existing RunInvariant subject protocol uses pretty-printed JSON with a final LF included in its request hash.
-ThreadLoop's new profile uses compact JSON and excludes optional framing. RunInvariant must introduce explicit support
-for this distinct suite instead of changing its frozen protocol. See the follow-up specification.
+ThreadLoop's profile uses compact JSON and excludes optional framing. RunInvariant's merged `threadloop` suite supports
+this distinct profile while preserving its frozen protocol. See the [integration handoff](run-invariant-follow-up.md).
 
 ## Corpus integrity and comparison
 

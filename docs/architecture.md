@@ -19,7 +19,7 @@ The status applies to the specific capability, not to every use of the same doma
 | **Implemented now**                              | Session CLI, read-only next-action inspection, Markdown artifacts, and verified audit exports.                                                                     | [CLI reference](cli.md) and [audit export](observability.md).                                                                                                                                                                                                             |
 | **Implemented now**                              | Source-tree YAML compiler, candidate validators, executor mapping helpers, and internal conformance-corpus checks.                                                 | Development tooling documented in the [contract index](#contract-index); it is not a configurable runtime.                                                                                                                                                                |
 | **Accepted in Controller Contract v0.1**         | Profile/graph identities, deterministic decisions and action requests, claim/attempt recovery semantics, executor process seam, and external conformance protocol. | Five versioned contract families in the [contract index](#contract-index).                                                                                                                                                                                                |
-| **Deferred to the controller-runtime milestone** | Configurable graph selection/execution, durable graph-bound runs and Execution Claims, and controller conformance through an external runtime subject.             | [Contract tracker #110](https://github.com/nnennandukwe/threadloop/issues/110), [conformance handoff](contracts/controller-conformance-v0.1/run-invariant-follow-up.md), and [generated state-machine tests #112](https://github.com/nnennandukwe/threadloop/issues/112). |
+| **Deferred to the controller-runtime milestone** | Configurable graph selection/execution, durable graph-bound runs and Execution Claims, and conformance by a real controller through the external harness.          | [Contract tracker #110](https://github.com/nnennandukwe/threadloop/issues/110), [conformance handoff](contracts/controller-conformance-v0.1/run-invariant-follow-up.md), and [generated state-machine tests #112](https://github.com/nnennandukwe/threadloop/issues/112). |
 | **Deferred to the controller-runtime milestone** | GAAP process invocation, independently authenticated receipt admission, and persistence before controller reevaluation.                                            | [Runtime integration #111](https://github.com/nnennandukwe/threadloop/issues/111).                                                                                                                                                                                        |
 | **Deferred to the Rust migration**               | A Rust replacement of ThreadLoop after the contract freeze and the separate runtime milestone prove the required behavior.                                         | [Tracker #110](https://github.com/nnennandukwe/threadloop/issues/110); [storage evolution #85](https://github.com/nnennandukwe/threadloop/issues/85) remains a migration prerequisite.                                                                                    |
 
@@ -42,10 +42,12 @@ engine. Its graph language has registered SDLC actions, guards, authority requir
 arbitrary executable nodes or expressions.
 
 [RunInvariant](https://github.com/nnennandukwe/run-invariant) currently provides GAAP decision-conformance
-infrastructure. Controller Contract v0.1 also names it as the intended future harness for a separate ThreadLoop
-controller suite. That integration is unimplemented: the corpus stays in ThreadLoop, and the
-[follow-up specification](contracts/controller-conformance-v0.1/run-invariant-follow-up.md) is not evidence that
-RunInvariant consumes it. These are distinct suites and proof states.
+infrastructure. [RunInvariant PR #4](https://github.com/nnennandukwe/run-invariant/pull/4) merged a separate ThreadLoop
+controller harness that consumes this repository's pinned corpus, launches one external process per case, and validates
+responses. Synthetic subjects exercise the harness; a real ThreadLoop controller has not demonstrated conformance. The
+corpus stays in ThreadLoop. The [integration handoff](contracts/controller-conformance-v0.1/run-invariant-follow-up.md)
+records the requirements and remaining proof. Merged harness support does not establish a release or runtime
+integration.
 
 ## Implemented now: the fixed governed PR lifecycle
 
@@ -214,7 +216,7 @@ provenance and completeness limits.
 ## Contract index
 
 These specifications are **accepted in Controller Contract v0.1**. Their source-tree validation tooling is **implemented
-now**; the configurable runtime and external conformance execution remain deferred as described above.
+now**; the configurable runtime and conformance by a real controller remain deferred as described above.
 
 | Contract                                                                           | Schemas and examples                                                                                                                                                                                                                                                                                                                             | Supporting evidence                                                                                                                                                                                                                                      |
 | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -224,6 +226,7 @@ now**; the configurable runtime and external conformance execution remain deferr
 | [Executor interface / GAAP mapping](contracts/executor-v0.1/README.md)             | [Request schema](contracts/executor-v0.1/schemas/executor-request.schema.json), [result schema](contracts/executor-v0.1/schemas/executor-result.schema.json), [mapping-policy schema](contracts/executor-v0.1/schemas/gaap-mapping-policy.schema.json).                                                                                          | The contract links its pinned upstream artifacts and valid/invalid example corpora; [#111](https://github.com/nnennandukwe/threadloop/issues/111) owns runtime invocation and admission.                                                                 |
 | [Controller Conformance Protocol](contracts/controller-conformance-v0.1/README.md) | [Request schema](contracts/controller-conformance-v0.1/schemas/request.schema.json), [response schema](contracts/controller-conformance-v0.1/schemas/response.schema.json), [38-case manifest](contracts/controller-conformance-v0.1/manifest.json), [golden vectors](contracts/controller-conformance-v0.1/vectors/golden.json).                | [Coverage](contracts/controller-conformance-v0.1/coverage.md), [compatibility pins](contracts/controller-conformance-v0.1/compatibility.json), and [RunInvariant integration handoff](contracts/controller-conformance-v0.1/run-invariant-follow-up.md). |
 
-The [contract-freeze tracker #110](https://github.com/nnennandukwe/threadloop/issues/110) defines the gate before the
-separate runtime milestone and Rust work. Contract acceptance is not a release, production-readiness claim, demonstrated
-runtime interoperability, or foundation acceptance.
+The [contract-freeze tracker #110](https://github.com/nnennandukwe/threadloop/issues/110) closed after verification at
+`fa616c6650c59b80ce2ce33b4847b7bd2f48a334`. The separate runtime milestone must still prove the required behavior before
+Rust work begins. Contract acceptance is not a release, production-readiness claim, demonstrated runtime
+interoperability, or foundation acceptance.

@@ -1,6 +1,9 @@
 # Add ThreadLoop Controller Conformance v0.1 support
 
-Status: ready-to-file follow-up specification. This document does not create an issue or implement RunInvariant support.
+Status: harness integration merged in [RunInvariant PR #4](https://github.com/nnennandukwe/run-invariant/pull/4) at
+`602e89ca50d2924e66caab94d1b568b3a1ec4c21`. ThreadLoop #108 is accepted and the #110 contract freeze is complete. This
+document retains the integration requirements. Synthetic process tests exercise the harness; conformance by a real
+ThreadLoop controller remains unproven. Merge does not establish release, runtime integration, or production readiness.
 
 ## Motivation and prerequisites
 
