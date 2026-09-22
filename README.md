@@ -17,11 +17,16 @@ engine. It does not supply a model/tool loop, model routing, or protected-effect
 | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Implemented now**                              | Fixed PR lifecycle, durable SQLite state, current-HEAD proof and signed review checks, bounded post-PR repair, human completion, review artifacts, and verified audit export. Source-tree development tools compile and validate contract examples offline. |
 | **Accepted in Controller Contract v0.1**         | Workflow Profile and Compiled Graph, Controller Decision and Action Request, Execution Claim and Attempt, executor/GAAP mapping, and controller conformance specifications.                                                                                 |
-| **Deferred to the controller-runtime milestone** | Configurable graph execution, durable Execution Claim enforcement, GAAP process invocation and authenticated receipt admission, and external execution of the controller conformance suite.                                                                 |
+| **Deferred to the controller-runtime milestone** | Configurable graph execution, durable Execution Claim enforcement, GAAP process invocation and authenticated receipt admission, and conformance by a real controller through the external suite.                                                            |
 | **Deferred to the Rust migration**               | A Rust ThreadLoop replacement, after the contract freeze and separate runtime milestone demonstrate the required behavior.                                                                                                                                  |
 
 The offline compiler is implemented development tooling; its output is not executable through the packaged CLI. Existing
 sessions do not acquire graph bindings or Execution Claims from the accepted specifications.
+
+The [contract freeze #110](https://github.com/nnennandukwe/threadloop/issues/110) is complete.
+[RunInvariant PR #4](https://github.com/nnennandukwe/run-invariant/pull/4) merged the external harness for this corpus.
+Synthetic subjects exercise that harness; conformance by a real ThreadLoop controller remains unproven. These milestones
+do not establish a release or completion of the separate runtime milestone.
 
 The [architecture guide](docs/architecture.md) explains the four system roles, the YAML-to-canonical-JSON contract, and
 the relationship between a ThreadLoop Workflow Run and a GAAP Agent Run. It links the normative contracts and separates
