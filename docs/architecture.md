@@ -180,8 +180,9 @@ To inspect and check the published examples, clone the tagged release of
 [threadloop-contracts](https://github.com/nnennandukwe/threadloop-contracts) and run:
 
 ```bash
-git clone --depth 1 --branch v0.1.0 https://github.com/nnennandukwe/threadloop-contracts.git
+git clone https://github.com/nnennandukwe/threadloop-contracts.git
 cd threadloop-contracts
+git checkout --detach 7dcf432bc75a68b5ee803c6ebb7346b6bb417f83 # v0.1.0
 npm ci --ignore-scripts
 npm test -- tests/unit/workflow-graph-contract.test.ts
 npm test -- tests/unit/controller-contract.test.ts tests/unit/execution-contract.test.ts tests/unit/executor-contract.test.ts
