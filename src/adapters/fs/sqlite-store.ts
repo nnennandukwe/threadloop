@@ -44,7 +44,7 @@ import type {
   ThreadloopConfig,
 } from '../../domain/types.js';
 import { TASK_STATUS, isTaskStatus } from '../../domain/types.js';
-import type { ThreadloopErrorCode } from '../../contracts/errors.js';
+import { StateCorruptedError, type ThreadloopErrorCode } from '../../contracts/errors.js';
 import { threadloopPaths } from './repo.js';
 import { DatabaseSync } from './sqlite-driver.js';
 
@@ -137,8 +137,6 @@ const SIGNED_RECEIPT_COLUMNS = [
   'state_version',
   'verified_at',
 ] as const;
-
-class InvalidJsonError extends Error {}
 
 type ConnectionState = { writer: DatabaseSync | null; ready: boolean };
 
@@ -300,7 +298,7 @@ export class AuditChainCorruptedError extends Error {
   }
 }
 
-export class SessionTransitionHistoryCorruptedError extends Error {
+export class SessionTransitionHistoryCorruptedError extends StateCorruptedError {
   readonly sessionId: string;
 
   constructor(sessionId: string, detail: string) {
@@ -363,7 +361,7 @@ export async function readState(repoRoot: string): Promise<StateData> {
   return withReadSnapshot(repoRoot, (db) => {
     const parsed = stateDataSchema.safeParse(loadState(db));
     if (!parsed.success) {
-      throw new Error(INVALID_STATE_DB_ERROR);
+      throw new StateCorruptedError(INVALID_STATE_DB_ERROR);
     }
     return parsed.data;
   });
@@ -378,7 +376,7 @@ export async function readSessionGateContext(repoRoot: string, sessionId: string
     }
     const corruption = detectTransitionStateCorruption(current);
     if (corruption) {
-      throw new Error(corruption);
+      throw new StateCorruptedError(corruption);
     }
     return {
       taskId: current.task_id,
@@ -691,7 +689,7 @@ export function readSessionLifecycleReadOnly(repoRoot: string, sessionId: string
     }
     const corruption = detectTransitionStateCorruption(current);
     if (corruption) {
-      throw new Error(corruption);
+      throw new StateCorruptedError(corruption);
     }
     const authority = assertSessionTransitionHistoryAuthority(db, sessionId);
 
@@ -897,7 +895,7 @@ export async function applySessionTransition(
       )
       .run(input.targetState, nextVersion, blockedFromState, current.task_id, current.status, current.state_version);
     if (Number(update.changes) !== 1) {
-      throw new Error('ThreadLoop transition compare-and-swap did not update exactly one task.');
+      throw new StateCorruptedError('ThreadLoop transition compare-and-swap did not update exactly one task.');
     }
 
     const endedAt = input.targetState === TASK_STATUS.COMPLETED ? createdAt : null;
@@ -906,7 +904,7 @@ export async function applySessionTransition(
         .prepare(`UPDATE sessions SET ended_at = ? WHERE id = ? AND ended_at IS NULL`)
         .run(endedAt, input.sessionId);
       if (Number(completion.changes) !== 1) {
-        throw new Error('ThreadLoop transition completion did not update exactly one session.');
+        throw new StateCorruptedError('ThreadLoop transition completion did not update exactly one session.');
       }
       writeActiveProjection(db);
     }
@@ -1741,23 +1739,23 @@ function schemaShapeProblem(db: DatabaseSync) {
 function assertCanonicalSchemaShape(db: DatabaseSync) {
   const problem = schemaShapeProblem(db);
   if (problem) {
-    throw new Error(problem);
+    throw new StateCorruptedError(problem);
   }
 }
 
 function readDatabaseSchemaVersion(db: DatabaseSync) {
   if (!tableExists(db, 'metadata')) {
-    throw new Error('Missing ThreadLoop schema version metadata.');
+    throw new StateCorruptedError('Missing ThreadLoop schema version metadata.');
   }
   const row = db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get() as
     { value: string } | undefined;
   if (!row) {
-    throw new Error('Missing ThreadLoop schema version metadata.');
+    throw new StateCorruptedError('Missing ThreadLoop schema version metadata.');
   }
   // Canonical decimal only: "08", "8.0", "8e0", and padded values are all rejected, not coerced.
   const version = Number(row.value);
   if (!Number.isSafeInteger(version) || version < 1 || String(version) !== row.value) {
-    throw new Error(`Unsupported ThreadLoop schema version: ${row.value}`);
+    throw new StateCorruptedError(`Unsupported ThreadLoop schema version: ${row.value}`);
   }
   return version;
 }
@@ -1765,10 +1763,10 @@ function readDatabaseSchemaVersion(db: DatabaseSync) {
 function assertSupportedSchemaVersion(db: DatabaseSync) {
   const version = readDatabaseSchemaVersion(db);
   if (version > CURRENT_SCHEMA_VERSION) {
-    throw new Error(`Unsupported ThreadLoop schema version: ${version}`);
+    throw new StateCorruptedError(`Unsupported ThreadLoop schema version: ${version}`);
   }
   if (version < MIN_SUPPORTED_SCHEMA_VERSION) {
-    throw new Error(
+    throw new StateCorruptedError(
       `Unsupported ThreadLoop schema version: ${version}. This build upgrades schema v${MIN_SUPPORTED_SCHEMA_VERSION} ` +
         'and newer; open the database with the development build that created it to upgrade it first.',
     );
@@ -1779,7 +1777,7 @@ function assertSupportedSchemaVersion(db: DatabaseSync) {
 function assertCurrentSchemaVersion(db: DatabaseSync) {
   const version = readDatabaseSchemaVersion(db);
   if (version !== CURRENT_SCHEMA_VERSION) {
-    throw new Error(`Unsupported ThreadLoop schema version: ${version}`);
+    throw new StateCorruptedError(`Unsupported ThreadLoop schema version: ${version}`);
   }
 }
 
@@ -1802,7 +1800,7 @@ function detachLegacyGateReceiptResultDomain(db: DatabaseSync) {
     return false;
   }
   if (tableExists(db, LEGACY_GATE_RECEIPTS_TABLE)) {
-    throw new Error(`A previous gate-receipt migration left ${LEGACY_GATE_RECEIPTS_TABLE} behind.`);
+    throw new StateCorruptedError(`A previous gate-receipt migration left ${LEGACY_GATE_RECEIPTS_TABLE} behind.`);
   }
 
   // The append-only triggers and the covering index carry the table name, so they must go before the rename;
@@ -1830,7 +1828,7 @@ function restoreLegacyGateReceipts(db: DatabaseSync, detached: boolean) {
   );
   const copied = count('gate_receipts');
   if (copied !== expected) {
-    throw new Error(`Gate-receipt migration copied ${copied} of ${expected} receipts.`);
+    throw new StateCorruptedError(`Gate-receipt migration copied ${copied} of ${expected} receipts.`);
   }
   db.exec(`DROP TABLE ${LEGACY_GATE_RECEIPTS_TABLE}`);
 }
@@ -2258,7 +2256,9 @@ function parseJsonText<T>(value: string, invalidMessage: string): T {
   try {
     return JSON.parse(value) as T;
   } catch {
-    throw new InvalidJsonError(invalidMessage);
+    throw invalidMessage === INVALID_STATE_DB_ERROR
+      ? new StateCorruptedError(invalidMessage)
+      : new Error(invalidMessage);
   }
 }
 

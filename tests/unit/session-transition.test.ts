@@ -419,6 +419,30 @@ describe('session transition domain', () => {
     });
   });
 
+  it('offers a post-PR repair only when the guard that applies it would pass', () => {
+    const failing = {
+      ...passedProofContext(),
+      phase: LIFECYCLE_PHASE.POST_PR,
+      attemptsUsed: 0,
+      evidence: { ...passedProofContext().evidence!, status: 'failed' as const },
+    };
+    const plan = (proofGuardContext: ProofGuardContext) =>
+      planNextTransition({
+        state: 'verifying',
+        stateVersion: 7,
+        blockedFromState: null,
+        phase: LIFECYCLE_PHASE.POST_PR,
+        proof: { status: 'failed', attemptsUsed: 0 },
+        proofGuardContext,
+      });
+
+    expect(plan(failing)).toMatchObject({ candidate: { target_state: 'repairing', executable: true } });
+    expect(plan({ ...failing, plan: null })).toMatchObject({
+      candidate: { target_state: 'repairing', executable: false },
+      guardFailures: [{ code: 'PROOF_PLAN_REQUIRED' }],
+    });
+  });
+
   it('allows the third authorized repair to commit and verify while rejecting a fourth entry', () => {
     const thirdRepair = {
       ...passedProofContext(),

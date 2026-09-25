@@ -11,7 +11,6 @@ import {
   appendSignedGateReceipt,
   appendSignedReviewReceipt,
   AuditChainCorruptedError,
-  readConfig,
   readSessionLifecycleReadOnly,
   readSessionProofEvidenceReadOnly,
   requiresExplicitInitMigration,
@@ -20,8 +19,7 @@ import {
   SignedReviewReceiptAppendConflictError,
   StoredEvidenceCorruptedError,
 } from '../adapters/fs/sqlite-store.js';
-import { isThreadloopInitialized } from '../adapters/fs/repo.js';
-import { observeProofRepository, observeRepository, resolveRepoRoot } from '../adapters/git/client.js';
+import { observeProofRepository, observeRepository } from '../adapters/git/client.js';
 import { ThreadloopError } from '../contracts/errors.js';
 import {
   AttestationValidationError,
@@ -32,7 +30,7 @@ import {
 } from '../domain/attestation.js';
 import { canonicalJson } from '../domain/canonical-json.js';
 import {
-  canonicalizeProofPlan,
+  bindStoredProofPlan,
   hasCiTrustPolicy,
   hasReviewTrustPolicy,
   type BoundProofPlan,
@@ -46,7 +44,7 @@ import {
   type SignedReviewReceiptEnvelope,
 } from '../domain/review.js';
 import { TASK_STATUS } from '../domain/types.js';
-import { mapAuditChainCorruption } from './audit-service-errors.js';
+import { assertInitializedReadOnly, mapAuditChainCorruption, resolveRepositoryRoot } from './preconditions.js';
 import { MAX_SIGNED_RECEIPT_PACKAGE_BYTES, type SignedReceiptFileSystem } from './signed-receipt-files.js';
 
 export interface SignedReceiptImportInput {
@@ -57,30 +55,20 @@ export interface SignedReceiptImportInput {
   receiptFileSystem: SignedReceiptFileSystem;
 }
 
-export interface ImportedSignedGateReceipt {
-  repoRoot: string;
-  lifecycle: { state: string; stateVersion: number };
-  receipt: ParsedSignedReceiptPackage;
-  signer: VerifiedSigstoreSigner;
-  sequence: number;
-  alreadyImported: boolean;
-  verifiedAt: string;
-  packagePath: string;
-}
-
-export interface ImportedSignedReviewReceipt {
-  repoRoot: string;
-  lifecycle: { state: string; stateVersion: number };
-  receipt: ParsedSignedReviewReceiptPackage;
-  signer: VerifiedSigstoreSigner;
-  sequence: number;
-  alreadyImported: boolean;
-  verifiedAt: string;
-  packagePath: string;
-}
-
 type ImportKind = 'gate' | 'review';
 type ImportEnvelope = SignedReceiptEnvelope | SignedReviewReceiptEnvelope;
+type ImportedPackage = ParsedSignedReceiptPackage | ParsedSignedReviewReceiptPackage;
+
+export interface ImportedSignedPackage<TReceipt extends ImportedPackage> {
+  repoRoot: string;
+  lifecycle: { state: string; stateVersion: number };
+  receipt: TReceipt;
+  signer: VerifiedSigstoreSigner;
+  sequence: number;
+  alreadyImported: boolean;
+  verifiedAt: string;
+  packagePath: string;
+}
 
 interface PreparedImport<TEnvelope extends ImportEnvelope> {
   repoRoot: string;
@@ -91,155 +79,164 @@ interface PreparedImport<TEnvelope extends ImportEnvelope> {
   fileSystem: SignedReceiptFileSystem;
 }
 
-export async function importSignedGateReceiptPackage(
-  input: SignedReceiptImportInput,
-): Promise<ImportedSignedGateReceipt> {
-  const prepared = await prepareImport(input, 'gate', parseSignedReceiptEnvelope);
-  if (!hasCiTrustPolicy(prepared.plan.plan)) {
-    throw new ThreadloopError(
-      'SIGNED_RECEIPT_IDENTITY_MISMATCH',
-      'This session has no immutable signed-CI trust policy. Start a new session with a v3 proof plan.',
-    );
-  }
-
-  const artifact = prepared.envelope.artifact;
-  const gate = prepared.plan.plan.gates.find((candidate) => candidate.id === artifact.gate.id);
-  const repository = await observeRepository(prepared.repoRoot);
-  const proofRepository = await observeProofRepository(prepared.repoRoot);
-  const expectedRepository = githubRepositoryUri(repository);
-  const signer = await verifySigner(prepared.envelope, prepared.plan.plan.ci, input.verifyReceipt);
-  let receipt: ParsedSignedReceiptPackage;
-  try {
-    receipt = validateSignedReceiptStatement(prepared.envelope);
-  } catch (error) {
-    throw mapSignedReceiptParseError(error);
-  }
-  assertSignerProjection(signer, artifact.source, prepared.plan.plan.ci, 'CI');
-  assertSignedGateContext({
-    requestedSessionId: input.sessionId,
-    plan: prepared.plan,
-    expectedRepository,
-    currentBranch: proofRepository.branch,
-    currentHead: proofRepository.headSha,
-    receipt,
-    gate,
-    policy: prepared.plan.plan.ci,
-  });
-  // Reported separately from a code failure, so an operator reading the error sees a broken environment rather
-  // than broken code. Nothing is persisted either way; the signed package stays on disk as evidence.
-  if (artifact.result === 'setup_failed') {
-    const failingStep = artifact.setup?.find((step) => step.result !== 'passed');
-    throw new ThreadloopError(
-      'SIGNED_RECEIPT_SETUP_FAILED',
-      'The signed gate receipt records failing declared setup, so the gate command never ran.',
-      {
-        details: {
-          receipt_id: artifact.receipt_id,
-          gate_id: artifact.gate.id,
-          setup_step_id: failingStep?.id ?? null,
-          setup_step_command: failingStep?.command ?? null,
-          setup_step_result: failingStep?.result ?? null,
-          setup_step_exit_status: failingStep?.exit_status ?? null,
-          hint: 'Correct the declared setup steps. A bound proof plan is immutable, so start a new session to adopt the corrected declaration.',
-        },
-      },
-    );
-  }
-  if (
-    artifact.result !== 'passed' ||
-    artifact.exit_status !== 0 ||
-    artifact.signal !== null ||
-    artifact.head_before !== artifact.head_after ||
-    !artifact.clean_before ||
-    !artifact.clean_after
-  ) {
-    throw new ThreadloopError(
-      'SIGNED_RECEIPT_RESULT_REJECTED',
-      'Only a clean, unchanged, passing CI gate receipt is authoritative proof.',
-      { details: { receipt_id: artifact.receipt_id, result: artifact.result } },
-    );
-  }
-
-  const verifiedAt = new Date().toISOString();
-  try {
-    const persisted = await persistControlledPackage({
-      prepared,
-      receiptId: artifact.receipt_id,
-      sessionId: artifact.session_id,
-      fileName: 'signed-receipt.json',
-      packageJson: receipt.packageJson,
-      packageSha256: receipt.packageSha256,
-      append: (packagePath, promotePackage) =>
-        appendSignedGateReceipt(prepared.repoRoot, {
-          receipt,
-          signer,
-          packagePath,
-          stateVersion: prepared.lifecycle.stateVersion,
-          verifiedAt,
-          promotePackage,
-        }),
-    });
-    return {
-      repoRoot: prepared.repoRoot,
-      lifecycle: { state: prepared.lifecycle.state, stateVersion: prepared.lifecycle.stateVersion },
-      receipt,
-      signer,
-      sequence: persisted.sequence,
-      alreadyImported: persisted.alreadyImported,
-      verifiedAt: persisted.verifiedAt,
-      packagePath: persisted.packagePath,
-    };
-  } catch (error) {
-    if (error instanceof AuditChainCorruptedError) {
-      throw mapAuditChainCorruption(input.sessionId, error);
-    }
-    if (error instanceof SessionTransitionHistoryCorruptedError) {
-      throw mapTransitionHistoryCorruption(error);
-    }
-    if (error instanceof SignedReceiptAppendConflictError) {
-      throw new ThreadloopError('SIGNED_RECEIPT_CONFLICT', error.message, { cause: error });
-    }
-    if (isErrorCode(error, 'EEXIST')) {
-      throw new ThreadloopError(
-        'SIGNED_RECEIPT_CONFLICT',
-        `Signed receipt ${artifact.receipt_id} already has an unindexed package at its controlled path.`,
-        { cause: error },
-      );
-    }
-    throw error;
-  }
+/** What differs between importing a signed gate receipt and a signed review snapshot. */
+interface SignedImportKind<TEnvelope extends ImportEnvelope, TReceipt extends ImportedPackage> {
+  kind: ImportKind;
+  label: 'Signed receipt' | 'Signed review receipt';
+  fileName: 'signed-receipt.json' | 'signed-review-receipt.json';
+  parseEnvelope: (value: unknown, digest: typeof sha256) => TEnvelope;
+  trustPolicy: (plan: BoundProofPlan) => GitHubActionsTrustPolicy | null;
+  missingPolicyMessage: string;
+  signerLabel: 'CI' | 'review';
+  parseReceipt: (prepared: PreparedImport<TEnvelope>) => TReceipt;
+  /** Binds the verified receipt to this session, plan, repository, and live HEAD. */
+  assertAuthoritative: (
+    receipt: TReceipt,
+    context: {
+      sessionId: string;
+      plan: BoundProofPlan;
+      policy: GitHubActionsTrustPolicy;
+      expectedRepository: string | null;
+      proofRepository: Awaited<ReturnType<typeof observeProofRepository>>;
+    },
+  ) => void;
+  conflictError: new (message: string) => Error;
+  append: (
+    repoRoot: string,
+    input: {
+      receipt: TReceipt;
+      signer: VerifiedSigstoreSigner;
+      packagePath: string;
+      stateVersion: number;
+      verifiedAt: string;
+      promotePackage: () => void;
+    },
+  ) => Promise<{ sequence: number; alreadyImported: boolean; verifiedAt: string }>;
 }
 
-export async function importSignedReviewReceiptPackage(
+const GATE_IMPORT: SignedImportKind<SignedReceiptEnvelope, ParsedSignedReceiptPackage> = {
+  kind: 'gate',
+  label: 'Signed receipt',
+  fileName: 'signed-receipt.json',
+  parseEnvelope: parseSignedReceiptEnvelope,
+  trustPolicy: (plan) => (hasCiTrustPolicy(plan.plan) ? plan.plan.ci : null),
+  missingPolicyMessage:
+    'This session has no immutable signed-CI trust policy. Start a new session with a v3 proof plan.',
+  signerLabel: 'CI',
+  parseReceipt: (prepared) => validateSignedReceiptStatement(prepared.envelope),
+  assertAuthoritative: (receipt, context) => {
+    const artifact = receipt.artifact;
+    assertSignedGateContext({
+      requestedSessionId: context.sessionId,
+      plan: context.plan,
+      expectedRepository: context.expectedRepository,
+      currentBranch: context.proofRepository.branch,
+      currentHead: context.proofRepository.headSha,
+      receipt,
+      gate: context.plan.plan.gates.find((candidate) => candidate.id === artifact.gate.id),
+      policy: context.policy,
+    });
+    // Reported separately from a code failure, so an operator reading the error sees a broken environment rather
+    // than broken code. Nothing is persisted either way; the signed package stays on disk as evidence.
+    if (artifact.result === 'setup_failed') {
+      const failingStep = artifact.setup?.find((step) => step.result !== 'passed');
+      throw new ThreadloopError(
+        'SIGNED_RECEIPT_SETUP_FAILED',
+        'The signed gate receipt records failing declared setup, so the gate command never ran.',
+        {
+          details: {
+            receipt_id: artifact.receipt_id,
+            gate_id: artifact.gate.id,
+            setup_step_id: failingStep?.id ?? null,
+            setup_step_command: failingStep?.command ?? null,
+            setup_step_result: failingStep?.result ?? null,
+            setup_step_exit_status: failingStep?.exit_status ?? null,
+            hint: 'Correct the declared setup steps. A bound proof plan is immutable, so start a new session to adopt the corrected declaration.',
+          },
+        },
+      );
+    }
+    if (
+      artifact.result !== 'passed' ||
+      artifact.exit_status !== 0 ||
+      artifact.signal !== null ||
+      artifact.head_before !== artifact.head_after ||
+      !artifact.clean_before ||
+      !artifact.clean_after
+    ) {
+      throw new ThreadloopError(
+        'SIGNED_RECEIPT_RESULT_REJECTED',
+        'Only a clean, unchanged, passing CI gate receipt is authoritative proof.',
+        { details: { receipt_id: artifact.receipt_id, result: artifact.result } },
+      );
+    }
+  },
+  conflictError: SignedReceiptAppendConflictError,
+  append: appendSignedGateReceipt,
+};
+
+const REVIEW_IMPORT: SignedImportKind<SignedReviewReceiptEnvelope, ParsedSignedReviewReceiptPackage> = {
+  kind: 'review',
+  label: 'Signed review receipt',
+  fileName: 'signed-review-receipt.json',
+  parseEnvelope: parseSignedReviewReceiptEnvelope,
+  trustPolicy: (plan) => (hasReviewTrustPolicy(plan.plan) ? plan.plan.review : null),
+  missingPolicyMessage:
+    'This session has no immutable signed-review trust policy. Start a new session with a v3 proof plan.',
+  signerLabel: 'review',
+  parseReceipt: (prepared) => parseSignedReviewReceiptPackage(prepared.packageValue, sha256),
+  assertAuthoritative: (receipt, context) =>
+    assertSignedReviewContext({
+      requestedSessionId: context.sessionId,
+      plan: context.plan,
+      expectedRepository: context.expectedRepository,
+      currentHead: context.proofRepository.headSha,
+      receipt,
+      policy: context.policy,
+    }),
+  conflictError: SignedReviewReceiptAppendConflictError,
+  append: appendSignedReviewReceipt,
+};
+
+export function importSignedGateReceiptPackage(input: SignedReceiptImportInput) {
+  return importSignedPackage(input, GATE_IMPORT);
+}
+
+export function importSignedReviewReceiptPackage(input: SignedReceiptImportInput) {
+  return importSignedPackage(input, REVIEW_IMPORT);
+}
+
+/**
+ * Verifies one signed package and appends it. Every check that can be made without the network runs against the
+ * live repository first; nothing is persisted, and no package is promoted, unless all of them pass.
+ */
+async function importSignedPackage<TEnvelope extends ImportEnvelope, TReceipt extends ImportedPackage>(
   input: SignedReceiptImportInput,
-): Promise<ImportedSignedReviewReceipt> {
-  const prepared = await prepareImport(input, 'review', parseSignedReviewReceiptEnvelope);
-  if (!hasReviewTrustPolicy(prepared.plan.plan)) {
-    throw new ThreadloopError(
-      'SIGNED_RECEIPT_IDENTITY_MISMATCH',
-      'This session has no immutable signed-review trust policy. Start a new session with a v3 proof plan.',
-    );
+  kind: SignedImportKind<TEnvelope, TReceipt>,
+): Promise<ImportedSignedPackage<TReceipt>> {
+  const prepared = await prepareImport(input, kind.kind, kind.parseEnvelope);
+  const policy = kind.trustPolicy(prepared.plan);
+  if (!policy) {
+    throw new ThreadloopError('SIGNED_RECEIPT_IDENTITY_MISMATCH', kind.missingPolicyMessage);
   }
 
   const artifact = prepared.envelope.artifact;
   const repository = await observeRepository(prepared.repoRoot);
   const proofRepository = await observeProofRepository(prepared.repoRoot);
-  const expectedRepository = githubRepositoryUri(repository);
-  const signer = await verifySigner(prepared.envelope, prepared.plan.plan.review, input.verifyReceipt);
-  let receipt: ParsedSignedReviewReceiptPackage;
+  const signer = await verifySigner(prepared.envelope, policy, input.verifyReceipt);
+  let receipt: TReceipt;
   try {
-    receipt = parseSignedReviewReceiptPackage(prepared.packageValue, sha256);
+    receipt = kind.parseReceipt(prepared);
   } catch (error) {
     throw mapSignedReceiptParseError(error);
   }
-  assertSignerProjection(signer, artifact.source, prepared.plan.plan.review, 'review');
-  assertSignedReviewContext({
-    requestedSessionId: input.sessionId,
+  assertSignerProjection(signer, artifact.source, policy, kind.signerLabel);
+  kind.assertAuthoritative(receipt, {
+    sessionId: input.sessionId,
     plan: prepared.plan,
-    expectedRepository,
-    currentHead: proofRepository.headSha,
-    receipt,
-    policy: prepared.plan.plan.review,
+    policy,
+    expectedRepository: githubRepositoryUri(repository),
+    proofRepository,
   });
 
   const verifiedAt = new Date().toISOString();
@@ -248,11 +245,11 @@ export async function importSignedReviewReceiptPackage(
       prepared,
       receiptId: artifact.receipt_id,
       sessionId: artifact.session_id,
-      fileName: 'signed-review-receipt.json',
+      fileName: kind.fileName,
       packageJson: receipt.packageJson,
       packageSha256: receipt.packageSha256,
       append: (packagePath, promotePackage) =>
-        appendSignedReviewReceipt(prepared.repoRoot, {
+        kind.append(prepared.repoRoot, {
           receipt,
           signer,
           packagePath,
@@ -278,7 +275,7 @@ export async function importSignedReviewReceiptPackage(
     if (error instanceof SessionTransitionHistoryCorruptedError) {
       throw mapTransitionHistoryCorruption(error);
     }
-    if (error instanceof SignedReviewReceiptAppendConflictError) {
+    if (error instanceof kind.conflictError) {
       throw new ThreadloopError('SIGNED_RECEIPT_CONFLICT', error.message, { cause: error });
     }
     if (error instanceof StoredEvidenceCorruptedError) {
@@ -294,7 +291,7 @@ export async function importSignedReviewReceiptPackage(
     if (isErrorCode(error, 'EEXIST')) {
       throw new ThreadloopError(
         'SIGNED_RECEIPT_CONFLICT',
-        `Signed review receipt ${artifact.receipt_id} already has an unindexed package at its controlled path.`,
+        `${kind.label} ${artifact.receipt_id} already has an unindexed package at its controlled path.`,
         { cause: error },
       );
     }
@@ -408,24 +405,14 @@ async function prepareImport<TEnvelope extends ImportEnvelope>(
       details: { session_id: input.sessionId },
     });
   }
-  let canonicalPlan: ReturnType<typeof canonicalizeProofPlan>;
-  try {
-    canonicalPlan = canonicalizeProofPlan(JSON.parse(storedProof.plan.json) as unknown, sha256);
-  } catch (error) {
-    throw new ThreadloopError('PROOF_PLAN_CORRUPTED', 'The stored proof plan is invalid.', { cause: error });
-  }
-  if (canonicalPlan.json !== storedProof.plan.json || canonicalPlan.sha256 !== storedProof.plan.sha256) {
-    throw new ThreadloopError('PROOF_PLAN_CORRUPTED', 'The stored proof plan digest does not match its contents.');
+  const bound = bindStoredProofPlan(storedProof.plan, sha256);
+  if ('problem' in bound) {
+    throw new ThreadloopError('PROOF_PLAN_CORRUPTED', bound.problem);
   }
   return {
     repoRoot,
     lifecycle,
-    plan: {
-      ...canonicalPlan,
-      baselineBranch: storedProof.plan.baselineBranch,
-      baselineHeadSha: storedProof.plan.baselineHeadSha,
-      createdAt: storedProof.plan.createdAt,
-    },
+    plan: bound.plan,
     packageValue,
     envelope,
     fileSystem: input.receiptFileSystem,
@@ -661,26 +648,6 @@ function mapSigstoreReceiptError(error: unknown) {
     | 'SIGNED_RECEIPT_SIGNATURE_INVALID'
     | 'SIGNED_RECEIPT_VERIFICATION_UNAVAILABLE';
   return new ThreadloopError(code, error.message, { cause: error });
-}
-
-async function resolveRepositoryRoot(cwd: string) {
-  try {
-    return await resolveRepoRoot(cwd);
-  } catch (error) {
-    throw new ThreadloopError('NOT_GIT_REPOSITORY', 'ThreadLoop requires a Git repository. Run `git init` first.', {
-      cause: error,
-    });
-  }
-}
-
-async function assertInitializedReadOnly(repoRoot: string) {
-  if (!isThreadloopInitialized(repoRoot)) {
-    throw new ThreadloopError(
-      'THREADLOOP_NOT_INITIALIZED',
-      'ThreadLoop is not initialized in this repo. Run `threadloop init` first.',
-    );
-  }
-  await readConfig(repoRoot);
 }
 
 function isErrorCode(error: unknown, code: string) {

@@ -1190,6 +1190,27 @@ describe('signed review receipt import', () => {
     expect(repairTransitionCount(fixture.repoDir)).toBe(3);
   });
 
+  it('keeps the review snapshot that opened a repair as its basis even if that evidence later reads as corrupt', async () => {
+    const fixture = await makeAuthoritativeReviewingSession();
+    const blocker = blockingReviewArtifact(fixture, 'review_opens_repair', 'Fix before readiness');
+    const imported = await importSessionReviewReceipt({
+      cwd: fixture.repoDir,
+      sessionId: fixture.sessionId,
+      packagePath: await writePackage(fixture, blocker),
+      verifyReceipt: () => verifier(blocker),
+    });
+    await transitionSession(fixture.repoDir, fixture.sessionId, 'repairing', 6, 'review-basis:open');
+    await writeFile(path.join(fixture.repoDir, 'repair.txt'), 'review repair\n', 'utf8');
+    await commitFixtureChanges(fixture, 'repair the review finding', ['repair.txt']);
+    await writeFile(
+      path.join(fixture.repoDir, imported.receipt.package.path),
+      Buffer.alloc(10 * 1024 * 1024 + 1, 0x20),
+    );
+
+    await transitionSession(fixture.repoDir, fixture.sessionId, 'verifying', 7, 'review-basis:verify');
+    expect(readLifecycle(fixture.repoDir)).toEqual({ status: 'verifying', state_version: 8 });
+  });
+
   it('requires a descendant commit after the exact evidence that opened each repair cycle', async () => {
     const fixture = await makeAuthoritativeReviewingSession([
       'node',
