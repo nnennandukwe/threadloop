@@ -93,7 +93,10 @@ export async function validateCommunityRepository(repositoryRoot: string): Promi
     return result.data;
   };
   const collectLinks = (content: string, file: string) => {
-    for (const match of content.matchAll(/\]\(([^)\s]+)/g)) links.push({ file, target: match[1] as string });
+    // A destination is either wrapped in angle brackets, where spaces and parentheses are allowed, or bare.
+    for (const match of content.matchAll(/\]\((?:<([^>\n]*)>|([^)\s]+))/g)) {
+      links.push({ file, target: (match[1] ?? match[2]) as string });
+    }
   };
 
   const templates = path.join(repositoryRoot, '.github', 'ISSUE_TEMPLATE');
@@ -138,10 +141,8 @@ export async function validateCommunityRepository(repositoryRoot: string): Promi
     if (content !== undefined) collectLinks(content, file);
   }
 
-  for (const link of links) {
-    const where = label(link.file);
-    // Markdown allows a destination wrapped in angle brackets.
-    const target = link.target.replace(/^<(.*)>$/, '$1');
+  for (const { file, target } of links) {
+    const where = label(file);
     if (/^[A-Za-z][A-Za-z\d+.-]*:/.test(target)) {
       if (!target.startsWith('https://') || !URL.canParse(target)) {
         errors.push(`${where}: external URL must use HTTPS: ${target}`);
@@ -159,7 +160,7 @@ export async function validateCommunityRepository(repositoryRoot: string): Promi
     }
     const resolved = decoded.startsWith('/')
       ? path.join(repositoryRoot, decoded.slice(1))
-      : path.resolve(path.dirname(link.file), decoded);
+      : path.resolve(path.dirname(file), decoded);
     const relative = path.relative(repositoryRoot, resolved);
     if (relative.startsWith('..') || path.isAbsolute(relative)) {
       errors.push(`${where}: local link leaves the repository: ${target}`);
