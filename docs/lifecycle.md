@@ -59,12 +59,11 @@ historical entries remain counted, while new entries are allowed only for post-P
 `threadloop session next --session <id> --json` is read-only and returns one deterministic candidate or `null`. It
 reports live Git facts without refreshing persisted snapshots. It rehashes the latest receipt manifest and output
 artifacts, classifies local proof as missing/current/stale/failed/corrupt, and reports independent CI proof as
-policy-missing/missing/passed/stale/corrupt. It also reports the three-cycle repair budget. Reading schema v2 or v3
-reports proof migration without writing newer objects. Contract v4 also reports lifecycle phase and schema status,
-pre-PR review evidence, the exact implementation basis, lifecycle history, current signed-review findings and
-approval/merge state, audit validity/root/coverage, and one next human action. Reading schema v6 returns
-`migration_required` without mutation; run `threadloop init` outside the runner to perform the transactional v8
-migration.
+policy-missing/missing/passed/stale/corrupt. It also reports the three-cycle repair budget. Contract v4 also reports
+lifecycle phase and schema status, pre-PR review evidence, the exact implementation basis, lifecycle history, current
+signed-review findings and approval/merge state, audit validity/root/coverage, and one next human action. Reading schema
+v7 returns `migration_required` without mutation; run `threadloop init` outside the runner to perform the transactional
+v8 migration.
 
 `threadloop session transition` requires the caller's expected state version and an idempotency key. State mutation,
 transition history, idempotency outcome, audit guard decision, active projection, and session completion are one
@@ -147,7 +146,7 @@ evidence-bearing transition to `blocked`.
 
 ## Audit coverage
 
-New sessions begin with `session_started`. Sessions created before schema v6 receive exactly one `audit_activated`
-genesis event with `coverage: schema_v6_forward`; ThreadLoop does not invent earlier decisions. Audit corruption blocks
-controller writes and export but leaves semantic note reads available for diagnosis. `session next` is a read-only
-projection and creates no audit event.
+New sessions begin with `session_started`. Sessions created before schema v6 carry exactly one `audit_activated` genesis
+event with `coverage: schema_v6_forward`, recorded when they were upgraded; ThreadLoop does not invent earlier
+decisions. Audit corruption blocks controller writes and export but leaves semantic note reads available for diagnosis.
+`session next` is a read-only projection and creates no audit event.

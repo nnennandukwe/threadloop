@@ -117,7 +117,6 @@ export interface StateData {
   sessions: Session[];
   entries: Entry[];
   artifacts: Artifact[];
-  active: ActiveState | null;
   activeSessions: ActiveState[];
 }
 

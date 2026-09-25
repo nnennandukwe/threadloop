@@ -14,7 +14,7 @@ import {
   applySessionTransition,
   EvidenceChangedError,
   readSessionEvidenceWatermarkReadOnly,
-  resetSqliteConnections,
+  closeSqliteConnections,
 } from '../../src/adapters/fs/sqlite-store.js';
 import {
   buildInTotoReceiptStatement,
@@ -28,7 +28,6 @@ import { canonicalizeTransitionRequest, type TransitionRequest } from '../../src
 import {
   buildInTotoReviewStatement,
   canonicalizeSignedReviewReceiptArtifact,
-  REVIEW_IN_TOTO_PAYLOAD_TYPE,
   SIGNED_REVIEW_RECEIPT_MEDIA_TYPE,
   type SignedReviewReceiptArtifact,
 } from '../../src/domain/review.js';
@@ -256,7 +255,7 @@ async function writePackage(
         mediaType: 'application/vnd.dev.sigstore.bundle.v0.3+json',
         dsseEnvelope: {
           payload: Buffer.from(canonicalJson(statement)).toString('base64'),
-          payloadType: REVIEW_IN_TOTO_PAYLOAD_TYPE,
+          payloadType: IN_TOTO_PAYLOAD_TYPE,
           signatures: [{ keyid: '', sig: 'c2lnbmF0dXJl' }],
         },
         verificationMaterial: {
@@ -445,7 +444,7 @@ function blockingReviewArtifact(fixture: ReviewFixture, receiptId: string, body:
 }
 
 afterEach(async () => {
-  await resetSqliteConnections();
+  closeSqliteConnections();
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
@@ -492,7 +491,7 @@ describe('signed review receipt import', () => {
       first.receipt.package.sha256,
     );
 
-    await resetSqliteConnections(fixture.repoDir);
+    closeSqliteConnections(fixture.repoDir);
     const db = new DatabaseSync(path.join(fixture.repoDir, '.threadloop/state/state.db'), { readOnly: true });
     try {
       expect(db.prepare(`SELECT COUNT(*) AS count FROM signed_review_receipts`).get()).toEqual({ count: 1 });
@@ -512,7 +511,7 @@ describe('signed review receipt import', () => {
 
   it('maps a missing audit genesis before importing signed review evidence', async () => {
     const fixture = await makeReviewingSession();
-    await resetSqliteConnections(fixture.repoDir);
+    closeSqliteConnections(fixture.repoDir);
     const dbPath = path.join(fixture.repoDir, '.threadloop/state/state.db');
     const corrupt = new DatabaseSync(dbPath);
     corrupt.exec(`
@@ -554,7 +553,7 @@ describe('signed review receipt import', () => {
     const fixture = await makeReviewingSession();
     const artifact = reviewArtifact(fixture);
     const packagePath = await writePackage(fixture, artifact);
-    await resetSqliteConnections(fixture.repoDir);
+    closeSqliteConnections(fixture.repoDir);
     const dbPath = path.join(fixture.repoDir, '.threadloop/state/state.db');
     const corrupt = new DatabaseSync(dbPath);
     corrupt.prepare(`UPDATE tasks SET state_version = 7`).run();

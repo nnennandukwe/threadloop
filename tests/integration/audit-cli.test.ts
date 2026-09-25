@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { parseJson, runCli, runCliFailure } from '../helpers/cli.js';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
-import { resetSqliteConnections } from '../../src/adapters/fs/sqlite-store.js';
+import { closeSqliteConnections } from '../../src/adapters/fs/sqlite-store.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
 import { exportSessionAudit, transitionSession } from '../../src/services/session-service.js';
 
@@ -47,7 +47,7 @@ async function makeSession() {
 }
 
 afterEach(async () => {
-  await resetSqliteConnections();
+  closeSqliteConnections();
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
@@ -208,7 +208,7 @@ describe('audit CLI', () => {
     },
   ])('fails closed when the audit ledger is $name', async ({ expectedCode, mutate }) => {
     const fixture = await makeSession();
-    await resetSqliteConnections(fixture.repoDir);
+    closeSqliteConnections(fixture.repoDir);
     const db = new DatabaseSync(path.join(fixture.repoDir, '.threadloop/state/state.db'));
     try {
       mutate(db);
@@ -263,7 +263,7 @@ describe('audit CLI', () => {
 
   it('reports corruption and blocks later controller mutations without changing lifecycle state', async () => {
     const fixture = await makeSession();
-    await resetSqliteConnections(fixture.repoDir);
+    closeSqliteConnections(fixture.repoDir);
     const dbPath = path.join(fixture.repoDir, '.threadloop/state/state.db');
     const db = new DatabaseSync(dbPath);
     try {
@@ -437,7 +437,7 @@ describe('audit CLI', () => {
       },
     });
 
-    await resetSqliteConnections(fixture.repoDir);
+    closeSqliteConnections(fixture.repoDir);
     const db = new DatabaseSync(path.join(fixture.repoDir, '.threadloop/state/state.db'));
     try {
       db.prepare(`DROP TRIGGER audit_events_no_update`).run();
@@ -513,7 +513,7 @@ describe('audit CLI', () => {
     },
   ])('reports a structured $name mismatch through the public command', async ({ expectedCode, mutate }) => {
     const fixture = await makeSession();
-    await resetSqliteConnections(fixture.repoDir);
+    closeSqliteConnections(fixture.repoDir);
     const db = new DatabaseSync(path.join(fixture.repoDir, '.threadloop/state/state.db'));
     try {
       db.prepare(`DROP TRIGGER audit_events_no_update`).run();
