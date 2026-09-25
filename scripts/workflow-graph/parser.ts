@@ -1,11 +1,6 @@
 import { isAlias, isScalar, parseDocument, visit } from 'yaml';
-import {
-  diagnostic,
-  validateShape,
-  workflowProfileSchema,
-  type ValidationResult,
-  type WorkflowProfile,
-} from './contracts.js';
+import { diagnostic, validateShape, type ValidationResult } from '../contract-kernel/kernel.js';
+import { workflowProfileSchema, type WorkflowProfile } from './contracts.js';
 
 export function parseWorkflowProfile(source: string): ValidationResult<WorkflowProfile> {
   try {

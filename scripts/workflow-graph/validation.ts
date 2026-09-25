@@ -1,4 +1,5 @@
-import { diagnostic, type Diagnostic, type WorkflowProfile } from './contracts.js';
+import { diagnostic, type Diagnostic } from '../contract-kernel/kernel.js';
+import type { WorkflowProfile } from './contracts.js';
 
 type Edge = WorkflowProfile['transitions'][number];
 

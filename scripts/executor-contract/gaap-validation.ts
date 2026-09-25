@@ -1,8 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { Ajv2020 } from 'ajv/dist/2020.js';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
-import { same } from '../controller-contract/validation.js';
-import type { ValidationResult } from '../workflow-graph/contracts.js';
+import { same, type ValidationResult } from '../contract-kernel/kernel.js';
 import { canonicalExecutorJson, invalid, validateJsonValue } from './codec.js';
 import type { GaapEvent, GaapReceipt, GaapRequest } from './gaap-types.js';
 

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { digest } from '../../scripts/contract-kernel/kernel.js';
 import {
   applyExecutionOperation,
   createExecutionJournal,
-  executionDigest,
   projectControllerExecution,
   replayExecutionJournal,
 } from '../../scripts/execution-contract/model.js';
@@ -16,6 +16,7 @@ import {
   receiptFor,
   target,
 } from '../fixtures/execution-contract.js';
+import { codes } from '../fixtures/contracts.js';
 
 async function admittedExecution() {
   const fixture = await executionFixture();
@@ -32,11 +33,11 @@ describe('Independent execution authority', () => {
   it('allows an independently admitted policy rotation without granting the revoked actor authority', async () => {
     const { journal, context, authority, admit } = await admittedExecution();
     const current = structuredClone(context);
-    const replacement = { id: 'current_controller', digest: executionDigest('current controller') };
+    const replacement = { id: 'current_controller', digest: digest('current controller') };
     current.snapshot.policy.rules.authorities = current.snapshot.policy.rules.authorities.map((item) =>
       item.type === 'threadloop' ? { ...item, identity: replacement } : item,
     );
-    current.snapshot.policy.digest = executionDigest(current.snapshot.policy.rules);
+    current.snapshot.policy.digest = digest(current.snapshot.policy.rules);
     const revoked = operationFor(journal, current.actor, { kind: 'cancel', reason: 'Revoked actor' });
     admit({ kind: 'operation', execution_digest: journal.execution_digest, context: current, operation: revoked });
     const denied = applyExecutionOperation(journal, current, revoked, authority);
@@ -52,9 +53,9 @@ describe('Independent execution authority', () => {
   it('rejects a fabricated current policy that grants the caller human authority', async () => {
     const { journal, context, authority } = await admittedExecution();
     const forged = structuredClone(context);
-    forged.actor = { kind: 'human', identity: { id: 'attacker', digest: executionDigest('attacker') } };
+    forged.actor = { kind: 'human', identity: { id: 'attacker', digest: digest('attacker') } };
     forged.snapshot.policy.rules.authorities.push({ type: 'human', identity: forged.actor.identity });
-    forged.snapshot.policy.digest = executionDigest(forged.snapshot.policy.rules);
+    forged.snapshot.policy.digest = digest(forged.snapshot.policy.rules);
     const result = applyExecutionOperation(
       journal,
       forged,
@@ -101,11 +102,18 @@ describe('Independent execution authority', () => {
     const operation = operationFor(journal, context.actor, { kind: 'cancel', reason: 'Authorized cancellation' });
     admit({ kind: 'operation', execution_digest: journal.execution_digest, context, operation });
     const substituted = { ...operation, command: { kind: 'invalidate', reason: 'integrity_failure' } };
-    expect(applyExecutionOperation(journal, context, substituted, authority).ok).toBe(false);
+    expect(codes(applyExecutionOperation(journal, context, substituted, authority))).toEqual([
+      'UNTRUSTED_EXECUTION_INPUT',
+    ]);
     const applied = applyExecutionOperation(journal, context, operation, authority);
     if (!applied.ok) throw new Error(JSON.stringify(applied));
-    expect(applyExecutionOperation(applied.value.journal, context, operation, authority).ok).toBe(false);
-    expect(projectControllerExecution(journal, context.snapshot, authority).ok).toBe(false);
+    // The admission bound the old journal digest, so it cannot authorize the same operation again.
+    expect(codes(applyExecutionOperation(applied.value.journal, context, operation, authority))).toEqual([
+      'UNTRUSTED_EXECUTION_INPUT',
+    ]);
+    expect(codes(projectControllerExecution(journal, context.snapshot, authority))).toEqual([
+      'UNTRUSTED_EXECUTION_INPUT',
+    ]);
     admit({ kind: 'projection', execution_digest: journal.execution_digest, snapshot: context.snapshot });
     expect(projectControllerExecution(journal, context.snapshot, authority).ok).toBe(true);
     const unavailable = {
@@ -117,6 +125,8 @@ describe('Independent execution authority', () => {
       ok: false,
       diagnostics: [{ code: 'UNTRUSTED_EXECUTION_INPUT' }],
     });
-    expect(replayExecutionJournal(applied.value.journal, { isAdmitted: () => false }).ok).toBe(false);
+    expect(codes(replayExecutionJournal(applied.value.journal, { isAdmitted: () => false }))).toEqual([
+      'UNTRUSTED_EXECUTION_INPUT',
+    ]);
   });
 });

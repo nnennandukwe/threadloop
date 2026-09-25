@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { publishedSchemas } from '../contract-kernel/kernel.js';
 
 const identifier = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/);
 const references = z.array(identifier);
@@ -187,58 +188,10 @@ export type WorkflowProfile = z.infer<typeof workflowProfileSchema>;
 export type CompiledPayload = z.infer<typeof compiledPayloadSchema>;
 export type CompiledGraph = z.infer<typeof compiledGraphSchema>;
 
-export interface Diagnostic {
-  code: string;
-  path: string;
-  identifier: string | null;
-  message: string;
-  recovery: string;
-}
-
-export type ValidationResult<T> = { ok: true; value: T } | { ok: false; diagnostics: Diagnostic[] };
-
-export function diagnostic(
-  code: string,
-  path: string,
-  identifier: string | null,
-  message: string,
-  recovery: string,
-): Diagnostic {
-  return { code, path, identifier, message, recovery };
-}
-
-export function validateShape<T>(schema: z.ZodType<T>, value: unknown): ValidationResult<T> {
-  const result = schema.safeParse(value);
-  if (result.success) return { ok: true, value: result.data };
-  return {
-    ok: false,
-    diagnostics: result.error.issues.map((issue) =>
-      diagnostic(
-        issue.path.at(-1) === 'schema_version' || issue.path.at(-1) === 'graph_schema_version'
-          ? 'UNSUPPORTED_VERSION'
-          : 'SCHEMA_INVALID',
-        '$' + issue.path.map((part) => (typeof part === 'number' ? `[${part}]` : `.${String(part)}`)).join(''),
-        null,
-        issue.message,
-        'Use the published v0.1 schema and registered capability parameters; unknown fields are not ignored.',
-      ),
-    ),
-  };
-}
-
-export function publishedSchemas() {
-  const schemas = {
+export function publishedWorkflowGraphSchemas() {
+  return publishedSchemas('workflow-graph', {
     'workflow-profile': workflowProfileSchema,
     'compiled-graph': compiledGraphSchema,
     'graph-binding': graphBindingSchema,
-  };
-  return Object.fromEntries(
-    Object.entries(schemas).map(([name, schema]) => [
-      name,
-      {
-        ...z.toJSONSchema(schema, { target: 'draft-2020-12' }),
-        $id: `https://github.com/nnennandukwe/threadloop/contracts/workflow-graph/0.1/${name}`,
-      },
-    ]),
-  );
+  });
 }

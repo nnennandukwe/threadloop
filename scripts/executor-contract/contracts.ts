@@ -1,14 +1,14 @@
 import { z } from 'zod';
+import { digest as contentDigest, publishedSchemas } from '../contract-kernel/kernel.js';
 import { actionRequestSchema, subjectSchema } from '../controller-contract/contracts.js';
-import { executionDigest } from '../execution-contract/model.js';
 import { attemptReceiptSchema } from '../execution-contract/contracts.js';
 
 const text = z.string().min(1).regex(/\S/, 'Text must contain a non-whitespace character.');
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const counter = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const identity = z.strictObject({ id: text, digest });
-export const versionedIdentitySchema = z.strictObject({ name: text, version: text, digest });
-export const evidenceTypeSchema = z.enum([
+const versionedIdentitySchema = z.strictObject({ name: text, version: text, digest });
+const evidenceTypeSchema = z.enum([
   'approval',
   'command_output',
   'artifact',
@@ -17,14 +17,14 @@ export const evidenceTypeSchema = z.enum([
   'resource_usage',
   'interruption',
 ]);
-export const evidenceSchema = z.strictObject({ evidence_type: evidenceTypeSchema, digest, locator: text.nullable() });
-export const budgetSchema = z.strictObject({
+const evidenceSchema = z.strictObject({ evidence_type: evidenceTypeSchema, digest, locator: text.nullable() });
+const budgetSchema = z.strictObject({
   max_cost_micros: counter,
   max_elapsed_ms: counter,
   max_model_tokens: counter,
   max_tool_calls: counter,
 });
-export const usageSchema = z.strictObject({
+const usageSchema = z.strictObject({
   cost_micros: counter,
   elapsed_ms: counter,
   model_tokens: counter,
@@ -34,13 +34,13 @@ function uniqueArray<T extends z.ZodType>(element: T) {
   return z
     .array(element)
     .min(1)
-    .refine((items) => new Set(items.map(executionDigest)).size === items.length, {
+    .refine((items) => new Set(items.map(contentDigest)).size === items.length, {
       message: 'Array entries must be unique.',
     })
     .meta({ uniqueItems: true });
 }
 
-export const parametersSchema = z.strictObject({
+const parametersSchema = z.strictObject({
   subject_locator: text,
   capability: versionedIdentitySchema,
   task: z.strictObject({ instructions: text, constraints: z.array(text) }),
@@ -157,18 +157,14 @@ export type GaapMappingPolicy = z.infer<typeof gaapMappingPolicySchema>;
 export type Evidence = z.infer<typeof evidenceSchema>;
 
 export function publishedExecutorSchemas() {
-  return Object.fromEntries(
-    Object.entries({
+  return publishedSchemas(
+    'executor',
+    {
       'executor-request': executorRequestSchema,
       'executor-result': executorResultSchema,
       'gaap-mapping-policy': gaapMappingPolicySchema,
       'result-observation': resultObservationSchema,
-    }).map(([name, schema]) => [
-      name,
-      {
-        ...z.toJSONSchema(schema, { target: 'draft-2020-12', reused: 'inline' }),
-        $id: `https://github.com/nnennandukwe/threadloop/contracts/executor/0.1/${name}`,
-      },
-    ]),
+    },
+    { reused: 'inline' },
   );
 }

@@ -1,9 +1,8 @@
+import { same } from '../contract-kernel/kernel.js';
 import type { ControllerInput } from './contracts.js';
-import { canonicalJson } from '../../src/domain/canonical-json.js';
 
 type Receipt = ControllerInput['receipts'][number];
 type Guard = ControllerInput['compiled_graph']['graph']['guards'][number];
-const same = (left: unknown, right: unknown) => canonicalJson(left) === canonicalJson(right);
 
 export function hasBoundProofPlan(input: ControllerInput): boolean {
   return (
@@ -131,20 +130,11 @@ export function supportsGuard(
       if (guard.parameters.condition === 'current') return true;
       if (guard.parameters.condition === 'blocking') return blocking;
       if (guard.parameters.condition === 'clear') return !blocking;
+      // The complete current proof set: every configured local and independent gate passed.
+      const proof = { id: guard.id, required_actions: [] };
       return (
-        rules.local_gate_ids.length > 0 &&
-        rules.local_gate_ids.every((gate) =>
-          payloads.some(
-            (proof) =>
-              proof.type === 'local_proof' && proof.gate_id === gate && proof.result === 'passed' && proof.clean,
-          ),
-        ) &&
-        rules.independent_gate_ids.length > 0 &&
-        rules.independent_gate_ids.every((gate) =>
-          payloads.some(
-            (proof) => proof.type === 'independent_proof' && proof.gate_id === gate && proof.result === 'passed',
-          ),
-        )
+        supportsGuard(input, { ...proof, capability: 'local_proof', parameters: { result: 'passed' } }, receipts) &&
+        supportsGuard(input, { ...proof, capability: 'independent_proof', parameters: {} }, receipts)
       );
     }
     case 'human_approval':

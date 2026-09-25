@@ -1,10 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { digest } from '../../scripts/contract-kernel/kernel.js';
 import * as cryptoAdapter from '../../src/adapters/crypto/sha256.js';
-import {
-  applyExecutionOperation,
-  executionDigest,
-  replayExecutionJournal,
-} from '../../scripts/execution-contract/model.js';
+import { applyExecutionOperation, replayExecutionJournal } from '../../scripts/execution-contract/model.js';
 import { executionLimits } from '../../scripts/execution-contract/limits.js';
 import { initialExecution, grant, executorA, operationFor, operate } from '../fixtures/execution-contract.js';
 
@@ -69,7 +66,7 @@ describe('Bounded execution replay', () => {
       const operation = operationFor(journal, context.actor, grant, `delivery_${i}`);
       journal.execution.entries.push({ context, operation });
     }
-    journal.execution_digest = executionDigest(journal.execution);
+    journal.execution_digest = digest(journal.execution);
     const replayed = replayExecutionJournal(journal, authority);
     expect(replayed.ok).toBe(true);
     if (!replayed.ok) return;
@@ -105,7 +102,7 @@ describe('Bounded execution replay', () => {
         valid_until: `2026-09-10T10:${String(minute).padStart(2, '0')}:00.000Z`,
       });
       expect(current.result.code).toBe('CLAIM_RENEWED');
-      expect(current.journal.execution_digest).toBe(executionDigest(current.journal.execution));
+      expect(current.journal.execution_digest).toBe(digest(current.journal.execution));
     }
     expect(current.projection.claims).toHaveLength(1);
   });

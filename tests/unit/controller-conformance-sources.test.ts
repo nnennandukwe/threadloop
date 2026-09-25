@@ -1,4 +1,3 @@
-import { Ajv2020 } from 'ajv/dist/2020.js';
 import {
   fixtureSourceSchema,
   sharedValuesSchema,
@@ -6,6 +5,7 @@ import {
 } from '../../scripts/controller-conformance/contracts.js';
 import { describe, expect, it } from 'vitest';
 import { materializeFixtureSources } from '../../scripts/controller-conformance/sources.js';
+import { ajv } from '../fixtures/contracts.js';
 
 const source = (fixture: unknown) => ({ schema: 'threadloop.conformance-source/0.1', fixture });
 const shared = (values: Record<string, unknown>) => ({ schema: 'threadloop.conformance-shared/0.1', values });
@@ -78,10 +78,9 @@ describe('Portable fixture sources', () => {
 });
 
 it('Zod and published Ajv schemas reject malformed reference objects consistently', () => {
-  const ajv = new Ajv2020({ strict: true });
   const schemas = publishedConformanceSchemas();
-  const sourceValidator = ajv.compile(schemas.source!);
-  const sharedValidator = ajv.compile(schemas.shared!);
+  const sourceValidator = ajv().compile(schemas.source!);
+  const sharedValidator = ajv().compile(schemas.shared!);
   for (const invalid of [
     { $fixture_ref: 'graph', extra: true },
     { $fixture_ref: 1 },
@@ -98,7 +97,7 @@ it('Zod and published Ajv schemas reject malformed reference objects consistentl
   expect(sourceValidator(source({ nested: [ref('graph'), { name: 'literal' }] }))).toBe(true);
 });
 
-it('bounds total expansion across individually bounded cases (c8752963, 66bba7a2)', () => {
+it('bounds total expansion across individually bounded cases', () => {
   const values: Record<string, unknown> = { leaf: 'x'.repeat(1024) };
   let name = 'leaf';
   for (let index = 0; index < 13; index++) {
