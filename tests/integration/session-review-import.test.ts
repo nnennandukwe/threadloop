@@ -10,7 +10,12 @@ import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import { SigstoreReceiptVerificationError, type VerifiedSigstoreSigner } from '../../src/adapters/crypto/sigstore.js';
 import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
 import { nodeSignedReceiptFileSystem } from '../../src/adapters/fs/signed-receipt-files.js';
-import { applySessionTransition, resetSqliteConnections } from '../../src/adapters/fs/sqlite-store.js';
+import {
+  applySessionTransition,
+  EvidenceChangedError,
+  readSessionEvidenceWatermarkReadOnly,
+  resetSqliteConnections,
+} from '../../src/adapters/fs/sqlite-store.js';
 import {
   buildInTotoReceiptStatement,
   canonicalizeSignedGateReceiptArtifact,
@@ -708,6 +713,119 @@ describe('signed review receipt import', () => {
     ).rejects.toMatchObject({ code: 'SIGNED_RECEIPT_CONFLICT' });
     expect(reviewReceiptCount(fixture.repoDir)).toBe(1);
     expect(await readFile(path.join(fixture.repoDir, imported.receipt.package.path))).toEqual(authoritativeBytes);
+  });
+
+  it('rejects an older signed approval re-imported over a newer blocking review', async () => {
+    const fixture = await makeAuthoritativeReviewingSession();
+    const olderApproval = reviewArtifact(fixture, {
+      receipt_id: 'review_older_approval',
+      observed_at: '2026-07-26T12:00:00.000Z',
+    });
+    const newerBlocker = {
+      ...blockingReviewArtifact(fixture, 'review_newer_blocker', 'Newer finding'),
+      observed_at: '2026-07-26T12:05:00.000Z',
+    };
+    const importArtifact = async (artifact: SignedReviewReceiptArtifact) =>
+      importSessionReviewReceipt({
+        cwd: fixture.repoDir,
+        sessionId: fixture.sessionId,
+        packagePath: await writePackage(fixture, artifact),
+        verifyReceipt: () => verifier(artifact),
+      });
+    await importArtifact(newerBlocker);
+
+    const replay = (await importArtifact(olderApproval).catch((error: unknown) => error)) as Error;
+    expect(replay).toMatchObject({ code: 'SIGNED_RECEIPT_CONFLICT' });
+    expect(replay.message).toContain('was observed before already-imported review receipt review_newer_blocker');
+    expect(reviewReceiptCount(fixture.repoDir)).toBe(1);
+    const failure = await transitionSessionFailure(
+      fixture.repoDir,
+      fixture.sessionId,
+      'ready_for_human',
+      6,
+      'review:after-replay',
+    );
+    expect(failure.error.code).toBe('TRANSITION_GUARD_FAILED');
+  });
+
+  it('rejects review evidence for a different pull request than the session already imported', async () => {
+    const fixture = await makeAuthoritativeReviewingSession();
+    const first = reviewArtifact(fixture, { receipt_id: 'review_pr_42' });
+    await importSessionReviewReceipt({
+      cwd: fixture.repoDir,
+      sessionId: fixture.sessionId,
+      packagePath: await writePackage(fixture, first),
+      verifyReceipt: () => verifier(first),
+    });
+    const otherPullRequest = reviewArtifact(fixture, {
+      receipt_id: 'review_pr_43',
+      observed_at: '2026-07-26T12:05:00.000Z',
+      pull_request: { ...first.pull_request, number: 43, url: `${sourceRepository}/pull/43` },
+    });
+
+    const mismatch = (await importSessionReviewReceipt({
+      cwd: fixture.repoDir,
+      sessionId: fixture.sessionId,
+      packagePath: await writePackage(fixture, otherPullRequest),
+      verifyReceipt: () => verifier(otherPullRequest),
+    }).catch((error: unknown) => error)) as Error;
+    expect(mismatch).toMatchObject({ code: 'SIGNED_RECEIPT_CONFLICT' });
+    expect(mismatch.message).toContain('describes #43');
+    expect(reviewReceiptCount(fixture.repoDir)).toBe(1);
+  });
+
+  it('refuses to apply a transition whose guard evidence changed after evaluation, without burning the key', async () => {
+    const fixture = await makeAuthoritativeReviewingSession();
+    const clean = reviewArtifact(fixture, { receipt_id: 'review_clean_before_race' });
+    await importSessionReviewReceipt({
+      cwd: fixture.repoDir,
+      sessionId: fixture.sessionId,
+      packagePath: await writePackage(fixture, clean),
+      verifyReceipt: () => verifier(clean),
+    });
+    // The guard context a concurrent transition evaluated against: clean review, no blockers.
+    const evaluatedWatermark = readSessionEvidenceWatermarkReadOnly(fixture.repoDir, fixture.sessionId);
+    const blocker = {
+      ...blockingReviewArtifact(fixture, 'review_blocker_during_race', 'Arrived mid-transition'),
+      observed_at: '2026-07-26T12:05:00.000Z',
+    };
+    await importSessionReviewReceipt({
+      cwd: fixture.repoDir,
+      sessionId: fixture.sessionId,
+      packagePath: await writePackage(fixture, blocker),
+      verifyReceipt: () => verifier(blocker),
+    });
+    const request: TransitionRequest = {
+      sessionId: fixture.sessionId,
+      targetState: 'ready_for_human',
+      expectedStateVersion: 6,
+      actor: 'agent',
+      input: {},
+    };
+
+    await expect(
+      applySessionTransition(
+        fixture.repoDir,
+        {
+          ...request,
+          idempotencyKey: 'review:raced',
+          evidenceWatermark: evaluatedWatermark,
+          ...canonicalizeTransitionRequest(request, sha256),
+        },
+        () => ({ allowed: true, guardFailures: [], requiredWork: [] }),
+      ),
+    ).rejects.toBeInstanceOf(EvidenceChangedError);
+    expect(readLifecycle(fixture.repoDir)).toEqual({ status: 'reviewing', state_version: 6 });
+
+    // The same key is still unused, so a retry is evaluated against the blocker instead of replaying a result.
+    const retried = await transitionSessionFailure(
+      fixture.repoDir,
+      fixture.sessionId,
+      'ready_for_human',
+      6,
+      'review:raced',
+    );
+    expect(retried.error.code).toBe('TRANSITION_GUARD_FAILED');
   });
 
   it('serializes concurrent identical imports into one receipt and one audit event', async () => {
