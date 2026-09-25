@@ -86,6 +86,12 @@ export function integer(minimum: number, maximum: number) {
   );
 }
 
+export const positiveInteger = rule(
+  z.number({ error: 'must be a positive integer' }),
+  (value) => Number.isSafeInteger(value) && value >= 1,
+  'must be a positive integer',
+);
+
 export const sha256Digest = rule(
   z.string({ error: 'must be a lowercase SHA-256 digest' }),
   (value) => /^[0-9a-f]{64}$/.test(value),
@@ -103,6 +109,16 @@ export const canonicalTimestamp = rule(
   text(64),
   (value) => Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value,
   'must be a canonical UTC ISO-8601 timestamp',
+);
+
+/**
+ * Any timestamp `Date.parse` accepts. Review snapshots carry GitHub's timestamps verbatim, which omit
+ * milliseconds, so the canonical form would reject every real review.
+ */
+export const parsableTimestamp = rule(
+  text(64),
+  (value) => Number.isFinite(Date.parse(value)),
+  'must be an ISO timestamp',
 );
 
 export const githubRepository = rule(

@@ -3,12 +3,12 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { sha256 } from '../src/adapters/crypto/sha256.js';
 import { signSigstoreStatement } from '../src/adapters/crypto/sigstore.js';
+import { IN_TOTO_PAYLOAD_TYPE } from '../src/domain/attestation.js';
 import { canonicalJson } from '../src/domain/canonical-json.js';
 import {
   authorizeReviewReportForSigning,
   buildInTotoReviewStatement,
   canonicalizeSignedReviewReceiptArtifact,
-  REVIEW_IN_TOTO_PAYLOAD_TYPE,
   SIGNED_REVIEW_RECEIPT_MEDIA_TYPE,
 } from '../src/domain/review.js';
 import { positiveIntegerEnvironment, requiredEnvironment } from './sensor-environment.js';
@@ -49,7 +49,7 @@ const artifact = authorizeReviewReportForSigning(report, {
 });
 const canonicalArtifact = canonicalizeSignedReviewReceiptArtifact(artifact, sha256);
 const statement = buildInTotoReviewStatement(canonicalArtifact.artifact, canonicalArtifact.sha256);
-const bundle = await signSigstoreStatement(Buffer.from(canonicalJson(statement)), REVIEW_IN_TOTO_PAYLOAD_TYPE);
+const bundle = await signSigstoreStatement(Buffer.from(canonicalJson(statement)), IN_TOTO_PAYLOAD_TYPE);
 
 await mkdir(path.dirname(outputPath), { recursive: true });
 await writeFile(

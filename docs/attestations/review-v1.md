@@ -92,7 +92,8 @@ The canonical artifact records:
 
 The signed package media type is `application/vnd.threadloop.signed-review-receipt.v1+json`. Its DSSE payload is an
 in-toto Statement v1 whose first subject binds the reviewed pull-request HEAD and whose second subject binds the
-canonical review artifact digest. The payload must decode to UTF-8 canonical JSON.
+canonical review artifact digest. The payload must decode to UTF-8 canonical JSON equal to exactly the statement the
+canonical artifact implies.
 
 ## Verification and import
 
