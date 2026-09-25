@@ -1,139 +1,27 @@
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import { describe, expect, it } from 'vitest';
-import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
-import { readRepoSnapshot } from '../../src/adapters/fs/sqlite-store.js';
-import { isThreadloopError } from '../../src/contracts/errors.js';
-import {
-  captureEntry,
-  generateArtifact,
-  getStatus,
-  initThreadloop,
-  listSessions,
-  startTask,
-} from '../../src/services/session-service.js';
+import { afterEach, describe, expect, it } from 'vitest';
+import { cleanupTemporaryState, makeRepo } from '../helpers/session.js';
+import { withStateDb } from '../helpers/state-db.js';
+import { captureEntry, initThreadloop, startTask } from '../../src/services/session-service.js';
 
-const execFileAsync = promisify(execFile);
+afterEach(cleanupTemporaryState);
 
-async function makeRepo() {
-  const repoDir = await mkdtemp(path.join(os.tmpdir(), 'threadloop-service-'));
-  await execFileAsync('git', ['init'], { cwd: repoDir });
-  await execFileAsync('git', ['config', 'user.email', 'test@example.com'], { cwd: repoDir });
-  await execFileAsync('git', ['config', 'user.name', 'Test User'], { cwd: repoDir });
-  return repoDir;
-}
-
+// Auto-initialization, live artifact snapshots, and explicit selection among several active sessions are proven
+// end to end through the CLI in tests/integration/cli.test.ts.
 describe('session service', () => {
-  it('auto-initializes a repo on startTask and records agent issue metadata', async () => {
-    const repoDir = await makeRepo();
-
-    const started = await startTask({
-      cwd: repoDir,
-      title: 'Auto init task',
-      goal: 'Start without manual init',
-      constraints: [],
-      baseRef: null,
-      issueRef: 'ISSUE-13',
-      actor: 'agent',
-    });
-
-    const status = await getStatus(repoDir, started.session.id);
-    expect(status.task.issueRef).toBe('ISSUE-13');
-    expect(status.task).toMatchObject({ status: 'queued', stateVersion: 0 });
-    expect(status.entries[0]).toMatchObject({ kind: 'intent', source: 'agent' });
-    expect(status.repoSnapshot).not.toBeNull();
-  });
-
-  it('uses a live snapshot when generating an artifact for an active session', async () => {
-    const repoDir = await makeRepo();
-
-    const started = await startTask({
-      cwd: repoDir,
-      title: 'Live artifact snapshot',
-      goal: 'Refresh scope during artifact generation',
-      constraints: [],
-      baseRef: null,
-    });
-
-    await writeFile(path.join(repoDir, 'feature.ts'), 'export const feature = true;\n', 'utf8');
-
-    const artifact = await generateArtifact(repoDir, 'change-brief', started.session.id);
-    const content = await readFile(artifact.fullPath, 'utf8');
-    const storedSnapshot = await readRepoSnapshot(repoDir, started.session.id);
-
-    expect(artifact.artifact.snapshotSource).toBe('live');
-    expect(content).toContain('feature.ts');
-    expect(storedSnapshot?.changedFiles).toContain('feature.ts');
-  });
-
-  it('requires explicit selection when multiple sessions are active', async () => {
-    const repoDir = await makeRepo();
-    await initThreadloop(repoDir);
-
-    const first = await startTask({
-      cwd: repoDir,
-      title: 'First task',
-      goal: 'Track first task',
-      constraints: [],
-      baseRef: null,
-    });
-    const second = await startTask({
-      cwd: repoDir,
-      title: 'Second task',
-      goal: 'Track second task',
-      constraints: [],
-      baseRef: null,
-    });
-
-    await expect(generateArtifact(repoDir, 'change-brief')).rejects.toSatisfy((error: unknown) => {
-      expect(isThreadloopError(error)).toBe(true);
-      expect((error as { code?: string }).code).toBe('SESSION_AMBIGUOUS');
-      return true;
-    });
-
-    const captured = await captureEntry({
-      cwd: repoDir,
-      sessionId: second.session.id,
-      kind: 'decision',
-      body: 'Explicit capture works',
-      because: 'Machine consumers target sessions directly',
-    });
-    expect(captured.session.id).toBe(second.session.id);
-
-    const listed = await listSessions(repoDir);
-    expect(listed.sessions).toHaveLength(2);
-    expect(listed.sessions.find((item) => item.session.id === first.session.id)?.active).toBe(true);
-    expect(listed.sessions.find((item) => item.session.id === second.session.id)?.active).toBe(true);
-  });
-
   it('resolves sessions from tasks and sessions, never from the stored active-session projection', async () => {
     const repoDir = await makeRepo();
     await initThreadloop(repoDir);
+    const task = (title: string) =>
+      startTask({ cwd: repoDir, title, goal: `Own ${title}`, constraints: [], baseRef: null });
+    const first = await task('First registry task');
+    const second = await task('Second registry task');
 
-    const first = await startTask({
-      cwd: repoDir,
-      title: 'First registry task',
-      goal: 'Own the first session',
-      constraints: [],
-      baseRef: null,
-    });
-    const second = await startTask({
-      cwd: repoDir,
-      title: 'Second registry task',
-      goal: 'Own the second session',
-      constraints: [],
-      baseRef: null,
-    });
-
-    const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'));
-    try {
-      db.prepare(`UPDATE active_sessions SET task_id = ? WHERE session_id = ?`).run(second.task.id, first.session.id);
-    } finally {
-      db.close();
-    }
+    withStateDb(
+      repoDir,
+      (db) =>
+        db.prepare(`UPDATE active_sessions SET task_id = ? WHERE session_id = ?`).run(second.task.id, first.session.id),
+      { readOnly: false },
+    );
 
     const captured = await captureEntry({
       cwd: repoDir,
