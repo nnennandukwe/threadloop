@@ -121,7 +121,9 @@ export async function collectGitHubReviewSnapshot(
     const nodes = array(reviews.nodes, 'GitHub pull request reviews.nodes');
     for (const [index, value] of nodes.entries()) {
       const review = object(value, `GitHub pull request reviews.nodes[${index}]`);
-      if (review.state !== 'APPROVED') {
+      // GitHub reports a deleted account as a null author, and a review whose commit is gone as a null commit.
+      // Neither can be a current approval by an identified human, so they are left out rather than failing.
+      if (review.state !== 'APPROVED' || review.author === null || review.commit === null) {
         continue;
       }
       const author = object(review.author, `GitHub approved review ${index}.author`);
@@ -237,7 +239,13 @@ async function queryPullRequest(
   try {
     value = (await response.json()) as unknown;
   } catch (error) {
-    throw new Error('GitHub GraphQL review query returned invalid JSON.', { cause: error });
+    // An error page is often HTML; the status is the useful part of that failure.
+    throw new Error(
+      response.ok
+        ? 'GitHub GraphQL review query returned invalid JSON.'
+        : `GitHub GraphQL review query failed: HTTP ${response.status}`,
+      { cause: error },
+    );
   }
   const result = object(value, 'GitHub GraphQL response');
   const errors = Array.isArray(result.errors) ? result.errors : [];

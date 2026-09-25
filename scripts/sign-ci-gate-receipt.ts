@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { sha256 } from '../src/adapters/crypto/sha256.js';
 import { signSigstoreStatement } from '../src/adapters/crypto/sigstore.js';
@@ -12,7 +12,7 @@ import {
   type GitHubGateJobResult,
 } from '../src/domain/attestation.js';
 import { canonicalJson } from '../src/domain/canonical-json.js';
-import { gateSensorContext, requiredEnvironment } from './sensor-environment.js';
+import { gateSensorContext, readReport, requiredEnvironment } from './sensor-environment.js';
 
 const MAXIMUM_REPORT_BYTES = 1_048_576;
 
@@ -21,20 +21,7 @@ const reportPath = path.resolve(requiredEnvironment('THREADLOOP_REPORT_PATH'));
 const outputPath = path.resolve(requiredEnvironment('THREADLOOP_OUTPUT_PATH'));
 const jobResult = parseJobResult(requiredEnvironment('THREADLOOP_GATE_JOB_RESULT'));
 
-const reportMetadata = await stat(reportPath);
-if (!reportMetadata.isFile() || reportMetadata.size > MAXIMUM_REPORT_BYTES) {
-  throw new Error(`Captured gate report must be a regular file no larger than ${MAXIMUM_REPORT_BYTES} bytes.`);
-}
-const reportJson = await readFile(reportPath, 'utf8');
-if (Buffer.byteLength(reportJson) !== reportMetadata.size) {
-  throw new Error('Captured gate report changed while it was being read.');
-}
-let report: unknown;
-try {
-  report = JSON.parse(reportJson) as unknown;
-} catch {
-  throw new Error('Captured gate report must contain JSON.');
-}
+const report = await readReport(reportPath, MAXIMUM_REPORT_BYTES, 'gate');
 
 const artifact = authorizeGateReportForSigning(report, {
   receiptId: `receipt_${randomUUID()}`,
