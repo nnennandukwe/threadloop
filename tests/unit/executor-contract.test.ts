@@ -4,15 +4,16 @@ import { digest } from '../../scripts/contract-kernel/kernel.js';
 import { validateExecutorRequest, validateExecutorResult } from '../../scripts/executor-contract/validation.js';
 import { receiptFor } from '../fixtures/execution-contract.js';
 import type { ExecutorResult } from '../../scripts/executor-contract/contracts.js';
+import { codes } from '../fixtures/contracts.js';
 
 describe('Executor contract candidates', () => {
   it.each([
-    ['unknown version', { schema_version: 'threadloop.executor/999' }],
-    ['unknown field', { admission: { approved: true } }],
-  ])('rejects %s even with a fresh envelope hash', async (_name, changes) => {
+    ['unknown version', { schema_version: 'threadloop.executor/999' }, 'UNSUPPORTED_VERSION'],
+    ['unknown field', { admission: { approved: true } }, 'SCHEMA_INVALID'],
+  ])('rejects %s even with a fresh envelope hash', async (_name, changes, code) => {
     const { envelope } = await executorFixture();
     const request = { ...envelope.request, ...changes };
-    expect(validateExecutorRequest({ request, request_digest: digest(request) }).ok).toBe(false);
+    expect(codes(validateExecutorRequest({ request, request_digest: digest(request) }))).toEqual([code]);
   });
   it('validates a complete request without asserting runtime authority', async () => {
     const { envelope } = await executorFixture();
@@ -21,11 +22,11 @@ describe('Executor contract candidates', () => {
   it('rejects changed request contents and forged nested Action Request digests', async () => {
     const { envelope } = await executorFixture();
     envelope.request.parameters.task.instructions = 'Different task';
-    expect(validateExecutorRequest(envelope).ok).toBe(false);
+    expect(codes(validateExecutorRequest(envelope))).toEqual(['REQUEST_DIGEST_MISMATCH']);
     envelope.request_digest = digest(envelope.request);
     envelope.request.action_request.request_digest = 'f'.repeat(64);
     envelope.request_digest = digest(envelope.request);
-    expect(validateExecutorRequest(envelope).ok).toBe(false);
+    expect(codes(validateExecutorRequest(envelope))).toEqual(['REQUEST_DIGEST_MISMATCH']);
   });
   it('validates a correlated result but rejects a changed claim even with fresh hashes', async () => {
     const fixture = await executorFixture();
@@ -59,6 +60,6 @@ describe('Executor contract candidates', () => {
     result.attempt_receipt.receipt.claim.version++;
     result.attempt_receipt.receipt_digest = digest(result.attempt_receipt.receipt);
     envelope.result_digest = digest(result);
-    expect(validateExecutorResult(envelope, fixture.envelope).ok).toBe(false);
+    expect(codes(validateExecutorResult(envelope, fixture.envelope))).toEqual(['RESULT_BINDING_MISMATCH']);
   });
 });

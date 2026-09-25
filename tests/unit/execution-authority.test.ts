@@ -16,6 +16,7 @@ import {
   receiptFor,
   target,
 } from '../fixtures/execution-contract.js';
+import { codes } from '../fixtures/contracts.js';
 
 async function admittedExecution() {
   const fixture = await executionFixture();
@@ -101,11 +102,18 @@ describe('Independent execution authority', () => {
     const operation = operationFor(journal, context.actor, { kind: 'cancel', reason: 'Authorized cancellation' });
     admit({ kind: 'operation', execution_digest: journal.execution_digest, context, operation });
     const substituted = { ...operation, command: { kind: 'invalidate', reason: 'integrity_failure' } };
-    expect(applyExecutionOperation(journal, context, substituted, authority).ok).toBe(false);
+    expect(codes(applyExecutionOperation(journal, context, substituted, authority))).toEqual([
+      'UNTRUSTED_EXECUTION_INPUT',
+    ]);
     const applied = applyExecutionOperation(journal, context, operation, authority);
     if (!applied.ok) throw new Error(JSON.stringify(applied));
-    expect(applyExecutionOperation(applied.value.journal, context, operation, authority).ok).toBe(false);
-    expect(projectControllerExecution(journal, context.snapshot, authority).ok).toBe(false);
+    // The admission bound the old journal digest, so it cannot authorize the same operation again.
+    expect(codes(applyExecutionOperation(applied.value.journal, context, operation, authority))).toEqual([
+      'UNTRUSTED_EXECUTION_INPUT',
+    ]);
+    expect(codes(projectControllerExecution(journal, context.snapshot, authority))).toEqual([
+      'UNTRUSTED_EXECUTION_INPUT',
+    ]);
     admit({ kind: 'projection', execution_digest: journal.execution_digest, snapshot: context.snapshot });
     expect(projectControllerExecution(journal, context.snapshot, authority).ok).toBe(true);
     const unavailable = {
@@ -117,6 +125,8 @@ describe('Independent execution authority', () => {
       ok: false,
       diagnostics: [{ code: 'UNTRUSTED_EXECUTION_INPUT' }],
     });
-    expect(replayExecutionJournal(applied.value.journal, { isAdmitted: () => false }).ok).toBe(false);
+    expect(codes(replayExecutionJournal(applied.value.journal, { isAdmitted: () => false }))).toEqual([
+      'UNTRUSTED_EXECUTION_INPUT',
+    ]);
   });
 });

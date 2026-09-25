@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { readFile } from 'node:fs/promises';
-import { Ajv2020 } from 'ajv/dist/2020.js';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
 import { canonicalExecutorJson, parseExecutorMessage } from '../../scripts/executor-contract/codec.js';
@@ -23,6 +22,7 @@ import {
 import type { ExecutionJournal } from '../../scripts/execution-contract/contracts.js';
 import type { ControllerInput } from '../../scripts/controller-contract/contracts.js';
 import type { GaapReceipt } from '../../scripts/executor-contract/gaap-types.js';
+import { codes, publishedValidators } from '../fixtures/contracts.js';
 
 const root = new URL('../../docs/contracts/executor-v0.1/', import.meta.url);
 async function json(path: string): Promise<unknown> {
@@ -128,12 +128,13 @@ describe('Published executor corpus', () => {
       const snapshot = structuredClone(fixture.snapshot);
       snapshot.binding.subject.content_digest = 'f'.repeat(64);
       const authority = executorFixtureAuthority(fixture.journal, snapshot, fixture.request);
-      expect(validateExecutorContext(fixture.request, fixture.journal, snapshot, authority).ok).toBe(false);
+      expect(codes(validateExecutorContext(fixture.request, fixture.journal, snapshot, authority))).toEqual([
+        'EXECUTOR_CONTEXT_MISMATCH',
+      ]);
     },
   );
   it('matches every generated schema and validates published examples offline', async () => {
-    const schemas = publishedExecutorSchemas();
-    const ajv = new Ajv2020({ strict: true, validateFormats: false });
+    const validators = await publishedValidators('executor', publishedExecutorSchemas());
     const fixture = await input();
     const examples: Record<string, unknown[]> = {
       'executor-request': [fixture.request],
@@ -162,10 +163,8 @@ describe('Published executor corpus', () => {
       examples['executor-result']!.push(mapped.value);
       examples['result-observation']!.push(scenario.observation);
     }
-    expect(Object.keys(examples).sort()).toEqual(Object.keys(schemas).sort());
-    for (const [name, schema] of Object.entries(schemas)) {
-      expect(await json(`schemas/${name}.schema.json`)).toEqual(schema);
-      const validate = ajv.compile(schema);
+    expect(Object.keys(examples).sort()).toEqual(Object.keys(validators).sort());
+    for (const [name, validate] of Object.entries(validators)) {
       expect(examples[name]!.length).toBeGreaterThan(0);
       for (const example of examples[name]!) {
         expect(validate(example), `${name}: ${JSON.stringify(validate.errors)}`).toBe(true);
@@ -296,15 +295,15 @@ describe('Published executor corpus', () => {
     }
   });
   it.each([
-    'ask_effect',
-    'wrong_completion_subject',
-    'stale_verifier',
-    'same_actor',
-    'missing_evidence',
-    'missing_interruption',
-    'nonterminal',
-    'changed_usage',
-  ])('rejects resealed semantic failure %s', async (mutation) => {
+    ['ask_effect', 'earlier matching allow decision'],
+    ['wrong_completion_subject', 'bind the current subject'],
+    ['stale_verifier', 'Completion requires'],
+    ['same_actor', 'different actor'],
+    ['missing_evidence', 'every requested evidence type'],
+    ['missing_interruption', 'Interrupted receipts require interruption evidence'],
+    ['nonterminal', 'must contain a terminal receipt'],
+    ['changed_usage', 'final usage must agree'],
+  ])('rejects resealed semantic failure %s', async (mutation, reason) => {
     const request = await json('upstream/gaap/agent-run-request.json');
     const receipt = (await json(
       `upstream/gaap/${mutation === 'missing_interruption' ? 'interrupted' : 'completed'}.json`,
@@ -335,6 +334,7 @@ describe('Published executor corpus', () => {
     const digest = gaapDigest(body);
     if (!digest.ok) throw new Error('Invalid test fixture');
     receipt.receipt_digest = digest.value;
-    expect(validateGaapReceipt(receipt, request).ok).toBe(false);
+    const result = validateGaapReceipt(receipt, request);
+    expect(result.ok || result.diagnostics[0]!.message).toContain(reason);
   });
 });
