@@ -4,14 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { runCli, runCliFailure } from '../helpers/cli.js';
-import {
-  appendEntryToSession,
-  closeSqliteConnections,
-  createId,
-  resetSqliteConnections,
-} from '../../src/adapters/fs/sqlite-store.js';
+import { appendEntryToSession, closeSqliteConnections, createId } from '../../src/adapters/fs/sqlite-store.js';
 import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
 import { createThreadloopProgram } from '../../src/cli-program.js';
 import { buildProtocolContract } from '../../src/contracts/protocol.js';
@@ -84,11 +79,6 @@ function readStoredRepoSnapshot(repoDir: string, sessionId: string) {
   } finally {
     db.close();
   }
-}
-
-async function resetSqliteConnectionLifecycle() {
-  await closeSqliteConnections();
-  await resetSqliteConnections();
 }
 
 async function runConcurrentMutationBurst(repoDir: string, sessionId: string, label: string) {
@@ -175,6 +165,11 @@ describe('threadloop CLI', () => {
     await execFileAsync('git', ['init'], { cwd: repoDir });
     await execFileAsync('git', ['config', 'user.email', 'test@example.com'], { cwd: repoDir });
     await execFileAsync('git', ['config', 'user.name', 'Test User'], { cwd: repoDir });
+  });
+
+  afterEach(async () => {
+    closeSqliteConnections();
+    await rm(repoDir, { recursive: true, force: true });
   });
 
   it('initializes, starts, captures, and generates an artifact', async () => {
@@ -285,344 +280,6 @@ describe('threadloop CLI', () => {
     expect(readStoredRepoSnapshot(repoDir, started.data.session_id)?.baseRef).toBe('main');
   });
 
-  it('migrates legacy state.json into SQLite and keeps the JSON file as backup', async () => {
-    const legacyState = {
-      tasks: [
-        {
-          id: 'task_legacy',
-          title: 'Legacy task',
-          goal: 'Preserve v1 data',
-          constraints: ['Keep history intact'],
-          repoRoot: repoDir,
-          status: 'active',
-          createdAt: '2026-03-14T12:00:00.000Z',
-        },
-      ],
-      sessions: [
-        {
-          id: 'session_legacy',
-          taskId: 'task_legacy',
-          startedAt: '2026-03-14T12:00:00.000Z',
-          endedAt: null,
-          baseRef: null,
-          branch: 'master',
-          headSha: 'HEAD',
-        },
-      ],
-      entries: [
-        {
-          id: 'entry_legacy',
-          sessionId: 'session_legacy',
-          kind: 'decision',
-          body: 'Legacy decision',
-          metadata: { because: 'Existing repo state' },
-          createdAt: '2026-03-14T12:01:00.000Z',
-          source: 'cli',
-        },
-      ],
-      artifacts: [],
-      active: {
-        taskId: 'task_legacy',
-        sessionId: 'session_legacy',
-      },
-    };
-
-    await mkdir(path.join(repoDir, '.threadloop/state'), { recursive: true });
-    await writeFile(
-      path.join(repoDir, '.threadloop/config.json'),
-      `${JSON.stringify({ version: 1, createdAt: '2026-03-14T12:00:00.000Z' }, null, 2)}\n`,
-      'utf8',
-    );
-    await writeFile(
-      path.join(repoDir, '.threadloop/state/state.json'),
-      `${JSON.stringify(legacyState, null, 2)}\n`,
-      'utf8',
-    );
-
-    const status = await runCli(repoDir, ['session', 'status', '--session', 'session_legacy']);
-    await runCli(repoDir, [
-      'session',
-      'capture',
-      'note',
-      'Migrated capture still works',
-      '--session',
-      'session_legacy',
-    ]);
-
-    expect(status.stdout).toContain('Task: Legacy task');
-    expect(existsSync(path.join(repoDir, '.threadloop/state/state.db'))).toBe(true);
-
-    const snapshot = readStateSnapshot(repoDir);
-    expect(snapshot.taskStatuses).toEqual(['queued']);
-    expect(snapshot.entryBodies).toContain('Legacy decision');
-    expect(snapshot.entryBodies).toContain('Migrated capture still works');
-
-    const legacyBackup = await readFile(path.join(repoDir, '.threadloop/state/state.json'), 'utf8');
-    expect(legacyBackup).toContain('Legacy decision');
-  });
-
-  it('migrates schema v1 task lifecycle state without losing active-session compatibility', async () => {
-    await mkdir(path.join(repoDir, '.threadloop/state'), { recursive: true });
-    await writeFile(
-      path.join(repoDir, '.threadloop/config.json'),
-      `${JSON.stringify({ version: 1, createdAt: '2026-07-23T12:00:00.000Z' }, null, 2)}\n`,
-      'utf8',
-    );
-    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
-    const db = new DatabaseSync(dbPath);
-    const now = '2026-07-23T12:00:00.000Z';
-
-    try {
-      db.exec(`
-        CREATE TABLE metadata (
-          key TEXT PRIMARY KEY,
-          value TEXT NOT NULL
-        );
-
-        CREATE TABLE tasks (
-          id TEXT PRIMARY KEY,
-          title TEXT NOT NULL,
-          goal TEXT NOT NULL,
-          constraints_json TEXT NOT NULL,
-          issue_ref TEXT,
-          repo_root TEXT NOT NULL,
-          status TEXT NOT NULL,
-          created_at TEXT NOT NULL
-        );
-
-        CREATE TABLE sessions (
-          id TEXT PRIMARY KEY,
-          task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-          started_at TEXT NOT NULL,
-          ended_at TEXT,
-          base_ref TEXT,
-          branch TEXT NOT NULL,
-          head_sha TEXT NOT NULL,
-          last_heartbeat_at TEXT,
-          last_heartbeat_source TEXT
-        );
-
-        CREATE TABLE entries (
-          id TEXT PRIMARY KEY,
-          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-          kind TEXT NOT NULL,
-          body TEXT NOT NULL,
-          metadata_json TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          source TEXT NOT NULL
-        );
-
-        CREATE TABLE artifacts (
-          id TEXT PRIMARY KEY,
-          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-          kind TEXT NOT NULL,
-          path TEXT NOT NULL,
-          template_version TEXT NOT NULL,
-          generated_at TEXT NOT NULL,
-          snapshot_source TEXT
-        );
-
-        CREATE TABLE active_state (
-          id INTEGER PRIMARY KEY CHECK (id = 1),
-          task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE
-        );
-
-        CREATE TABLE active_sessions (
-          session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
-          task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE
-        );
-
-        CREATE TABLE repo_snapshots (
-          session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
-          branch TEXT NOT NULL,
-          head_sha TEXT NOT NULL,
-          base_ref TEXT,
-          changed_files_json TEXT NOT NULL,
-          diff_stats_json TEXT NOT NULL,
-          commit_range_json TEXT NOT NULL,
-          reconciled_at TEXT NOT NULL
-        );
-      `);
-      db.prepare(`INSERT INTO metadata (key, value) VALUES ('schema_version', '1')`).run();
-      db.prepare(
-        `
-          INSERT INTO tasks (id, title, goal, constraints_json, issue_ref, repo_root, status, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-      ).run('task_active', 'Active v1 task', 'Migrate to queued', '[]', null, repoDir, 'active', now);
-      db.prepare(
-        `
-          INSERT INTO sessions (id, task_id, started_at, ended_at, base_ref, branch, head_sha, last_heartbeat_at, last_heartbeat_source)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-      ).run('session_active', 'task_active', now, null, null, 'feature/lifecycle', 'abc123', null, null);
-
-      db.prepare(
-        `
-          INSERT INTO tasks (id, title, goal, constraints_json, issue_ref, repo_root, status, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-      ).run('task_completed', 'Completed v1 task', 'Remain completed', '[]', null, repoDir, 'completed', now);
-      db.prepare(
-        `
-          INSERT INTO sessions (id, task_id, started_at, ended_at, base_ref, branch, head_sha, last_heartbeat_at, last_heartbeat_source)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-      ).run('session_completed', 'task_completed', now, now, null, 'feature/done', 'def456', null, null);
-
-      const taskColumns = db.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>;
-      expect(taskColumns.map((column) => column.name)).not.toContain('state_version');
-    } finally {
-      db.close();
-    }
-
-    const status = parseJsonOutput<{
-      data: {
-        task: { status: string; state_version: number };
-      };
-    }>((await runCli(repoDir, ['session', 'status', '--session', 'session_active', '--json'])).stdout);
-
-    expect(status.data.task).toMatchObject({ status: 'queued', state_version: 0 });
-
-    const migrated = new DatabaseSync(dbPath, { readOnly: true });
-    try {
-      const schemaVersion = migrated.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get() as
-        { value: string } | undefined;
-      expect(schemaVersion?.value).toBe('8');
-      expect(migrated.prepare(`SELECT id, status, state_version FROM tasks ORDER BY id`).all()).toEqual([
-        { id: 'task_active', status: 'queued', state_version: 0 },
-        { id: 'task_completed', status: 'completed', state_version: 0 },
-      ]);
-      expect(readScalarCount(migrated, 'SELECT COUNT(*) AS count FROM active_sessions')).toBe(1);
-    } finally {
-      migrated.close();
-    }
-  });
-
-  it('rejects unsupported schema metadata before migrating legacy state', async () => {
-    const legacyState = {
-      tasks: [
-        {
-          id: 'task_legacy',
-          title: 'Legacy task',
-          goal: 'Preserve v1 data',
-          constraints: [],
-          repoRoot: repoDir,
-          status: 'active',
-          createdAt: '2026-03-14T12:00:00.000Z',
-        },
-      ],
-      sessions: [
-        {
-          id: 'session_legacy',
-          taskId: 'task_legacy',
-          startedAt: '2026-03-14T12:00:00.000Z',
-          endedAt: null,
-          baseRef: null,
-          branch: 'master',
-          headSha: 'HEAD',
-        },
-      ],
-      entries: [],
-      artifacts: [],
-      active: {
-        taskId: 'task_legacy',
-        sessionId: 'session_legacy',
-      },
-    };
-
-    await mkdir(path.join(repoDir, '.threadloop/state'), { recursive: true });
-    await writeFile(
-      path.join(repoDir, '.threadloop/config.json'),
-      `${JSON.stringify({ version: 1, createdAt: '2026-03-14T12:00:00.000Z' }, null, 2)}\n`,
-      'utf8',
-    );
-    await writeFile(
-      path.join(repoDir, '.threadloop/state/state.json'),
-      `${JSON.stringify(legacyState, null, 2)}\n`,
-      'utf8',
-    );
-
-    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
-    const db = new DatabaseSync(dbPath);
-    db.exec(`
-      CREATE TABLE metadata (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-      );
-
-      CREATE TABLE tasks (
-        id TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        goal TEXT NOT NULL,
-        constraints_json TEXT NOT NULL,
-        repo_root TEXT NOT NULL,
-        status TEXT NOT NULL,
-        created_at TEXT NOT NULL
-      );
-
-      CREATE TABLE sessions (
-        id TEXT PRIMARY KEY,
-        task_id TEXT NOT NULL,
-        started_at TEXT NOT NULL,
-        ended_at TEXT,
-        base_ref TEXT,
-        branch TEXT NOT NULL,
-        head_sha TEXT NOT NULL
-      );
-
-      CREATE TABLE entries (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        body TEXT NOT NULL,
-        metadata_json TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        source TEXT NOT NULL
-      );
-
-      CREATE TABLE artifacts (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        path TEXT NOT NULL,
-        template_version TEXT NOT NULL,
-        generated_at TEXT NOT NULL
-      );
-
-      CREATE TABLE active_state (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        task_id TEXT NOT NULL,
-        session_id TEXT NOT NULL
-      );
-    `);
-    db.prepare(`INSERT INTO metadata (key, value) VALUES ('schema_version', '0')`).run();
-    db.prepare(`INSERT INTO active_state (id, task_id, session_id) VALUES (1, 'task_legacy', 'session_legacy')`).run();
-    db.close();
-
-    await expect(runCli(repoDir, ['session', 'list'])).rejects.toThrow('Unsupported ThreadLoop schema version: 0');
-
-    const migratedDb = new DatabaseSync(dbPath, { readOnly: true });
-    try {
-      expect(readScalarCount(migratedDb, 'SELECT COUNT(*) AS count FROM tasks')).toBe(0);
-      expect(
-        readScalarCount(
-          migratedDb,
-          `SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'active_sessions'`,
-        ),
-      ).toBe(0);
-      const sessionColumns = migratedDb.prepare(`PRAGMA table_info(sessions)`).all() as Array<{ name: string }>;
-      expect(sessionColumns.map((column) => column.name)).not.toContain('last_heartbeat_at');
-      expect(sessionColumns.map((column) => column.name)).not.toContain('last_heartbeat_source');
-    } finally {
-      migratedDb.close();
-    }
-
-    const legacyBackup = await readFile(path.join(repoDir, '.threadloop/state/state.json'), 'utf8');
-    expect(legacyBackup).toContain('Legacy task');
-  });
-
   it('rejects a newer schema before changing journal mode or bootstrapping tables', async () => {
     await mkdir(path.join(repoDir, '.threadloop/state'), { recursive: true });
     await writeFile(
@@ -664,89 +321,11 @@ describe('threadloop CLI', () => {
     }
   });
 
-  it('repairs a mismatched active-session task projection before materializing the session', async () => {
-    await runCli(repoDir, ['init']);
-    const first = parseJsonOutput<{ data: { session_id: string; task_id: string } }>(
-      (
-        await runCli(repoDir, [
-          'session',
-          'start',
-          'First projection task',
-          '--goal',
-          'Own the first session',
-          '--json',
-        ])
-      ).stdout,
-    );
-    const second = parseJsonOutput<{ data: { session_id: string; task_id: string } }>(
-      (
-        await runCli(repoDir, [
-          'session',
-          'start',
-          'Second projection task',
-          '--goal',
-          'Own the second session',
-          '--json',
-        ])
-      ).stdout,
-    );
-
-    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
-    const corrupted = new DatabaseSync(dbPath);
-    try {
-      corrupted
-        .prepare(`UPDATE active_sessions SET task_id = ? WHERE session_id = ?`)
-        .run(second.data.task_id, first.data.session_id);
-    } finally {
-      corrupted.close();
-    }
-
-    const capture = parseJsonOutput<{ data: { session_id: string; task: { id: string } } }>(
-      (
-        await runCli(repoDir, [
-          'session',
-          'capture',
-          'note',
-          'Projection repaired before capture',
-          '--session',
-          first.data.session_id,
-          '--json',
-        ])
-      ).stdout,
-    );
-
-    expect(capture.data).toMatchObject({
-      session_id: first.data.session_id,
-      task: { id: first.data.task_id },
-    });
-
-    const repaired = new DatabaseSync(dbPath, { readOnly: true });
-    try {
-      expect(
-        repaired.prepare(`SELECT task_id FROM active_sessions WHERE session_id = ?`).get(first.data.session_id),
-      ).toEqual({ task_id: first.data.task_id });
-    } finally {
-      repaired.close();
-    }
-  });
-
   it('reports malformed config JSON with the ThreadLoop error message', async () => {
     await mkdir(path.join(repoDir, '.threadloop/state'), { recursive: true });
     await writeFile(path.join(repoDir, '.threadloop/config.json'), '{not-json\n', 'utf8');
 
     await expect(runCli(repoDir, ['session', 'list'])).rejects.toThrow('Invalid .threadloop/config.json');
-  });
-
-  it('reports malformed legacy state JSON with the ThreadLoop error message', async () => {
-    await mkdir(path.join(repoDir, '.threadloop/state'), { recursive: true });
-    await writeFile(
-      path.join(repoDir, '.threadloop/config.json'),
-      `${JSON.stringify({ version: 1, createdAt: '2026-03-14T12:00:00.000Z' }, null, 2)}\n`,
-      'utf8',
-    );
-    await writeFile(path.join(repoDir, '.threadloop/state/state.json'), '{not-json\n', 'utf8');
-
-    await expect(runCli(repoDir, ['session', 'list'])).rejects.toThrow('Invalid .threadloop/state/state.json');
   });
 
   it('reports malformed SQLite JSON columns with the ThreadLoop error message', async () => {
@@ -1449,54 +1028,7 @@ describe('threadloop CLI', () => {
     expect(status.data.entries.kinds.intent).toBe(1);
   });
 
-  it('keeps SQLite-backed state intact under concurrent capture, heartbeat, and reconcile writes', async () => {
-    await runCli(repoDir, ['init']);
-    await writeFile(path.join(repoDir, 'feature.ts'), 'export const feature = true;\n', 'utf8');
-
-    const started = parseJsonOutput<{ data: { session_id: string } }>(
-      (await runCli(repoDir, ['session', 'start', 'Concurrent flow', '--goal', 'Stress SQLite writes', '--json']))
-        .stdout,
-    );
-    await runConcurrentMutationBurst(repoDir, started.data.session_id, 'Concurrent flow');
-  });
-
-  it('reopens cached sqlite handles after close/reset hooks and keeps writes working', async () => {
-    await runCli(repoDir, ['init']);
-    const started = parseJsonOutput<{ data: { session_id: string } }>(
-      (await runCli(repoDir, ['session', 'start', 'Resettable flow', '--goal', 'Exercise lifecycle hooks', '--json']))
-        .stdout,
-    );
-    const sessionId = started.data.session_id;
-
-    await runCli(repoDir, [
-      'session',
-      'capture',
-      'decision',
-      'First write before reset',
-      '--session',
-      sessionId,
-      '--json',
-    ]);
-    await resetSqliteConnectionLifecycle();
-
-    const statusAfterReset = parseJsonOutput<{
-      data: { entries: { count: number; kinds: Record<string, number> } };
-    }>((await runCli(repoDir, ['session', 'status', '--session', sessionId, '--json'])).stdout);
-
-    expect(statusAfterReset.data.entries.count).toBe(2);
-    expect(statusAfterReset.data.entries.kinds.intent).toBe(1);
-    expect(statusAfterReset.data.entries.kinds.decision).toBe(1);
-
-    await runCli(repoDir, ['session', 'capture', 'note', 'Second write after reset', '--session', sessionId, '--json']);
-    const statusAfterReuse = parseJsonOutput<{
-      data: { entries: { count: number; kinds: Record<string, number> } };
-    }>((await runCli(repoDir, ['session', 'status', '--session', sessionId, '--json'])).stdout);
-
-    expect(statusAfterReuse.data.entries.count).toBe(3);
-    expect(statusAfterReuse.data.entries.kinds.note).toBe(1);
-  });
-
-  it('keeps SQLite-backed state intact across repeated concurrent mutation bursts in one process', async () => {
+  it('keeps SQLite-backed state intact across repeated concurrent mutation bursts', async () => {
     await runCli(repoDir, ['init']);
     await writeFile(path.join(repoDir, 'feature.ts'), 'export const feature = true;\n', 'utf8');
 
@@ -1516,7 +1048,6 @@ describe('threadloop CLI', () => {
       );
 
       await runConcurrentMutationBurst(repoDir, started.data.session_id, `Concurrent flow ${round + 1}`);
-      await resetSqliteConnectionLifecycle();
     }
 
     const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });

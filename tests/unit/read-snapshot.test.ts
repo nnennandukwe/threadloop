@@ -3,19 +3,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
-import {
-  closeSqliteConnections,
-  ensureStateDatabase,
-  resetSqliteConnections,
-  withReadSnapshot,
-} from '../../src/adapters/fs/sqlite-store.js';
+import { closeSqliteConnections, ensureStateDatabase, withReadSnapshot } from '../../src/adapters/fs/sqlite-store.js';
 
 const temporaryRepos: string[] = [];
 const PROBE_KEY = 'read_snapshot_probe';
 
 afterEach(async () => {
-  await closeSqliteConnections();
-  await resetSqliteConnections();
+  closeSqliteConnections();
   await Promise.all(temporaryRepos.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 

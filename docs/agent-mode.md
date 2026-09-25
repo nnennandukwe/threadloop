@@ -34,10 +34,8 @@ Semantic vs mechanical operations:
 and commit range.
 
 On a current-schema repository, `audit show` and `audit verify` are storage-read-only and never apply a lifecycle
-transition. On a repository older than schema v6, their first migration-aware call may append the honest
-`audit_activated` event that begins forward-only coverage. A repository on schema v6 or any schema older than the
-current one instead stops with `SESSION_SCHEMA_MIGRATION_REQUIRED`; run `threadloop init` explicitly in a writable
-checkout before retrying audit inspection.
+transition. A repository on schema v7 instead stops with `SESSION_SCHEMA_MIGRATION_REQUIRED`; run `threadloop init`
+explicitly in a writable checkout before retrying audit inspection.
 
 ## Recommended orchestrator flow
 
@@ -184,4 +182,3 @@ Not the intended v2 operating model:
 - Verified signed review receipts drive review repair, human readiness, and completion guards.
 - Audit JSONL and handoffs are projections; neither can authorize lifecycle mutation.
 - `.threadloop` internal paths are excluded from artifact Git scope.
-- Legacy `.threadloop/state/state.json` data migrates to SQLite on first access and is kept as a backup file.

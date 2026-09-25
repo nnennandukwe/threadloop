@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CURRENT_SCHEMA_VERSION,
-  EXPLICIT_INIT_MIGRATION_MIN_SCHEMA_VERSION,
+  MIN_SUPPORTED_SCHEMA_VERSION,
   requiresExplicitInitMigration,
 } from '../../src/adapters/fs/sqlite-store.js';
 import { taskSchema } from '../../src/schemas/state.js';
@@ -27,19 +27,17 @@ describe('task state schema', () => {
     });
   });
 
-  it('normalizes the legacy active state and rejects unknown lifecycle values', () => {
-    expect(taskSchema.parse({ ...task, status: 'active' })).toMatchObject({
-      status: 'queued',
-    });
+  it('rejects unknown lifecycle values', () => {
+    expect(taskSchema.safeParse({ ...task, status: 'active' }).success).toBe(false);
     expect(taskSchema.safeParse({ ...task, status: 'unknown' }).success).toBe(false);
     expect(taskSchema.safeParse({ ...task, blockedFromState: 'unknown' }).success).toBe(false);
   });
 });
 
 describe('storage schema migration policy', () => {
-  it('requires explicit init for every semantic schema between the migration floor and current version', () => {
-    expect(requiresExplicitInitMigration(EXPLICIT_INIT_MIGRATION_MIN_SCHEMA_VERSION - 1)).toBe(false);
-    expect(requiresExplicitInitMigration(EXPLICIT_INIT_MIGRATION_MIN_SCHEMA_VERSION)).toBe(true);
+  it('requires explicit init for every supported schema older than the current version', () => {
+    expect(requiresExplicitInitMigration(MIN_SUPPORTED_SCHEMA_VERSION - 1)).toBe(false);
+    expect(requiresExplicitInitMigration(MIN_SUPPORTED_SCHEMA_VERSION)).toBe(true);
     expect(requiresExplicitInitMigration(CURRENT_SCHEMA_VERSION)).toBe(false);
     expect(requiresExplicitInitMigration(CURRENT_SCHEMA_VERSION + 1)).toBe(false);
 

@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { parseJson, runCli, runCliFailure } from '../helpers/cli.js';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
-import { applySessionTransition, resetSqliteConnections } from '../../src/adapters/fs/sqlite-store.js';
+import { applySessionTransition, closeSqliteConnections } from '../../src/adapters/fs/sqlite-store.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
 import { canonicalizeTransitionRequest, type TransitionRequest } from '../../src/domain/session-transition.js';
 
@@ -208,7 +208,7 @@ async function transition(
 }
 
 afterEach(async () => {
-  await resetSqliteConnections();
+  closeSqliteConnections();
   await Promise.all(temporaryRepos.splice(0).map((repoDir) => rm(repoDir, { recursive: true, force: true })));
   temporaryRepos.length = 0;
 });
@@ -230,7 +230,7 @@ describe('proof plan persistence', () => {
     });
     expect(result.data.proof_plan.sha256).toMatch(/^[a-f0-9]{64}$/);
 
-    await resetSqliteConnections(repoDir);
+    closeSqliteConnections(repoDir);
     const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
     try {
       expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '8' });
@@ -598,7 +598,7 @@ describe('session gate run', () => {
     );
     await forceVerifying(repoDir, sessionId);
 
-    await resetSqliteConnections(repoDir);
+    closeSqliteConnections(repoDir);
     const dbPath = path.join(repoDir, '.threadloop/state/state.db');
     const corrupt = new DatabaseSync(dbPath);
     try {
@@ -642,7 +642,7 @@ describe('session gate run', () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
     await recordProofPlan(repoDir, sessionId);
-    await resetSqliteConnections(repoDir);
+    closeSqliteConnections(repoDir);
     const dbPath = path.join(repoDir, '.threadloop/state/state.db');
     const corrupt = new DatabaseSync(dbPath);
     corrupt.prepare(`UPDATE tasks SET status = 'verifying', state_version = 4`).run();
@@ -840,7 +840,7 @@ describe('session gate run', () => {
     await recordProofPlan(repoDir, sessionId);
     await forceVerifying(repoDir, sessionId);
     await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json']);
-    await resetSqliteConnections(repoDir);
+    closeSqliteConnections(repoDir);
 
     const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'));
     try {
@@ -897,7 +897,7 @@ describe('proof-aware session next', () => {
     await forceVerifying(repoDir, sessionId);
     await runCli(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json']);
 
-    await resetSqliteConnections(repoDir);
+    closeSqliteConnections(repoDir);
     const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'));
     try {
       db.exec(`DROP TRIGGER gate_receipts_no_update`);
@@ -1567,60 +1567,6 @@ describe('proof-aware session next', () => {
       },
     });
   });
-
-  it('reports proof migration for schema v3 without mutating the database', async () => {
-    const repoDir = await makeCommittedRepo();
-    const started = parseJson<{ data: { session_id: string } }>(
-      (await runCli(repoDir, ['session', 'start', 'Legacy proof state', '--goal', 'Read without migration', '--json']))
-        .stdout,
-    );
-    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
-    await resetSqliteConnections(repoDir);
-    const downgrade = new DatabaseSync(dbPath);
-    try {
-      downgrade.exec(`
-        DROP TABLE gate_receipts;
-        DROP TABLE proof_plans;
-        UPDATE metadata SET value = '3' WHERE key = 'schema_version';
-      `);
-    } finally {
-      downgrade.close();
-    }
-    const before = await readFile(dbPath);
-
-    const next = parseJson<{
-      data: {
-        candidate: null;
-        proof: { status: string };
-        staleness: { status: string; is_stale: null };
-        repair_budget: { status: string; attempts_used: null };
-      };
-    }>((await runCli(repoDir, ['session', 'next', '--session', started.data.session_id, '--json'])).stdout);
-    expect(next.data).toMatchObject({
-      candidate: null,
-      guard_failures: [{ code: 'SESSION_SCHEMA_MIGRATION_REQUIRED' }],
-      proof: { status: 'migration_required' },
-      staleness: { status: 'migration_required', is_stale: null },
-      repair_budget: { status: 'migration_required', attempts_used: null },
-    });
-    expect(await readFile(dbPath)).toEqual(before);
-
-    const unchanged = new DatabaseSync(dbPath, { readOnly: true });
-    try {
-      expect(unchanged.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({
-        value: '3',
-      });
-      expect(
-        unchanged
-          .prepare(
-            `SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name IN ('proof_plans', 'gate_receipts')`,
-          )
-          .get(),
-      ).toEqual({ count: 0 });
-    } finally {
-      unchanged.close();
-    }
-  });
 });
 
 describe('declared gate setup', () => {
@@ -1754,7 +1700,7 @@ describe('declared gate setup', () => {
       ]),
     );
 
-    await resetSqliteConnections(repoDir);
+    closeSqliteConnections(repoDir);
     const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'));
     try {
       const stored = db.prepare(`SELECT receipt_json FROM gate_receipts`).get() as { receipt_json: string };
@@ -1792,7 +1738,7 @@ describe('gate receipt result domain migration', () => {
 
     // Rebuild the table with the pre-v8 narrow result domain and roll the recorded version back, so the next
     // CLI invocation exercises the real migration path against real stored evidence.
-    await resetSqliteConnections(repoDir);
+    closeSqliteConnections(repoDir);
     const downgrade = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'));
     try {
       downgrade.exec(`
@@ -1850,7 +1796,7 @@ describe('gate receipt result domain migration', () => {
     } finally {
       downgrade.close();
     }
-    await resetSqliteConnections(repoDir);
+    closeSqliteConnections(repoDir);
 
     // A schema at or above v6 but below current requires an explicit operator migration, so reads report
     // migration_required rather than silently rewriting stored evidence.
@@ -1861,7 +1807,7 @@ describe('gate receipt result domain migration', () => {
 
     await runCli(repoDir, ['init']);
 
-    await resetSqliteConnections(repoDir);
+    closeSqliteConnections(repoDir);
     const migrated = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
     try {
       expect(migrated.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({

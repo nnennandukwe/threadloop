@@ -341,11 +341,7 @@ export async function transitionSession(input: TransitionSessionInput) {
         }
         preparedProofGuardRejection = rejection;
       }
-    } else if (
-      lifecycle &&
-      lifecycle.schemaVersion >= 4 &&
-      getTransitionGuardRequirement(lifecycle.state, input.targetState) === 'review'
-    ) {
+    } else if (lifecycle && getTransitionGuardRequirement(lifecycle.state, input.targetState) === 'review') {
       evidenceWatermark = readSessionEvidenceWatermarkReadOnly(repoRoot, input.sessionId);
       const preliminary = await evaluateSessionProof(repoRoot, input.sessionId, null);
       if (!preliminary.plan) {
@@ -362,11 +358,7 @@ export async function transitionSession(input: TransitionSessionInput) {
         const proofState = await evaluateSessionProof(repoRoot, input.sessionId, repository.headSha);
         proofGuardContext = await buildProofGuardContext(repoRoot, proofState, repository, phase, transitionHistory);
       }
-    } else if (
-      lifecycle &&
-      lifecycle.schemaVersion >= 4 &&
-      requiresProofGuardContext(lifecycle.state, input.targetState)
-    ) {
+    } else if (lifecycle && requiresProofGuardContext(lifecycle.state, input.targetState)) {
       evidenceWatermark = readSessionEvidenceWatermarkReadOnly(repoRoot, input.sessionId);
       const repository = await observeProofRepository(repoRoot);
       const proofState = await evaluateSessionProof(repoRoot, input.sessionId, repository.headSha);
@@ -1043,11 +1035,8 @@ async function loadSessionAudit(input: SessionAuditInput, expectedRoot?: string)
   await assertInitializedReadOnly(repoRoot);
   assertSchemaDoesNotRequireExplicitMigration(repoRoot);
   const availability = inspectAuditLedgerReadOnly(repoRoot);
-  if (!availability.available && availability.schemaVersion !== null && availability.schemaVersion >= 6) {
-    throw auditUnavailableFailure(
-      input.sessionId,
-      new AuditLedgerUnavailableError('table_missing', availability.schemaVersion),
-    );
+  if (!availability.available && availability.schemaVersion !== null) {
+    throw auditUnavailableFailure(input.sessionId, new AuditLedgerUnavailableError(availability.schemaVersion));
   }
   try {
     await ensureStateDatabase(repoRoot);
@@ -1124,10 +1113,7 @@ function auditUnavailableFailure(sessionId: string, error: AuditLedgerUnavailabl
       session_id: sessionId,
       schema_version: error.schemaVersion,
       reason: error.reason,
-      hint:
-        error.reason === 'schema_version'
-          ? 'Run a state-migrating ThreadLoop command before retrying the audit operation.'
-          : 'Restore the schema-v6-or-newer audit ledger from trusted storage before retrying.',
+      hint: 'Restore the audit ledger from trusted storage before retrying.',
     },
   });
 }
@@ -1198,15 +1184,14 @@ export async function getNextSessionAction(input: NextSessionInput) {
   const lifecycleHistory = lifecycle.transitionHistory;
   const phase = deriveLifecyclePhase(lifecycleHistory, lifecycle.auditGenesisState);
   const lifecycleMigrationRequired = lifecycle.schemaVersion < CURRENT_SCHEMA_VERSION;
-  const proofState =
-    !lifecycleMigrationRequired && lifecycle.schemaVersion >= 4
-      ? await evaluateSessionProof(repoRoot, lifecycle.sessionId, proofRepository?.headSha ?? repository.headSha)
-      : null;
+  const proofState = !lifecycleMigrationRequired
+    ? await evaluateSessionProof(repoRoot, lifecycle.sessionId, proofRepository?.headSha ?? repository.headSha)
+    : null;
   const proofGuardContext =
     proofState && proofRepository
       ? await buildProofGuardContext(repoRoot, proofState, proofRepository, phase, lifecycleHistory)
       : undefined;
-  const audit = projectSessionAuditReadOnly(lifecycle.schemaVersion, lifecycle.auditEvents);
+  const audit = projectSessionAuditReadOnly(lifecycle.auditEvents);
   const planned = lifecycleMigrationRequired
     ? {
         candidate: null,
@@ -1429,18 +1414,8 @@ function projectPrePrReview(
 }
 
 function projectSessionAuditReadOnly(
-  schemaVersion: number,
   events: NonNullable<ReturnType<typeof readSessionLifecycleReadOnly>>['auditEvents'],
 ) {
-  if (schemaVersion < 6) {
-    return {
-      status: 'migration_required' as const,
-      event_count: null,
-      root: null,
-      coverage: 'unavailable' as const,
-      error: null,
-    };
-  }
   if (!events || events.length === 0) {
     return {
       status: 'corrupt' as const,
