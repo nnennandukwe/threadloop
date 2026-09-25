@@ -671,6 +671,26 @@ describe('session gate run', () => {
     }
   });
 
+  it('classifies an inconsistent lifecycle row as state corruption rather than a bad argument', async () => {
+    const repoDir = await makeCommittedRepo();
+    const sessionId = await startFramedSession(repoDir);
+    await recordProofPlan(repoDir, sessionId);
+    await forceVerifying(repoDir, sessionId);
+    closeSqliteConnections(repoDir);
+    const corrupt = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'));
+    corrupt.prepare(`UPDATE tasks SET blocked_from_state = 'implementing'`).run();
+    corrupt.close();
+
+    const failure = parseJson<{ error: { code: string; message: string } }>(
+      (await runCliFailure(repoDir, ['session', 'gate', 'run', 'repository-check', '--session', sessionId, '--json']))
+        .stderr,
+    );
+    expect(failure.error).toMatchObject({
+      code: 'STATE_CORRUPTED',
+      message: `Session ${sessionId} has an inconsistent blocked prior state.`,
+    });
+  });
+
   it('rejects gate execution after leaving the named proof-plan branch', async () => {
     const repoDir = await makeCommittedRepo();
     const sessionId = await startFramedSession(repoDir);
