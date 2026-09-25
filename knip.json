@@ -4,6 +4,5 @@
   "ignoreExportsUsedInFile": true,
   "vitest": {
     "entry": ["tests/**/*.test.ts"]
-  },
-  "ignoreBinaries": ["mkfifo"]
+  }
 }

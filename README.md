@@ -13,15 +13,16 @@ engine. It does not supply a model/tool loop, model routing, or protected-effect
 
 ## Capability status
 
-| Status                                           | What it covers                                                                                                                                                                                                                                              |
-| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Implemented now**                              | Fixed PR lifecycle, durable SQLite state, current-HEAD proof and signed review checks, bounded post-PR repair, human completion, review artifacts, and verified audit export. Source-tree development tools compile and validate contract examples offline. |
-| **Accepted in Controller Contract v0.1**         | Workflow Profile and Compiled Graph, Controller Decision and Action Request, Execution Claim and Attempt, executor/GAAP mapping, and controller conformance specifications.                                                                                 |
-| **Deferred to the controller-runtime milestone** | Configurable graph execution, durable Execution Claim enforcement, GAAP process invocation and authenticated receipt admission, and conformance by a real controller through the external suite.                                                            |
-| **Deferred to the Rust migration**               | A Rust ThreadLoop replacement, after the contract freeze and separate runtime milestone demonstrate the required behavior.                                                                                                                                  |
+| Status                                           | What it covers                                                                                                                                                                                                                                                         |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Implemented now**                              | Fixed PR lifecycle, durable SQLite state, current-HEAD proof and signed review checks, bounded post-PR repair, human completion, review artifacts, and verified audit export.                                                                                          |
+| **Accepted in Controller Contract v0.1**         | Workflow Profile and Compiled Graph, Controller Decision and Action Request, Execution Claim and Attempt, executor/GAAP mapping, and controller conformance specifications, published in [threadloop-contracts](https://github.com/nnennandukwe/threadloop-contracts). |
+| **Deferred to the controller-runtime milestone** | Configurable graph execution, durable Execution Claim enforcement, GAAP process invocation and authenticated receipt admission, and conformance by a real controller through the external suite.                                                                       |
+| **Deferred to the Rust migration**               | A Rust ThreadLoop replacement, after the contract freeze and separate runtime milestone demonstrate the required behavior.                                                                                                                                             |
 
-The offline compiler is implemented development tooling; its output is not executable through the packaged CLI. Existing
-sessions do not acquire graph bindings or Execution Claims from the accepted specifications.
+The contracts and their offline compiler and validators live in
+[threadloop-contracts](https://github.com/nnennandukwe/threadloop-contracts); nothing there is executable through the
+ThreadLoop CLI. Existing sessions do not acquire graph bindings or Execution Claims from the accepted specifications.
 
 The [contract freeze #110](https://github.com/nnennandukwe/threadloop/issues/110) is complete.
 [RunInvariant PR #4](https://github.com/nnennandukwe/run-invariant/pull/4) merged the external harness for this corpus.
