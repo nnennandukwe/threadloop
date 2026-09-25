@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -9,9 +9,10 @@ import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import {
   applySessionTransition,
   ensureStateDatabase,
-  resetSqliteConnections,
+  closeSqliteConnections,
 } from '../../src/adapters/fs/sqlite-store.js';
 import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
+import { createAuditEvent, ZERO_AUDIT_HASH } from '../../src/domain/audit.js';
 import { canonicalizeTransitionRequest, type TransitionRequest } from '../../src/domain/session-transition.js';
 
 const execFileAsync = promisify(execFile);
@@ -90,194 +91,69 @@ async function prepareReadyForHumanFixture(repoDir: string, sessionId: string) {
   }
 }
 
-function createSchemaV2(repoDir: string) {
-  const dbPath = path.join(repoDir, '.threadloop/state/state.db');
-  const db = new DatabaseSync(dbPath);
-  const now = '2026-07-23T12:00:00.000Z';
+/** A current-schema state database for tests that corrupt or downgrade it. */
+async function createCurrentDatabase(repoDir: string) {
+  await ensureStateDatabase(repoDir);
+  closeSqliteConnections(repoDir);
+  return path.join(repoDir, '.threadloop/state/state.db');
+}
 
-  db.exec(`
-    CREATE TABLE metadata (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL
-    );
-
-    CREATE TABLE tasks (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      goal TEXT NOT NULL,
-      constraints_json TEXT NOT NULL,
-      issue_ref TEXT,
-      repo_root TEXT NOT NULL,
-      status TEXT NOT NULL,
-      state_version INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE sessions (
-      id TEXT PRIMARY KEY,
-      task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-      started_at TEXT NOT NULL,
-      ended_at TEXT,
-      base_ref TEXT,
-      branch TEXT NOT NULL,
-      head_sha TEXT NOT NULL,
-      last_heartbeat_at TEXT,
-      last_heartbeat_source TEXT
-    );
-
-    CREATE TABLE entries (
-      id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      kind TEXT NOT NULL,
-      body TEXT NOT NULL,
-      metadata_json TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      source TEXT NOT NULL
-    );
-
-    CREATE TABLE artifacts (
-      id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      kind TEXT NOT NULL,
-      path TEXT NOT NULL,
-      template_version TEXT NOT NULL,
-      generated_at TEXT NOT NULL,
-      snapshot_source TEXT
-    );
-
-    CREATE TABLE active_state (
-      id INTEGER PRIMARY KEY CHECK (id = 1),
-      task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE active_sessions (
-      session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
-      task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE repo_snapshots (
-      session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
-      branch TEXT NOT NULL,
-      head_sha TEXT NOT NULL,
-      base_ref TEXT,
-      changed_files_json TEXT NOT NULL,
-      diff_stats_json TEXT NOT NULL,
-      commit_range_json TEXT NOT NULL,
-      reconciled_at TEXT NOT NULL
-    );
-  `);
-  db.prepare(`INSERT INTO metadata (key, value) VALUES ('schema_version', '2')`).run();
-  db.prepare(
-    `
-      INSERT INTO tasks (
-        id, title, goal, constraints_json, issue_ref, repo_root, status, state_version, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-  ).run('task_queued', 'Queued task', 'Exercise schema v3', '[]', '#39', repoDir, 'queued', 0, now);
-  db.prepare(
-    `
-      INSERT INTO sessions (
-        id, task_id, started_at, ended_at, base_ref, branch, head_sha, last_heartbeat_at, last_heartbeat_source
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-  ).run('session_queued', 'task_queued', now, null, null, 'issue-39/test', 'abc123', null, null);
-  db.prepare(`INSERT INTO active_sessions (session_id, task_id) VALUES (?, ?)`).run('session_queued', 'task_queued');
-  db.prepare(`INSERT INTO active_state (id, task_id, session_id) VALUES (1, ?, ?)`).run(
-    'task_queued',
-    'session_queued',
+/**
+ * Replaces a session's ledger with the `audit_activated` genesis its schema-v6 upgrade recorded, which still
+ * exists in databases created before the audit ledger and must keep verifying.
+ */
+function activateLegacyAuditLedger(dbPath: string, sessionId: string, state: string, stateVersion: number) {
+  const activation = createAuditEvent(
+    {
+      id: 'audit_legacy_activation',
+      sessionId,
+      sequence: 1,
+      eventType: 'audit_activated',
+      recordedAt: '2026-07-29T00:00:00.000Z',
+      stateVersion,
+      previousSha256: ZERO_AUDIT_HASH,
+      payload: {
+        coverage: 'schema_v6_forward',
+        lifecycle_state_at_activation: state,
+        note: 'Historical decisions before schema v6 are not reconstructed.',
+      },
+    },
+    sha256,
   );
-  db.close();
-  return dbPath;
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.exec(`
+      DROP TRIGGER audit_events_no_delete;
+      DELETE FROM audit_events WHERE session_id = '${sessionId}';
+      CREATE TRIGGER audit_events_no_delete BEFORE DELETE ON audit_events
+      BEGIN SELECT RAISE(ABORT, 'audit events are immutable'); END;
+    `);
+    db.prepare(`UPDATE tasks SET status = ?, state_version = ?`).run(state, stateVersion);
+    db.prepare(
+      `INSERT INTO audit_events (id, session_id, sequence, event_type, state_version, previous_sha256, event_json,
+        event_sha256, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      activation.value.id,
+      sessionId,
+      1,
+      'audit_activated',
+      stateVersion,
+      ZERO_AUDIT_HASH,
+      activation.json,
+      activation.sha256,
+      activation.value.recorded_at,
+    );
+  } finally {
+    db.close();
+  }
 }
 
 afterEach(async () => {
-  await resetSqliteConnections();
-  temporaryRepos.length = 0;
+  closeSqliteConnections();
+  await Promise.all(temporaryRepos.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
 describe('schema v7 lifecycle and audit persistence', () => {
-  it('migrates a canonical schema-v2 database without changing lifecycle state', async () => {
-    const repoDir = await makeRepo();
-    const dbPath = createSchemaV2(repoDir);
-
-    await ensureStateDatabase(repoDir);
-    await resetSqliteConnections(repoDir);
-
-    const db = new DatabaseSync(dbPath, { readOnly: true });
-    try {
-      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '8' });
-      expect(
-        (db.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>).map((column) => column.name),
-      ).toContain('blocked_from_state');
-      expect(
-        db
-          .prepare(
-            `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('session_transitions', 'transition_idempotency', 'transition_idempotency_conflicts', 'proof_plans', 'gate_receipts', 'signed_gate_receipts', 'signed_review_receipts', 'audit_events') ORDER BY name`,
-          )
-          .all(),
-      ).toEqual([
-        { name: 'audit_events' },
-        { name: 'gate_receipts' },
-        { name: 'proof_plans' },
-        { name: 'session_transitions' },
-        { name: 'signed_gate_receipts' },
-        { name: 'signed_review_receipts' },
-        { name: 'transition_idempotency' },
-        { name: 'transition_idempotency_conflicts' },
-      ]);
-      expect(
-        db
-          .prepare(
-            `
-              SELECT name
-              FROM sqlite_master
-              WHERE
-                type = 'trigger'
-                AND (
-                  name LIKE 'session_transitions_no_%'
-                  OR name LIKE 'transition_idempotency_no_%'
-                  OR name LIKE 'transition_idempotency_conflicts_no_%'
-                )
-              ORDER BY name
-            `,
-          )
-          .all(),
-      ).toEqual([
-        { name: 'session_transitions_no_delete' },
-        { name: 'session_transitions_no_replace' },
-        { name: 'session_transitions_no_update' },
-        { name: 'transition_idempotency_conflicts_no_delete' },
-        { name: 'transition_idempotency_conflicts_no_replace' },
-        { name: 'transition_idempotency_conflicts_no_update' },
-        { name: 'transition_idempotency_no_delete' },
-        { name: 'transition_idempotency_no_replace' },
-        { name: 'transition_idempotency_no_update' },
-      ]);
-      expect(
-        db
-          .prepare(`SELECT sequence, event_type, state_version, previous_sha256 FROM audit_events WHERE session_id = ?`)
-          .get('session_queued'),
-      ).toMatchObject({
-        sequence: 1,
-        event_type: 'audit_activated',
-        state_version: 0,
-        previous_sha256: '0'.repeat(64),
-      });
-      expect(db.prepare(`SELECT status, state_version, blocked_from_state FROM tasks`).get()).toEqual({
-        status: 'queued',
-        state_version: 0,
-        blocked_from_state: null,
-      });
-      expect(db.prepare(`SELECT task_id, session_id FROM active_state WHERE id = 1`).get()).toEqual({
-        task_id: 'task_queued',
-        session_id: 'session_queued',
-      });
-    } finally {
-      db.close();
-    }
-  });
-
   it('bootstraps a metadata-less state database before enforcing migration policy', async () => {
     const repoDir = await makeRepo();
     const dbPath = path.join(repoDir, '.threadloop/state/state.db');
@@ -310,21 +186,19 @@ describe('schema v7 lifecycle and audit persistence', () => {
 
   it('retains post-PR phase when audit coverage begins in reviewing', async () => {
     const repoDir = await makeRepo();
-    const dbPath = createSchemaV2(repoDir);
-    const legacy = new DatabaseSync(dbPath);
-    legacy.prepare(`UPDATE tasks SET status = 'reviewing', state_version = 4`).run();
-    legacy.close();
+    const { session_id: sessionId } = await startQueuedSession(repoDir);
+    closeSqliteConnections(repoDir);
+    activateLegacyAuditLedger(path.join(repoDir, '.threadloop/state/state.db'), sessionId, 'reviewing', 4);
 
-    await runCli(repoDir, ['init']);
     const projected = parseJson<{ data: { lifecycle: { phase: string } } }>(
-      (await runCli(repoDir, ['session', 'next', '--session', 'session_queued', '--json'])).stdout,
+      (await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout,
     );
     expect(projected.data.lifecycle.phase).toBe('post_pr');
 
-    await applyFixtureTransition(repoDir, 'session_queued', 'repairing', 4, 'legacy:repair');
-    await applyFixtureTransition(repoDir, 'session_queued', 'verifying', 5, 'legacy:verify');
+    await applyFixtureTransition(repoDir, sessionId, 'repairing', 4, 'legacy:repair');
+    await applyFixtureTransition(repoDir, sessionId, 'verifying', 5, 'legacy:verify');
     const request: TransitionRequest = {
-      sessionId: 'session_queued',
+      sessionId,
       targetState: 'implementing',
       expectedStateVersion: 6,
       actor: 'agent',
@@ -366,10 +240,10 @@ describe('schema v7 lifecycle and audit persistence', () => {
         `legacy-pre-pr:${targetState}`,
       );
     }
-    await resetSqliteConnections(repoDir);
+    closeSqliteConnections(repoDir);
     const dbPath = path.join(repoDir, '.threadloop/state/state.db');
     const legacy = new DatabaseSync(dbPath);
-    legacy.prepare(`UPDATE metadata SET value = '6' WHERE key = 'schema_version'`).run();
+    legacy.prepare(`UPDATE metadata SET value = '7' WHERE key = 'schema_version'`).run();
     legacy.close();
 
     await runCli(repoDir, ['init']);
@@ -394,16 +268,16 @@ describe('schema v7 lifecycle and audit persistence', () => {
     });
   });
 
-  it('projects schema-v6 migration requirements read-only and migrates only through init', async () => {
+  it('projects schema-v7 migration requirements read-only and migrates only through init', async () => {
     const repoDir = await makeRepo();
     const started = parseJson<{ data: { session_id: string } }>(
       (await runCli(repoDir, ['session', 'start', 'Migration task', '--goal', 'Preserve semantic history', '--json']))
         .stdout,
     );
     const dbPath = path.join(repoDir, '.threadloop/state/state.db');
-    await resetSqliteConnections(repoDir);
+    closeSqliteConnections(repoDir);
     const downgrade = new DatabaseSync(dbPath);
-    downgrade.prepare(`UPDATE metadata SET value = '6' WHERE key = 'schema_version'`).run();
+    downgrade.prepare(`UPDATE metadata SET value = '7' WHERE key = 'schema_version'`).run();
     const beforeCounts = {
       transitions: (downgrade.prepare(`SELECT COUNT(*) AS count FROM session_transitions`).get() as { count: number })
         .count,
@@ -425,7 +299,7 @@ describe('schema v7 lifecycle and audit persistence', () => {
     expect(next.data).toMatchObject({
       contract_version: 4,
       lifecycle: {
-        storage_schema_version: 6,
+        storage_schema_version: 7,
         contract_status: 'migration_required',
       },
       candidate: null,
@@ -471,7 +345,7 @@ describe('schema v7 lifecycle and audit persistence', () => {
         error: {
           code: 'SESSION_SCHEMA_MIGRATION_REQUIRED',
           details: {
-            storage_schema_version: 6,
+            storage_schema_version: 7,
           },
         },
       });
@@ -480,7 +354,7 @@ describe('schema v7 lifecycle and audit persistence', () => {
     }
 
     await runCli(repoDir, ['init']);
-    await resetSqliteConnections(repoDir);
+    closeSqliteConnections(repoDir);
     const migrated = new DatabaseSync(dbPath, { readOnly: true });
     try {
       expect(migrated.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({
@@ -499,7 +373,7 @@ describe('schema v7 lifecycle and audit persistence', () => {
 
   it('revalidates canonical schema metadata on the ready read path', async () => {
     const repoDir = await makeRepo();
-    const dbPath = createSchemaV2(repoDir);
+    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
     await ensureStateDatabase(repoDir);
 
     const corrupt = new DatabaseSync(dbPath);
@@ -518,11 +392,11 @@ describe('schema v7 lifecycle and audit persistence', () => {
     }
   });
 
-  it.each(['2.0', '02', '2e0', ' 2 ', '\t2\n', '3.0', '03', '3e0', ' 3 ', '\t3\n'])(
+  it.each(['8.0', '08', '8e0', ' 8 ', '\t8\n'])(
     'rejects malformed schema metadata %j before mutation',
     async (rawVersion) => {
       const repoDir = await makeRepo();
-      const dbPath = createSchemaV2(repoDir);
+      const dbPath = await createCurrentDatabase(repoDir);
       const corrupt = new DatabaseSync(dbPath);
       const initialJournalMode = corrupt.prepare(`PRAGMA journal_mode`).get();
       corrupt.prepare(`UPDATE metadata SET value = ? WHERE key = 'schema_version'`).run(rawVersion);
@@ -531,7 +405,7 @@ describe('schema v7 lifecycle and audit persistence', () => {
       await expect(ensureStateDatabase(repoDir)).rejects.toThrow(
         `Unsupported ThreadLoop schema version: ${rawVersion}`,
       );
-      await resetSqliteConnections(repoDir);
+      closeSqliteConnections(repoDir);
 
       const unchanged = new DatabaseSync(dbPath, { readOnly: true });
       try {
@@ -539,20 +413,6 @@ describe('schema v7 lifecycle and audit persistence', () => {
           value: rawVersion,
         });
         expect(unchanged.prepare(`PRAGMA journal_mode`).get()).toEqual(initialJournalMode);
-        expect(
-          (
-            unchanged.prepare(`PRAGMA table_info(tasks)`).all() as Array<{
-              name: string;
-            }>
-          ).map((column) => column.name),
-        ).not.toContain('blocked_from_state');
-        expect(
-          unchanged
-            .prepare(
-              `SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'session_transitions'`,
-            )
-            .get(),
-        ).toEqual({ count: 0 });
       } finally {
         unchanged.close();
       }
@@ -561,7 +421,7 @@ describe('schema v7 lifecycle and audit persistence', () => {
 
   it('returns STATE_CORRUPTED for malformed metadata through the public transition envelope', async () => {
     const repoDir = await makeRepo();
-    const dbPath = createSchemaV2(repoDir);
+    const dbPath = await createCurrentDatabase(repoDir);
     const corrupt = new DatabaseSync(dbPath);
     corrupt.prepare(`UPDATE metadata SET value = '2.0' WHERE key = 'schema_version'`).run();
     corrupt.close();
@@ -594,49 +454,41 @@ describe('schema v7 lifecycle and audit persistence', () => {
       expect(unchanged.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({
         value: '2.0',
       });
-      expect(
-        unchanged
-          .prepare(`SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'session_transitions'`)
-          .get(),
-      ).toEqual({ count: 0 });
     } finally {
       unchanged.close();
     }
   });
 
-  it('rolls back every schema-v6 change when migration validation fails', async () => {
+  it('rolls back every upgrade change when schema validation fails', async () => {
     const repoDir = await makeRepo();
-    const dbPath = createSchemaV2(repoDir);
+    const dbPath = await createCurrentDatabase(repoDir);
     const incompatible = new DatabaseSync(dbPath);
-    incompatible.exec(`CREATE TABLE transition_idempotency (unexpected TEXT NOT NULL)`);
+    incompatible.exec(`
+      UPDATE metadata SET value = '7' WHERE key = 'schema_version';
+      DROP TRIGGER transition_idempotency_no_update;
+      DROP TRIGGER transition_idempotency_no_delete;
+      DROP TRIGGER transition_idempotency_no_replace;
+      DROP TABLE transition_idempotency;
+      CREATE TABLE transition_idempotency (unexpected TEXT NOT NULL);
+    `);
     incompatible.close();
 
     await expect(ensureStateDatabase(repoDir)).rejects.toThrow('Invalid schema for transition_idempotency');
-    await resetSqliteConnections(repoDir);
+    closeSqliteConnections(repoDir);
 
     const unchanged = new DatabaseSync(dbPath, { readOnly: true });
     try {
       expect(unchanged.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({
-        value: '2',
+        value: '7',
       });
-      expect(
-        (unchanged.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>).map((column) => column.name),
-      ).not.toContain('blocked_from_state');
+      expect(unchanged.prepare(`PRAGMA table_info(transition_idempotency)`).all()).toMatchObject([
+        { name: 'unexpected' },
+      ]);
       expect(
         unchanged
-          .prepare(`SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'session_transitions'`)
-          .get(),
-      ).toEqual({ count: 0 });
-      expect(unchanged.prepare(`PRAGMA table_info(transition_idempotency)`).all()).toEqual([
-        {
-          cid: 0,
-          name: 'unexpected',
-          type: 'TEXT',
-          notnull: 1,
-          dflt_value: null,
-          pk: 0,
-        },
-      ]);
+          .prepare(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'transition_idempotency_no_%'`)
+          .all(),
+      ).toEqual([]);
     } finally {
       unchanged.close();
     }
@@ -681,7 +533,7 @@ describe('schema v7 lifecycle and audit persistence', () => {
       '--json',
     ]);
     expect(parseJson<{ error: { code: string } }>(conflict.stderr).error.code).toBe('IDEMPOTENCY_CONFLICT');
-    await resetSqliteConnections(repoDir);
+    closeSqliteConnections(repoDir);
 
     const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'));
     try {
@@ -786,7 +638,7 @@ describe('schema v7 lifecycle and audit persistence', () => {
       '{}',
       '--json',
     ]);
-    await resetSqliteConnections(repoDir);
+    closeSqliteConnections(repoDir);
 
     const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'));
     db.exec(`
@@ -865,7 +717,7 @@ describe('schema v7 lifecycle and audit persistence', () => {
   it('maps a missing audit genesis during session next to actionable audit recovery', async () => {
     const repoDir = await makeRepo();
     const { session_id: sessionId } = await startQueuedSession(repoDir);
-    await resetSqliteConnections(repoDir);
+    closeSqliteConnections(repoDir);
     const dbPath = path.join(repoDir, '.threadloop/state/state.db');
     const corrupt = new DatabaseSync(dbPath);
     corrupt.exec(`
@@ -927,7 +779,7 @@ describe('schema v7 lifecycle and audit persistence', () => {
       '{}',
       '--json',
     ]);
-    await resetSqliteConnections(repoDir);
+    closeSqliteConnections(repoDir);
     const dbPath = path.join(repoDir, '.threadloop/state/state.db');
     const corrupt = new DatabaseSync(dbPath);
     const beforeAuditCount = (
@@ -998,7 +850,7 @@ describe('schema v7 lifecycle and audit persistence', () => {
   it('binds a no-transition task projection to the session-started genesis event', async () => {
     const repoDir = await makeRepo();
     const { session_id: sessionId, task_id: taskId } = await startQueuedSession(repoDir);
-    await resetSqliteConnections(repoDir);
+    closeSqliteConnections(repoDir);
     const dbPath = path.join(repoDir, '.threadloop/state/state.db');
     const corrupt = new DatabaseSync(dbPath);
     corrupt.prepare(`UPDATE tasks SET status = 'implementing' WHERE id = ?`).run(taskId);
@@ -1011,7 +863,7 @@ describe('schema v7 lifecycle and audit persistence', () => {
     expect(failure.error.message).toContain('current lifecycle projection does not match transition history');
   });
 
-  it('rolls back schema-v6 migration when legacy transition history is inconsistent', async () => {
+  it('rolls back the schema upgrade when transition history is inconsistent', async () => {
     const repoDir = await makeRepo();
     const started = parseJson<{ data: { session_id: string } }>(
       (
@@ -1041,11 +893,11 @@ describe('schema v7 lifecycle and audit persistence', () => {
       '{}',
       '--json',
     ]);
-    await resetSqliteConnections(repoDir);
+    closeSqliteConnections(repoDir);
     const dbPath = path.join(repoDir, '.threadloop/state/state.db');
     const corrupt = new DatabaseSync(dbPath);
     corrupt.exec(`
-      UPDATE metadata SET value = '6' WHERE key = 'schema_version';
+      UPDATE metadata SET value = '7' WHERE key = 'schema_version';
       DROP TRIGGER session_transitions_no_update;
       DROP TRIGGER session_transitions_no_delete;
       DROP TRIGGER session_transitions_no_replace;
@@ -1059,12 +911,12 @@ describe('schema v7 lifecycle and audit persistence', () => {
     expect(failure.stderr).toContain(
       'Hint: Restore transition history from trusted storage, then rerun `threadloop init`.',
     );
-    await resetSqliteConnections(repoDir);
+    closeSqliteConnections(repoDir);
 
     const unchanged = new DatabaseSync(dbPath, { readOnly: true });
     try {
       expect(unchanged.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({
-        value: '6',
+        value: '7',
       });
       expect(
         unchanged
@@ -1522,7 +1374,7 @@ describe('session transition command', () => {
         idempotencyKey: 'rollback:atomic',
       }),
     ).rejects.toThrow('injected idempotency failure');
-    await resetSqliteConnections(repoDir);
+    closeSqliteConnections(repoDir);
 
     const unchanged = new DatabaseSync(dbPath, { readOnly: true });
     try {
@@ -1566,7 +1418,7 @@ describe('session transition command', () => {
       },
     });
     expect(result.ok && typeof result.data.session.ended_at).toBe('string');
-    await resetSqliteConnections(repoDir);
+    closeSqliteConnections(repoDir);
 
     const completed = new DatabaseSync(dbPath, { readOnly: true });
     try {
@@ -1753,67 +1605,6 @@ describe('session next command', { timeout: 15_000 }, () => {
     expect(JSON.stringify(next)).not.toContain('token');
     expect(JSON.stringify(next)).not.toContain(repoDir);
     expect(await readFile(dbPath)).toEqual(beforeBytes);
-  });
-
-  it('reads a canonical schema-v2 database without migrating or creating v4 objects', async () => {
-    const repoDir = await makeRepo();
-    const dbPath = createSchemaV2(repoDir);
-
-    const next = parseJson<{
-      data: {
-        lifecycle: { state: string; state_version: number };
-        repository: { branch: string | null; head_sha: string | null };
-      };
-    }>((await runCli(repoDir, ['session', 'next', '--session', 'session_queued', '--json'])).stdout);
-    expect(next.data).toMatchObject({
-      lifecycle: { state: 'queued', state_version: 0, blocked_from_state: null },
-      repository: { branch: null, head_sha: null },
-    });
-
-    const db = new DatabaseSync(dbPath, { readOnly: true });
-    try {
-      expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '2' });
-      expect(
-        db
-          .prepare(`SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'session_transitions'`)
-          .get(),
-      ).toEqual({ count: 0 });
-      expect(
-        (db.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>).map((column) => column.name),
-      ).not.toContain('blocked_from_state');
-    } finally {
-      db.close();
-    }
-  });
-
-  it('fails schema-v1 next reads without migration or repair', async () => {
-    const repoDir = await makeRepo();
-    const dbPath = createSchemaV2(repoDir);
-    const downgrade = new DatabaseSync(dbPath);
-    downgrade.prepare(`UPDATE metadata SET value = '1' WHERE key = 'schema_version'`).run();
-    downgrade.close();
-
-    const failure = await runCliFailure(repoDir, ['session', 'next', '--session', 'session_queued', '--json']);
-    expect(parseJson<{ error: { code: string; message: string } }>(failure.stderr)).toMatchObject({
-      error: {
-        code: 'STATE_CORRUPTED',
-        message: 'ThreadLoop schema version 1 requires migration before session next can read lifecycle state.',
-      },
-    });
-
-    const unchanged = new DatabaseSync(dbPath, { readOnly: true });
-    try {
-      expect(unchanged.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({
-        value: '1',
-      });
-      expect(
-        unchanged
-          .prepare(`SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'session_transitions'`)
-          .get(),
-      ).toEqual({ count: 0 });
-    } finally {
-      unchanged.close();
-    }
   });
 
   it('reports blocked recovery and completed terminal states honestly', async () => {

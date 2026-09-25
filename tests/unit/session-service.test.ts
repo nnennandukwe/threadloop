@@ -109,7 +109,7 @@ describe('session service', () => {
     expect(listed.sessions.find((item) => item.session.id === second.session.id)?.active).toBe(true);
   });
 
-  it('rejects a session registry entry whose projected task does not own the session', async () => {
+  it('resolves sessions from tasks and sessions, never from the stored active-session projection', async () => {
     const repoDir = await makeRepo();
     await initThreadloop(repoDir);
 
@@ -135,17 +135,12 @@ describe('session service', () => {
       db.close();
     }
 
-    await expect(
-      captureEntry({
-        cwd: repoDir,
-        sessionId: first.session.id,
-        kind: 'note',
-        body: 'This must not attach to the wrong task',
-      }),
-    ).rejects.toSatisfy((error: unknown) => {
-      expect(isThreadloopError(error)).toBe(true);
-      expect((error as { code?: string }).code).toBe('STATE_CORRUPTED');
-      return true;
+    const captured = await captureEntry({
+      cwd: repoDir,
+      sessionId: first.session.id,
+      kind: 'note',
+      body: 'Attaches to the task that owns the session',
     });
+    expect(captured.task.id).toBe(first.task.id);
   });
 });
