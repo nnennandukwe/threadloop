@@ -12,54 +12,14 @@ import {
   type GitHubGateJobResult,
 } from '../src/domain/attestation.js';
 import { canonicalJson } from '../src/domain/canonical-json.js';
-import { canonicalizeProofPlan } from '../src/domain/proof.js';
-import { requiredEnvironment } from './sensor-environment.js';
+import { gateSensorContext, requiredEnvironment } from './sensor-environment.js';
 
 const MAXIMUM_REPORT_BYTES = 1_048_576;
 
-const sessionId = requiredEnvironment('THREADLOOP_SESSION_ID');
-const planSha256 = requiredEnvironment('THREADLOOP_PLAN_SHA256');
-const gateId = requiredEnvironment('THREADLOOP_GATE_ID');
-const gateJson = requiredEnvironment('THREADLOOP_GATE_JSON');
+const { sessionId, planSha256, gate, sourceRepository, sourceRef, sourceHead, runInvocationUri } = gateSensorContext();
 const reportPath = path.resolve(requiredEnvironment('THREADLOOP_REPORT_PATH'));
 const outputPath = path.resolve(requiredEnvironment('THREADLOOP_OUTPUT_PATH'));
 const jobResult = parseJobResult(requiredEnvironment('THREADLOOP_GATE_JOB_RESULT'));
-const sourceRepository = `${requiredEnvironment('GITHUB_SERVER_URL')}/${requiredEnvironment('GITHUB_REPOSITORY')}`;
-const sourceRef = requiredEnvironment('GITHUB_REF');
-const sourceHead = requiredEnvironment('GITHUB_SHA');
-const runInvocationUri =
-  `${sourceRepository}/actions/runs/${requiredEnvironment('GITHUB_RUN_ID')}` +
-  `/attempts/${requiredEnvironment('GITHUB_RUN_ATTEMPT')}`;
-
-if (!/^session_[A-Za-z0-9_-]+$/.test(sessionId)) {
-  throw new Error('THREADLOOP_SESSION_ID must be a ThreadLoop session id.');
-}
-if (!/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(sourceRepository)) {
-  throw new Error(
-    'The reusable sensor requires a canonical https://github.com/<owner>/<repo> URL accessible to the workflow.',
-  );
-}
-if (!/^[a-f0-9]{64}$/.test(planSha256)) {
-  throw new Error('THREADLOOP_PLAN_SHA256 must be 64 lowercase hexadecimal characters.');
-}
-if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(gateId)) {
-  throw new Error('THREADLOOP_GATE_ID is invalid.');
-}
-if (!/^refs\/heads\/[A-Za-z0-9._/-]+$/.test(sourceRef)) {
-  throw new Error('The reusable sensor accepts only branch refs.');
-}
-if (!/^[a-f0-9]{40}$/.test(sourceHead)) {
-  throw new Error('GITHUB_SHA must be a full lowercase commit SHA.');
-}
-
-const parsedGate = JSON.parse(gateJson) as unknown;
-const gate = canonicalizeProofPlan(
-  { acceptance_criteria: ['Execute the caller-declared CI gate'], gates: [parsedGate] },
-  sha256,
-).plan.gates[0];
-if (!gate || gate.id !== gateId || canonicalJson(gate) !== canonicalJson(parsedGate)) {
-  throw new Error('THREADLOOP_GATE_JSON must be the exact declared gate identified by THREADLOOP_GATE_ID.');
-}
 
 const reportMetadata = await stat(reportPath);
 if (!reportMetadata.isFile() || reportMetadata.size > MAXIMUM_REPORT_BYTES) {
