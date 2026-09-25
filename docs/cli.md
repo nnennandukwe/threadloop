@@ -5,8 +5,9 @@ explicit transitions against current evidence, and generates review artifacts. T
 session-first; root commands remain only for compatibility.
 
 These commands operate the fixed governed PR lifecycle. The [architecture guide](architecture.md) distinguishes them
-from accepted Controller Contract v0.1 specifications and source-tree development tooling. There is no packaged profile
-compiler, configurable graph executor, or GAAP process adapter command.
+from the accepted Controller Contract v0.1 specifications and their tooling in
+[threadloop-contracts](https://github.com/nnennandukwe/threadloop-contracts). There is no packaged profile compiler,
+configurable graph executor, or GAAP process adapter command.
 
 ## Commands
 

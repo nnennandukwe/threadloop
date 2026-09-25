@@ -6,6 +6,9 @@ useDefault = true
 [[rules]]
 id = "generic-api-key"
 
+# The docs/contracts/ paths below moved to nnennandukwe/threadloop-contracts. The allowlists stay because the history
+# scan (--log-opts=--all) still reads those fixtures in earlier commits.
+
 [[rules.allowlists]]
 description = "Controller fixture idempotency keys are public SHA-256 request identities"
 condition = "AND"
