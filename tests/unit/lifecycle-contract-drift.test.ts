@@ -2,8 +2,14 @@ import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
-import { isForwardLifecycleTransition, REPAIR_ENTRY_STATES } from '../../src/domain/lifecycle.js';
-import { TASK_STATUS_VALUES } from '../../src/domain/types.js';
+import {
+  deriveLifecyclePhase,
+  evaluateLifecycleTransition,
+  isForwardLifecycleTransition,
+  REPAIR_BUDGET,
+  REPAIR_ENTRY_STATES,
+} from '../../src/domain/lifecycle.js';
+import { LIFECYCLE_PHASE, TASK_STATUS_VALUES } from '../../src/domain/types.js';
 
 // Byte-for-byte copies of docs/contracts/workflow-graph-v0.1/ from nnennandukwe/threadloop-contracts at v0.1.0. That
 // contract's Governed PR profile specifies this runtime's lifecycle, so these tests fail when the two drift apart.
@@ -17,7 +23,14 @@ const VENDORED_SHA256 = {
 interface GovernedPrProfile {
   states: Array<{ id: string }>;
   transitions: Array<{ id: string; from: string; to: string }>;
-  budgets: Array<{ id: string; transition_refs: string[] }>;
+  budgets: Array<{ id: string; limit: number; transition_refs: string[] }>;
+  phase_policy: {
+    initial: string;
+    advanced: string;
+    monotonic: boolean;
+    include_audit_genesis: boolean;
+    state_refs: string[];
+  };
 }
 
 async function readVendored(name: keyof typeof VENDORED_SHA256) {
@@ -51,9 +64,37 @@ describe('Governed PR contract v0.1 and the runtime lifecycle', () => {
     expect(mapped).toEqual(expected);
   });
 
-  it('counts exactly the runtime repair entries against the repair budget', async () => {
+  it('blocks from, and recovers to, exactly the states the runtime allows', async () => {
+    const profile = await governedPr();
+    const edges = new Set(profile.transitions.map((edge) => `${edge.from}:${edge.to}`));
+    for (const state of TASK_STATUS_VALUES.filter((candidate) => candidate !== 'blocked')) {
+      expect(evaluateLifecycleTransition(state, 'blocked').allowed, `${state} -> blocked`).toBe(
+        edges.has(`${state}:blocked`),
+      );
+      expect(
+        evaluateLifecycleTransition('blocked', state, { blockedFromState: state }).allowed,
+        `blocked -> ${state}`,
+      ).toBe(edges.has(`blocked:${state}`));
+    }
+  });
+
+  it('enters the post-PR phase on the same states, monotonically, including an audit genesis', async () => {
+    const { phase_policy: policy } = await governedPr();
+    expect([policy.initial, policy.advanced]).toEqual([LIFECYCLE_PHASE.PRE_PR, LIFECYCLE_PHASE.POST_PR]);
+    expect(deriveLifecyclePhase([])).toBe(policy.initial);
+    for (const state of TASK_STATUS_VALUES) {
+      const expected = policy.state_refs.includes(state) ? policy.advanced : policy.initial;
+      expect(deriveLifecyclePhase([{ to_state: state }]), state).toBe(expected);
+      expect(deriveLifecyclePhase([], policy.include_audit_genesis ? state : null), `genesis ${state}`).toBe(expected);
+    }
+    expect(policy.monotonic).toBe(true);
+    expect(deriveLifecyclePhase([{ to_state: 'reviewing' }, { to_state: 'repairing' }])).toBe(policy.advanced);
+  });
+
+  it('counts exactly the runtime repair entries against the same repair limit', async () => {
     const profile = await governedPr();
     const [budget] = profile.budgets;
+    expect(budget?.limit).toBe(REPAIR_BUDGET);
     expect(
       profile.transitions
         .filter((edge) => budget?.transition_refs.includes(edge.id))
