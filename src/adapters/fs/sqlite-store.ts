@@ -105,8 +105,7 @@ const IMMUTABLE_TABLES = [
 ] as const;
 
 /** Sessions whose work is still open. The single source for "active"; nothing reads a stored projection of it. */
-const ACTIVE_SESSIONS_SQL = `
-  SELECT sessions.task_id AS "taskId", sessions.id AS "sessionId"
+const OPEN_SESSIONS = `
   FROM sessions
   INNER JOIN tasks ON tasks.id = sessions.task_id
   WHERE tasks.status <> '${TASK_STATUS.COMPLETED}' AND sessions.ended_at IS NULL
@@ -1887,24 +1886,25 @@ function loadState(db: DatabaseSync): StateData {
       `,
     )
     .all() as unknown as Artifact[];
-  const activeSessions = db.prepare(ACTIVE_SESSIONS_SQL).all() as unknown as StateData['activeSessions'];
+  const activeSessions = db
+    .prepare(`SELECT sessions.task_id AS "taskId", sessions.id AS "sessionId" ${OPEN_SESSIONS}`)
+    .all() as unknown as StateData['activeSessions'];
 
   return { tasks, sessions, entries, artifacts, activeSessions };
 }
 
 /**
- * `active_sessions` and `active_state` are a stored projection of ACTIVE_SESSIONS_SQL. Nothing reads them; they
+ * `active_sessions` and `active_state` are a stored projection of OPEN_SESSIONS. Nothing reads them; they
  * are rewritten whenever the set of open sessions can change so the stored data matches what earlier builds of
  * this schema expect.
  */
 function writeActiveProjection(db: DatabaseSync) {
-  db.exec(`DELETE FROM active_sessions; DELETE FROM active_state;`);
-  db.exec(
-    `INSERT INTO active_sessions (session_id, task_id) SELECT "sessionId", "taskId" FROM (${ACTIVE_SESSIONS_SQL})`,
-  );
   db.exec(`
+    DELETE FROM active_sessions;
+    DELETE FROM active_state;
+    INSERT INTO active_sessions (session_id, task_id) SELECT sessions.id, sessions.task_id ${OPEN_SESSIONS};
     INSERT INTO active_state (id, task_id, session_id)
-    SELECT 1, task_id, session_id FROM active_sessions WHERE (SELECT COUNT(*) FROM active_sessions) = 1
+    SELECT 1, task_id, session_id FROM active_sessions WHERE (SELECT COUNT(*) FROM active_sessions) = 1;
   `);
 }
 
