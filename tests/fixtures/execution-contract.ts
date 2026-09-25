@@ -1,4 +1,5 @@
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
+import { digest } from '../../scripts/contract-kernel/kernel.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
 import { readFile } from 'node:fs/promises';
 import { controllerInputSchema, controllerDecisionSchema } from '../../scripts/controller-contract/contracts.js';
@@ -18,7 +19,6 @@ import {
   createExecutionJournal as create,
   replayExecutionJournal as replay,
   projectControllerExecution as project,
-  executionDigest,
   requestReference,
 } from '../../scripts/execution-contract/model.js';
 
@@ -114,7 +114,7 @@ export async function initialExecution(
 ) {
   const fixture = await executionFixture(profile);
   fixture.policy.rules.retry_safety = retry;
-  fixture.policy.digest = executionDigest(fixture.policy.rules);
+  fixture.policy.digest = digest(fixture.policy.rules);
   const created = createExecutionJournal(fixture.context, fixture.request, fixture.policy);
   if (!created.ok) throw new Error(JSON.stringify(created));
   return { ...fixture, journal: created.value };
@@ -189,10 +189,10 @@ export function receiptFor(
     effect: 'none',
     resulting_subject: null,
     finished_at: '2026-09-10T10:01:00.000Z',
-    evidence: [{ id: 'local_proof', digest: executionDigest('proof') }],
+    evidence: [{ id: 'local_proof', digest: digest('proof') }],
     ...changes,
   };
-  return { receipt, receipt_digest: executionDigest(receipt) };
+  return { receipt, receipt_digest: digest(receipt) };
 }
 
 export function recoveryFor(journal: ExecutionJournal, kind: RecoveryEvidence['evidence']['kind']): RecoveryEvidence {
@@ -208,9 +208,9 @@ export function recoveryFor(journal: ExecutionJournal, kind: RecoveryEvidence['e
     observed_at: '2026-09-10T10:06:00.000Z',
     resulting_subject: null,
     verification_policy: journal.execution.initial_context.snapshot.policy.rules.evidence_policies[0]!,
-    acceptance: { id: `accepted_${kind}`, digest: executionDigest(kind) },
+    acceptance: { id: `accepted_${kind}`, digest: digest(kind) },
   };
-  return { evidence, evidence_digest: executionDigest(evidence) };
+  return { evidence, evidence_digest: digest(evidence) };
 }
 
 export function receiptAdmissionFor(
@@ -230,9 +230,60 @@ export function receiptAdmissionFor(
     executor: report.executor,
     receipt: { id: report.id, digest: envelope.receipt_digest },
     verification_policy: journal.execution.initial_context.snapshot.policy.rules.evidence_policies[0]!,
-    acceptance: { id: `accepted_${report.id}`, digest: executionDigest(['accepted', envelope.receipt_digest]) },
+    acceptance: { id: `accepted_${report.id}`, digest: digest(['accepted', envelope.receipt_digest]) },
     admitted_at: time,
     valid_until: null,
   };
-  return structuredClone({ admission, admission_digest: executionDigest(admission) });
+  return structuredClone({ admission, admission_digest: digest(admission) });
+}
+
+export const executorBActor: ExecutionContext['actor'] = { kind: 'executor', executor: executorB };
+
+/** Submit a receipt as executor A; admissions default to one synthetic trusted admission. */
+export function submitReceipt(
+  journal: ExecutionJournal,
+  receipt: AttemptReceipt,
+  time = '2026-09-10T10:01:00.000Z',
+  admissions?: ReceiptAdmission[],
+  actor?: ExecutionContext['actor'],
+) {
+  return operate(journal, { kind: 'submit_receipt', receipt }, actor, time, [], admissions);
+}
+
+/** Acquire and start the default claim_a/attempt_a as executor A. */
+export function startAttempt(journal: ExecutionJournal) {
+  return operate(operate(journal, grant).journal, { kind: 'start', ...target });
+}
+
+/** ThreadLoop expires the default claim at its deadline unless a later time is given. */
+export function expireClaim(
+  journal: ExecutionJournal,
+  time = '2026-09-10T10:05:00.000Z',
+  evidence: RecoveryEvidence[] = [],
+) {
+  return operate(journal, { kind: 'expire', ...target }, controllerActor(journal), time, evidence);
+}
+
+/** Replace the default claim with claim_b/attempt_b for executor B unless overridden. */
+export function replaceClaim(
+  changes: Partial<Extract<ExecutionOperation['command'], { kind: 'replace' }>> = {},
+): ExecutionOperation['command'] {
+  return {
+    kind: 'replace',
+    previous_claim: target.claim,
+    claim_id: 'claim_b',
+    attempt_id: 'attempt_b',
+    executor: executorB,
+    valid_until: '2026-09-10T10:10:00.000Z',
+    evidence_ids: [],
+    ...changes,
+  };
+}
+
+export function reconcileCommand(
+  disposition: Extract<ExecutionOperation['command'], { kind: 'reconcile' }>['disposition'],
+  evidence: RecoveryEvidence[],
+  reason = 'Independent observation checked by the operator',
+): ExecutionOperation['command'] {
+  return { kind: 'reconcile', ...target, disposition, evidence_ids: evidence.map((item) => item.evidence.id), reason };
 }

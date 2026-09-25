@@ -1,9 +1,52 @@
+import { readFile } from 'node:fs/promises';
 import { initialExecution, operate, grant, target, executorA } from './execution-contract.js';
-import { executionDigest } from '../../scripts/execution-contract/model.js';
+import { digest } from '../../scripts/contract-kernel/kernel.js';
 import type { ExecutorRequest, GaapMappingPolicy } from '../../scripts/executor-contract/contracts.js';
+import { canonicalExecutorJson } from '../../scripts/executor-contract/codec.js';
+import type { GaapReceipt, GaapRequest } from '../../scripts/executor-contract/gaap-types.js';
 import { executionAdmissionDigest } from '../../scripts/execution-contract/authority.js';
 import { executorRequestAdmissionDigest } from '../../scripts/executor-contract/validation.js';
 import type { ExecutionJournal } from '../../scripts/execution-contract/contracts.js';
+
+const published = new URL('../../docs/contracts/executor-v0.1/', import.meta.url);
+
+/** A committed executor-v0.1 document, parsed fresh for each caller to mutate. */
+export async function executorJson<T>(path: string): Promise<T> {
+  return JSON.parse(await readFile(new URL(path, published), 'utf8')) as T;
+}
+
+/** The published local-gates request and mapping with one published GAAP receipt and its observation. */
+export async function gaapMappingFixture(name = 'completed') {
+  const fixture = await executorJson<{ request: ExecutorRequest; mapping: GaapMappingPolicy }>(
+    'fixtures/local-gates.json',
+  );
+  const receipt = await executorJson<GaapReceipt>(`fixtures/${name}.gaap.canonical`);
+  const scenario = await executorJson<{ observation: unknown }>(`fixtures/${name}.json`);
+  return { ...fixture, receipt, ...scenario };
+}
+
+/** The pinned upstream request and completed receipt, independent of ThreadLoop mapping. */
+export async function nativeGaapFixture() {
+  return {
+    request: await executorJson<GaapRequest>('upstream/gaap/agent-run-request.json'),
+    receipt: await executorJson<GaapReceipt>('upstream/gaap/completed.json'),
+  };
+}
+
+/** Renumber events and recompute the receipt digest after a test edits the ledger. */
+export function resealGaap(receipt: GaapReceipt) {
+  receipt.body.events.forEach((event, index) => {
+    event.sequence = index + 1;
+  });
+  receipt.receipt_digest = 'sha256:' + digest(receipt.body);
+  return receipt;
+}
+
+export function gaapBytes(receipt: GaapReceipt) {
+  const encoded = canonicalExecutorJson(resealGaap(receipt));
+  if (!encoded.ok) throw new Error(JSON.stringify(encoded));
+  return Buffer.from(encoded.value);
+}
 
 export async function executorFixture() {
   const initial = await initialExecution();
@@ -20,7 +63,7 @@ export async function executorFixture() {
     policies,
     evidence_mapping: [{ family: 'local_proof', evidence_types: ['command_output'] }],
   };
-  const mapping = { policy, policy_digest: executionDigest(policy) };
+  const mapping = { policy, policy_digest: digest(policy) };
   const request: ExecutorRequest['request'] = {
     schema_version: 'threadloop.executor/0.1',
     kind: 'execute',
@@ -51,7 +94,7 @@ export async function executorFixture() {
     ...initial,
     started,
     mapping,
-    envelope: { request: structuredClone(request), request_digest: executionDigest(request) },
+    envelope: { request: structuredClone(request), request_digest: digest(request) },
   };
 }
 

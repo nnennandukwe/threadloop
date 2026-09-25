@@ -582,3 +582,30 @@ function reportDuplicateIds(entries: readonly { id: string }[], context: z.Refin
     seen.add(id);
   }
 }
+
+/**
+ * Rebinds a plan read back from storage. The stored JSON must re-canonicalize to exactly the bytes and digest that
+ * were recorded, or the plan is reported as corrupt rather than trusted.
+ */
+export function bindStoredProofPlan(
+  stored: { json: string; sha256: string; baselineBranch: string; baselineHeadSha: string; createdAt: string },
+  digest: ProofDigest,
+): { plan: BoundProofPlan } | { problem: string } {
+  let canonical: CanonicalProofPlan;
+  try {
+    canonical = canonicalizeProofPlan(JSON.parse(stored.json) as unknown, digest);
+  } catch {
+    return { problem: 'The stored proof plan is invalid.' };
+  }
+  if (canonical.json !== stored.json || canonical.sha256 !== stored.sha256) {
+    return { problem: 'The stored proof plan digest does not match its contents.' };
+  }
+  return {
+    plan: {
+      ...canonical,
+      baselineBranch: stored.baselineBranch,
+      baselineHeadSha: stored.baselineHeadSha,
+      createdAt: stored.createdAt,
+    },
+  };
+}

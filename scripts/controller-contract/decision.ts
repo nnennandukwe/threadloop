@@ -1,15 +1,12 @@
 import { supportsGuard } from './guards.js';
 import { validateBlockedReasons } from './blocked.js';
-import { sha256 } from '../../src/adapters/crypto/sha256.js';
-import { canonicalJson } from '../../src/domain/canonical-json.js';
 import { controllerDecisionSchema, type ControllerDecision, type ControllerInput } from './contracts.js';
-import { validateShape, type Diagnostic, type ValidationResult } from '../workflow-graph/contracts.js';
+import { digest, same, validateShape, type Diagnostic, type ValidationResult } from '../contract-kernel/kernel.js';
 import {
   currentObservation,
   currentReceipt,
   expired,
   issue,
-  same,
   validateControllerInput,
   validateRequestInSnapshot,
 } from './validation.js';
@@ -27,13 +24,13 @@ export function validateControllerDecision(
   const decision = parsed.value.decision;
   const errors: Diagnostic[] = [];
   const reject = (code: string, path: string, message: string) => errors.push(issue(code, path, message));
-  if (!same(decision.binding, value.binding) || decision.input_digest !== sha256(canonicalJson(value)))
+  if (!same(decision.binding, value.binding) || decision.input_digest !== digest(value))
     reject(
       'DECISION_BINDING_MISMATCH',
       '$.decision',
       'The decision must bind the entire canonical input snapshot and its run binding.',
     );
-  if (parsed.value.decision_digest !== sha256(canonicalJson(decision)))
+  if (parsed.value.decision_digest !== digest(decision))
     reject('DECISION_DIGEST_MISMATCH', '$.decision_digest', 'The decision contents differ from the claimed digest.');
   const state = value.compiled_graph.graph.states.find((state) => state.id === value.binding.source_state)!;
   if (decision.outcome === 'terminal') {

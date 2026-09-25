@@ -1,13 +1,11 @@
 import { canonicalJson } from '../../src/domain/canonical-json.js';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
+import { diagnostic, digest, validateShape, type ValidationResult } from '../contract-kernel/kernel.js';
 import {
   compiledGraphSchema,
   graphBindingSchema,
-  diagnostic,
-  validateShape,
   type CompiledGraph,
   type CompiledPayload,
-  type ValidationResult,
   type WorkflowProfile,
 } from './contracts.js';
 import { parseWorkflowProfile } from './parser.js';
@@ -19,7 +17,7 @@ export function compileWorkflowProfile(source: string): ValidationResult<Compile
   const diagnostics = validateTopology(parsed.value);
   if (diagnostics.length) return { ok: false, diagnostics };
   const graph = normalize(parsed.value);
-  return { ok: true, value: { graph, graph_digest: sha256(canonicalJson(graph)) } };
+  return { ok: true, value: { graph, graph_digest: digest(graph) } };
 }
 
 export function validateGraphBinding(binding: unknown, compiled: unknown): ValidationResult<CompiledGraph> {

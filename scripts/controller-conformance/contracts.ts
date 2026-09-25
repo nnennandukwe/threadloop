@@ -1,6 +1,8 @@
 import { z } from 'zod';
+import { publishedSchemas } from '../contract-kernel/kernel.js';
 import { compiledGraphSchema } from '../workflow-graph/contracts.js';
 import { controllerDecisionSchema, controllerInputSchema } from '../controller-contract/contracts.js';
+import { attemptSchema, executionClaimSchema } from '../execution-contract/contracts.js';
 
 const text = z.string().regex(/\S/);
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -56,7 +58,7 @@ const stepResult = z.strictObject({
   attempt_id: text.nullable(),
   replayed: z.boolean(),
 });
-export const executionSummarySchema = z.strictObject({
+const executionSummarySchema = z.strictObject({
   revision: counter,
   request_status: z.enum(['open', 'satisfied', 'cancelled', 'invalidated']),
   claims: z.array(
@@ -64,24 +66,15 @@ export const executionSummarySchema = z.strictObject({
       id: text,
       version: counter.min(1),
       attempt_id: text,
-      status: z.enum(['active', 'released', 'expired', 'replaced', 'invalidated', 'cancelled', 'completed']),
+      status: executionClaimSchema.shape.status,
     }),
   ),
   attempts: z.array(
     z.strictObject({
       id: text,
       claim: claimReference,
-      status: z.enum([
-        'pending',
-        'running',
-        'succeeded',
-        'failed',
-        'blocked',
-        'interrupted',
-        'cancelled',
-        'unknown_outcome',
-      ]),
-      effect: z.enum(['not_started', 'none', 'occurred', 'unknown']),
+      status: attemptSchema.shape.status,
+      effect: attemptSchema.shape.effect,
       receipt_id: text.nullable(),
     }),
   ),
@@ -105,7 +98,7 @@ export const executionSummarySchema = z.strictObject({
   ),
   controller: controllerInputSchema.pick({ execution: true, invalidated_claims: true, existing_requests: true }),
 });
-export const resultSchema = z.discriminatedUnion('status', [
+const resultSchema = z.discriminatedUnion('status', [
   invalidResult,
   z.strictObject({ status: z.literal('compiled'), compiled_graph: compiledGraphSchema }),
   z.strictObject({ status: z.literal('decision'), decision: controllerDecisionSchema }),
@@ -221,8 +214,9 @@ export type SubjectResponse = z.infer<typeof responseSchema>;
 export type CaseResult = z.infer<typeof resultSchema>;
 
 export function publishedConformanceSchemas() {
-  return Object.fromEntries(
-    Object.entries({
+  return publishedSchemas(
+    'controller-conformance',
+    {
       request: requestSchema,
       response: responseSchema,
       fixture: fixtureSchema,
@@ -231,12 +225,7 @@ export function publishedConformanceSchemas() {
       manifest: manifestSchema,
       compatibility: compatibilitySchema,
       'execution-scenario': executionScenarioSchema,
-    }).map(([name, schema]) => [
-      name,
-      {
-        ...z.toJSONSchema(schema, { target: 'draft-2020-12', reused: 'ref' }),
-        $id: `https://github.com/nnennandukwe/threadloop/contracts/controller-conformance/0.1/${name}`,
-      },
-    ]),
+    },
+    { reused: 'ref' },
   );
 }

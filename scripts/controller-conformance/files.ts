@@ -12,50 +12,33 @@ export const corpusDirectory = fileURLToPath(
   new URL('../../docs/contracts/controller-conformance-v0.1/', import.meta.url),
 );
 
+/**
+ * Committed artifacts are read whole: regular files only, never through a symlink, and bounded. The checks and the
+ * read use one descriptor, so the bytes checked are the bytes read even if the path is replaced meanwhile. The
+ * descriptor is opened non-blocking so a FIFO or device is rejected by the regular-file check instead of blocking.
+ */
 async function readArtifact(path: string, maxBytes = 16 * 1024 * 1024): Promise<Buffer> {
-  const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)).catch(
-    (error: unknown) => {
-      if (error instanceof Error && 'code' in error && error.code === 'ELOOP')
-        throw new Error(`${path}: expected a regular file, not a symlink.`, { cause: error });
-      throw error;
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK).catch(
+    (error: NodeJS.ErrnoException) => {
+      throw error.code === 'ELOOP' ? new Error(`${path}: expected a regular file.`) : error;
     },
   );
-  let content: Buffer;
   try {
-    const opened = await handle.stat();
-    const named = await lstat(path);
-    if (!opened.isFile() || !named.isFile() || opened.dev !== named.dev || opened.ino !== named.ino)
-      throw new Error(`${path}: expected the same regular file that was opened.`);
-    if (opened.size > maxBytes) throw new Error(`${path}: byte limit exceeded (${maxBytes} bytes).`);
-    const chunks: Buffer[] = [];
-    let size = 0;
-    // Read at most the budget plus one byte, even if the file grows after stat.
-    while (true) {
-      const chunk = Buffer.alloc(Math.min(64 * 1024, maxBytes + 1 - size));
-      const { bytesRead } = await handle.read(chunk, 0, chunk.length, null);
-      if (!bytesRead) {
-        content = Buffer.concat(chunks, size);
-        break;
-      }
-      size += bytesRead;
-      if (size > maxBytes) throw new Error(`${path}: byte limit exceeded (${maxBytes} bytes).`);
-      chunks.push(chunk.subarray(0, bytesRead));
+    const metadata = await handle.stat();
+    if (!metadata.isFile()) throw new Error(`${path}: expected a regular file.`);
+    if (metadata.size > maxBytes) throw new Error(`${path}: byte limit exceeded (${maxBytes} bytes).`);
+    // Reading one byte past the stated size detects growth; a short total detects truncation.
+    const buffer = Buffer.alloc(metadata.size + 1);
+    let total = 0;
+    for (;;) {
+      const { bytesRead } = await handle.read(buffer, total, buffer.length - total, total);
+      if (bytesRead === 0 || (total += bytesRead) === buffer.length) break;
     }
-  } catch (error) {
-    const closeFailure = await handle.close().then(
-      () => undefined,
-      (closeError: unknown) => ({ error: closeError }),
-    );
-    if (closeFailure)
-      throw new AggregateError(
-        [error, closeFailure.error],
-        `${path}: ${error instanceof Error ? error.message : String(error)}; descriptor close also failed.`,
-        { cause: error },
-      );
-    throw error;
+    if (total !== metadata.size) throw new Error(`${path}: changed while it was being read.`);
+    return buffer.subarray(0, total);
+  } finally {
+    await handle.close();
   }
-  await handle.close();
-  return content;
 }
 
 async function readJson(path: string, sourceBudget?: { remaining: number }): Promise<unknown> {

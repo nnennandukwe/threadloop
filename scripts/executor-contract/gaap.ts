@@ -1,25 +1,34 @@
-import { validateShape, type ValidationResult } from '../workflow-graph/contracts.js';
-import { gaapMappingPolicySchema, resultObservationSchema, type Evidence, type ExecutorResult } from './contracts.js';
+import { digest, same, validateShape, type ValidationResult } from '../contract-kernel/kernel.js';
+import {
+  gaapMappingPolicySchema,
+  resultObservationSchema,
+  type Evidence,
+  type ExecutorRequest,
+  type ExecutorResult,
+} from './contracts.js';
 import type { GaapEvidence, GaapRequest } from './gaap-types.js';
 import { invalid, parseExecutorMessage, validateJsonValue } from './codec.js';
-import { validateExecutorRequest, validateExecutorResult } from './validation.js';
-import { executionDigest, requestReference } from '../execution-contract/model.js';
-import { same } from '../controller-contract/validation.js';
+import { checkExecutorResult, validateExecutorRequest } from './validation.js';
+import { requestReference } from '../execution-contract/model.js';
+import { sameSubjectIdentity } from '../controller-contract/contracts.js';
 import { validateGaapReceipt, validateGaapRequest } from './gaap-validation.js';
 
 export function buildGaapRequest(requestValue: unknown, policyValue: unknown): ValidationResult<GaapRequest> {
   const request = validateExecutorRequest(requestValue);
-  if (!request.ok) return request;
+  return request.ok ? mapRequest(request.value, policyValue) : request;
+}
+
+function mapRequest(request: ExecutorRequest, policyValue: unknown): ValidationResult<GaapRequest> {
   const bounded = validateJsonValue(policyValue);
   if (!bounded.ok) return bounded;
   const parsed = validateShape(gaapMappingPolicySchema, policyValue);
   if (!parsed.ok) return parsed;
-  const { policy, policy_digest: digest } = parsed.value;
-  const input = request.value.request;
+  const { policy, policy_digest: policyDigest } = parsed.value;
+  const input = request.request;
   const parameters = input.parameters;
   if (
-    executionDigest(policy) !== digest ||
-    !same(input.mapping_policy, { id: policy.id, digest }) ||
+    digest(policy) !== policyDigest ||
+    !same(input.mapping_policy, { id: policy.id, digest: policyDigest }) ||
     input.action_request.request.capability !== policy.action_capability ||
     !same(parameters.capability, policy.capability) ||
     !same(parameters.policies, policy.policies)
@@ -29,11 +38,9 @@ export function buildGaapRequest(requestValue: unknown, policyValue: unknown): V
       'Mapping policy must match the exact capability, supported policies, and immutable request.',
     );
   const families = input.action_request.request.evidence_requirements.map((requirement) => requirement.family);
+  // The schema already rejects duplicate mapping families.
   const mappingFamilies = policy.evidence_mapping.map((entry) => entry.family);
-  if (
-    new Set(mappingFamilies).size !== mappingFamilies.length ||
-    families.some((family) => !mappingFamilies.includes(family))
-  )
+  if (families.some((family) => !mappingFamilies.includes(family)))
     return invalid('GAAP_EVIDENCE_MAPPING', 'Every required evidence family needs one explicit supported mapping.');
   const required = [
     ...new Set(
@@ -51,7 +58,7 @@ export function buildGaapRequest(requestValue: unknown, policyValue: unknown): V
     ...identity,
     digest: 'sha256:' + identity.digest,
   });
-  const runIdentity = executionDigest({
+  const runIdentity = digest({
     domain: 'threadloop.gaap-agent-run/0.1',
     request: requestReference(input.action_request),
     workflow_run_id: input.action_request.request.binding.workflow_run_id,
@@ -61,7 +68,7 @@ export function buildGaapRequest(requestValue: unknown, policyValue: unknown): V
   });
   return validateGaapRequest({
     schema_version: 'gaap.agent-run-request/0.1.0',
-    request_id: 'threadloop_request_' + request.value.request_digest,
+    request_id: 'threadloop_request_' + request.request_digest,
     run_id: 'threadloop_attempt_' + runIdentity,
     subject: {
       kind: input.action_request.request.binding.subject.kind,
@@ -89,7 +96,7 @@ export function mapGaapResult(
 ): ValidationResult<ExecutorResult> {
   const request = validateExecutorRequest(requestValue);
   if (!request.ok) return request;
-  const mapped = buildGaapRequest(request.value, policy);
+  const mapped = mapRequest(request.value, policy);
   if (!mapped.ok) return mapped;
   const parsed = parseExecutorMessage(bytes);
   if (!parsed.ok) return parsed;
@@ -125,11 +132,7 @@ export function mapGaapResult(
   const resulting = observation.value.resulting_subject;
   if (
     'sha256:' + resulting.content_digest !== body.resulting_subject_digest ||
-    resulting.kind !== initial.kind ||
-    (initial.kind === 'repository' &&
-      resulting.kind === 'repository' &&
-      initial.repository_id !== resulting.repository_id) ||
-    (initial.kind === 'artifact' && resulting.kind === 'artifact' && initial.artifact_id !== resulting.artifact_id) ||
+    !sameSubjectIdentity(resulting, initial) ||
     (body.initial_subject_digest === body.resulting_subject_digest && !same(resulting, initial))
   )
     return invalid(
@@ -184,46 +187,28 @@ export function mapGaapResult(
       }
     }
   }
-  let status: ExecutorResult['result']['attempt_receipt']['receipt']['status'];
-  let reason: ExecutorResult['result']['reason']['code'];
-  switch (body.terminal_status) {
-    case 'completed':
-      status = 'succeeded';
-      reason = 'completed';
-      break;
-    case 'failed':
-      status = 'failed';
-      reason = 'failed';
-      break;
-    case 'interrupted':
-      status = 'interrupted';
-      reason = 'interrupted';
-      break;
-    case 'blocked': {
-      status = 'blocked';
-      const causalDecision = body.events
-        .filter((event) => event.event_type === 'protected_effect_decision')
-        .filter(
-          (event) =>
-            (event.decision.outcome === 'ask' &&
-              ['authority.required', event.decision.code].includes(body.terminal_reason)) ||
-            (event.decision.outcome === 'block' && body.terminal_reason === event.decision.code),
-        )
-        .at(-1);
-      reason =
-        body.terminal_reason === 'runtime.hard_stop'
-          ? 'budget_exhausted'
-          : causalDecision?.decision.outcome === 'ask' &&
-              ['authority.required', causalDecision.decision.code].includes(body.terminal_reason)
-            ? 'authority_required'
-            : causalDecision?.decision.outcome === 'block' && body.terminal_reason === causalDecision.decision.code
-              ? 'effect_denied'
-              : 'blocked';
-      break;
-    }
-    default:
-      return invalid('GAAP_NONTERMINAL_RESULT', 'A one-shot result must be terminal.');
-  }
+  // validateGaapReceipt admits only terminal receipts.
+  const terminal = body.terminal_status as 'completed' | 'blocked' | 'failed' | 'interrupted';
+  const cause = body.events
+    .filter((event) => event.event_type === 'protected_effect_decision')
+    .filter(
+      (event) =>
+        (event.decision.outcome === 'ask' &&
+          ['authority.required', event.decision.code].includes(body.terminal_reason)) ||
+        (event.decision.outcome === 'block' && body.terminal_reason === event.decision.code),
+    )
+    .at(-1)?.decision.outcome;
+  const status = terminal === 'completed' ? 'succeeded' : terminal;
+  const reason: ExecutorResult['result']['reason']['code'] =
+    terminal !== 'blocked'
+      ? terminal
+      : body.terminal_reason === 'runtime.hard_stop'
+        ? 'budget_exhausted'
+        : cause === 'ask'
+          ? 'authority_required'
+          : cause === 'block'
+            ? 'effect_denied'
+            : 'blocked';
   const receipt: ExecutorResult['result']['attempt_receipt']['receipt'] = {
     schema_version: '0.1',
     id: 'gaap_' + sourceDigest.slice(7),
@@ -246,7 +231,7 @@ export function mapGaapResult(
     schema_version: 'threadloop.executor/0.1',
     kind: 'result',
     request_digest: request.value.request_digest,
-    attempt_receipt: { receipt, receipt_digest: executionDigest(receipt) },
+    attempt_receipt: { receipt, receipt_digest: digest(receipt) },
     source_receipt: { type: 'terminal_run_receipt', id: body.run_id, digest: sourceDigest.slice(7) },
     effects,
     verification,
@@ -255,8 +240,8 @@ export function mapGaapResult(
     reason: { code: reason, message: body.terminal_reason },
   };
   // Return detached JSON; shared references from the inputs must not escape or imply trust.
-  return validateExecutorResult(
-    JSON.parse(JSON.stringify({ result, result_digest: executionDigest(result) })) as unknown,
+  return checkExecutorResult(
+    JSON.parse(JSON.stringify({ result, result_digest: digest(result) })) as unknown,
     request.value,
   );
 }

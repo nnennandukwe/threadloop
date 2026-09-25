@@ -1,6 +1,6 @@
 import { canonicalExecutorJson, parseExecutorMessage } from '../executor-contract/codec.js';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
-import type { ValidationResult } from '../workflow-graph/contracts.js';
+import type { ValidationResult } from '../contract-kernel/kernel.js';
 
 function translate<T>(result: ValidationResult<T>): ValidationResult<T> {
   return result.ok

@@ -1,4 +1,4 @@
-import { getDeterministicForwardTarget, isForwardLifecycleTransition } from './lifecycle.js';
+import { getDeterministicForwardTarget, isForwardLifecycleTransition, REPAIR_BUDGET } from './lifecycle.js';
 import { LIFECYCLE_PHASE, TASK_STATUS, type EntrySource, type LifecyclePhase, type TaskStatus } from './types.js';
 import { canonicalizeJsonValue, isPlainObject } from './canonical-json.js';
 import type { BoundProofPlan } from './proof.js';
@@ -122,15 +122,11 @@ export function evaluateTransitionGuards(
   proof: ProofGuardContext = {},
 ): TransitionGuardDecision {
   if (sourceState === TASK_STATUS.BLOCKED && blockedFromState === null) {
-    return deniedGuards(
-      {
-        code: 'BLOCKED_PRIOR_STATE_REQUIRED',
-        message: 'A blocked session requires its recorded prior lifecycle state.',
-      },
-      {
-        code: 'RESTORE_BLOCKED_PRIOR_STATE',
-        description: 'Restore the durable blocked prior state from verified persistence evidence.',
-      },
+    return deny(
+      'BLOCKED_PRIOR_STATE_REQUIRED',
+      'A blocked session requires its recorded prior lifecycle state.',
+      'RESTORE_BLOCKED_PRIOR_STATE',
+      'Restore the durable blocked prior state from verified persistence evidence.',
     );
   }
 
@@ -192,93 +188,63 @@ function evaluateReviewOwnedGuards(
         description: 'Run the review sensor again for the current repository HEAD.',
       },
     }[status];
-    return deniedGuards(
-      { code: details.code, message: details.message, owner_issue: 42 },
-      { code: details.work, description: details.description, owner_issue: 42 },
-    );
+    return deny(details.code, details.message, details.work, details.description, 42);
   }
 
   const blocking = hasBlockingReview(review);
   if (targetState === TASK_STATUS.REPAIRING) {
-    if (blocking && (proof.attemptsUsed ?? 3) < 3) {
+    if (blocking && (proof.attemptsUsed ?? REPAIR_BUDGET) < REPAIR_BUDGET) {
       return allowedGuards();
     }
-    const exhausted = (proof.attemptsUsed ?? 3) >= 3;
-    return deniedGuards(
-      {
-        code: exhausted ? 'REPAIR_BUDGET_EXHAUSTED' : 'BLOCKING_REVIEW_FINDING_REQUIRED',
-        message: exhausted
-          ? 'No fourth repair cycle is permitted.'
-          : 'Review repair requires a current blocking review finding.',
-        owner_issue: 42,
-      },
-      {
-        code: exhausted ? 'TRANSITION_TO_BLOCKED' : 'REFRESH_SIGNED_REVIEW_PROOF',
-        description: exhausted
-          ? 'Provide complete block evidence and explicitly transition the session to blocked.'
-          : 'Import the latest signed review snapshot before selecting repair.',
-        owner_issue: 42,
-      },
+    const exhausted = (proof.attemptsUsed ?? REPAIR_BUDGET) >= REPAIR_BUDGET;
+    return deny(
+      exhausted ? 'REPAIR_BUDGET_EXHAUSTED' : 'BLOCKING_REVIEW_FINDING_REQUIRED',
+      exhausted ? 'No fourth repair cycle is permitted.' : 'Review repair requires a current blocking review finding.',
+      exhausted ? 'TRANSITION_TO_BLOCKED' : 'REFRESH_SIGNED_REVIEW_PROOF',
+      exhausted
+        ? 'Provide complete block evidence and explicitly transition the session to blocked.'
+        : 'Import the latest signed review snapshot before selecting repair.',
+      42,
     );
   }
 
   if (blocking) {
-    return deniedGuards(
-      {
-        code: 'BLOCKING_REVIEW_FINDINGS',
-        message: 'Current unresolved review findings require a bounded repair cycle.',
-        owner_issue: 42,
-      },
-      {
-        code: 'ENTER_REVIEW_REPAIR',
-        description: 'Transition to repairing while budget remains and address the current findings.',
-        owner_issue: 42,
-      },
+    return deny(
+      'BLOCKING_REVIEW_FINDINGS',
+      'Current unresolved review findings require a bounded repair cycle.',
+      'ENTER_REVIEW_REPAIR',
+      'Transition to repairing while budget remains and address the current findings.',
+      42,
     );
   }
 
   if (proof.evidence?.status !== 'passed' || proof.ciEvidence?.status !== 'passed') {
-    return deniedGuards(
-      {
-        code: 'CURRENT_REVIEW_PROOF_SET_REQUIRED',
-        message: 'Review progression requires current local, signed CI, and signed review proof.',
-        owner_issue: 42,
-      },
-      {
-        code: 'REFRESH_REVIEW_PROOF_SET',
-        description: 'Refresh every stale or missing proof source for the current HEAD.',
-        owner_issue: 42,
-      },
+    return deny(
+      'CURRENT_REVIEW_PROOF_SET_REQUIRED',
+      'Review progression requires current local, signed CI, and signed review proof.',
+      'REFRESH_REVIEW_PROOF_SET',
+      'Refresh every stale or missing proof source for the current HEAD.',
+      42,
     );
   }
 
   if (sourceState === TASK_STATUS.READY_FOR_HUMAN && targetState === TASK_STATUS.COMPLETED) {
     if (!hasCurrentHumanApproval(review)) {
-      return deniedGuards(
-        {
-          code: 'CURRENT_HUMAN_APPROVAL_REQUIRED',
-          message: 'Completion requires a non-bot human approval bound to the pull request HEAD.',
-          owner_issue: 42,
-        },
-        {
-          code: 'OBTAIN_CURRENT_HUMAN_APPROVAL',
-          description: 'Obtain a human approval on the current pull request HEAD.',
-          owner_issue: 42,
-        },
+      return deny(
+        'CURRENT_HUMAN_APPROVAL_REQUIRED',
+        'Completion requires a non-bot human approval bound to the pull request HEAD.',
+        'OBTAIN_CURRENT_HUMAN_APPROVAL',
+        'Obtain a human approval on the current pull request HEAD.',
+        42,
       );
     }
     if (!review.merged) {
-      return deniedGuards(
-        {
-          code: 'OBSERVED_MERGE_REQUIRED',
-          message: 'Completion requires the signed review sensor to observe the pull request as merged.',
-          owner_issue: 42,
-        },
-        {
-          code: 'MERGE_AND_REFRESH_REVIEW_PROOF',
-          description: 'Merge through human authority, then import a post-merge signed review snapshot.',
-          owner_issue: 42,
-        },
+      return deny(
+        'OBSERVED_MERGE_REQUIRED',
+        'Completion requires the signed review sensor to observe the pull request as merged.',
+        'MERGE_AND_REFRESH_REVIEW_PROOF',
+        'Merge through human authority, then import a post-merge signed review snapshot.',
+        42,
       );
     }
   }
@@ -326,17 +292,12 @@ function evaluateProofOwnedGuards(
   const plan = proof.plan;
   const repository = proof.repository;
   if (!plan || !repository) {
-    return deniedGuards(
-      {
-        code: 'PROOF_PLAN_REQUIRED',
-        message: 'This transition requires an immutable proof plan and live repository authority.',
-        owner_issue: 40,
-      },
-      {
-        code: 'RESTORE_PROOF_AUTHORITY',
-        description: 'Record or restore the session proof plan, then retry from a clean named branch.',
-        owner_issue: 40,
-      },
+    return deny(
+      'PROOF_PLAN_REQUIRED',
+      'This transition requires an immutable proof plan and live repository authority.',
+      'RESTORE_PROOF_AUTHORITY',
+      'Record or restore the session proof plan, then retry from a clean named branch.',
+      40,
     );
   }
 
@@ -344,17 +305,12 @@ function evaluateProofOwnedGuards(
     if (repository.clean && repository.branch === plan.baselineBranch && repository.headSha === plan.baselineHeadSha) {
       return allowedGuards();
     }
-    return deniedGuards(
-      {
-        code: 'PROOF_BASELINE_MISMATCH',
-        message: 'The repository no longer matches the clean branch and HEAD bound to the proof plan.',
-        owner_issue: 40,
-      },
-      {
-        code: 'RESTORE_PROOF_BASELINE',
-        description: 'Restore the clean proof-plan branch and baseline HEAD before implementation begins.',
-        owner_issue: 40,
-      },
+    return deny(
+      'PROOF_BASELINE_MISMATCH',
+      'The repository no longer matches the clean branch and HEAD bound to the proof plan.',
+      'RESTORE_PROOF_BASELINE',
+      'Restore the clean proof-plan branch and baseline HEAD before implementation begins.',
+      40,
     );
   }
 
@@ -368,67 +324,45 @@ function evaluateProofOwnedGuards(
     ) {
       return allowedGuards();
     }
-    return deniedGuards(
-      {
-        code: proof.implementationBasis ? 'IMPLEMENTATION_BASIS_NOT_ADVANCED' : 'COMMITTED_IMPLEMENTATION_REQUIRED',
-        message: proof.implementationBasis
-          ? `Live HEAD ${repository.headSha} must be a clean descendant commit after implementation basis ${proof.implementationBasis.headSha}.`
-          : 'Verification requires a clean committed diff from an authoritative implementation basis.',
-        owner_issue: 69,
-      },
-      {
-        code: 'COMMIT_IMPLEMENTATION',
-        description:
-          'Agent repository-work authority must create one clean scoped commit after the reported implementation basis, then retry.',
-        owner_issue: 69,
-      },
+    return deny(
+      proof.implementationBasis ? 'IMPLEMENTATION_BASIS_NOT_ADVANCED' : 'COMMITTED_IMPLEMENTATION_REQUIRED',
+      proof.implementationBasis
+        ? `Live HEAD ${repository.headSha} must be a clean descendant commit after implementation basis ${proof.implementationBasis.headSha}.`
+        : 'Verification requires a clean committed diff from an authoritative implementation basis.',
+      'COMMIT_IMPLEMENTATION',
+      'Agent repository-work authority must create one clean scoped commit after the reported implementation basis, then retry.',
+      69,
     );
   }
 
   if (sourceState === TASK_STATUS.VERIFYING && targetState === TASK_STATUS.IMPLEMENTING) {
     if (proof.phase !== LIFECYCLE_PHASE.PRE_PR) {
-      return deniedGuards(
-        {
-          code: 'POST_PR_IMPLEMENTATION_REENTRY_FORBIDDEN',
-          message: 'A post-PR session cannot re-enter implementing.',
-          owner_issue: 69,
-        },
-        {
-          code: 'ENTER_REVIEW_REPAIR',
-          description: 'The signed-review controller must use the repairing path while post-PR repair budget remains.',
-          owner_issue: 69,
-        },
+      return deny(
+        'POST_PR_IMPLEMENTATION_REENTRY_FORBIDDEN',
+        'A post-PR session cannot re-enter implementing.',
+        'ENTER_REVIEW_REPAIR',
+        'The signed-review controller must use the repairing path while post-PR repair budget remains.',
+        69,
       );
     }
     if (!repository.clean || repository.branch !== plan.baselineBranch) {
-      return deniedGuards(
-        {
-          code: 'PROOF_CHECKOUT_MISMATCH',
-          message: 'Pre-PR implementation re-entry requires a clean checkout on the proof-plan branch.',
-          owner_issue: 69,
-        },
-        {
-          code: 'RESTORE_PROOF_CHECKOUT',
-          description: 'Restore the clean proof-plan branch at the reviewed or failed HEAD, then retry.',
-          owner_issue: 69,
-        },
+      return deny(
+        'PROOF_CHECKOUT_MISMATCH',
+        'Pre-PR implementation re-entry requires a clean checkout on the proof-plan branch.',
+        'RESTORE_PROOF_CHECKOUT',
+        'Restore the clean proof-plan branch at the reviewed or failed HEAD, then retry.',
+        69,
       );
     }
     if (proof.evidence?.status === 'failed' || readPrePrReviewEvidence(input)?.outcome === 'changes_required') {
       return allowedGuards();
     }
-    return deniedGuards(
-      {
-        code: 'PRE_PR_REVIEW_INPUT_REQUIRED',
-        message: 'Pre-PR implementation re-entry requires a current failed gate or current review findings.',
-        owner_issue: 69,
-      },
-      {
-        code: 'RECORD_PRE_PR_REVIEW_OUTCOME',
-        description:
-          'The operator/controller must retry with changes_required pre_pr_review evidence bound to the live HEAD.',
-        owner_issue: 69,
-      },
+    return deny(
+      'PRE_PR_REVIEW_INPUT_REQUIRED',
+      'Pre-PR implementation re-entry requires a current failed gate or current review findings.',
+      'RECORD_PRE_PR_REVIEW_OUTCOME',
+      'The operator/controller must retry with changes_required pre_pr_review evidence bound to the live HEAD.',
+      69,
     );
   }
 
@@ -437,59 +371,39 @@ function evaluateProofOwnedGuards(
     (targetState === TASK_STATUS.PRE_PR_REVIEWING || targetState === TASK_STATUS.REVIEWING)
   ) {
     if (targetState === TASK_STATUS.PRE_PR_REVIEWING && proof.phase !== LIFECYCLE_PHASE.PRE_PR) {
-      return deniedGuards(
-        {
-          code: 'POST_PR_IMPLEMENTATION_REENTRY_FORBIDDEN',
-          message: 'A post-PR session cannot enter the pre-PR review boundary.',
-          owner_issue: 69,
-        },
-        {
-          code: 'REFRESH_REVIEW_PROOF_SET',
-          description: 'Refresh post-PR proof and return to reviewing.',
-          owner_issue: 69,
-        },
+      return deny(
+        'POST_PR_IMPLEMENTATION_REENTRY_FORBIDDEN',
+        'A post-PR session cannot enter the pre-PR review boundary.',
+        'REFRESH_REVIEW_PROOF_SET',
+        'Refresh post-PR proof and return to reviewing.',
+        69,
       );
     }
     if (targetState === TASK_STATUS.REVIEWING && proof.phase !== LIFECYCLE_PHASE.POST_PR) {
-      return deniedGuards(
-        {
-          code: 'PRE_PR_REVIEW_INPUT_REQUIRED',
-          message: 'A pre-PR session must enter pre_pr_reviewing before reviewing.',
-          owner_issue: 69,
-        },
-        {
-          code: 'RECORD_PRE_PR_REVIEW_OUTCOME',
-          description: 'Enter pre_pr_reviewing, then record a clean current-HEAD pre-PR review outcome.',
-          owner_issue: 69,
-        },
+      return deny(
+        'PRE_PR_REVIEW_INPUT_REQUIRED',
+        'A pre-PR session must enter pre_pr_reviewing before reviewing.',
+        'RECORD_PRE_PR_REVIEW_OUTCOME',
+        'Enter pre_pr_reviewing, then record a clean current-HEAD pre-PR review outcome.',
+        69,
       );
     }
     if (proof.evidence?.status !== 'passed') {
-      return deniedGuards(
-        {
-          code: 'CURRENT_PASSING_PROOF_REQUIRED',
-          message: 'Review requires every latest declared gate receipt to pass for the current HEAD.',
-          owner_issue: 40,
-        },
-        {
-          code: 'COMPLETE_CURRENT_PROOF',
-          description: 'Run or repair every declared gate until current-HEAD proof passes.',
-          owner_issue: 40,
-        },
+      return deny(
+        'CURRENT_PASSING_PROOF_REQUIRED',
+        'Review requires every latest declared gate receipt to pass for the current HEAD.',
+        'COMPLETE_CURRENT_PROOF',
+        'Run or repair every declared gate until current-HEAD proof passes.',
+        40,
       );
     }
     if (!repository.clean || repository.branch !== plan.baselineBranch) {
-      return deniedGuards(
-        {
-          code: 'PROOF_CHECKOUT_MISMATCH',
-          message: 'Review requires current-HEAD passing proof from a clean checkout on the proof-plan branch.',
-          owner_issue: 40,
-        },
-        {
-          code: 'RESTORE_PROOF_CHECKOUT',
-          description: 'Restore the clean proof-plan branch while preserving the verified HEAD, then retry.',
-          owner_issue: 40,
-        },
+      return deny(
+        'PROOF_CHECKOUT_MISMATCH',
+        'Review requires current-HEAD passing proof from a clean checkout on the proof-plan branch.',
+        'RESTORE_PROOF_CHECKOUT',
+        'Restore the clean proof-plan branch while preserving the verified HEAD, then retry.',
+        40,
       );
     }
     if (proof.ciEvidence?.status !== 'passed') {
@@ -507,34 +421,23 @@ function evaluateProofOwnedGuards(
     ) {
       return allowedGuards();
     }
-    return deniedGuards(
-      {
-        code: 'PRE_PR_REVIEW_INPUT_REQUIRED',
-        message: 'Pre-PR review remediation requires current changes_required evidence on a clean proof-plan branch.',
-        owner_issue: 69,
-      },
-      {
-        code: 'RECORD_PRE_PR_REVIEW_OUTCOME',
-        description:
-          'The operator/controller must record current-HEAD changes_required evidence, then retry the implementing transition.',
-        owner_issue: 69,
-      },
+    return deny(
+      'PRE_PR_REVIEW_INPUT_REQUIRED',
+      'Pre-PR review remediation requires current changes_required evidence on a clean proof-plan branch.',
+      'RECORD_PRE_PR_REVIEW_OUTCOME',
+      'The operator/controller must record current-HEAD changes_required evidence, then retry the implementing transition.',
+      69,
     );
   }
 
   if (sourceState === TASK_STATUS.PRE_PR_REVIEWING && targetState === TASK_STATUS.REVIEWING) {
     if (proof.phase !== LIFECYCLE_PHASE.PRE_PR || readPrePrReviewEvidence(input)?.outcome !== 'clean') {
-      return deniedGuards(
-        {
-          code: 'PRE_PR_REVIEW_INPUT_REQUIRED',
-          message: 'Entering reviewing requires a clean current-HEAD pre-PR review outcome.',
-          owner_issue: 69,
-        },
-        {
-          code: 'RECORD_PRE_PR_REVIEW_OUTCOME',
-          description: 'The operator/controller must record a clean pre_pr_review outcome for the live HEAD.',
-          owner_issue: 69,
-        },
+      return deny(
+        'PRE_PR_REVIEW_INPUT_REQUIRED',
+        'Entering reviewing requires a clean current-HEAD pre-PR review outcome.',
+        'RECORD_PRE_PR_REVIEW_OUTCOME',
+        'The operator/controller must record a clean pre_pr_review outcome for the live HEAD.',
+        69,
       );
     }
     if (
@@ -543,17 +446,12 @@ function evaluateProofOwnedGuards(
       !repository.clean ||
       repository.branch !== plan.baselineBranch
     ) {
-      return deniedGuards(
-        {
-          code: 'CURRENT_REVIEW_PROOF_SET_REQUIRED',
-          message: 'Pre-PR clearance requires current local and signed CI proof from the clean proof-plan branch.',
-          owner_issue: 69,
-        },
-        {
-          code: 'REFRESH_REVIEW_PROOF_SET',
-          description: 'Refresh local and signed CI proof for the live HEAD before entering reviewing.',
-          owner_issue: 69,
-        },
+      return deny(
+        'CURRENT_REVIEW_PROOF_SET_REQUIRED',
+        'Pre-PR clearance requires current local and signed CI proof from the clean proof-plan branch.',
+        'REFRESH_REVIEW_PROOF_SET',
+        'Refresh local and signed CI proof for the live HEAD before entering reviewing.',
+        69,
       );
     }
     return allowedGuards();
@@ -561,38 +459,26 @@ function evaluateProofOwnedGuards(
 
   if (sourceState === TASK_STATUS.VERIFYING && targetState === TASK_STATUS.REPAIRING) {
     if (proof.phase !== LIFECYCLE_PHASE.POST_PR) {
-      return deniedGuards(
-        {
-          code: 'CURRENT_FAILED_PROOF_REQUIRED',
-          message: 'Pre-PR gate failures return to implementing and do not enter repairing.',
-          owner_issue: 69,
-        },
-        {
-          code: 'COMMIT_IMPLEMENTATION',
-          description: 'Transition to implementing without consuming repair budget, then create one scoped commit.',
-          owner_issue: 69,
-        },
+      return deny(
+        'CURRENT_FAILED_PROOF_REQUIRED',
+        'Pre-PR gate failures return to implementing and do not enter repairing.',
+        'COMMIT_IMPLEMENTATION',
+        'Transition to implementing without consuming repair budget, then create one scoped commit.',
+        69,
       );
     }
-    if (proof.evidence?.status === 'failed' && (proof.attemptsUsed ?? 3) < 3) {
+    if (proof.evidence?.status === 'failed' && (proof.attemptsUsed ?? REPAIR_BUDGET) < REPAIR_BUDGET) {
       return allowedGuards();
     }
-    const exhausted = (proof.attemptsUsed ?? 3) >= 3;
-    return deniedGuards(
-      {
-        code: exhausted ? 'REPAIR_BUDGET_EXHAUSTED' : 'CURRENT_FAILED_PROOF_REQUIRED',
-        message: exhausted
-          ? 'No fourth repair cycle is permitted.'
-          : 'Repairing requires a current-HEAD nonpassing gate receipt.',
-        owner_issue: 40,
-      },
-      {
-        code: exhausted ? 'TRANSITION_TO_BLOCKED' : 'RUN_CURRENT_GATES',
-        description: exhausted
-          ? 'Provide complete block evidence and explicitly transition the session to blocked.'
-          : 'Run the declared gates on the current clean HEAD and retain the failure receipt.',
-        owner_issue: 40,
-      },
+    const exhausted = (proof.attemptsUsed ?? REPAIR_BUDGET) >= REPAIR_BUDGET;
+    return deny(
+      exhausted ? 'REPAIR_BUDGET_EXHAUSTED' : 'CURRENT_FAILED_PROOF_REQUIRED',
+      exhausted ? 'No fourth repair cycle is permitted.' : 'Repairing requires a current-HEAD nonpassing gate receipt.',
+      exhausted ? 'TRANSITION_TO_BLOCKED' : 'RUN_CURRENT_GATES',
+      exhausted
+        ? 'Provide complete block evidence and explicitly transition the session to blocked.'
+        : 'Run the declared gates on the current clean HEAD and retain the failure receipt.',
+      40,
     );
   }
 
@@ -600,17 +486,12 @@ function evaluateProofOwnedGuards(
     if (repository.clean && repository.branch === plan.baselineBranch && repository.committedRepairFromFailure) {
       return allowedGuards();
     }
-    return deniedGuards(
-      {
-        code: 'COMMITTED_REPAIR_REQUIRED',
-        message: 'Verification re-entry requires a clean committed repair after the failure HEAD.',
-        owner_issue: 40,
-      },
-      {
-        code: 'COMMIT_REPAIR',
-        description: 'Commit a repair on the proof-plan branch and clean the worktree before retrying.',
-        owner_issue: 40,
-      },
+    return deny(
+      'COMMITTED_REPAIR_REQUIRED',
+      'Verification re-entry requires a clean committed repair after the failure HEAD.',
+      'COMMIT_REPAIR',
+      'Commit a repair on the proof-plan branch and clean the worktree before retrying.',
+      40,
     );
   }
 
@@ -650,10 +531,7 @@ function signedCiProofGuard(status: CiProofEvidence['status']): TransitionGuardD
       description: 'Import verified signed CI proof.',
     },
   }[status];
-  return deniedGuards(
-    { code: details.failure, message: details.message, owner_issue: 41 },
-    { code: details.work, description: details.description, owner_issue: 41 },
-  );
+  return deny(details.failure, details.message, details.work, details.description, 41);
 }
 
 export function validateTransitionEvidence(
@@ -666,30 +544,22 @@ export function validateTransitionEvidence(
     targetState === TASK_STATUS.BLOCKED &&
     !hasRequiredTextFields(input.block, ['reason', 'evidence_ref', 'recovery', 'stop_code'])
   ) {
-    return deniedGuards(
-      {
-        code: 'BLOCK_EVIDENCE_REQUIRED',
-        message: 'Entering blocked requires reason, evidence_ref, recovery, and stop_code.',
-      },
-      {
-        code: 'PROVIDE_BLOCK_EVIDENCE',
-        description: 'Provide complete block evidence without changing the prior lifecycle state.',
-      },
+    return deny(
+      'BLOCK_EVIDENCE_REQUIRED',
+      'Entering blocked requires reason, evidence_ref, recovery, and stop_code.',
+      'PROVIDE_BLOCK_EVIDENCE',
+      'Provide complete block evidence without changing the prior lifecycle state.',
     );
   }
   if (
     sourceState === TASK_STATUS.BLOCKED &&
     !hasRequiredTextFields(input.recovery, ['approved_by', 'evidence_ref', 'reason'])
   ) {
-    return deniedGuards(
-      {
-        code: 'RECOVERY_EVIDENCE_REQUIRED',
-        message: 'Recovering from blocked requires approved_by, evidence_ref, and reason.',
-      },
-      {
-        code: 'PROVIDE_RECOVERY_EVIDENCE',
-        description: 'Provide explicit human recovery approval and durable recovery evidence.',
-      },
+    return deny(
+      'RECOVERY_EVIDENCE_REQUIRED',
+      'Recovering from blocked requires approved_by, evidence_ref, and reason.',
+      'PROVIDE_RECOVERY_EVIDENCE',
+      'Provide explicit human recovery approval and durable recovery evidence.',
     );
   }
 
@@ -703,35 +573,22 @@ export function validateTransitionEvidence(
       proof.evidence?.status !== 'failed');
 
   if (suppliedPrePrReview && !prePrReview) {
-    return deniedGuards(
-      {
-        code: 'PRE_PR_REVIEW_FINDINGS_INVALID',
-        message:
-          'pre_pr_review must contain a valid outcome, live 40-character HEAD, evidence reference, SHA-256 digest, and unique normalized findings.',
-        owner_issue: 69,
-      },
-      {
-        code: 'RECORD_PRE_PR_REVIEW_OUTCOME',
-        description:
-          'The operator/controller must correct the pre_pr_review object and retry without changing lifecycle state.',
-        owner_issue: 69,
-      },
+    return deny(
+      'PRE_PR_REVIEW_FINDINGS_INVALID',
+      'pre_pr_review must contain a valid outcome, live 40-character HEAD, evidence reference, SHA-256 digest, and unique normalized findings.',
+      'RECORD_PRE_PR_REVIEW_OUTCOME',
+      'The operator/controller must correct the pre_pr_review object and retry without changing lifecycle state.',
+      69,
     );
   }
 
   if (requiresPrePrReview && !prePrReview) {
-    return deniedGuards(
-      {
-        code: 'PRE_PR_REVIEW_INPUT_REQUIRED',
-        message: `Lifecycle transition ${sourceState} -> ${targetState} requires pre_pr_review evidence.`,
-        owner_issue: 69,
-      },
-      {
-        code: 'RECORD_PRE_PR_REVIEW_OUTCOME',
-        description:
-          'The operator/controller must provide a canonical pre_pr_review object bound to the live repository HEAD.',
-        owner_issue: 69,
-      },
+    return deny(
+      'PRE_PR_REVIEW_INPUT_REQUIRED',
+      `Lifecycle transition ${sourceState} -> ${targetState} requires pre_pr_review evidence.`,
+      'RECORD_PRE_PR_REVIEW_OUTCOME',
+      'The operator/controller must provide a canonical pre_pr_review object bound to the live repository HEAD.',
+      69,
     );
   }
 
@@ -741,34 +598,22 @@ export function validateTransitionEvidence(
       (sourceState === TASK_STATUS.PRE_PR_REVIEWING &&
         (targetState === TASK_STATUS.IMPLEMENTING || targetState === TASK_STATUS.REVIEWING));
     if (!isPrePrReviewTransition) {
-      return deniedGuards(
-        {
-          code: 'PRE_PR_REVIEW_FINDINGS_INVALID',
-          message: `pre_pr_review evidence is not accepted for ${sourceState} -> ${targetState}.`,
-          owner_issue: 69,
-        },
-        {
-          code: 'RECORD_PRE_PR_REVIEW_OUTCOME',
-          description:
-            'The operator/controller must remove pre_pr_review evidence or select the matching pre-PR transition.',
-          owner_issue: 69,
-        },
+      return deny(
+        'PRE_PR_REVIEW_FINDINGS_INVALID',
+        `pre_pr_review evidence is not accepted for ${sourceState} -> ${targetState}.`,
+        'RECORD_PRE_PR_REVIEW_OUTCOME',
+        'The operator/controller must remove pre_pr_review evidence or select the matching pre-PR transition.',
+        69,
       );
     }
 
     if (prePrReview.headSha !== proof.repository?.headSha) {
-      return deniedGuards(
-        {
-          code: 'PRE_PR_REVIEW_HEAD_MISMATCH',
-          message: `Pre-PR review HEAD ${prePrReview.headSha} does not match live HEAD ${proof.repository?.headSha ?? '(unavailable)'}.`,
-          owner_issue: 69,
-        },
-        {
-          code: 'RECORD_PRE_PR_REVIEW_OUTCOME',
-          description:
-            'The operator/controller must review the live HEAD and retry with evidence bound to that exact commit.',
-          owner_issue: 69,
-        },
+      return deny(
+        'PRE_PR_REVIEW_HEAD_MISMATCH',
+        `Pre-PR review HEAD ${prePrReview.headSha} does not match live HEAD ${proof.repository?.headSha ?? '(unavailable)'}.`,
+        'RECORD_PRE_PR_REVIEW_OUTCOME',
+        'The operator/controller must review the live HEAD and retry with evidence bound to that exact commit.',
+        69,
       );
     }
 
@@ -779,17 +624,12 @@ export function validateTransitionEvidence(
           ? 'clean'
           : null;
     if (expectedOutcome && prePrReview.outcome !== expectedOutcome) {
-      return deniedGuards(
-        {
-          code: 'PRE_PR_REVIEW_FINDINGS_INVALID',
-          message: `${sourceState} -> ${targetState} requires pre_pr_review outcome ${expectedOutcome}.`,
-          owner_issue: 69,
-        },
-        {
-          code: 'RECORD_PRE_PR_REVIEW_OUTCOME',
-          description: `The operator/controller must retry with a ${expectedOutcome} outcome that matches the requested transition.`,
-          owner_issue: 69,
-        },
+      return deny(
+        'PRE_PR_REVIEW_FINDINGS_INVALID',
+        `${sourceState} -> ${targetState} requires pre_pr_review outcome ${expectedOutcome}.`,
+        'RECORD_PRE_PR_REVIEW_OUTCOME',
+        `The operator/controller must retry with a ${expectedOutcome} outcome that matches the requested transition.`,
+        69,
       );
     }
   }
@@ -938,18 +778,12 @@ export function planNextTransition(input: {
         : input.state === TASK_STATUS.REVIEWING
           ? TASK_STATUS.READY_FOR_HUMAN
           : TASK_STATUS.COMPLETED;
-    const guards = evaluateTransitionGuards(input.state, target, {}, input.blockedFromState, input.proofGuardContext);
-    return {
-      candidate: {
-        from_state: input.state,
-        target_state: target,
-        expected_state_version: input.stateVersion,
-        executable: guards.allowed,
-      },
-      guardFailures: guards.guardFailures,
-      requiredWork: guards.requiredWork,
-      terminalReason: null,
-    };
+    return candidate(
+      input.state,
+      target,
+      input.stateVersion,
+      evaluateTransitionGuards(input.state, target, {}, input.blockedFromState, input.proofGuardContext),
+    );
   }
 
   const target = getDeterministicForwardTarget(input.state);
@@ -963,18 +797,12 @@ export function planNextTransition(input: {
     };
   }
 
-  const guards = evaluateTransitionGuards(input.state, target, {}, input.blockedFromState, input.proofGuardContext);
-  return {
-    candidate: {
-      from_state: input.state,
-      target_state: target,
-      expected_state_version: input.stateVersion,
-      executable: guards.allowed,
-    },
-    guardFailures: guards.guardFailures,
-    requiredWork: guards.requiredWork,
-    terminalReason: null,
-  };
+  return candidate(
+    input.state,
+    target,
+    input.stateVersion,
+    evaluateTransitionGuards(input.state, target, {}, input.blockedFromState, input.proofGuardContext),
+  );
 }
 
 function planVerifyingTransition(
@@ -984,53 +812,23 @@ function planVerifyingTransition(
   proofGuardContext: ProofGuardContext | undefined,
 ): PlannedTransition {
   const phaseAwareGuardContext = { ...proofGuardContext, phase };
+  const planFromVerifying = (target: TaskStatus) =>
+    candidate(
+      TASK_STATUS.VERIFYING,
+      target,
+      stateVersion,
+      evaluateTransitionGuards(TASK_STATUS.VERIFYING, target, {}, null, phaseAwareGuardContext),
+    );
   if (proof.status === 'passed') {
-    const target = phase === LIFECYCLE_PHASE.PRE_PR ? TASK_STATUS.PRE_PR_REVIEWING : TASK_STATUS.REVIEWING;
-    const guards = evaluateTransitionGuards(TASK_STATUS.VERIFYING, target, {}, null, phaseAwareGuardContext);
-    return {
-      candidate: {
-        from_state: TASK_STATUS.VERIFYING,
-        target_state: target,
-        expected_state_version: stateVersion,
-        executable: guards.allowed,
-      },
-      guardFailures: guards.guardFailures,
-      requiredWork: guards.requiredWork,
-      terminalReason: null,
-    };
+    return planFromVerifying(phase === LIFECYCLE_PHASE.PRE_PR ? TASK_STATUS.PRE_PR_REVIEWING : TASK_STATUS.REVIEWING);
   }
   if (proof.status === 'failed' && phase === LIFECYCLE_PHASE.PRE_PR) {
-    const guards = evaluateTransitionGuards(
-      TASK_STATUS.VERIFYING,
-      TASK_STATUS.IMPLEMENTING,
-      {},
-      null,
-      phaseAwareGuardContext,
-    );
-    return {
-      candidate: {
-        from_state: TASK_STATUS.VERIFYING,
-        target_state: TASK_STATUS.IMPLEMENTING,
-        expected_state_version: stateVersion,
-        executable: guards.allowed,
-      },
-      guardFailures: guards.guardFailures,
-      requiredWork: guards.requiredWork,
-      terminalReason: null,
-    };
+    return planFromVerifying(TASK_STATUS.IMPLEMENTING);
   }
-  if (proof.status === 'failed' && proof.attemptsUsed < 3) {
-    return {
-      candidate: {
-        from_state: TASK_STATUS.VERIFYING,
-        target_state: TASK_STATUS.REPAIRING,
-        expected_state_version: stateVersion,
-        executable: true,
-      },
-      guardFailures: [],
-      requiredWork: [],
-      terminalReason: null,
-    };
+  // Evaluated like every other candidate, so `session next` never offers a repair the apply step would refuse
+  // for missing plan or repository authority.
+  if (proof.status === 'failed' && proof.attemptsUsed < REPAIR_BUDGET) {
+    return planFromVerifying(TASK_STATUS.REPAIRING);
   }
   if (proof.status === 'failed') {
     return {
@@ -1095,18 +893,14 @@ function planVerifyingTransition(
   };
 }
 
+/** The codes are part of the runner's closed code set, so they are kept even though the guard is generic. */
 function deferredProofGuards(): TransitionGuardDecision {
-  return deniedGuards(
-    {
-      code: 'PROOF_AUTHORITY_DEFERRED',
-      message: 'Proof-plan and current-HEAD authority is not available in M002-2.',
-      owner_issue: 40,
-    },
-    {
-      code: 'IMPLEMENT_ISSUE_40',
-      description: 'Provide authoritative proof-plan, gate, staleness, and repair-budget evidence.',
-      owner_issue: 40,
-    },
+  return deny(
+    'PROOF_AUTHORITY_DEFERRED',
+    'No proof-owned guard can authorize this transition from the available evidence.',
+    'IMPLEMENT_ISSUE_40',
+    'Provide authoritative proof-plan, gate, staleness, and repair-budget evidence.',
+    40,
   );
 }
 
@@ -1114,11 +908,39 @@ function allowedGuards(): TransitionGuardDecision {
   return { allowed: true, guardFailures: [], requiredWork: [] };
 }
 
-function deniedGuards(
-  guardFailure: TransitionGuardFailure,
-  requiredWork: TransitionRequiredWork,
+/** One guard failure and the work that clears it, both attributed to the issue that owns the guard. */
+function deny(
+  code: string,
+  message: string,
+  work: string,
+  description: string,
+  ownerIssue?: number,
 ): TransitionGuardDecision {
-  return { allowed: false, guardFailures: [guardFailure], requiredWork: [requiredWork] };
+  const owner = ownerIssue === undefined ? {} : { owner_issue: ownerIssue };
+  return {
+    allowed: false,
+    guardFailures: [{ code, message, ...owner }],
+    requiredWork: [{ code: work, description, ...owner }],
+  };
+}
+
+function candidate(
+  fromState: TaskStatus,
+  targetState: TaskStatus,
+  expectedStateVersion: number,
+  guards: TransitionGuardDecision,
+): PlannedTransition {
+  return {
+    candidate: {
+      from_state: fromState,
+      target_state: targetState,
+      expected_state_version: expectedStateVersion,
+      executable: guards.allowed,
+    },
+    guardFailures: guards.guardFailures,
+    requiredWork: guards.requiredWork,
+    terminalReason: null,
+  };
 }
 
 function hasRequiredTextFields(value: unknown, fields: string[]) {
