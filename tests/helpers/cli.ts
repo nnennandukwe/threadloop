@@ -114,3 +114,98 @@ export async function runCliFailure(cwd: string, args: string[], env?: NodeJS.Pr
 export function parseJson<T>(value: string | undefined) {
   return JSON.parse(value ?? '') as T;
 }
+
+/** The `--json` failure envelope every command writes to stderr. */
+export interface ErrorEnvelope {
+  ok: false;
+  command: string;
+  error: {
+    code: string;
+    message: string;
+    details: Record<string, unknown> & {
+      guard_failures?: Array<{ code: string; message: string; owner_issue?: number }>;
+    };
+  };
+}
+
+/** Runs a command that must fail and returns its parsed `--json` error envelope. */
+export async function runCliError(cwd: string, args: string[], env?: NodeJS.ProcessEnv) {
+  return parseJson<ErrorEnvelope>((await runCliFailure(cwd, args, env)).stderr);
+}
+
+/** The argv for one `session transition --json`; `input` is an object to serialize or raw `--input` text. */
+export function transitionArgs(
+  sessionId: string,
+  targetState: string,
+  expectedStateVersion: number | string,
+  idempotencyKey: string,
+  input: Record<string, unknown> | string = {},
+  actor = 'agent',
+) {
+  return [
+    'session',
+    'transition',
+    targetState,
+    '--session',
+    sessionId,
+    '--expected-state-version',
+    String(expectedStateVersion),
+    '--idempotency-key',
+    idempotencyKey,
+    '--actor',
+    actor,
+    '--input',
+    typeof input === 'string' ? input : JSON.stringify(input),
+    '--json',
+  ];
+}
+
+interface TransitionEnvelope {
+  ok: true;
+  command: string;
+  data: {
+    session_id: string;
+    task_id: string;
+    transition: { from_state: string; to_state: string };
+    lifecycle: { state: string; state_version: number; blocked_from_state: string | null };
+    session: { ended_at: string | null };
+    proof_plan: { sha256: string; baseline_branch: string; baseline_head_sha: string };
+  };
+}
+
+/** Applies one transition through the public CLI and returns its parsed success envelope. */
+export async function transition(cwd: string, ...args: Parameters<typeof transitionArgs>) {
+  return parseJson<TransitionEnvelope>((await runCli(cwd, transitionArgs(...args))).stdout);
+}
+
+/** Attempts one transition that must be refused and returns its parsed error envelope. */
+export async function transitionFailure(cwd: string, ...args: Parameters<typeof transitionArgs>) {
+  return runCliError(cwd, transitionArgs(...args));
+}
+
+/** The `data` of `session next --json`. Pass `T` to read fields beyond a `toMatchObject` comparison. */
+export async function sessionNext<T = Record<string, unknown>>(cwd: string, sessionId: string) {
+  return parseJson<{ data: T }>((await runCli(cwd, ['session', 'next', '--session', sessionId, '--json'])).stdout).data;
+}
+
+interface GateReceipt {
+  id: string;
+  sequence: number;
+  result: string;
+  exit_status: number | null;
+  head_before: string;
+  head_after: string;
+  clean_after: boolean;
+  artifact: { path: string; sha256: string };
+  setup: Array<Record<string, unknown>>;
+}
+
+export function gateRunArgs(sessionId: string, gateId = 'check') {
+  return ['session', 'gate', 'run', gateId, '--session', sessionId, '--json'];
+}
+
+/** Runs one declared gate through `session gate run --json` and returns the receipt it appended. */
+export async function runGate(cwd: string, sessionId: string, env?: NodeJS.ProcessEnv) {
+  return parseJson<{ data: { receipt: GateReceipt } }>((await runCli(cwd, gateRunArgs(sessionId), env)).stdout).data
+    .receipt;
+}
