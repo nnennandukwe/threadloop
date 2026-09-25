@@ -460,9 +460,18 @@ describe('proof-aware session next', () => {
     });
   });
 
-  it('denies review without mutating lifecycle state when another branch points at the passing HEAD', async () => {
+  it.each([
+    {
+      name: 'the worktree becomes dirty',
+      mutateCheckout: (repoDir: string) => writeFile(path.join(repoDir, 'post-proof-change.txt'), 'uncommitted\n'),
+    },
+    {
+      name: 'another branch points at the passing HEAD',
+      mutateCheckout: (repoDir: string) => git(repoDir, 'switch', '-c', 'alternate-proof-branch'),
+    },
+  ])('denies review without mutating lifecycle state when $name', async ({ mutateCheckout }) => {
     const { repoDir, sessionId } = await verifyingSessionWithReceipt();
-    await git(repoDir, 'switch', '-c', 'alternate-proof-branch');
+    await mutateCheckout(repoDir);
 
     expect(await sessionNext(repoDir, sessionId)).toMatchObject({
       candidate: { target_state: 'pre_pr_reviewing', executable: false },
