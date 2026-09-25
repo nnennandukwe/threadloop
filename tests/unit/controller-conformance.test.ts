@@ -48,7 +48,7 @@ import {
   type SubjectRequest,
 } from '../../scripts/controller-conformance/contracts.js';
 import { validateControllerDecision } from '../../scripts/controller-contract/decision.js';
-import type { ValidationResult } from '../../scripts/workflow-graph/contracts.js';
+import type { ValidationResult } from '../../scripts/contract-kernel/kernel.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
 

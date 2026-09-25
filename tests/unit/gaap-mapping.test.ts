@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { executorFixture } from '../fixtures/executor-contract.js';
 import { buildGaapRequest, mapGaapResult } from '../../scripts/executor-contract/gaap.js';
 import { canonicalExecutorJson } from '../../scripts/executor-contract/codec.js';
-import { executionDigest } from '../../scripts/execution-contract/model.js';
+import { digest } from '../../scripts/contract-kernel/kernel.js';
 import type { GaapReceipt } from '../../scripts/executor-contract/gaap-types.js';
 
 async function mappedFixture(name: string) {
@@ -18,8 +18,8 @@ async function mappedFixture(name: string) {
   const body = JSON.parse(JSON.stringify(receipt.body).replaceAll(source, subject)) as GaapReceipt['body'];
   body.request_id = mapped.value.request_id;
   body.run_id = mapped.value.run_id;
-  body.request_digest = 'sha256:' + executionDigest(mapped.value);
-  const sealed = { body, receipt_digest: 'sha256:' + executionDigest(body) };
+  body.request_digest = 'sha256:' + digest(mapped.value);
+  const sealed = { body, receipt_digest: 'sha256:' + digest(body) };
   const canonical = canonicalExecutorJson(sealed);
   if (!canonical.ok) throw new Error(JSON.stringify(canonical));
   return {
@@ -44,7 +44,7 @@ describe('GAAP mapping candidates', () => {
       if (field === 'capability') fixture.envelope.request.parameters.capability.name = 'unsupported';
       if (field === 'policies') fixture.envelope.request.parameters.policies[0]!.digest = 'f'.repeat(64);
       if (field === 'evidence') fixture.envelope.request.parameters.required_verification.evidence_types = ['artifact'];
-      fixture.envelope.request_digest = executionDigest(fixture.envelope.request);
+      fixture.envelope.request_digest = digest(fixture.envelope.request);
       expect(buildGaapRequest(fixture.envelope, fixture.mapping).ok).toBe(false);
     }
   });
@@ -53,7 +53,7 @@ describe('GAAP mapping candidates', () => {
     const first = buildGaapRequest(fixture.envelope, fixture.mapping);
     fixture.envelope.request.claim = { id: 'claim_b', version: 2 };
     fixture.envelope.request.attempt_id = 'attempt_b';
-    fixture.envelope.request_digest = executionDigest(fixture.envelope.request);
+    fixture.envelope.request_digest = digest(fixture.envelope.request);
     const next = buildGaapRequest(fixture.envelope, fixture.mapping);
     expect(first.ok && next.ok && first.value.run_id !== next.value.run_id).toBe(true);
   });
@@ -87,7 +87,7 @@ describe('GAAP mapping candidates', () => {
   it('rejects a validly hashed receipt for another request', async () => {
     const fixture = await mappedFixture('completed');
     fixture.sealed.body.request_id = 'another_request';
-    fixture.sealed.receipt_digest = 'sha256:' + executionDigest(fixture.sealed.body);
+    fixture.sealed.receipt_digest = 'sha256:' + digest(fixture.sealed.body);
     const canonical = canonicalExecutorJson(fixture.sealed);
     if (!canonical.ok) throw new Error('Invalid fixture');
     expect(mapGaapResult(fixture.envelope, fixture.mapping, Buffer.from(canonical.value), fixture.observation).ok).toBe(

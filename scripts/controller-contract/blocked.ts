@@ -1,5 +1,5 @@
 import type { ControllerDecision, ControllerInput } from './contracts.js';
-import type { Diagnostic } from '../workflow-graph/contracts.js';
+import type { Diagnostic } from '../contract-kernel/kernel.js';
 import { currentObservation, currentReceipt, expired, issue, validateRequestInSnapshot } from './validation.js';
 
 type Reason = Extract<ControllerDecision['decision'], { outcome: 'blocked' }>['reasons'][number];

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { digest } from '../../scripts/contract-kernel/kernel.js';
 import {
   applyExecutionOperation,
   createExecutionJournal,
-  executionDigest,
   projectControllerExecution,
   replayExecutionJournal,
 } from '../../scripts/execution-contract/model.js';
@@ -32,11 +32,11 @@ describe('Independent execution authority', () => {
   it('allows an independently admitted policy rotation without granting the revoked actor authority', async () => {
     const { journal, context, authority, admit } = await admittedExecution();
     const current = structuredClone(context);
-    const replacement = { id: 'current_controller', digest: executionDigest('current controller') };
+    const replacement = { id: 'current_controller', digest: digest('current controller') };
     current.snapshot.policy.rules.authorities = current.snapshot.policy.rules.authorities.map((item) =>
       item.type === 'threadloop' ? { ...item, identity: replacement } : item,
     );
-    current.snapshot.policy.digest = executionDigest(current.snapshot.policy.rules);
+    current.snapshot.policy.digest = digest(current.snapshot.policy.rules);
     const revoked = operationFor(journal, current.actor, { kind: 'cancel', reason: 'Revoked actor' });
     admit({ kind: 'operation', execution_digest: journal.execution_digest, context: current, operation: revoked });
     const denied = applyExecutionOperation(journal, current, revoked, authority);
@@ -52,9 +52,9 @@ describe('Independent execution authority', () => {
   it('rejects a fabricated current policy that grants the caller human authority', async () => {
     const { journal, context, authority } = await admittedExecution();
     const forged = structuredClone(context);
-    forged.actor = { kind: 'human', identity: { id: 'attacker', digest: executionDigest('attacker') } };
+    forged.actor = { kind: 'human', identity: { id: 'attacker', digest: digest('attacker') } };
     forged.snapshot.policy.rules.authorities.push({ type: 'human', identity: forged.actor.identity });
-    forged.snapshot.policy.digest = executionDigest(forged.snapshot.policy.rules);
+    forged.snapshot.policy.digest = digest(forged.snapshot.policy.rules);
     const result = applyExecutionOperation(
       journal,
       forged,

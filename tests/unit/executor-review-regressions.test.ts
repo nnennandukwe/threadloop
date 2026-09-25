@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { Ajv2020 } from 'ajv/dist/2020.js';
 import { describe, expect, it } from 'vitest';
-import { executionDigest } from '../../scripts/execution-contract/model.js';
+import { digest } from '../../scripts/contract-kernel/kernel.js';
 import { canonicalExecutorJson } from '../../scripts/executor-contract/codec.js';
 import {
   publishedExecutorSchemas,
@@ -24,7 +24,7 @@ function reseal(receipt: GaapReceipt) {
   receipt.body.events.forEach((event, index) => {
     event.sequence = index + 1;
   });
-  receipt.receipt_digest = 'sha256:' + executionDigest(receipt.body);
+  receipt.receipt_digest = 'sha256:' + digest(receipt.body);
   return receipt;
 }
 function bytes(receipt: GaapReceipt) {
@@ -89,7 +89,7 @@ describe('Reproduced executor review boundaries', () => {
     async (suffix) => {
       const { request } = await mappingFixture();
       request.request.mapping_policy.digest += suffix;
-      request.request_digest = executionDigest(request.request);
+      request.request_digest = digest(request.request);
       const validate = new Ajv2020({ strict: true, validateFormats: false }).compile(
         publishedExecutorSchemas()['executor-request']!,
       );
@@ -103,9 +103,9 @@ describe('Reproduced executor review boundaries', () => {
       ...fixture.mapping.policy.evidence_mapping[0]!,
       evidence_types: ['artifact'],
     });
-    fixture.mapping.policy_digest = executionDigest(fixture.mapping.policy);
+    fixture.mapping.policy_digest = digest(fixture.mapping.policy);
     fixture.request.request.mapping_policy.digest = fixture.mapping.policy_digest;
-    fixture.request.request_digest = executionDigest(fixture.request.request);
+    fixture.request.request_digest = digest(fixture.request.request);
     const validate = new Ajv2020({ strict: true, validateFormats: false }).compile(
       publishedExecutorSchemas()['gaap-mapping-policy']!,
     );
@@ -184,7 +184,7 @@ describe('Reproduced executor review boundaries', () => {
         result.verification.push({ ...structuredClone(result.verification[0]!), verdict: 'FAIL' });
       if (mutation === 'source_id') result.source_receipt.id = 'another_receipt';
       if (mutation === 'source_digest') result.source_receipt.digest = 'f'.repeat(64);
-      envelope.result_digest = executionDigest(result);
+      envelope.result_digest = digest(result);
       expect(validateExecutorResult(envelope, fixture.request).ok).toBe(false);
     },
   );
@@ -199,8 +199,8 @@ describe('Reproduced executor review boundaries', () => {
     receipt.receipt.effect = 'unknown';
     receipt.receipt.resulting_subject!.content_digest = 'f'.repeat(64);
     envelope.result.reason.code = 'failed';
-    receipt.receipt_digest = executionDigest(receipt.receipt);
-    envelope.result_digest = executionDigest(envelope.result);
+    receipt.receipt_digest = digest(receipt.receipt);
+    envelope.result_digest = digest(envelope.result);
     expect(validateExecutorResult(envelope, fixture.request).ok).toBe(true);
     // The executor did not observe an attributable mutation. Synthetic admission still requires recovery.
     const admitted = operate(
@@ -242,8 +242,8 @@ describe('Reproduced executor review boundaries', () => {
         request.request.parameters.required_verification.evidence_types.push(
           request.request.parameters.required_verification.evidence_types[0]!,
         );
-      request.request.action_request.request_digest = executionDigest(request.request.action_request.request);
-      request.request_digest = executionDigest(request.request);
+      request.request.action_request.request_digest = digest(request.request.action_request.request);
+      request.request_digest = digest(request.request);
       const validate = new Ajv2020({ strict: true, validateFormats: false }).compile(
         publishedExecutorSchemas()['executor-request']!,
       );
@@ -354,8 +354,8 @@ describe('Reproduced executor review boundaries', () => {
         if (mutation === 'none_changed_revision') receipt.resulting_subject.revision = 'different_revision';
         else receipt.resulting_subject.content_digest = 'f'.repeat(64);
       }
-      result.result.attempt_receipt.receipt_digest = executionDigest(receipt);
-      result.result_digest = executionDigest(result.result);
+      result.result.attempt_receipt.receipt_digest = digest(receipt);
+      result.result_digest = digest(result.result);
       expect(validateExecutorResult(result, fixture.request).ok).toBe(false);
     },
   );

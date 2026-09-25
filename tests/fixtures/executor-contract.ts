@@ -1,5 +1,5 @@
 import { initialExecution, operate, grant, target, executorA } from './execution-contract.js';
-import { executionDigest } from '../../scripts/execution-contract/model.js';
+import { digest } from '../../scripts/contract-kernel/kernel.js';
 import type { ExecutorRequest, GaapMappingPolicy } from '../../scripts/executor-contract/contracts.js';
 import { executionAdmissionDigest } from '../../scripts/execution-contract/authority.js';
 import { executorRequestAdmissionDigest } from '../../scripts/executor-contract/validation.js';
@@ -20,7 +20,7 @@ export async function executorFixture() {
     policies,
     evidence_mapping: [{ family: 'local_proof', evidence_types: ['command_output'] }],
   };
-  const mapping = { policy, policy_digest: executionDigest(policy) };
+  const mapping = { policy, policy_digest: digest(policy) };
   const request: ExecutorRequest['request'] = {
     schema_version: 'threadloop.executor/0.1',
     kind: 'execute',
@@ -51,7 +51,7 @@ export async function executorFixture() {
     ...initial,
     started,
     mapping,
-    envelope: { request: structuredClone(request), request_digest: executionDigest(request) },
+    envelope: { request: structuredClone(request), request_digest: digest(request) },
   };
 }
 

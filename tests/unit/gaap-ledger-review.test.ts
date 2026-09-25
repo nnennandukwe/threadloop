@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
-import { executionDigest } from '../../scripts/execution-contract/model.js';
+import { digest } from '../../scripts/contract-kernel/kernel.js';
 import { canonicalExecutorJson } from '../../scripts/executor-contract/codec.js';
 import type { ExecutorRequest, GaapMappingPolicy } from '../../scripts/executor-contract/contracts.js';
 import { mapGaapResult } from '../../scripts/executor-contract/gaap.js';
@@ -22,7 +22,7 @@ function seal(receipt: GaapReceipt) {
   receipt.body.events.forEach((event, index) => {
     event.sequence = index + 1;
   });
-  receipt.receipt_digest = 'sha256:' + executionDigest(receipt.body);
+  receipt.receipt_digest = 'sha256:' + digest(receipt.body);
   return receipt;
 }
 function completion(receipt: GaapReceipt) {
@@ -48,7 +48,7 @@ function reportToolCalls(receipt: GaapReceipt, count: number) {
 }
 function budgetToolCalls(receipt: GaapReceipt, request: GaapRequest, count: number) {
   request.resource_budget.max_tool_calls = count;
-  receipt.body.request_digest = 'sha256:' + executionDigest(request);
+  receipt.body.request_digest = 'sha256:' + digest(request);
 }
 function map(fixtureValue: Awaited<ReturnType<typeof fixture>>) {
   const encoded = canonicalExecutorJson(seal(fixtureValue.receipt));

@@ -1,15 +1,11 @@
-import { validateShape, type ValidationResult } from '../workflow-graph/contracts.js';
+import { digest, same, validateShape, type ValidationResult } from '../contract-kernel/kernel.js';
 import { executorRequestSchema, executorResultSchema, type ExecutorRequest, type ExecutorResult } from './contracts.js';
 import { invalid, validateJsonValue } from './codec.js';
-import {
-  executionDigest,
-  projectControllerExecution,
-  replayExecutionJournal,
-  requestReference,
-} from '../execution-contract/model.js';
+import { projectControllerExecution, replayExecutionJournal, requestReference } from '../execution-contract/model.js';
 import type { ExecutionAuthority } from '../execution-contract/authority.js';
 import { executionJournalSchema } from '../execution-contract/contracts.js';
-import { requestIdentity, same } from '../controller-contract/validation.js';
+import { sameSubjectIdentity } from '../controller-contract/contracts.js';
+import { requestIdentity } from '../controller-contract/validation.js';
 
 export function validateExecutorRequest(value: unknown): ValidationResult<ExecutorRequest> {
   const bounded = validateJsonValue(value);
@@ -19,7 +15,7 @@ export function validateExecutorRequest(value: unknown): ValidationResult<Execut
   const envelope = parsed.value;
   const { request } = envelope;
   const action = request.action_request;
-  if (executionDigest(request) !== envelope.request_digest || executionDigest(action.request) !== action.request_digest)
+  if (digest(request) !== envelope.request_digest || digest(action.request) !== action.request_digest)
     return invalid(
       'REQUEST_DIGEST_MISMATCH',
       'Executor and Action Request contents must match their retained digests.',
@@ -29,7 +25,7 @@ export function validateExecutorRequest(value: unknown): ValidationResult<Execut
   if (action.request.idempotency_key !== requestIdentity(action.request.binding, action.request.action_id))
     return invalid('REQUEST_IDENTITY_MISMATCH', 'Action identity must match the exact action slot.');
   const parameters = request.parameters;
-  const unique = (items: unknown[]) => new Set(items.map(executionDigest)).size === items.length;
+  const unique = (items: unknown[]) => new Set(items.map(digest)).size === items.length;
   if (
     !unique(parameters.policies) ||
     !unique(parameters.required_verification.evidence_types) ||
@@ -53,7 +49,7 @@ export function validateExecutorRequest(value: unknown): ValidationResult<Execut
 
 /** Identifies a host-approved immutable request; the digest is not an authentication mechanism. */
 export function executorRequestAdmissionDigest(request: ExecutorRequest): string {
-  return executionDigest({ domain: 'threadloop.executor-request-admission/0.1', request });
+  return digest({ domain: 'threadloop.executor-request-admission/0.1', request });
 }
 
 /** Development preflight, not a dispatch or receipt admission. Requires independently admitted history and snapshot. */
@@ -111,10 +107,7 @@ export function validateExecutorResult(value: unknown, requestValue: unknown): V
   const { result } = parsed.value;
   const receipt = result.attempt_receipt.receipt;
   const input = request.value.request;
-  if (
-    executionDigest(result) !== parsed.value.result_digest ||
-    executionDigest(receipt) !== result.attempt_receipt.receipt_digest
-  )
+  if (digest(result) !== parsed.value.result_digest || digest(receipt) !== result.attempt_receipt.receipt_digest)
     return invalid('RESULT_DIGEST_MISMATCH', 'Result and Attempt receipt must match their canonical digests.');
   if (
     result.request_digest !== request.value.request_digest ||
@@ -147,16 +140,7 @@ export function validateExecutorResult(value: unknown, requestValue: unknown): V
     return invalid('RESULT_SUBJECT_MISMATCH', 'An occurred effect must identify the resulting subject.');
   const initialSubject = input.action_request.request.binding.subject;
   const resultingSubject = receipt.resulting_subject;
-  if (
-    resultingSubject !== null &&
-    (resultingSubject.kind !== initialSubject.kind ||
-      (initialSubject.kind === 'repository' &&
-        resultingSubject.kind === 'repository' &&
-        initialSubject.repository_id !== resultingSubject.repository_id) ||
-      (initialSubject.kind === 'artifact' &&
-        resultingSubject.kind === 'artifact' &&
-        initialSubject.artifact_id !== resultingSubject.artifact_id))
-  )
+  if (!sameSubjectIdentity(resultingSubject, initialSubject))
     return invalid('RESULT_SUBJECT_MISMATCH', 'Result must identify the original repository or artifact.');
   let currentDigest = initialSubject.content_digest;
   for (const effect of result.effects) {

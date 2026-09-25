@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { executionDigest } from '../../scripts/execution-contract/model.js';
+import { digest } from '../../scripts/contract-kernel/kernel.js';
 import { validateControllerDecision } from '../../scripts/controller-contract/decision.js';
 import type { ControllerDecision } from '../../scripts/controller-contract/contracts.js';
 import { readFile } from 'node:fs/promises';
@@ -77,19 +77,19 @@ describe('Execution admission', () => {
       expect(createExecutionJournal(fixture.context, fixture.request, fixture.policy).ok).toBe(true);
       if (kind === 'receipt_admissions') {
         const record = fixture.context.receipt_admissions[1]!;
-        record.admission.acceptance.digest = executionDigest('different');
-        record.admission_digest = executionDigest(record.admission);
+        record.admission.acceptance.digest = digest('different');
+        record.admission_digest = digest(record.admission);
       } else {
         const record = fixture.context.recovery_evidence[1]!;
         record.evidence.kind = 'effect_occurred';
-        record.evidence_digest = executionDigest(record.evidence);
+        record.evidence_digest = digest(record.evidence);
       }
       const created = createExecutionJournal(fixture.context, fixture.request, fixture.policy);
       expect(created.ok).toBe(false);
       if (!created.ok) expect(created.diagnostics[0]?.code).toBe('INITIAL_EVIDENCE_CONFLICT');
       const tampered = structuredClone(fixture.journal);
       tampered.execution.initial_context = fixture.context;
-      tampered.execution_digest = executionDigest(tampered.execution);
+      tampered.execution_digest = digest(tampered.execution);
       expect(replayExecutionJournal(tampered).ok).toBe(false);
     },
   );
@@ -99,11 +99,11 @@ describe('Execution admission', () => {
     const stop = recoveryFor(journal, 'executor_stopped');
     const changedStop = structuredClone(stop);
     changedStop.evidence.kind = 'effect_occurred';
-    changedStop.evidence_digest = executionDigest(changedStop.evidence);
+    changedStop.evidence_digest = digest(changedStop.evidence);
     const admission = receiptAdmissionFor(journal, receiptFor(journal));
     const changedAdmission = structuredClone(admission);
-    changedAdmission.admission.acceptance.digest = executionDigest('different');
-    changedAdmission.admission_digest = executionDigest(changedAdmission.admission);
+    changedAdmission.admission.acceptance.digest = digest('different');
+    changedAdmission.admission_digest = digest(changedAdmission.admission);
     const rejected = operate(
       journal,
       grant,
@@ -225,7 +225,7 @@ describe('Execution admission', () => {
     const started = operate(operate(journal, grant).journal, { kind: 'start', ...target });
     const receipt = receiptFor(journal, {
       status,
-      evidence: [{ id: 'invented', digest: executionDigest('invented') }],
+      evidence: [{ id: 'invented', digest: digest('invented') }],
     });
     const reported = operate(
       started.journal,
@@ -266,7 +266,7 @@ describe('Execution admission', () => {
     [
       'request',
       ({ admission }) => {
-        admission.request.request_digest = executionDigest('other request');
+        admission.request.request_digest = digest('other request');
       },
     ],
     [
@@ -278,7 +278,7 @@ describe('Execution admission', () => {
     [
       'graph',
       ({ admission }) => {
-        admission.binding.graph_digest = executionDigest('other graph');
+        admission.binding.graph_digest = digest('other graph');
       },
     ],
     [
@@ -290,13 +290,13 @@ describe('Execution admission', () => {
     [
       'subject',
       ({ admission }) => {
-        admission.binding.subject.content_digest = executionDigest('other subject');
+        admission.binding.subject.content_digest = digest('other subject');
       },
     ],
     [
       'execution policy',
       ({ admission }) => {
-        admission.execution_policy.digest = executionDigest('other policy');
+        admission.execution_policy.digest = digest('other policy');
       },
     ],
     [
@@ -332,13 +332,13 @@ describe('Execution admission', () => {
     [
       'receipt digest',
       ({ admission }) => {
-        admission.receipt.digest = executionDigest('other receipt');
+        admission.receipt.digest = digest('other receipt');
       },
     ],
     [
       'verification policy',
       ({ admission }) => {
-        admission.verification_policy.digest = executionDigest('other verifier');
+        admission.verification_policy.digest = digest('other verifier');
       },
     ],
     [
@@ -366,7 +366,7 @@ describe('Execution admission', () => {
     const receipt = receiptFor(journal);
     const admission = receiptAdmissionFor(journal, receipt);
     change(admission);
-    admission.admission_digest = executionDigest(admission.admission);
+    admission.admission_digest = digest(admission.admission);
     const rejected = operate(
       started.journal,
       { kind: 'submit_receipt', receipt },
@@ -386,7 +386,7 @@ describe('Execution admission', () => {
     const started = operate(operate(journal, grant).journal, { kind: 'start', ...target });
     const receipt = receiptFor(journal);
     const admission = receiptAdmissionFor(journal, receipt);
-    admission.admission_digest = executionDigest('wrong hash');
+    admission.admission_digest = digest('wrong hash');
     const rejected = operate(
       started.journal,
       { kind: 'submit_receipt', receipt },
@@ -398,7 +398,7 @@ describe('Execution admission', () => {
     expect(rejected.result.code).toBe('RECEIPT_ADMISSION_MISMATCH');
     const corrected = receiptAdmissionFor(journal, receipt);
     corrected.admission.id = 'new_admission';
-    corrected.admission_digest = executionDigest(corrected.admission);
+    corrected.admission_digest = digest(corrected.admission);
     const redelivered = operate(
       rejected.journal,
       { kind: 'submit_receipt', receipt },
@@ -460,8 +460,8 @@ describe('Execution admission', () => {
       }
       const acquired = operate(journal, grant, undefined, '2026-09-10T10:00:00.000Z', [], [original]);
       const changed = structuredClone(acquired.context);
-      changed.receipt_admissions[0]!.admission.acceptance.digest = executionDigest('changed acceptance');
-      changed.receipt_admissions[0]!.admission_digest = executionDigest(changed.receipt_admissions[0]!.admission);
+      changed.receipt_admissions[0]!.admission.acceptance.digest = digest('changed acceptance');
+      changed.receipt_admissions[0]!.admission_digest = digest(changed.receipt_admissions[0]!.admission);
       const result = applyExecutionOperation(acquired.journal, changed, acquired.operation);
       expect(result.ok && result.value.result.code).toBe('IDENTITY_CONFLICT');
       if (!result.ok) return;
@@ -495,7 +495,7 @@ describe('Execution admission', () => {
   it('enforces the admitted attempt limit even when earlier work never started', async () => {
     const fixture = await executionFixture();
     fixture.policy.rules.max_attempts = 1;
-    fixture.policy.digest = executionDigest(fixture.policy.rules);
+    fixture.policy.digest = digest(fixture.policy.rules);
     const created = createExecutionJournal(fixture.context, fixture.request, fixture.policy);
     expect(created.ok).toBe(true);
     if (!created.ok) return;
@@ -608,7 +608,7 @@ describe('Execution Claim identity and serialization', () => {
     const first = operate(journal, grant);
     const tampered = structuredClone(first.journal);
     tampered.execution.entries[0]!.context.actor = { kind: 'executor', executor: executorB };
-    tampered.execution_digest = executionDigest(tampered.execution);
+    tampered.execution_digest = digest(tampered.execution);
     expect(replayExecutionJournal(tampered).ok).toBe(false);
   });
 });
@@ -907,7 +907,7 @@ describe('Controller projection and preserved bindings', () => {
           snapshot.binding.state_version++;
           snapshot.observation.state_version++;
         } else if (drift === 'subject') {
-          snapshot.binding.subject.content_digest = executionDigest('new subject');
+          snapshot.binding.subject.content_digest = digest('new subject');
           snapshot.observation.subject = snapshot.binding.subject;
         } else if (drift === 'policy') snapshot.policy.id = 'new policy';
         else if (drift === 'capability') snapshot.available_capabilities = [];
@@ -984,10 +984,10 @@ describe('Controller projection and preserved bindings', () => {
     context.snapshot.evaluation_time = '2026-09-10T10:05:00.000Z';
     context.snapshot.policy.rules.authorities = context.snapshot.policy.rules.authorities.map((authority) =>
       authority.type === 'threadloop'
-        ? { ...authority, identity: { id: 'new_controller', digest: executionDigest('new controller') } }
+        ? { ...authority, identity: { id: 'new_controller', digest: digest('new controller') } }
         : authority,
     );
-    context.snapshot.policy.digest = executionDigest(context.snapshot.policy.rules);
+    context.snapshot.policy.digest = digest(context.snapshot.policy.rules);
     const result = applyExecutionOperation(
       claimed.journal,
       context,
@@ -1007,16 +1007,14 @@ describe('Controller projection and preserved bindings', () => {
     const snapshot = { ...context.snapshot, ...projection.value };
     const decision: ControllerDecision['decision'] = {
       schema_version: '0.1',
-      input_digest: executionDigest(snapshot),
+      input_digest: digest(snapshot),
       binding: snapshot.binding,
       outcome: 'waiting',
       request: claimed.operation.request,
       claim: target.claim,
       attempt_id: target.attempt_id,
     };
-    expect(validateControllerDecision(snapshot, { decision, decision_digest: executionDigest(decision) }).ok).toBe(
-      true,
-    );
+    expect(validateControllerDecision(snapshot, { decision, decision_digest: digest(decision) }).ok).toBe(true);
     const lateSnapshot = { ...context.snapshot, evaluation_time: '2026-09-10T10:05:00.000Z' };
     const expired = projectControllerExecution(claimed.journal, lateSnapshot);
     expect(expired.ok && expired.value.execution.status).toBe('reconciliation_required');
@@ -1024,7 +1022,7 @@ describe('Controller projection and preserved bindings', () => {
     const blockedInput = { ...lateSnapshot, ...expired.value };
     const blocked: ControllerDecision['decision'] = {
       schema_version: '0.1',
-      input_digest: executionDigest(blockedInput),
+      input_digest: digest(blockedInput),
       binding: snapshot.binding,
       outcome: 'blocked',
       reasons: [
@@ -1035,9 +1033,9 @@ describe('Controller projection and preserved bindings', () => {
         },
       ],
     };
-    expect(
-      validateControllerDecision(blockedInput, { decision: blocked, decision_digest: executionDigest(blocked) }).ok,
-    ).toBe(true);
+    expect(validateControllerDecision(blockedInput, { decision: blocked, decision_digest: digest(blocked) }).ok).toBe(
+      true,
+    );
   });
 
   it.each(['state', 'subject', 'policy', 'fence'] as const)(
@@ -1052,7 +1050,7 @@ describe('Controller projection and preserved bindings', () => {
         context.snapshot.observation.state_version++;
       }
       if (kind === 'subject') {
-        context.snapshot.binding.subject.content_digest = executionDigest('other');
+        context.snapshot.binding.subject.content_digest = digest('other');
         context.snapshot.observation.subject = context.snapshot.binding.subject;
       }
       if (kind === 'policy') context.snapshot.policy.id = 'other_policy';
@@ -1298,7 +1296,7 @@ describe('Published execution contract corpus', () => {
       if (['__proto__', 'prototype', 'constructor'].includes(key)) throw new Error('Invalid fixture key');
       parent[key] = fixture.value;
       if (fixture.reseal && operation.command.kind === 'submit_receipt')
-        operation.command.receipt.receipt_digest = executionDigest(operation.command.receipt.receipt);
+        operation.command.receipt.receipt_digest = digest(operation.command.receipt.receipt);
       const result = applyExecutionOperation(started.journal, context, operation);
       const codes = result.ok ? [result.value.result.code] : result.diagnostics.map((diagnostic) => diagnostic.code);
       expect(codes, fixture.id).toContain(fixture.code);
@@ -1316,8 +1314,8 @@ describe('Published execution contract corpus', () => {
       .parse(JSON.parse(await readFile(new URL('fixtures/golden-digests.json', bundle), 'utf8')));
     const { journal } = await initialExecution();
     const claimed = operate(journal, grant);
-    expect(executionDigest(claimed.projection.claims[0])).toBe(expected.claim_digest);
-    expect(executionDigest(claimed.projection.attempts[0])).toBe(expected.attempt_digest);
+    expect(digest(claimed.projection.claims[0])).toBe(expected.claim_digest);
+    expect(digest(claimed.projection.attempts[0])).toBe(expected.attempt_digest);
   });
 });
 
@@ -1330,9 +1328,9 @@ describe('Durable conflicts and bounded recovery', () => {
       if (changed)
         request.request.inputs.push({
           role: 'release_manifest',
-          artifact: { id: 'other_input', digest: executionDigest('other input') },
+          artifact: { id: 'other_input', digest: digest('other input') },
         });
-      request.request_digest = executionDigest(request.request);
+      request.request_digest = digest(request.request);
       const operation = operationFor(journal, context.actor, { kind: 'register_request', request }, 'registration');
       const acquired = operate(journal, grant);
       const result = applyExecutionOperation(acquired.journal, context, operation);
@@ -1351,7 +1349,7 @@ describe('Durable conflicts and bounded recovery', () => {
     const original = structuredClone(recoveryFor(fixture.journal, 'executor_stopped'));
     original.evidence.claim.id = 'earlier_claim';
     original.evidence.observed_at = '2026-09-10T09:59:00.000Z';
-    original.evidence_digest = executionDigest(original.evidence);
+    original.evidence_digest = digest(original.evidence);
     fixture.context.recovery_evidence = [original];
     const created = createExecutionJournal(fixture.context, fixture.request, fixture.policy);
     expect(created.ok).toBe(true);
@@ -1395,14 +1393,14 @@ describe('Durable conflicts and bounded recovery', () => {
           : { ...original, artifact_id: 'foreign_artifact' };
       const changedKind =
         original.kind === 'repository'
-          ? { kind: 'artifact' as const, artifact_id: 'foreign_artifact', content_digest: executionDigest('foreign') }
+          ? { kind: 'artifact' as const, artifact_id: 'foreign_artifact', content_digest: digest('foreign') }
           : {
               kind: 'repository' as const,
               repository_id: 'foreign_repository',
               revision: 'other',
-              content_digest: executionDigest('foreign'),
+              content_digest: digest('foreign'),
             };
-      const successor = { ...original, content_digest: executionDigest('changed content') };
+      const successor = { ...original, content_digest: digest('changed content') };
       const expired = operate(
         started.journal,
         { kind: 'expire', ...target },
@@ -1424,7 +1422,7 @@ describe('Durable conflicts and bounded recovery', () => {
         if (!valid) expect(reported.projection.attempts).toEqual(started.projection.attempts);
         const observation = structuredClone(recoveryFor(journal, 'effect_occurred'));
         observation.evidence.resulting_subject = subject;
-        observation.evidence_digest = executionDigest(observation.evidence);
+        observation.evidence_digest = digest(observation.evidence);
         const evidence = [recoveryFor(journal, 'executor_stopped'), observation];
         const recovered = operate(
           expired.journal,
@@ -1508,7 +1506,7 @@ describe('Durable conflicts and bounded recovery', () => {
     );
     const changed = structuredClone(resolved.context);
     changed.recovery_evidence[1]!.evidence.kind = 'effect_occurred';
-    changed.recovery_evidence[1]!.evidence_digest = executionDigest(changed.recovery_evidence[1]!.evidence);
+    changed.recovery_evidence[1]!.evidence_digest = digest(changed.recovery_evidence[1]!.evidence);
     const conflicted = applyExecutionOperation(resolved.journal, changed, resolved.operation);
     expect(conflicted.ok).toBe(true);
     if (!conflicted.ok) return;
@@ -1651,9 +1649,9 @@ describe('Durable conflicts and bounded recovery', () => {
     const proposal = structuredClone(journal.execution.action_request);
     proposal.request.inputs.push({
       role: 'release_manifest',
-      artifact: { id: 'another_input', digest: executionDigest('input') },
+      artifact: { id: 'another_input', digest: digest('input') },
     });
-    proposal.request_digest = executionDigest(proposal.request);
+    proposal.request_digest = digest(proposal.request);
     const conflicted = operate(journal, { kind: 'register_request', request: proposal }, controllerActor(journal));
     expect(conflicted.result.code).toBe('IDENTITY_CONFLICT');
     expect(conflicted.projection.conflicts[0]?.namespace).toBe('request');
@@ -1726,8 +1724,8 @@ describe('Durable conflicts and bounded recovery', () => {
       );
       const fact = structuredClone(recoveryFor(journal, 'no_effect'));
       if (mode === 'wrong_attempt') fact.evidence.attempt_id = 'other_attempt';
-      if (mode === 'wrong_subject') fact.evidence.binding.subject.content_digest = executionDigest('other');
-      fact.evidence_digest = mode === 'bad_digest' ? executionDigest('tampered') : executionDigest(fact.evidence);
+      if (mode === 'wrong_subject') fact.evidence.binding.subject.content_digest = digest('other');
+      fact.evidence_digest = mode === 'bad_digest' ? digest('tampered') : digest(fact.evidence);
       const evidence = mode === 'missing_stop' ? [fact] : [fact, recoveryFor(journal, 'executor_stopped')];
       if (mode === 'contradictory') evidence.push(recoveryFor(journal, 'effect_occurred'));
       const result = operate(
@@ -1772,9 +1770,9 @@ describe('Durable conflicts and bounded recovery', () => {
   it('caps renewal at immutable request validity and rejects time reversal without an append', async () => {
     const fixture = await executionFixture();
     fixture.request.request.constraints.valid_until = '2026-09-10T10:06:00.000Z';
-    fixture.request.request_digest = executionDigest(fixture.request.request);
+    fixture.request.request_digest = digest(fixture.request.request);
     fixture.policy.rules.request.request_digest = fixture.request.request_digest;
-    fixture.policy.digest = executionDigest(fixture.policy.rules);
+    fixture.policy.digest = digest(fixture.policy.rules);
     const initial = createExecutionJournal(fixture.context, fixture.request, fixture.policy);
     expect(initial.ok).toBe(true);
     if (!initial.ok) return;

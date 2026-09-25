@@ -1,21 +1,10 @@
 import { isProxy } from 'node:util/types';
-import { diagnostic, type ValidationResult } from '../workflow-graph/contracts.js';
+import { withRecovery, type ValidationResult } from '../contract-kernel/kernel.js';
 import { executionLimits, withinExecutionLimits } from '../execution-contract/limits.js';
 
-export function invalid(code: string, message: string, path = '$'): ValidationResult<never> {
-  return {
-    ok: false,
-    diagnostics: [
-      diagnostic(
-        code,
-        path,
-        null,
-        message,
-        'Use the published executor contract and exact retained inputs; do not retry an effect to repair evidence.',
-      ),
-    ],
-  };
-}
+export const { invalid } = withRecovery(
+  'Use the published executor contract and exact retained inputs; do not retry an effect to repair evidence.',
+);
 
 function wellFormed(value: string): boolean {
   for (const character of value) {

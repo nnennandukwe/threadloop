@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { executorFixture, executorFixtureAuthority } from '../fixtures/executor-contract.js';
 import { validateExecutorContext } from '../../scripts/executor-contract/validation.js';
-import { executionDigest } from '../../scripts/execution-contract/model.js';
+import { digest } from '../../scripts/contract-kernel/kernel.js';
 import { operate, target } from '../fixtures/execution-contract.js';
 import type { ExecutorRequest } from '../../scripts/executor-contract/contracts.js';
 
@@ -20,7 +20,7 @@ describe('Executor request preflight authority', () => {
     expect(validateExecutorContext(fixture.envelope, journal, snapshot, authority).ok).toBe(true);
     expect(JSON.stringify({ journal, snapshot, request: fixture.envelope })).toBe(before);
     fixture.envelope.request.parameters.resource_budget.max_tool_calls++;
-    fixture.envelope.request_digest = executionDigest(fixture.envelope.request);
+    fixture.envelope.request_digest = digest(fixture.envelope.request);
     expect(validateExecutorContext(fixture.envelope, journal, snapshot, authority).ok).toBe(false);
   });
   const mutations: [string, (request: ExecutorRequest['request']) => void][] = [
@@ -94,10 +94,8 @@ describe('Executor request preflight authority', () => {
   it.each(mutations)('rejects a changed %s despite fresh hashes and approved parameters', async (_name, mutate) => {
     const fixture = await executorFixture();
     mutate(fixture.envelope.request);
-    fixture.envelope.request.action_request.request_digest = executionDigest(
-      fixture.envelope.request.action_request.request,
-    );
-    fixture.envelope.request_digest = executionDigest(fixture.envelope.request);
+    fixture.envelope.request.action_request.request_digest = digest(fixture.envelope.request.action_request.request);
+    fixture.envelope.request_digest = digest(fixture.envelope.request);
     const authority = executorFixtureAuthority(fixture.started.journal, fixture.context.snapshot, fixture.envelope);
     expect(
       validateExecutorContext(fixture.envelope, fixture.started.journal, fixture.context.snapshot, authority).ok,

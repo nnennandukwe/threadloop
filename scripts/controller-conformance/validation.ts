@@ -1,5 +1,5 @@
 import type { z } from 'zod';
-import { diagnostic, validateShape, type ValidationResult } from '../workflow-graph/contracts.js';
+import { digest, same, validateShape, withRecovery, type ValidationResult } from '../contract-kernel/kernel.js';
 import { compileWorkflowProfile } from '../workflow-graph/compiler.js';
 import { validateControllerInput } from '../controller-contract/validation.js';
 import { validateControllerDecision } from '../controller-contract/decision.js';
@@ -9,8 +9,6 @@ import {
   projectControllerExecution,
   replayExecutionJournal,
 } from '../execution-contract/model.js';
-import { canonicalJson } from '../../src/domain/canonical-json.js';
-import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import { canonicalConformanceJson, conformanceDigest, parseConformanceMessage } from './codec.js';
 import {
   compatibilitySchema,
@@ -29,28 +27,13 @@ import {
   type SubjectResponse,
 } from './contracts.js';
 
-function failure(code: string, message: string, path = '$'): ValidationResult<never> {
-  return {
-    ok: false,
-    diagnostics: [
-      diagnostic(
-        code,
-        path,
-        null,
-        message,
-        'Restore the named contract artifact or intentionally update its version and reviewed digest; rerun npm run spec:conformance:check.',
-      ),
-    ],
-  };
-}
+const { invalid: failure } = withRecovery(
+  'Restore the named contract artifact or intentionally update its version and reviewed digest; rerun npm run spec:conformance:check.',
+);
 
 function parse<T>(schema: z.ZodType<T>, value: unknown): ValidationResult<T> {
   const bytes = canonicalConformanceJson(value);
   return bytes.ok ? validateShape(schema, value) : bytes;
-}
-
-function equal(left: unknown, right: unknown): boolean {
-  return conformanceDigest(left) === conformanceDigest(right);
 }
 
 function diagnostics(result: Extract<ValidationResult<unknown>, { ok: false }>): CaseResult {
@@ -130,29 +113,26 @@ function validateResult(
     const actual: CaseResult = compiled.ok
       ? { status: 'compiled', compiled_graph: compiled.value }
       : diagnostics(compiled);
-    return equal(actual, result)
+    return same(actual, result)
       ? { ok: true, value: true }
       : failure('GRAPH_RESULT_MISMATCH', 'Result differs from accepted graph compilation semantics.');
   }
   if (operation === 'execution_scenario') {
     const actual = executionResult(input);
     if (!actual.ok) return actual;
-    return equal(actual.value, result)
+    return same(actual.value, result)
       ? { ok: true, value: true }
       : failure('EXECUTION_RESULT_MISMATCH', 'Result differs from accepted execution journal semantics.');
   }
   const snapshot = validateControllerInput(input);
   if (!snapshot.ok)
-    return equal(diagnostics(snapshot), result)
+    return same(diagnostics(snapshot), result)
       ? { ok: true, value: true }
       : failure('INPUT_RESULT_MISMATCH', 'Invalid input requires its validation diagnostics.');
   if (result.status !== 'decision')
     return failure('RESULT_KIND_MISMATCH', 'Valid controller input requires a Controller Decision.');
   const { decision, decision_digest } = result.decision;
-  if (
-    sha256(canonicalJson(decision)) !== decision_digest ||
-    decision.input_digest !== sha256(canonicalJson(snapshot.value))
-  )
+  if (digest(decision) !== decision_digest || decision.input_digest !== digest(snapshot.value))
     return failure('DOMAIN_DIGEST_MISMATCH', 'Controller decision must bind its exact payload and complete input.');
   const candidate = validateControllerDecision(snapshot.value, result.decision);
   if (candidate.ok) return { ok: true, value: true };
@@ -229,7 +209,7 @@ export function validateCorpus(
   const bounded = canonicalConformanceJson(fixtures);
   if (!bounded.ok) return bounded;
   const entries = parsed.value.manifest.entries;
-  if (!equal(Object.keys(fixtures).sort(), entries.map((entry) => entry.path).sort()))
+  if (!same(Object.keys(fixtures).sort(), entries.map((entry) => entry.path).sort()))
     return failure('INVALID_INVENTORY', 'Every fixture must be listed exactly once, without missing or extra files.');
   const validated: Fixture[] = [];
   for (const entry of entries) {
@@ -317,7 +297,7 @@ export function validateSubjectResponse(
     return failure('RESPONSE_DIGEST_MISMATCH', 'Response content differs from its digest.');
   if (payload.request_digest !== request.value.request_digest)
     return failure('REQUEST_BINDING_MISMATCH', 'Response belongs to another request.');
-  if (!equal(payload.subject, subject.value))
+  if (!same(payload.subject, subject.value))
     return failure('SUBJECT_MISMATCH', 'Declared subject differs from the harness-pinned identity.');
   const result = validateResult(request.value.request.operation, request.value.request.input, payload.result);
   return result.ok ? response : result;
@@ -352,16 +332,16 @@ export function compareCaseResult(
   if (!fixture.ok) return fixture;
   const response = validateSubjectResponse(bytes, requestValue, expectedSubject);
   if (!response.ok) return response;
-  if (!equal(bound.value, requestValue))
+  if (!same(bound.value, requestValue))
     return failure('FIXTURE_BINDING_MISMATCH', 'Comparison fixture and manifest must match the exact request.');
   const request = requestSchema.parse(requestValue).request;
   if (
     request.case_id !== fixture.value.id ||
     request.operation !== fixture.value.operation ||
-    !equal(request.input, fixture.value.input)
+    !same(request.input, fixture.value.input)
   )
     return failure('FIXTURE_BINDING_MISMATCH', 'Comparison requires the same case and input as the validated request.');
-  return equal(machineResult(response.value.response.result), machineResult(fixture.value.expected))
+  return same(machineResult(response.value.response.result), machineResult(fixture.value.expected))
     ? { ok: true, value: true }
     : failure('RESULT_MISMATCH', 'Validated response differs from the harness-held expected machine result.');
 }

@@ -1,10 +1,10 @@
-import { validateShape, type ValidationResult } from '../workflow-graph/contracts.js';
+import { digest, same, validateShape, type ValidationResult } from '../contract-kernel/kernel.js';
 import { gaapMappingPolicySchema, resultObservationSchema, type Evidence, type ExecutorResult } from './contracts.js';
 import type { GaapEvidence, GaapRequest } from './gaap-types.js';
 import { invalid, parseExecutorMessage, validateJsonValue } from './codec.js';
 import { validateExecutorRequest, validateExecutorResult } from './validation.js';
-import { executionDigest, requestReference } from '../execution-contract/model.js';
-import { same } from '../controller-contract/validation.js';
+import { requestReference } from '../execution-contract/model.js';
+import { sameSubjectIdentity } from '../controller-contract/contracts.js';
 import { validateGaapReceipt, validateGaapRequest } from './gaap-validation.js';
 
 export function buildGaapRequest(requestValue: unknown, policyValue: unknown): ValidationResult<GaapRequest> {
@@ -14,12 +14,12 @@ export function buildGaapRequest(requestValue: unknown, policyValue: unknown): V
   if (!bounded.ok) return bounded;
   const parsed = validateShape(gaapMappingPolicySchema, policyValue);
   if (!parsed.ok) return parsed;
-  const { policy, policy_digest: digest } = parsed.value;
+  const { policy, policy_digest: policyDigest } = parsed.value;
   const input = request.value.request;
   const parameters = input.parameters;
   if (
-    executionDigest(policy) !== digest ||
-    !same(input.mapping_policy, { id: policy.id, digest }) ||
+    digest(policy) !== policyDigest ||
+    !same(input.mapping_policy, { id: policy.id, digest: policyDigest }) ||
     input.action_request.request.capability !== policy.action_capability ||
     !same(parameters.capability, policy.capability) ||
     !same(parameters.policies, policy.policies)
@@ -51,7 +51,7 @@ export function buildGaapRequest(requestValue: unknown, policyValue: unknown): V
     ...identity,
     digest: 'sha256:' + identity.digest,
   });
-  const runIdentity = executionDigest({
+  const runIdentity = digest({
     domain: 'threadloop.gaap-agent-run/0.1',
     request: requestReference(input.action_request),
     workflow_run_id: input.action_request.request.binding.workflow_run_id,
@@ -125,11 +125,7 @@ export function mapGaapResult(
   const resulting = observation.value.resulting_subject;
   if (
     'sha256:' + resulting.content_digest !== body.resulting_subject_digest ||
-    resulting.kind !== initial.kind ||
-    (initial.kind === 'repository' &&
-      resulting.kind === 'repository' &&
-      initial.repository_id !== resulting.repository_id) ||
-    (initial.kind === 'artifact' && resulting.kind === 'artifact' && initial.artifact_id !== resulting.artifact_id) ||
+    !sameSubjectIdentity(resulting, initial) ||
     (body.initial_subject_digest === body.resulting_subject_digest && !same(resulting, initial))
   )
     return invalid(
@@ -246,7 +242,7 @@ export function mapGaapResult(
     schema_version: 'threadloop.executor/0.1',
     kind: 'result',
     request_digest: request.value.request_digest,
-    attempt_receipt: { receipt, receipt_digest: executionDigest(receipt) },
+    attempt_receipt: { receipt, receipt_digest: digest(receipt) },
     source_receipt: { type: 'terminal_run_receipt', id: body.run_id, digest: sourceDigest.slice(7) },
     effects,
     verification,
@@ -256,7 +252,7 @@ export function mapGaapResult(
   };
   // Return detached JSON; shared references from the inputs must not escape or imply trust.
   return validateExecutorResult(
-    JSON.parse(JSON.stringify({ result, result_digest: executionDigest(result) })) as unknown,
+    JSON.parse(JSON.stringify({ result, result_digest: digest(result) })) as unknown,
     request.value,
   );
 }

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { publishedSchemas } from '../contract-kernel/kernel.js';
 import { compiledGraphSchema, compiledPayloadSchema } from '../workflow-graph/contracts.js';
 
 const identifier = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/);
@@ -26,6 +27,15 @@ export const subjectSchema = z.discriminatedUnion('kind', [
   repositorySubject,
   z.strictObject({ kind: z.literal('artifact'), artifact_id: text, content_digest: digest }),
 ]);
+
+type Subject = z.infer<typeof subjectSchema>;
+/** Whether a result names the original repository or artifact; `null` asserts no resulting subject. */
+export function sameSubjectIdentity(result: Subject | null, original: Subject): boolean {
+  if (result === null) return true;
+  return result.kind === 'repository'
+    ? original.kind === 'repository' && result.repository_id === original.repository_id
+    : original.kind === 'artifact' && result.artifact_id === original.artifact_id;
+}
 
 const authority = z.strictObject({ type: z.enum(['threadloop', 'human']), identity });
 const evidencePayload = z.discriminatedUnion('type', [
@@ -296,43 +306,39 @@ export type ActionRequest = z.infer<typeof actionRequestSchema>;
 export type ControllerDecision = z.infer<typeof controllerDecisionSchema>;
 
 export function publishedControllerSchemas() {
-  const metadata = z.registry<{ id: string }>();
-  const definitions = {
-    Identifier: identifier,
-    NonemptyText: text,
-    Digest: digest,
-    Counter: counter,
-    Timestamp: timestamp,
-    Identity: identity,
-    IdentifierReferences: references,
-    RepositorySubject: repositorySubject,
-    Subject: subjectSchema,
-    Authority: authority,
-    EvidencePayload: evidencePayload,
-    ClaimReference: claimReference,
-    RequestReference: requestReference,
-    Receipt: receipt,
-    RunBinding: runBinding,
-    ArtifactInput: artifactInput,
-    EvidenceRequirements: requirements,
-    ExecutorRequest: executorRequest,
-    HumanRequest: humanRequest,
-    ActionRequest: actionRequestSchema,
-    ExecutorActionRequest: executorActionRequest,
-    CompiledGraph: compiledGraphSchema,
-  };
-  for (const [id, schema] of Object.entries(definitions)) metadata.add(schema, { id });
-  return Object.fromEntries(
-    Object.entries({
+  return publishedSchemas(
+    'controller',
+    {
       'controller-input': controllerInputSchema,
       'controller-decision': controllerDecisionSchema,
       'action-request': actionRequestSchema,
-    }).map(([name, schema]) => [
-      name,
-      {
-        ...z.toJSONSchema(schema, { target: 'draft-2020-12', metadata, reused: 'inline' }),
-        $id: `https://github.com/nnennandukwe/threadloop/contracts/controller/0.1/${name}`,
+    },
+    {
+      reused: 'inline',
+      definitions: {
+        Identifier: identifier,
+        NonemptyText: text,
+        Digest: digest,
+        Counter: counter,
+        Timestamp: timestamp,
+        Identity: identity,
+        IdentifierReferences: references,
+        RepositorySubject: repositorySubject,
+        Subject: subjectSchema,
+        Authority: authority,
+        EvidencePayload: evidencePayload,
+        ClaimReference: claimReference,
+        RequestReference: requestReference,
+        Receipt: receipt,
+        RunBinding: runBinding,
+        ArtifactInput: artifactInput,
+        EvidenceRequirements: requirements,
+        ExecutorRequest: executorRequest,
+        HumanRequest: humanRequest,
+        ActionRequest: actionRequestSchema,
+        ExecutorActionRequest: executorActionRequest,
+        CompiledGraph: compiledGraphSchema,
       },
-    ]),
+    },
   );
 }

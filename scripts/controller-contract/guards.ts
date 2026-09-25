@@ -1,9 +1,8 @@
+import { same } from '../contract-kernel/kernel.js';
 import type { ControllerInput } from './contracts.js';
-import { canonicalJson } from '../../src/domain/canonical-json.js';
 
 type Receipt = ControllerInput['receipts'][number];
 type Guard = ControllerInput['compiled_graph']['graph']['guards'][number];
-const same = (left: unknown, right: unknown) => canonicalJson(left) === canonicalJson(right);
 
 export function hasBoundProofPlan(input: ControllerInput): boolean {
   return (

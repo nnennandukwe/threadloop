@@ -1,6 +1,5 @@
-import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
-import { validateShape, type ValidationResult } from '../workflow-graph/contracts.js';
+import { digest, validateShape, type ValidationResult } from '../contract-kernel/kernel.js';
 import { actionIntentSchema, actionRequestSchema, type ActionRequest } from './contracts.js';
 import { issue, requestIdentity, validateControllerInput, validateRequestInSnapshot } from './validation.js';
 
@@ -46,7 +45,7 @@ export function buildActionRequest(snapshot: unknown, intent: unknown): Validati
     ),
     idempotency_key: requestIdentity(value.binding, action.id),
   };
-  const parsed = validateShape(actionRequestSchema, { request, request_digest: sha256(canonicalJson(request)) });
+  const parsed = validateShape(actionRequestSchema, { request, request_digest: digest(request) });
   return parsed.ok ? validateRequestInSnapshot(value, parsed.value) : parsed;
 }
 

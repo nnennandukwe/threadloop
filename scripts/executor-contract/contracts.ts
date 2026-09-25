@@ -1,6 +1,6 @@
 import { z } from 'zod';
+import { digest as contentDigest, publishedSchemas } from '../contract-kernel/kernel.js';
 import { actionRequestSchema, subjectSchema } from '../controller-contract/contracts.js';
-import { executionDigest } from '../execution-contract/model.js';
 import { attemptReceiptSchema } from '../execution-contract/contracts.js';
 
 const text = z.string().min(1).regex(/\S/, 'Text must contain a non-whitespace character.');
@@ -34,7 +34,7 @@ function uniqueArray<T extends z.ZodType>(element: T) {
   return z
     .array(element)
     .min(1)
-    .refine((items) => new Set(items.map(executionDigest)).size === items.length, {
+    .refine((items) => new Set(items.map(contentDigest)).size === items.length, {
       message: 'Array entries must be unique.',
     })
     .meta({ uniqueItems: true });
@@ -157,18 +157,14 @@ export type GaapMappingPolicy = z.infer<typeof gaapMappingPolicySchema>;
 export type Evidence = z.infer<typeof evidenceSchema>;
 
 export function publishedExecutorSchemas() {
-  return Object.fromEntries(
-    Object.entries({
+  return publishedSchemas(
+    'executor',
+    {
       'executor-request': executorRequestSchema,
       'executor-result': executorResultSchema,
       'gaap-mapping-policy': gaapMappingPolicySchema,
       'result-observation': resultObservationSchema,
-    }).map(([name, schema]) => [
-      name,
-      {
-        ...z.toJSONSchema(schema, { target: 'draft-2020-12', reused: 'inline' }),
-        $id: `https://github.com/nnennandukwe/threadloop/contracts/executor/0.1/${name}`,
-      },
-    ]),
+    },
+    { reused: 'inline' },
   );
 }

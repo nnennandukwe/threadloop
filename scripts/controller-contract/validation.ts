@@ -1,7 +1,13 @@
 import { canonicalJson } from '../../src/domain/canonical-json.js';
-import { sha256 } from '../../src/adapters/crypto/sha256.js';
+import {
+  digest,
+  same,
+  validateShape,
+  withRecovery,
+  type Diagnostic,
+  type ValidationResult,
+} from '../contract-kernel/kernel.js';
 import { actionRequestSchema, controllerInputSchema, type ActionRequest, type ControllerInput } from './contracts.js';
-import { diagnostic, validateShape, type Diagnostic, type ValidationResult } from '../workflow-graph/contracts.js';
 import { validateGraphBinding } from '../workflow-graph/compiler.js';
 import { hasBoundProofPlan, hasRepairAdmission, supportsGuard } from './guards.js';
 
@@ -18,7 +24,7 @@ export function validateControllerInput(input: unknown): ValidationResult<Contro
   const reject = (code: string, path: string, message: string) => errors.push(issue(code, path, message));
   const state = graph.value.graph.states.find((state) => state.id === value.binding.source_state);
   if (!state) reject('UNKNOWN_STATE', '$.binding.source_state', 'The source state is not declared by the bound graph.');
-  if (value.policy.digest !== sha256(canonicalJson(value.policy.rules)))
+  if (value.policy.digest !== digest(value.policy.rules))
     reject('POLICY_DIGEST_MISMATCH', '$.policy', 'Policy contents differ from their claimed digest.');
   if (value.policy.rules.proof_binding_transition_id !== null) {
     const entry = graph.value.graph.transitions.find(
@@ -135,7 +141,7 @@ export function validateControllerInput(input: unknown): ValidationResult<Contro
         '$.receipts',
         `Receipt ${receipt.id} uses an unaccepted verification policy.`,
       );
-    if (sha256(canonicalJson(receipt.payload)) !== receipt.payload_digest)
+    if (digest(receipt.payload) !== receipt.payload_digest)
       reject('RECEIPT_DIGEST_MISMATCH', '$.receipts', `Receipt ${receipt.id} payload does not match its digest.`);
     if ('findings' in receipt.payload)
       sets.push([`receipts.${receipt.id}.findings`, receipt.payload.findings.map((finding) => finding.id)]);
@@ -166,22 +172,12 @@ export function validateControllerInput(input: unknown): ValidationResult<Contro
   return errors.length ? { ok: false, diagnostics: errors } : parsed;
 }
 
-export function issue(code: string, path: string, message: string): Diagnostic {
-  return diagnostic(
-    code,
-    path,
-    null,
-    message,
-    'Restore the matching snapshot, evidence, or contract document and validate again; do not execute this candidate.',
-  );
-}
-
-export function same(left: unknown, right: unknown): boolean {
-  return canonicalJson(left) === canonicalJson(right);
-}
+export const { issue } = withRecovery(
+  'Restore the matching snapshot, evidence, or contract document and validate again; do not execute this candidate.',
+);
 
 export function requestIdentity(binding: ActionRequest['request']['binding'], actionId: string): string {
-  return sha256(canonicalJson({ schema_version: '0.1', binding, action_id: actionId }));
+  return digest({ schema_version: '0.1', binding, action_id: actionId });
 }
 
 export function expired(deadline: string | null, input: ControllerInput): boolean {
@@ -279,7 +275,7 @@ function validateRequestStructure(input: ControllerInput, envelope: ActionReques
   const request = envelope.request;
   const errors: Diagnostic[] = [];
   const reject = (code: string, path: string, message: string) => errors.push(issue(code, path, message));
-  if (sha256(canonicalJson(request)) !== envelope.request_digest)
+  if (digest(request) !== envelope.request_digest)
     reject('REQUEST_DIGEST_MISMATCH', '$.request_digest', 'Request contents do not match their digest.');
   if (request.idempotency_key !== requestIdentity(request.binding, request.action_id))
     reject(
@@ -464,6 +460,13 @@ export function validateRequestInSnapshot(
   return errors.length ? { ok: false, diagnostics: errors } : { ok: true, value: envelope };
 }
 
+type Guard = ControllerInput['compiled_graph']['graph']['guards'][number];
+type GuardCondition = Guard extends infer Each
+  ? Each extends Guard
+    ? Omit<Each, 'id' | 'required_actions'>
+    : never
+  : never;
+
 function actionPrerequisites(input: ControllerInput, request: ActionRequest['request']): boolean {
   if (
     input.binding.subject.kind === 'repository' &&
@@ -499,46 +502,15 @@ function actionPrerequisites(input: ControllerInput, request: ActionRequest['req
     .map((receipt) => receipt.payload)
     .filter((payload) => payload.type === 'local_proof')
     .filter((proof) => input.policy.rules.local_gate_ids.includes(proof.gate_id));
-  const local = () =>
-    supportsGuard(
-      input,
-      { id: 'prerequisite', capability: 'local_proof', parameters: { result: 'passed' }, required_actions: [] },
-      receipts,
-    );
-  const independent = () =>
-    supportsGuard(
-      input,
-      { id: 'prerequisite', capability: 'independent_proof', parameters: {}, required_actions: [] },
-      receipts,
-    );
-  const approval = () =>
-    supportsGuard(
-      input,
-      {
-        id: 'prerequisite',
-        capability: 'human_approval',
-        parameters: { scope: 'current_subject' },
-        required_actions: [],
-      },
-      receipts,
-    );
-  const clearReview = () =>
-    supportsGuard(
-      input,
-      { id: 'prerequisite', capability: 'review', parameters: { condition: 'clear' }, required_actions: [] },
-      receipts,
-    );
+  // Each prerequisite is the named guard's own check over the request's current receipts.
+  const holds = (condition: GuardCondition) =>
+    supportsGuard(input, { ...condition, id: 'prerequisite', required_actions: [] }, receipts);
+  const local = () => holds({ capability: 'local_proof', parameters: { result: 'passed' } });
+  const independent = () => holds({ capability: 'independent_proof', parameters: {} });
+  const approval = () => holds({ capability: 'human_approval', parameters: { scope: 'current_subject' } });
+  const clearReview = () => holds({ capability: 'review', parameters: { condition: 'clear' } });
   const releaseVerified = () =>
-    supportsGuard(
-      input,
-      {
-        id: 'prerequisite',
-        capability: 'artifact',
-        parameters: { stage: 'release_verified', result: 'passed' },
-        required_actions: [],
-      },
-      receipts,
-    );
+    holds({ capability: 'artifact', parameters: { stage: 'release_verified', result: 'passed' } });
   switch (request.capability) {
     case 'commit_change': {
       const repository = input.observation.repository;
@@ -565,16 +537,7 @@ function actionPrerequisites(input: ControllerInput, request: ActionRequest['req
     case 'run_local_gates':
       return (
         input.policy.rules.local_gate_ids.length > 0 &&
-        supportsGuard(
-          input,
-          {
-            id: 'prerequisite',
-            capability: 'repository',
-            parameters: { condition: 'clean_plan_branch' },
-            required_actions: [],
-          },
-          receipts,
-        )
+        holds({ capability: 'repository', parameters: { condition: 'clean_plan_branch' } })
       );
     case 'obtain_independent_proof':
       return local();

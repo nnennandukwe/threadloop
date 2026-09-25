@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { publishedSchemas } from '../contract-kernel/kernel.js';
 import { compiledGraphSchema } from '../workflow-graph/contracts.js';
 import { controllerDecisionSchema, controllerInputSchema } from '../controller-contract/contracts.js';
 
@@ -221,8 +222,9 @@ export type SubjectResponse = z.infer<typeof responseSchema>;
 export type CaseResult = z.infer<typeof resultSchema>;
 
 export function publishedConformanceSchemas() {
-  return Object.fromEntries(
-    Object.entries({
+  return publishedSchemas(
+    'controller-conformance',
+    {
       request: requestSchema,
       response: responseSchema,
       fixture: fixtureSchema,
@@ -231,12 +233,7 @@ export function publishedConformanceSchemas() {
       manifest: manifestSchema,
       compatibility: compatibilitySchema,
       'execution-scenario': executionScenarioSchema,
-    }).map(([name, schema]) => [
-      name,
-      {
-        ...z.toJSONSchema(schema, { target: 'draft-2020-12', reused: 'ref' }),
-        $id: `https://github.com/nnennandukwe/threadloop/contracts/controller-conformance/0.1/${name}`,
-      },
-    ]),
+    },
+    { reused: 'ref' },
   );
 }

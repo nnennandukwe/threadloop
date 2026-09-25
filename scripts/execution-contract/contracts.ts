@@ -1,5 +1,6 @@
-import { executionLimits } from './limits.js';
 import { z } from 'zod';
+import { publishedSchemas } from '../contract-kernel/kernel.js';
+import { executionLimits } from './limits.js';
 import { actionRequestSchema, controllerInputSchema, subjectSchema } from '../controller-contract/contracts.js';
 
 const text = z.string().min(1);
@@ -190,31 +191,9 @@ export type ReceiptAdmission = z.infer<typeof receiptAdmissionSchema>;
 export type RecoveryEvidence = z.infer<typeof recoveryEvidenceSchema>;
 
 export function publishedExecutionSchemas() {
-  const metadata = z.registry<{ id: string }>();
-  for (const [id, schema] of Object.entries({
-    NonEmptyText: text,
-    Sha256Digest: digest,
-    SafeCounter: counter,
-    AuthorityTime: timestamp,
-    Identity: identity,
-    RequestReference: requestReference,
-    RequestBinding: binding,
-    Subject: subjectSchema,
-    ClaimReference: claimReference,
-    Executor: executor,
-    Actor: actor,
-    ActionRequest: actionRequestSchema,
-    ControllerInput: controllerInputSchema,
-    ExecutionPolicy: executionPolicySchema,
-    AttemptReceipt: attemptReceiptSchema,
-    ReceiptAdmission: receiptAdmissionSchema,
-    RecoveryEvidence: recoveryEvidenceSchema,
-    ExecutionContext: executionContextSchema,
-    ExecutionOperation: executionOperationSchema,
-  }))
-    metadata.add(schema, { id });
-  return Object.fromEntries(
-    Object.entries({
+  return publishedSchemas(
+    'execution',
+    {
       'execution-journal': executionJournalSchema,
       'execution-operation': executionOperationSchema,
       'execution-claim': executionClaimSchema,
@@ -223,12 +202,30 @@ export function publishedExecutionSchemas() {
       'receipt-admission': receiptAdmissionSchema,
       'recovery-evidence': recoveryEvidenceSchema,
       'execution-policy': executionPolicySchema,
-    }).map(([name, schema]) => [
-      name,
-      {
-        ...z.toJSONSchema(schema, { target: 'draft-2020-12', metadata, reused: 'inline' }),
-        $id: `https://github.com/nnennandukwe/threadloop/contracts/execution/0.1/${name}`,
+    },
+    {
+      reused: 'inline',
+      definitions: {
+        NonEmptyText: text,
+        Sha256Digest: digest,
+        SafeCounter: counter,
+        AuthorityTime: timestamp,
+        Identity: identity,
+        RequestReference: requestReference,
+        RequestBinding: binding,
+        Subject: subjectSchema,
+        ClaimReference: claimReference,
+        Executor: executor,
+        Actor: actor,
+        ActionRequest: actionRequestSchema,
+        ControllerInput: controllerInputSchema,
+        ExecutionPolicy: executionPolicySchema,
+        AttemptReceipt: attemptReceiptSchema,
+        ReceiptAdmission: receiptAdmissionSchema,
+        RecoveryEvidence: recoveryEvidenceSchema,
+        ExecutionContext: executionContextSchema,
+        ExecutionOperation: executionOperationSchema,
       },
-    ]),
+    },
   );
 }

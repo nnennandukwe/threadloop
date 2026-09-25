@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { Ajv2020 } from 'ajv/dist/2020.js';
 import { describe, expect, it } from 'vitest';
-import { executionDigest } from '../../scripts/execution-contract/model.js';
+import { digest } from '../../scripts/contract-kernel/kernel.js';
 import {
   publishedExecutorSchemas,
   type ExecutorRequest,
@@ -53,7 +53,7 @@ describe('Executor PR review regressions', () => {
     if (field === 'actor_id') parameters.approval_context[0]!.actor_id = blank;
     if (field === 'scope') parameters.approval_context[0]!.scope = blank;
     if (field === 'approval_locator') parameters.approval_context[0]!.evidence.locator = blank;
-    envelope.request_digest = executionDigest(envelope.request);
+    envelope.request_digest = digest(envelope.request);
     const before = structuredClone(envelope);
     expect(requestSchema(envelope)).toBe(false);
     const result = validateExecutorRequest(envelope);
@@ -65,7 +65,7 @@ describe('Executor PR review regressions', () => {
   it('preserves meaningful task whitespace and its digest', async () => {
     const { envelope } = await executorFixture();
     envelope.request.parameters.task.instructions = '  Run gates.\n';
-    envelope.request_digest = executionDigest(envelope.request);
+    envelope.request_digest = digest(envelope.request);
     expect(requestSchema(envelope)).toBe(true);
     const result = validateExecutorRequest(envelope);
     expect(result.ok && result.value).toEqual(envelope);
@@ -88,8 +88,8 @@ describe('Executor PR review regressions', () => {
     const receipt = result.result.attempt_receipt;
     const original = receipt.receipt.evidence[0]!;
     receipt.receipt.evidence.push({ ...original, digest: kind === 'same_digest' ? original.digest : 'f'.repeat(64) });
-    receipt.receipt_digest = executionDigest(receipt.receipt);
-    result.result_digest = executionDigest(result.result);
+    receipt.receipt_digest = digest(receipt.receipt);
+    result.result_digest = digest(result.result);
     const before = structuredClone(result);
     const checked = validateExecutorResult(result, fixture.request);
     expect(checked.ok).toBe(false);
@@ -128,12 +128,12 @@ describe('Executor PR review regressions', () => {
         });
       }
       receipt.receipt.evidence.push({ id: 'retained_proof', digest: proof.digest });
-      receipt.receipt_digest = executionDigest(receipt.receipt);
-      envelope.result_digest = executionDigest(result);
+      receipt.receipt_digest = digest(receipt.receipt);
+      envelope.result_digest = digest(result);
       expect(validateExecutorResult(envelope, fixture.request).ok).toBe(true);
       receipt.receipt.evidence = receipt.receipt.evidence.filter((entry) => entry.digest !== proof.digest);
-      receipt.receipt_digest = executionDigest(receipt.receipt);
-      envelope.result_digest = executionDigest(result);
+      receipt.receipt_digest = digest(receipt.receipt);
+      envelope.result_digest = digest(result);
       const before = structuredClone(envelope);
       expect(validateExecutorResult(envelope, fixture.request)).toMatchObject({
         ok: false,

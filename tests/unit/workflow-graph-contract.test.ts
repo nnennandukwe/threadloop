@@ -3,7 +3,7 @@ import { Ajv2020 } from 'ajv/dist/2020.js';
 import { describe, expect, it } from 'vitest';
 import { parse, stringify } from 'yaml';
 import { parseWorkflowProfile } from '../../scripts/workflow-graph/parser.js';
-import { publishedSchemas, type WorkflowProfile } from '../../scripts/workflow-graph/contracts.js';
+import { publishedWorkflowGraphSchemas, type WorkflowProfile } from '../../scripts/workflow-graph/contracts.js';
 import { compileWorkflowProfile, validateGraphBinding } from '../../scripts/workflow-graph/compiler.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
 import { z } from 'zod';
@@ -245,7 +245,7 @@ describe('Published fixture corpus', () => {
     const entries = await readdir(new URL('fixtures/valid/', bundle));
     const profiles = entries.filter((name) => name.endsWith('.yaml')).sort();
     expect(profiles.length).toBeGreaterThan(0);
-    const schemas = publishedSchemas();
+    const schemas = publishedWorkflowGraphSchemas();
     const ajv = new Ajv2020({ strict: true });
     const graphValidator = ajv.compile(schemas['compiled-graph']!);
     const profileValidator = ajv.compile(schemas['workflow-profile']!);
@@ -271,7 +271,7 @@ describe('Published fixture corpus', () => {
   });
 
   it('checks every invalid YAML file for its specified rejection, without returning a graph', async () => {
-    const validator = new Ajv2020({ strict: true }).compile(publishedSchemas()['workflow-profile']!);
+    const validator = new Ajv2020({ strict: true }).compile(publishedWorkflowGraphSchemas()['workflow-profile']!);
     const expectedSchema = z.array(z.strictObject({ file: z.string(), expected_code: z.string() }));
     const manifest: unknown = JSON.parse(await readFile(new URL('fixtures/invalid/expected.json', bundle), 'utf8'));
     const expected = expectedSchema.parse(manifest);
@@ -338,7 +338,7 @@ function minimalProfile(): WorkflowProfile {
 describe('Workflow Profile authoring', () => {
   it('publishes reproducible Draft 2020-12 schemas usable by an independent validator', async () => {
     const ajv = new Ajv2020({ strict: true });
-    for (const [name, generated] of Object.entries(publishedSchemas())) {
+    for (const [name, generated] of Object.entries(publishedWorkflowGraphSchemas())) {
       const published: unknown = JSON.parse(await readFile(new URL(`schemas/${name}.schema.json`, bundle), 'utf8'));
       expect(published).toEqual(generated);
       expect(ajv.validateSchema(generated)).toBe(true);

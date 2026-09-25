@@ -1,10 +1,15 @@
 import { withinExecutionLimits } from './limits.js';
 import { isExecutionAdmitted, type ExecutionAuthority } from './authority.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
-import { createIncrementalSha256, sha256 } from '../../src/adapters/crypto/sha256.js';
-import { actionRequestSchema, type ActionRequest, type ControllerInput } from '../controller-contract/contracts.js';
-import { same, validateControllerInput, validateRequestInSnapshot } from '../controller-contract/validation.js';
-import { diagnostic, validateShape, type ValidationResult } from '../workflow-graph/contracts.js';
+import { createIncrementalSha256 } from '../../src/adapters/crypto/sha256.js';
+import { digest, same, validateShape, withRecovery, type ValidationResult } from '../contract-kernel/kernel.js';
+import {
+  actionRequestSchema,
+  sameSubjectIdentity,
+  type ActionRequest,
+  type ControllerInput,
+} from '../controller-contract/contracts.js';
+import { validateControllerInput, validateRequestInSnapshot } from '../controller-contract/validation.js';
 import {
   executionContextSchema,
   executionJournalSchema,
@@ -133,26 +138,15 @@ function observationConflicts(
       collisions.push({
         namespace: record.namespace,
         identity: record.identity,
-        original_digest: executionDigest(original.content),
-        incoming_digest: executionDigest(record.content),
+        original_digest: digest(original.content),
+        incoming_digest: digest(record.content),
       });
     if (!original) added.set(key, record);
   }
   return collisions;
 }
 
-export function executionDigest(value: unknown): string {
-  return sha256(canonicalJson(value));
-}
-
-function invalid<T>(code: string, message: string): ValidationResult<T> {
-  return {
-    ok: false,
-    diagnostics: [
-      diagnostic(code, '$', null, message, 'Restore the exact contract input; no journal append is proposed.'),
-    ],
-  };
-}
+const { invalid } = withRecovery('Restore the exact contract input; no journal append is proposed.');
 
 export function requestReference(request: ActionRequest) {
   return { idempotency_key: request.request.idempotency_key, request_digest: request.request_digest };
@@ -217,7 +211,7 @@ export function createExecutionJournal(
     return invalid('INITIAL_EVIDENCE_CONFLICT', 'Initial observation identities must have one immutable value.');
   const executionPolicy = parsedPolicy.value;
   if (
-    executionPolicy.digest !== executionDigest(executionPolicy.rules) ||
+    executionPolicy.digest !== digest(executionPolicy.rules) ||
     !same(executionPolicy.rules.request, requestReference(bound.value)) ||
     !same(executionPolicy.rules.workflow_policy, bound.value.request.policy)
   )
@@ -357,7 +351,7 @@ function replay(
   const parsed = validateShape(executionJournalSchema, journal);
   if (!parsed.ok) return parsed;
   const value = parsed.value;
-  if (value.execution_digest !== executionDigest(value.execution))
+  if (value.execution_digest !== digest(value.execution))
     return invalid('EXECUTION_DIGEST_MISMATCH', 'The journal differs from its canonical digest.');
   const initial = createExecutionJournal(
     value.execution.initial_context,
@@ -408,7 +402,7 @@ function sealJournal(execution: ExecutionJournal['execution']): ValidationResult
       'EXECUTION_INPUT_LIMIT',
       'Journal capacity reached; preserve the complete history and use an implementation with sufficient capacity. Never truncate or reset the request.',
     );
-  return { ok: true, value: { execution, execution_digest: executionDigest(execution) } };
+  return { ok: true, value: { execution, execution_digest: digest(execution) } };
 }
 
 export function applyExecutionOperation(
@@ -502,23 +496,22 @@ function step(
       context.snapshot.binding.graph_digest !== request.request.binding.graph_digest)
   )
     return invalid('CONTEXT_BINDING_MISMATCH', 'Context must belong to the original Workflow Run and graph.');
-  const digest = executionDigest(operation);
+  const operationDigest = digest(operation);
   const known = index.operations.get(operation.id);
   const command = operation.command;
   const collisions: IdentityCollision[] = [];
-  if (known && known.digest !== digest)
+  if (known && known.digest !== operationDigest)
     collisions.push({
       namespace: 'operation',
       identity: operation.id,
       original_digest: known.digest,
-      incoming_digest: digest,
+      incoming_digest: operationDigest,
     });
   collisions.push(...observationConflicts(index.observations, contextObservations(context)));
   if (collisions.length === 0 && known) return { ok: true, value: { result: known.result, replayed: true } };
   const priorConflicts = collisions.map((item) =>
     state.conflicts.find(
-      (record) =>
-        record.id === executionDigest([item.namespace, item.identity, item.original_digest, item.incoming_digest]),
+      (record) => record.id === digest([item.namespace, item.identity, item.original_digest, item.incoming_digest]),
     ),
   );
   if (known && priorConflicts.length > 0 && priorConflicts.every((item) => item !== undefined))
@@ -533,14 +526,14 @@ function step(
     );
     const result = results[0]!;
     if (!known) {
-      rememberOperation(index, state, operation, digest, result);
+      rememberOperation(index, state, operation, operationDigest, result);
       retainReceipt(state, command, result);
     }
     return { ok: true, value: { result, replayed: false } };
   }
   const result = execute(journal, state, context, operation, time.value, index);
   retainReceipt(state, command, result);
-  rememberOperation(index, state, operation, digest, result);
+  rememberOperation(index, state, operation, operationDigest, result);
   return { ok: true, value: { result, replayed: false } };
 }
 
@@ -584,7 +577,7 @@ function conflict(
   original: string,
   incoming: string,
 ): OperationResult {
-  const id = executionDigest([namespace, identity, original, incoming]);
+  const id = digest([namespace, identity, original, incoming]);
   const existing = state.conflicts.find((record) => record.id === id);
   if (existing) return existing.result;
   const result = outcome('IDENTITY_CONFLICT', state.revision, 'conflict');
@@ -643,13 +636,7 @@ function execute(
     if (previous)
       return same(previous.envelope, command.receipt)
         ? previous.result
-        : conflict(
-            state,
-            'receipt',
-            command.receipt.receipt.id,
-            executionDigest(previous.envelope),
-            executionDigest(command.receipt),
-          );
+        : conflict(state, 'receipt', command.receipt.receipt.id, digest(previous.envelope), digest(command.receipt));
     if (context.actor.kind !== 'executor' || !same(context.actor.executor, command.receipt.receipt.executor))
       return fail('EXECUTOR_MISMATCH');
   }
@@ -660,22 +647,10 @@ function execute(
     if (previous)
       return same(previous.operation.command, command) && same(previous.operation.actor, operation.actor)
         ? previous.result
-        : conflict(
-            state,
-            'claim',
-            command.claim_id,
-            executionDigest(previous.operation.command),
-            executionDigest(command),
-          );
+        : conflict(state, 'claim', command.claim_id, digest(previous.operation.command), digest(command));
     const attemptGrant = index.grantsByAttempt.get(command.attempt_id);
     if (attemptGrant)
-      return conflict(
-        state,
-        'attempt',
-        command.attempt_id,
-        executionDigest(attemptGrant.command),
-        executionDigest(command),
-      );
+      return conflict(state, 'attempt', command.attempt_id, digest(attemptGrant.command), digest(command));
   }
   if (
     operation.expected_revision !== state.revision - 1 ||
@@ -894,7 +869,7 @@ function submit(
   const claim = state.claims.find((claim) => same(reference(claim), receipt.claim));
   const attempt = state.attempts.find((attempt) => attempt.id === receipt.attempt_id);
   if (
-    envelope.receipt_digest !== executionDigest(receipt) ||
+    envelope.receipt_digest !== digest(receipt) ||
     !same(receipt.request, requestReference(journal.execution.action_request)) ||
     !same(receipt.binding, journal.execution.action_request.request.binding) ||
     !same(receipt.execution_policy, {
@@ -952,7 +927,7 @@ function admittedReceipt(context: ExecutionContext, envelope: AttemptReceipt, no
   if (!admitted || matches.some((item) => !same(item, admitted))) return false;
   const fact = admitted.admission;
   return (
-    admitted.admission_digest === executionDigest(fact) &&
+    admitted.admission_digest === digest(fact) &&
     fact.receipt.digest === envelope.receipt_digest &&
     same(fact.request, receipt.request) &&
     same(fact.binding, receipt.binding) &&
@@ -1024,7 +999,7 @@ function validRecoveryFact(
 ): boolean {
   const fact = envelope.evidence;
   return !(
-    envelope.evidence_digest !== executionDigest(fact) ||
+    envelope.evidence_digest !== digest(fact) ||
     !same(fact.request, claim.request) ||
     !same(fact.binding, claim.binding) ||
     !same(fact.execution_policy, claim.execution_policy) ||
@@ -1038,17 +1013,6 @@ function validRecoveryFact(
     !context.snapshot.policy.rules.evidence_policies.some((policy) => same(policy, fact.verification_policy)) ||
     (fact.kind !== 'effect_occurred' && fact.resulting_subject !== null)
   );
-}
-
-function sameSubjectIdentity(
-  result: ControllerInput['binding']['subject'] | null,
-  original: ControllerInput['binding']['subject'],
-): boolean {
-  if (result === null) return true;
-  if (result.kind === 'repository' && original.kind === 'repository')
-    return result.repository_id === original.repository_id;
-  if (result.kind === 'artifact' && original.kind === 'artifact') return result.artifact_id === original.artifact_id;
-  return false;
 }
 
 function reconcile(
