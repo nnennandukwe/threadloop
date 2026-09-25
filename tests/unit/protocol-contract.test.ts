@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { createNoopCliHandlers, createThreadloopProgram } from '../../src/cli-program.js';
-import { buildProtocolContract, collectLeafCommands, getCommandPath } from '../../src/contracts/protocol.js';
+import { commandPath, createThreadloopProgram } from '../../src/cli-program.js';
+import { buildProtocolContract, collectLeafCommands } from '../../src/contracts/protocol.js';
 
 describe('protocol contract', () => {
   it('covers every leaf CLI command and reflects json support from the command tree', () => {
-    const program = createThreadloopProgram(createNoopCliHandlers());
-    const contract = buildProtocolContract();
+    const program = createThreadloopProgram();
+    const contract = buildProtocolContract(program);
     const leafCommands = collectLeafCommands(program);
 
-    expect(Object.keys(contract.commands)).toEqual(leafCommands.map((command) => getCommandPath(command)));
+    expect(Object.keys(contract.commands)).toEqual(leafCommands.map((command) => commandPath(command)));
     expect(contract.contractVersions).toEqual({
       protocol: 4,
       proofPlan: 4,
@@ -19,7 +19,7 @@ describe('protocol contract', () => {
     });
 
     for (const command of leafCommands) {
-      const path = getCommandPath(command);
+      const path = commandPath(command);
       const usage = contract.commands[path];
       expect(usage).toBeDefined();
       if (!usage) {

@@ -61,23 +61,13 @@ Canonical session contract:
 - `threadloop audit verify --session <id> [--root <sha256>] [--json]`
 - `threadloop audit export --session <id> --output <path> [--json]`
 
-Compatibility surface:
+Repository and artifact commands:
 
 - `threadloop init`
-- `threadloop start <title> [--json]`
-- `threadloop capture <kind> [text] [--session <id>] [--json]`
-- `threadloop status [--session <id>] [--json]`
 - `threadloop artifact generate [change-brief|pr-summary|handoff] [--session <id>] [--json]`
 
-Compatibility rule:
-
-- legacy `capture` and `artifact generate` auto-resolve only when exactly one active session exists
-- legacy `start` preserves the legacy single-active-session behavior and refuses to open a second legacy root session in
-  the same repo
-- legacy `status` fails with `SESSION_REQUIRED` when zero sessions match
-- when zero sessions match for `capture` and `artifact generate`, they fail with `SESSION_REQUIRED`
-- when multiple sessions match for any legacy command, they fail with `SESSION_AMBIGUOUS`
-- pass `--session <id>` or use `threadloop session ...` for deterministic targeting
+Without `--session`, `artifact generate` targets the only active session. It fails with `SESSION_REQUIRED` when none is
+active and `SESSION_AMBIGUOUS` when several are.
 
 Implemented storage:
 
@@ -164,10 +154,8 @@ The current TypeScript/Node implementation provides:
 - transactional writes for core mutations
 - migration from legacy `state.json`
 - explicit `session` namespace commands
-- compatibility wrappers that safely fail on ambiguous multi-session state
-- `--json` machine-output contract for session commands and legacy wrappers
+- `--json` machine-output contract for session commands
 - reconcile and snapshot persistence
-- daemon-driven mechanical refresh
 - deterministic, idempotent lifecycle transitions with optimistic state versions
 - immutable proof plans bound to a clean branch and baseline commit
 - shell-free execution of declared local gates with digest-bound, append-only receipts
@@ -238,9 +226,6 @@ Recommended loop:
 
 Use `threadloop protocol --json` as the machine-facing contract for current commands, entry kinds, artifact kinds,
 supported environment variables, and the published branch/rebase/PR workflow guidance.
-
-The optional daemon only performs mechanical refresh work. It does not create semantic notes or replace explicit
-capture.
 
 The governed task lifecycle and schema-v8 contract are documented in [`docs/lifecycle.md`](docs/lifecycle.md). The
 signed package and reusable workflow are specified in

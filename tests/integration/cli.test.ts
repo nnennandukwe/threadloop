@@ -13,6 +13,7 @@ import {
   resetSqliteConnections,
 } from '../../src/adapters/fs/sqlite-store.js';
 import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
+import { createThreadloopProgram } from '../../src/cli-program.js';
 import { buildProtocolContract } from '../../src/contracts/protocol.js';
 
 const execFileAsync = promisify(execFile);
@@ -23,6 +24,13 @@ async function readArtifact(repoDir: string, name: string) {
 
 async function readExcludeFile(repoDir: string) {
   return readFile(path.join(repoDir, '.git/info/exclude'), 'utf8');
+}
+
+async function startSession(repoDir: string, args: string[]) {
+  const started = parseJsonOutput<{ data: { session_id: string } }>(
+    (await runCli(repoDir, ['session', 'start', ...args, '--json'])).stdout,
+  );
+  return started.data.session_id;
 }
 
 function parseJsonOutput<T>(output: string) {
@@ -171,13 +179,16 @@ describe('threadloop CLI', () => {
 
   it('initializes, starts, captures, and generates an artifact', async () => {
     await runCli(repoDir, ['init']);
-    await runCli(repoDir, ['start', 'Add retry logic', '--goal', 'Reduce transient failures']);
+    const sessionId = await startSession(repoDir, ['Add retry logic', '--goal', 'Reduce transient failures']);
     await runCli(repoDir, [
+      'session',
       'capture',
       'decision',
       'Retry only idempotent jobs',
       '--because',
       'Non-idempotent replay is unsafe',
+      '--session',
+      sessionId,
     ]);
     await runCli(repoDir, ['artifact', 'generate']);
 
@@ -328,8 +339,15 @@ describe('threadloop CLI', () => {
       'utf8',
     );
 
-    const status = await runCli(repoDir, ['status']);
-    await runCli(repoDir, ['capture', 'note', 'Migrated capture still works']);
+    const status = await runCli(repoDir, ['session', 'status', '--session', 'session_legacy']);
+    await runCli(repoDir, [
+      'session',
+      'capture',
+      'note',
+      'Migrated capture still works',
+      '--session',
+      'session_legacy',
+    ]);
 
     expect(status.stdout).toContain('Task: Legacy task');
     expect(existsSync(path.join(repoDir, '.threadloop/state/state.db'))).toBe(true);
@@ -583,7 +601,7 @@ describe('threadloop CLI', () => {
     db.prepare(`INSERT INTO active_state (id, task_id, session_id) VALUES (1, 'task_legacy', 'session_legacy')`).run();
     db.close();
 
-    await expect(runCli(repoDir, ['status'])).rejects.toThrow('Unsupported ThreadLoop schema version: 0');
+    await expect(runCli(repoDir, ['session', 'list'])).rejects.toThrow('Unsupported ThreadLoop schema version: 0');
 
     const migratedDb = new DatabaseSync(dbPath, { readOnly: true });
     try {
@@ -629,7 +647,7 @@ describe('threadloop CLI', () => {
       db.close();
     }
 
-    await expect(runCli(repoDir, ['status'])).rejects.toThrow('Unsupported ThreadLoop schema version: 9');
+    await expect(runCli(repoDir, ['session', 'list'])).rejects.toThrow('Unsupported ThreadLoop schema version: 9');
 
     const unchanged = new DatabaseSync(dbPath, { readOnly: true });
     try {
@@ -716,7 +734,7 @@ describe('threadloop CLI', () => {
     await mkdir(path.join(repoDir, '.threadloop/state'), { recursive: true });
     await writeFile(path.join(repoDir, '.threadloop/config.json'), '{not-json\n', 'utf8');
 
-    await expect(runCli(repoDir, ['status'])).rejects.toThrow('Invalid .threadloop/config.json');
+    await expect(runCli(repoDir, ['session', 'list'])).rejects.toThrow('Invalid .threadloop/config.json');
   });
 
   it('reports malformed legacy state JSON with the ThreadLoop error message', async () => {
@@ -728,18 +746,18 @@ describe('threadloop CLI', () => {
     );
     await writeFile(path.join(repoDir, '.threadloop/state/state.json'), '{not-json\n', 'utf8');
 
-    await expect(runCli(repoDir, ['status'])).rejects.toThrow('Invalid .threadloop/state/state.json');
+    await expect(runCli(repoDir, ['session', 'list'])).rejects.toThrow('Invalid .threadloop/state/state.json');
   });
 
   it('reports malformed SQLite JSON columns with the ThreadLoop error message', async () => {
     await runCli(repoDir, ['init']);
-    await runCli(repoDir, ['start', 'Add retry logic', '--goal', 'Reduce transient failures']);
+    await runCli(repoDir, ['session', 'start', 'Add retry logic', '--goal', 'Reduce transient failures']);
 
     const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'));
     db.prepare(`UPDATE tasks SET constraints_json = '{not-json'`).run();
     db.close();
 
-    await expect(runCli(repoDir, ['status'])).rejects.toThrow('Invalid .threadloop/state/state.db');
+    await expect(runCli(repoDir, ['session', 'list'])).rejects.toThrow('Invalid .threadloop/state/state.db');
   });
 
   it('supports capture via $EDITOR and alternate artifact renderers', async () => {
@@ -752,8 +770,10 @@ describe('threadloop CLI', () => {
     await execFileAsync('chmod', ['+x', editorScript], { cwd: repoDir });
 
     await runCli(repoDir, ['init']);
-    await runCli(repoDir, ['start', 'Add retry logic', '--goal', 'Reduce transient failures']);
-    await runCli(repoDir, ['capture', 'reviewer_guidance', '--edit'], { EDITOR: `sh ${editorScript}` });
+    const sessionId = await startSession(repoDir, ['Add retry logic', '--goal', 'Reduce transient failures']);
+    await runCli(repoDir, ['session', 'capture', 'reviewer_guidance', '--edit', '--session', sessionId], {
+      EDITOR: `sh ${editorScript}`,
+    });
     await runCli(repoDir, ['artifact', 'generate', 'pr-summary']);
     await runCli(repoDir, ['artifact', 'generate', 'handoff']);
 
@@ -886,8 +906,15 @@ describe('threadloop CLI', () => {
   it('filters ThreadLoop-owned paths from artifact scope without a base ref', async () => {
     await runCli(repoDir, ['init']);
     await writeFile(path.join(repoDir, 'feature.ts'), 'export const feature = true;\n', 'utf8');
-    await runCli(repoDir, ['start', 'Track feature work', '--goal', 'Keep scope clean']);
-    await runCli(repoDir, ['capture', 'note', 'Only repo files should appear in scope']);
+    const sessionId = await startSession(repoDir, ['Track feature work', '--goal', 'Keep scope clean']);
+    await runCli(repoDir, [
+      'session',
+      'capture',
+      'note',
+      'Only repo files should appear in scope',
+      '--session',
+      sessionId,
+    ]);
     await runCli(repoDir, ['artifact', 'generate']);
 
     const artifact = await readArtifact(repoDir, 'track-feature-work.change-brief.md');
@@ -910,7 +937,15 @@ describe('threadloop CLI', () => {
     await execFileAsync('git', ['add', 'feature.ts'], { cwd: repoDir });
     await execFileAsync('git', ['commit', '-m', 'feature commit'], { cwd: repoDir });
 
-    await runCli(repoDir, ['start', 'Base-aware scope', '--goal', 'Filter internal paths', '--base', 'main']);
+    await runCli(repoDir, [
+      'session',
+      'start',
+      'Base-aware scope',
+      '--goal',
+      'Filter internal paths',
+      '--base',
+      'main',
+    ]);
     await runCli(repoDir, ['artifact', 'generate']);
 
     const artifact = await readArtifact(repoDir, 'base-aware-scope.change-brief.md');
@@ -921,19 +956,19 @@ describe('threadloop CLI', () => {
   it('fails cleanly for a missing base ref', async () => {
     await runCli(repoDir, ['init']);
     await expect(
-      runCli(repoDir, ['start', 'Add retry logic', '--goal', 'Reduce transient failures', '--base', 'missing-branch']),
-    ).rejects.toThrow();
+      runCli(repoDir, [
+        'session',
+        'start',
+        'Add retry logic',
+        '--goal',
+        'Reduce transient failures',
+        '--base',
+        'missing-branch',
+      ]),
+    ).rejects.toThrow('BASE_REF_NOT_FOUND');
   });
 
-  it('fails with SESSION_REQUIRED when legacy status has no active session', async () => {
-    await runCli(repoDir, ['init']);
-
-    const failure = await runCliFailure(repoDir, ['status']);
-    expect(failure.stderr).toContain('threadloop [SESSION_REQUIRED]: No active session.');
-    expect(failure.stderr).toContain('Hint: Start one with `threadloop session start`.');
-  });
-
-  it('supports legacy wrapper commands with explicit session targeting and json envelopes', async () => {
+  it('targets sessions explicitly with json envelopes when several are active', async () => {
     await runCli(repoDir, ['init']);
 
     const first = parseJsonOutput<{ data: { session_id: string } }>(
@@ -950,6 +985,7 @@ describe('threadloop CLI', () => {
     }>(
       (
         await runCli(repoDir, [
+          'session',
           'capture',
           'decision',
           'Target the first session explicitly',
@@ -961,7 +997,7 @@ describe('threadloop CLI', () => {
     );
     expect(captured).toMatchObject({
       ok: true,
-      command: 'capture',
+      command: 'session capture',
       data: {
         session_id: first.data.session_id,
         entry: { kind: 'decision', body: 'Target the first session explicitly' },
@@ -972,8 +1008,8 @@ describe('threadloop CLI', () => {
       ok: true;
       command: string;
       data: { session_id: string; entries: { count: number; kinds: Record<string, number> } };
-    }>((await runCli(repoDir, ['status', '--session', first.data.session_id, '--json'])).stdout);
-    expect(status).toMatchObject({ ok: true, command: 'status' });
+    }>((await runCli(repoDir, ['session', 'status', '--session', first.data.session_id, '--json'])).stdout);
+    expect(status).toMatchObject({ ok: true, command: 'session status' });
     expect(status.data.session_id).toBe(first.data.session_id);
     expect(status.data.entries.count).toBe(2);
     expect(status.data.entries.kinds.intent).toBe(1);
@@ -994,47 +1030,19 @@ describe('threadloop CLI', () => {
     });
     expect(artifact.data.artifact.path).toContain('first-task.change-brief.md');
 
-    const secondStatus = await runCli(repoDir, ['status', '--session', second.data.session_id]);
+    const secondStatus = await runCli(repoDir, ['session', 'status', '--session', second.data.session_id]);
     expect(secondStatus.stdout).toContain(`Session: ${second.data.session_id}`);
   });
 
-  it('fails legacy wrapper commands cleanly when multiple sessions are active and no session is selected', async () => {
+  it('fails artifact generation without --session when several sessions are active', async () => {
     await runCli(repoDir, ['init']);
     await runCli(repoDir, ['session', 'start', 'First task', '--goal', 'Track first task']);
     await runCli(repoDir, ['session', 'start', 'Second task', '--goal', 'Track second task']);
-
-    const captureFailure = parseJsonOutput<{ error: { code: string } }>(
-      (await runCliFailure(repoDir, ['capture', 'decision', 'Ambiguous capture', '--json'])).stderr ?? '',
-    );
-    expect(captureFailure.error.code).toBe('SESSION_AMBIGUOUS');
-
-    const statusFailure = parseJsonOutput<{ error: { code: string } }>(
-      (await runCliFailure(repoDir, ['status', '--json'])).stderr ?? '',
-    );
-    expect(statusFailure.error.code).toBe('SESSION_AMBIGUOUS');
 
     const artifactFailure = parseJsonOutput<{ error: { code: string } }>(
       (await runCliFailure(repoDir, ['artifact', 'generate', '--json'])).stderr ?? '',
     );
     expect(artifactFailure.error.code).toBe('SESSION_AMBIGUOUS');
-  });
-
-  it('blocks legacy root start when a session is already active', async () => {
-    await runCli(repoDir, ['init']);
-
-    const started = parseJsonOutput<{ ok: true; command: string; data: { session_id: string } }>(
-      (await runCli(repoDir, ['start', 'Legacy task', '--goal', 'Use the compatibility wrapper', '--json'])).stdout,
-    );
-    expect(started).toMatchObject({ ok: true, command: 'start' });
-
-    const failed = parseJsonOutput<{ ok: false; command: string; error: { code: string } }>(
-      (await runCliFailure(repoDir, ['start', 'Another legacy task', '--goal', 'Should fail', '--json'])).stderr ?? '',
-    );
-    expect(failed).toMatchObject({
-      ok: false,
-      command: 'start',
-      error: { code: 'SESSION_AMBIGUOUS' },
-    });
   });
 
   it('fails cleanly outside a git repository', async () => {
@@ -1260,28 +1268,24 @@ describe('threadloop CLI', () => {
     expect(failure.stderr).toContain('Usage:');
   });
 
+  it('rejects reconcile when both --session and --all are given', async () => {
+    const sessionId = await startSession(repoDir, ['Reconcile target', '--goal', 'Pick one target']);
+
+    const failure = parseJsonOutput<{ error: { code: string; message: string } }>(
+      (await runCliFailure(repoDir, ['session', 'reconcile', '--session', sessionId, '--all', '--json'])).stderr ?? '',
+    );
+    expect(failure.error).toEqual({
+      code: 'INVALID_ARGUMENT',
+      message: 'Pass either --session <id> or --all, not both.',
+    });
+  });
+
   it('renders current session commands in help output', async () => {
     const rootHelp = await runCli(repoDir, ['--help']);
     expect(rootHelp.stdout).toContain('session');
     expect(rootHelp.stdout).toContain('artifact');
-    expect(rootHelp.stdout).toContain('start');
+    expect(rootHelp.stdout).not.toMatch(/^\s+(start|status|capture|daemon)\b/m);
     expect(rootHelp.stderr).toBe('');
-
-    const startHelp = await runCli(repoDir, ['start', '--help']);
-    expect(startHelp.stdout).toContain('--json');
-    expect(startHelp.stdout).toContain('defaults to');
-    expect(startHelp.stdout).toContain('main when available');
-    expect(startHelp.stdout).toContain('--issue <ref>');
-    expect(startHelp.stdout).toContain('--actor <actor>');
-
-    const captureHelp = await runCli(repoDir, ['capture', '--help']);
-    expect(captureHelp.stdout).toContain('--session <id>');
-    expect(captureHelp.stdout).toContain('--actor <actor>');
-    expect(captureHelp.stdout).toContain('--json');
-
-    const statusHelp = await runCli(repoDir, ['status', '--help']);
-    expect(statusHelp.stdout).toContain('--session <id>');
-    expect(statusHelp.stdout).toContain('--json');
 
     const artifactHelp = await runCli(repoDir, ['artifact', 'generate', '--help']);
     expect(artifactHelp.stdout).toContain('--session <id>');
@@ -1340,7 +1344,7 @@ describe('threadloop CLI', () => {
     }>((await runCli(repoDir, ['protocol', '--json'])).stdout);
 
     expect(protocol).toMatchObject({ ok: true, command: 'protocol' });
-    expect(protocol.data).toEqual(buildProtocolContract());
+    expect(protocol.data).toEqual(buildProtocolContract(createThreadloopProgram()));
     expect(protocol.data.envVars).toEqual({
       EDITOR: 'Editor command used by --edit and --goal-edit flows.',
     });

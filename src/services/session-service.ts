@@ -117,7 +117,6 @@ export interface StartTaskInput {
   baseRef?: string | null;
   issueRef?: string | null;
   actor?: EntrySource;
-  allowMultipleActive?: boolean;
 }
 
 export interface CaptureInput {
@@ -125,13 +124,8 @@ export interface CaptureInput {
   kind: EntryKind;
   body: string;
   because?: string;
-  sessionId?: string;
+  sessionId: string;
   actor?: EntrySource;
-}
-
-export interface SessionSelector {
-  sessionId?: string;
-  allowLegacySingleActive?: boolean;
 }
 
 export interface HeartbeatInput {
@@ -204,19 +198,6 @@ export async function startTask(input: StartTaskInput) {
     input.baseRef === undefined && (await refExists(repoRoot, DEFAULT_BASE_REF))
       ? DEFAULT_BASE_REF
       : (input.baseRef ?? null);
-
-  if (!input.allowMultipleActive) {
-    const state = await readState(repoRoot);
-    if (state.activeSessions.length > 0) {
-      throw new ThreadloopError(
-        'SESSION_AMBIGUOUS',
-        'A legacy root session already exists in this repo. Use explicit session commands for additional work.',
-        {
-          details: { activeSessions: state.activeSessions.length },
-        },
-      );
-    }
-  }
 
   if (baseRef && !(await refExists(repoRoot, baseRef))) {
     throw new ThreadloopError('BASE_REF_NOT_FOUND', `Base ref not found: ${baseRef}`, {
@@ -298,7 +279,7 @@ export async function listSessions(cwd: string) {
 
 export async function heartbeatSession(input: HeartbeatInput) {
   const { repoRoot, state } = await loadStateContext(input.cwd);
-  const resolved = resolveSessionFromState(state, { sessionId: input.sessionId });
+  const resolved = resolveActiveSession(state, input.sessionId);
   const now = new Date().toISOString();
   const source = input.source ?? 'cli';
   const repoSnapshot = await snapshotRepo(repoRoot, resolved.session.id, resolved.session.baseRef);
@@ -1902,10 +1883,7 @@ export async function reconcileSession(input: ReconcileInput): Promise<Reconcile
 
 export async function captureEntry(input: CaptureInput) {
   const { repoRoot, state } = await loadStateContext(input.cwd);
-  const resolved = resolveSessionFromState(state, {
-    allowLegacySingleActive: !input.sessionId,
-    ...(input.sessionId ? { sessionId: input.sessionId } : {}),
-  });
+  const resolved = resolveActiveSession(state, input.sessionId);
 
   const entry: Entry = await appendEntryToSession(repoRoot, resolved.session.id, {
     id: createId('entry'),
@@ -1918,31 +1896,18 @@ export async function captureEntry(input: CaptureInput) {
   return { repoRoot, task: resolved.task, session: resolved.session, entry };
 }
 
-export async function getStatus(cwd: string, selector: SessionSelector = {}) {
+export async function getStatus(cwd: string, sessionId: string) {
   const { repoRoot, state } = await loadStateContext(cwd);
-  if (!selector.sessionId && (selector.allowLegacySingleActive ?? true) && state.activeSessions.length === 0) {
-    return { repoRoot, active: null, entries: [], repoSnapshot: null };
-  }
-  const record = selector.sessionId
-    ? resolveSessionRecord(state, selector.sessionId)
-    : resolveSessionFromState(state, {
-        ...selector,
-        allowLegacySingleActive: selector.allowLegacySingleActive ?? !selector.sessionId,
-      });
-
-  const entries = state.entries.filter((entry) => entry.sessionId === record.session.id);
-  const repoSnapshot =
-    record.session.endedAt === null ? await snapshotRepo(repoRoot, record.session.id, record.session.baseRef) : null;
-  return { repoRoot, active: { task: record.task, session: record.session }, entries, repoSnapshot };
+  const { task, session } = resolveSessionRecord(state, sessionId);
+  const entries = state.entries.filter((entry) => entry.sessionId === session.id);
+  const repoSnapshot = session.endedAt === null ? await snapshotRepo(repoRoot, session.id, session.baseRef) : null;
+  return { repoRoot, task, session, entries, repoSnapshot };
 }
 
-export async function generateArtifact(
-  cwd: string,
-  artifactKind: ArtifactKind,
-  selector: SessionSelector = { allowLegacySingleActive: true },
-) {
+/** Without a session id, the artifact is generated for the only active session. */
+export async function generateArtifact(cwd: string, artifactKind: ArtifactKind, sessionId?: string) {
   const { repoRoot, state } = await loadStateContext(cwd);
-  const resolved = resolveArtifactSessionFromState(state, selector);
+  const resolved = sessionId ? resolveSessionRecord(state, sessionId) : resolveSingleActiveSession(state);
   const entries = state.entries.filter((entry) => entry.sessionId === resolved.session.id);
   const storedSnapshot = await readRepoSnapshot(repoRoot, resolved.session.id);
   let snapshot: RepoSnapshot;
@@ -1993,13 +1958,6 @@ export async function generateArtifact(
 
   await recordArtifact(repoRoot, artifact);
   return { repoRoot, task: resolved.task, session: resolved.session, artifact, fullPath };
-}
-
-function resolveArtifactSessionFromState(state: StateData, selector: SessionSelector): SessionRecord {
-  if (!selector.sessionId) {
-    return resolveSessionFromState(state, selector);
-  }
-  return resolveSessionRecord(state, selector.sessionId);
 }
 
 async function loadStateContext(cwd: string): Promise<StateContext> {
@@ -2079,24 +2037,17 @@ async function assertInitializedReadOnly(repoRoot: string) {
   await readConfig(repoRoot);
 }
 
-function resolveSessionFromState(state: StateData, selector: SessionSelector): ResolvedSession {
-  if (selector.sessionId) {
-    const active = state.activeSessions.find((item) => item.sessionId === selector.sessionId);
-    if (!active) {
-      throw new ThreadloopError('SESSION_NOT_FOUND', `Could not find active session: ${selector.sessionId}`, {
-        details: { sessionId: selector.sessionId },
-      });
-    }
-
-    return { active, ...materializeSessionRecord(state, active) };
-  }
-
-  if (!selector.allowLegacySingleActive) {
-    throw new ThreadloopError('SESSION_REQUIRED', 'A session id is required for this command.', {
-      details: { hint: 'Pass --session <id> or use the command with exactly one active session.' },
+function resolveActiveSession(state: StateData, sessionId: string): ResolvedSession {
+  const active = state.activeSessions.find((item) => item.sessionId === sessionId);
+  if (!active) {
+    throw new ThreadloopError('SESSION_NOT_FOUND', `Could not find active session: ${sessionId}`, {
+      details: { sessionId },
     });
   }
+  return { active, ...materializeSessionRecord(state, active) };
+}
 
+function resolveSingleActiveSession(state: StateData): ResolvedSession {
   if (state.activeSessions.length === 0) {
     throw new ThreadloopError(
       'SESSION_REQUIRED',

@@ -26,12 +26,12 @@ Semantic vs mechanical operations:
 
 - Semantic: `session start`, `session capture`, `artifact generate`, `session transition`
 - Mechanical evidence: `session gate run`, `session gate import`, `session review import`
-- Mechanical refresh: `session heartbeat`, `session reconcile`, `daemon run`
+- Mechanical refresh: `session heartbeat`, `session reconcile`
 - Lifecycle read-only: `session next`
 - Audit inspection: `audit show`, `audit verify`
 
-`session reconcile` and the daemon do not create semantic notes. They only refresh branch, head SHA, changed file scope,
-diff stats, and commit range.
+`session reconcile` does not create semantic notes. They only refresh branch, head SHA, changed file scope, diff stats,
+and commit range.
 
 On a current-schema repository, `audit show` and `audit verify` are storage-read-only and never apply a lifecycle
 transition. On a repository older than schema v6, their first migration-aware call may append the honest
@@ -148,26 +148,12 @@ threadloop artifact generate pr-summary --session "$SESSION_ID"
 threadloop artifact generate handoff --session "$SESSION_ID"
 ```
 
-## Daemon role
+## Periodic refresh
 
-`threadloop daemon run` is optional. It exists to perform periodic mechanical refresh of active sessions.
-
-What the daemon does:
-
-- loops on an interval
-- runs reconcile for all active sessions in the current workspace
-- writes running/stopped status through the normal command envelope
-- logs reconcile ticks and errors
-
-What the daemon does not do:
-
-- create semantic entries
-- infer intent from transcripts
-- decide when work is complete
-- replace explicit orchestrator calls for capture or guarded transition
-
-Use it when you want Git-derived state to stay warm while an agent works, but keep semantic capture under explicit
-orchestrator or agent control.
+ThreadLoop has no resident process. To keep Git-derived state warm while an agent works, schedule
+`threadloop session reconcile --all` from the orchestrator or a loop such as
+`while sleep 60; do threadloop session reconcile --all; done`. Reconcile never creates semantic entries, infers intent,
+or decides when work is complete.
 
 ## Concurrency and workspace expectations
 
@@ -179,7 +165,6 @@ Recommended:
 - sync `main` before each task and branch once per session
 - use explicit `session_id` targeting everywhere
 - rebase the session branch onto `origin/main` before opening a PR
-- keep one daemon per workspace if you use the daemon at all
 
 Allowed but less desirable:
 
@@ -188,10 +173,6 @@ Allowed but less desirable:
 Not the intended v2 operating model:
 
 - multiple autonomous tasks mutating the same checkout concurrently
-- depending on legacy root commands in multi-session automation
-
-Legacy root commands exist for compatibility, but automation should prefer the explicit `threadloop session ...`
-namespace because it avoids ambiguity.
 
 ## Operator notes
 
