@@ -10,54 +10,15 @@ import {
   toRecordedSetupStep,
 } from '../src/adapters/process/gate-runner.js';
 import { canonicalizeSignedGateReceiptArtifact, type SignedGateReceiptArtifact } from '../src/domain/attestation.js';
-import { canonicalJson } from '../src/domain/canonical-json.js';
-import { validateDeclaredGate, type GateReceiptResult } from '../src/domain/proof.js';
-import { requiredEnvironment } from './sensor-environment.js';
+import { type GateReceiptResult } from '../src/domain/proof.js';
+import { gateSensorContext, requiredEnvironment } from './sensor-environment.js';
 
 /** sha256 of the empty string, recorded when a blocked gate produced no output stream at all. */
 const EMPTY_SHA256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 
-const sessionId = requiredEnvironment('THREADLOOP_SESSION_ID');
-const planSha256 = requiredEnvironment('THREADLOOP_PLAN_SHA256');
-const gateId = requiredEnvironment('THREADLOOP_GATE_ID');
-const gateJson = requiredEnvironment('THREADLOOP_GATE_JSON');
+const { sessionId, planSha256, gate, sourceRepository, sourceRef, sourceHead, runInvocationUri } = gateSensorContext();
 const sourceRoot = path.resolve(requiredEnvironment('THREADLOOP_SOURCE_ROOT'));
 const reportPath = path.resolve(requiredEnvironment('THREADLOOP_REPORT_PATH'));
-const sourceRepository = `${requiredEnvironment('GITHUB_SERVER_URL')}/${requiredEnvironment('GITHUB_REPOSITORY')}`;
-const sourceRef = requiredEnvironment('GITHUB_REF');
-const sourceHead = requiredEnvironment('GITHUB_SHA');
-const runInvocationUri =
-  `${sourceRepository}/actions/runs/${requiredEnvironment('GITHUB_RUN_ID')}` +
-  `/attempts/${requiredEnvironment('GITHUB_RUN_ATTEMPT')}`;
-
-if (!/^session_[A-Za-z0-9_-]+$/.test(sessionId)) {
-  throw new Error('THREADLOOP_SESSION_ID must be a ThreadLoop session id.');
-}
-if (!/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(sourceRepository)) {
-  throw new Error(
-    'The reusable sensor requires a canonical https://github.com/<owner>/<repo> URL accessible to the workflow.',
-  );
-}
-if (!/^[a-f0-9]{64}$/.test(planSha256)) {
-  throw new Error('THREADLOOP_PLAN_SHA256 must be 64 lowercase hexadecimal characters.');
-}
-if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(gateId)) {
-  throw new Error('THREADLOOP_GATE_ID is invalid.');
-}
-if (!/^refs\/heads\/[A-Za-z0-9._/-]+$/.test(sourceRef)) {
-  throw new Error('The reusable sensor accepts only branch refs.');
-}
-if (!/^[a-f0-9]{40}$/.test(sourceHead)) {
-  throw new Error('GITHUB_SHA must be a full lowercase commit SHA.');
-}
-
-const parsedGate = JSON.parse(gateJson) as unknown;
-// Validated as a v4 gate, so a declared `setup` array is admitted under exactly the plan's own rules. Wrapping
-// this in a synthetic legacy plan would reject every gate that declares setup.
-const gate = validateDeclaredGate(parsedGate, { field: 'THREADLOOP_GATE_JSON', allowSetup: true });
-if (gate.id !== gateId || canonicalJson(gate) !== canonicalJson(parsedGate)) {
-  throw new Error('THREADLOOP_GATE_JSON must be the exact declared gate identified by THREADLOOP_GATE_ID.');
-}
 
 const before = await observeProofRepository(sourceRoot);
 if (before.headSha !== sourceHead) {

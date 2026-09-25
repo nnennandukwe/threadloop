@@ -100,7 +100,10 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
     .showHelpAfterError(false)
     .configureOutput({
       writeOut: (text) => process.stdout.write(text),
-      writeErr: () => {},
+      // Commander's own error text is replaced by ThreadLoop's failure envelope, but help shown because no
+      // subcommand was given is the only guidance the caller gets, so it goes to stderr.
+      writeErr: (text) => process.stderr.write(text),
+      outputError: () => {},
     })
     .exitOverride();
 
