@@ -66,19 +66,8 @@ function reviewArtifact(): SignedReviewReceiptArtifact {
 
 describe('signed review evidence', () => {
   it('canonicalizes a provider-neutral review snapshot and binds it to an in-toto statement', () => {
-    const canonicalize = Reflect.get(reviewDomain, 'canonicalizeSignedReviewReceiptArtifact') as (
-      value: unknown,
-      digest: typeof sha256,
-    ) => { artifact: ReturnType<typeof reviewArtifact>; json: string; sha256: string };
-    const buildStatement = Reflect.get(reviewDomain, 'buildInTotoReviewStatement') as (
-      artifact: ReturnType<typeof reviewArtifact>,
-      artifactSha256: string,
-    ) => unknown;
-
-    expect(typeof canonicalize).toBe('function');
-    expect(typeof buildStatement).toBe('function');
-    const canonical = canonicalize(reviewArtifact(), sha256);
-    const statement = buildStatement(canonical.artifact, canonical.sha256);
+    const canonical = reviewDomain.canonicalizeSignedReviewReceiptArtifact(reviewArtifact(), sha256);
+    const statement = reviewDomain.buildInTotoReviewStatement(canonical.artifact, canonical.sha256);
 
     expect(canonical.json).toBe(canonicalJson(reviewArtifact()));
     expect(statement).toMatchObject({
@@ -152,10 +141,6 @@ describe('signed review evidence', () => {
   });
 
   it('reports only unresolved current threads as blocking findings', () => {
-    const evaluate = Reflect.get(reviewDomain, 'reviewEvidenceFromArtifact') as (
-      artifact: ReturnType<typeof reviewArtifact>,
-      currentHead: string,
-    ) => reviewDomain.ReviewEvidence;
     const artifact = reviewArtifact();
     artifact.review.threads.push(
       {
@@ -173,8 +158,7 @@ describe('signed review evidence', () => {
       },
     );
 
-    expect(typeof evaluate).toBe('function');
-    expect(evaluate(artifact, headSha)).toMatchObject({
+    expect(reviewDomain.reviewEvidenceFromArtifact(artifact, headSha)).toMatchObject({
       status: 'current',
       snapshotId: 'review_123',
       blockingFindings: [{ id: 'PRRT_2', body: 'Current blocker' }],

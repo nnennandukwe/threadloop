@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
+import { canonicalJson } from '../../src/domain/canonical-json.js';
 import {
   canonicalizeProofPlan,
   evaluateProofEvidence,
@@ -7,33 +8,11 @@ import {
   recordedSetupViolation,
   type GateReceiptResult,
 } from '../../src/domain/proof.js';
-import { canonicalJson } from '../../src/domain/canonical-json.js';
+import { captureError, trustPolicy } from '../fixtures/receipts.js';
 
-const workflowSha = 'a'.repeat(40);
-
-function ciPolicy() {
-  return {
-    provider: 'github-actions',
-    issuer: 'https://token.actions.githubusercontent.com',
-    certificate_identity:
-      'https://github.com/example/project/.github/workflows/threadloop.yml@refs/heads/issue-78/gate-setup-steps',
-    source_repository: 'https://github.com/example/project',
-    build_signer_uri: `https://github.com/nnennandukwe/threadloop/.github/workflows/threadloop-gate-sensor.yml@${workflowSha}`,
-    build_signer_sha: workflowSha,
-  };
-}
-
-function reviewPolicy() {
-  return {
-    provider: 'github-actions',
-    issuer: 'https://token.actions.githubusercontent.com',
-    certificate_identity:
-      'https://github.com/example/project/.github/workflows/threadloop-review.yml@refs/heads/issue-78/gate-setup-steps',
-    source_repository: 'https://github.com/example/project',
-    build_signer_uri: `https://github.com/nnennandukwe/threadloop/.github/workflows/threadloop-review-sensor.yml@${workflowSha}`,
-    build_signer_sha: workflowSha,
-  };
-}
+const ciPolicy = () => trustPolicy('gate', 'threadloop.yml', 'issue-78/gate-setup-steps');
+const reviewPolicy = () => trustPolicy('review', 'threadloop-review.yml', 'issue-78/gate-setup-steps');
+const captureProofValidationError = (action: () => unknown) => captureError(ProofValidationError, action);
 
 const syncStep = {
   id: 'sync',
@@ -57,16 +36,6 @@ function planV4(gates: unknown[]) {
     review: reviewPolicy(),
     gates,
   };
-}
-
-function captureProofValidationError(action: () => unknown) {
-  try {
-    action();
-    throw new Error('Expected proof validation to fail.');
-  } catch (error) {
-    expect(error).toBeInstanceOf(ProofValidationError);
-    return error as ProofValidationError;
-  }
 }
 
 describe('proof plan v4 declared setup steps', () => {
@@ -355,44 +324,28 @@ describe('local proof evidence for recorded setup', () => {
     expect(evidence.failedReceiptIds).toEqual([]);
   });
 
-  it('treats a passed receipt that omits declared setup as corrupt', () => {
-    const evidence = evidenceFor(boundPlan([syncStep]), {
-      result: 'passed',
-      setup: [],
-      exit_status: 0,
-    });
-
-    expect(evidence.status).toBe('corrupt');
-  });
-
-  it('treats a recorded setup step the plan never declared as corrupt', () => {
-    const evidence = evidenceFor(boundPlan([syncStep]), {
-      setup: [recordedStep({ command: ['uv', 'sync', '--all-extras'] })],
-    });
-
-    expect(evidence.status).toBe('corrupt');
-  });
-
-  it('treats more recorded steps than declared as corrupt', () => {
-    const evidence = evidenceFor(boundPlan([syncStep]), {
-      setup: [recordedStep(), recordedStep({ id: 'extra' })],
-    });
-
-    expect(evidence.status).toBe('corrupt');
-  });
-
-  it('treats an aborted receipt that stopped mid-setup as a failure, not corruption', () => {
-    const evidence = evidenceFor(boundPlan([syncStep, { ...syncStep, id: 'second' }]), {
-      result: 'aborted',
-      setup: [recordedStep({ result: 'passed', exit_status: 0 })],
-    });
-
-    expect(evidence.status).toBe('failed');
-  });
-
-  it('treats a setup_failed receipt for a gate that declares no setup as corrupt', () => {
-    // The signed-artifact rule wins: setup_failed must name the step that failed, which no such gate has.
-    expect(evidenceFor(boundPlan([]), { setup: [] }).status).toBe('corrupt');
+  it.each([
+    [
+      'a passed receipt that omits declared setup',
+      [syncStep],
+      { result: 'passed', setup: [], exit_status: 0 },
+      'corrupt',
+    ],
+    [
+      'a recorded setup step the plan never declared',
+      [syncStep],
+      { setup: [recordedStep({ command: ['uv', 'sync', '--all-extras'] })] },
+      'corrupt',
+    ],
+    ['a setup_failed receipt for a gate that declares no setup', [], { setup: [] }, 'corrupt'],
+    [
+      'an aborted receipt that stopped mid-setup',
+      [syncStep, { ...syncStep, id: 'second' }],
+      { result: 'aborted', setup: [recordedStep()] },
+      'failed',
+    ],
+  ] as const)('evaluates %s as %s', (_name, declared, payload, status) => {
+    expect(evidenceFor(boundPlan([...declared]), payload).status).toBe(status);
   });
 
   it('keeps a stored v1 receipt without setup valid against a gate that declares none', () => {
