@@ -1754,10 +1754,12 @@ function readDatabaseSchemaVersion(db: DatabaseSync) {
   if (!row) {
     throw new Error('Missing ThreadLoop schema version metadata.');
   }
-  if (!/^[1-9][0-9]*$/.test(row.value) || !Number.isSafeInteger(Number(row.value))) {
+  // Canonical decimal only: "08", "8.0", "8e0", and padded values are all rejected, not coerced.
+  const version = Number(row.value);
+  if (!Number.isSafeInteger(version) || version < 1 || String(version) !== row.value) {
     throw new Error(`Unsupported ThreadLoop schema version: ${row.value}`);
   }
-  return Number(row.value);
+  return version;
 }
 
 function assertSupportedSchemaVersion(db: DatabaseSync) {
@@ -2248,7 +2250,7 @@ function insertRow(db: DatabaseSync, table: string, row: Record<string, SQLInput
 /** Selects snake_case columns under the camelCase names of the domain record they populate. */
 function camelColumns(columns: readonly string[]) {
   return columns
-    .map((column) => `${column} AS "${column.replace(/_([a-z0-9])/g, (_, next: string) => next.toUpperCase())}"`)
+    .map((column) => `${column} AS "${column.replace(/_[a-z0-9]/g, (separator) => separator.slice(1).toUpperCase())}"`)
     .join(', ');
 }
 
