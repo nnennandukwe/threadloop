@@ -236,3 +236,54 @@ export function receiptAdmissionFor(
   };
   return structuredClone({ admission, admission_digest: digest(admission) });
 }
+
+export const executorBActor: ExecutionContext['actor'] = { kind: 'executor', executor: executorB };
+
+/** Submit a receipt as executor A; admissions default to one synthetic trusted admission. */
+export function submitReceipt(
+  journal: ExecutionJournal,
+  receipt: AttemptReceipt,
+  time = '2026-09-10T10:01:00.000Z',
+  admissions?: ReceiptAdmission[],
+  actor?: ExecutionContext['actor'],
+) {
+  return operate(journal, { kind: 'submit_receipt', receipt }, actor, time, [], admissions);
+}
+
+/** Acquire and start the default claim_a/attempt_a as executor A. */
+export function startAttempt(journal: ExecutionJournal) {
+  return operate(operate(journal, grant).journal, { kind: 'start', ...target });
+}
+
+/** ThreadLoop expires the default claim at its deadline unless a later time is given. */
+export function expireClaim(
+  journal: ExecutionJournal,
+  time = '2026-09-10T10:05:00.000Z',
+  evidence: RecoveryEvidence[] = [],
+) {
+  return operate(journal, { kind: 'expire', ...target }, controllerActor(journal), time, evidence);
+}
+
+/** Replace the default claim with claim_b/attempt_b for executor B unless overridden. */
+export function replaceClaim(
+  changes: Partial<Extract<ExecutionOperation['command'], { kind: 'replace' }>> = {},
+): ExecutionOperation['command'] {
+  return {
+    kind: 'replace',
+    previous_claim: target.claim,
+    claim_id: 'claim_b',
+    attempt_id: 'attempt_b',
+    executor: executorB,
+    valid_until: '2026-09-10T10:10:00.000Z',
+    evidence_ids: [],
+    ...changes,
+  };
+}
+
+export function reconcileCommand(
+  disposition: Extract<ExecutionOperation['command'], { kind: 'reconcile' }>['disposition'],
+  evidence: RecoveryEvidence[],
+  reason = 'Independent observation checked by the operator',
+): ExecutionOperation['command'] {
+  return { kind: 'reconcile', ...target, disposition, evidence_ids: evidence.map((item) => item.evidence.id), reason };
+}
