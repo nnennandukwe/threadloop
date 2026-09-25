@@ -1,4 +1,24 @@
-import { Command, InvalidArgumentError, Option } from 'commander';
+import { Command, CommanderError, InvalidArgumentError, Option } from 'commander';
+import { artifactGenerateCommand } from './commands/artifact.js';
+import { auditExportCommand, auditShowCommand, auditVerifyCommand } from './commands/audit.js';
+import { initCommand } from './commands/init.js';
+import { protocolPrintCommand } from './commands/protocol.js';
+import { createCommandContext, type CommandContext } from './commands/runtime.js';
+import {
+  sessionCaptureCommand,
+  sessionGateImportCommand,
+  sessionGateRunCommand,
+  sessionHeartbeatCommand,
+  sessionListCommand,
+  sessionNextCommand,
+  sessionReconcileCommand,
+  sessionReviewImportCommand,
+  sessionStartCommand,
+  sessionStatusCommand,
+  sessionTransitionCommand,
+} from './commands/session.js';
+import { createInvalidArgumentError, toThreadloopError } from './contracts/errors.js';
+import { renderCommandFailure } from './contracts/output.js';
 import {
   ARTIFACT_KINDS,
   ENTRY_KINDS,
@@ -8,89 +28,29 @@ import {
   isTaskStatus,
 } from './domain/types.js';
 
-// Commander intentionally models command action arguments as a variadic any[] boundary.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type CliAction = (...args: any[]) => void | Promise<void>;
-
-export interface ThreadloopCliHandlers {
-  init: CliAction;
-  start: CliAction;
-  capture: CliAction;
-  status: CliAction;
-  artifactGenerate: CliAction;
-  sessionStart: CliAction;
-  sessionList: CliAction;
-  sessionStatus: CliAction;
-  sessionCapture: CliAction;
-  sessionHeartbeat: CliAction;
-  sessionTransition: CliAction;
-  sessionNext: CliAction;
-  sessionGateRun: CliAction;
-  sessionGateImport: CliAction;
-  sessionReviewImport: CliAction;
-  sessionReconcile: CliAction;
-  auditShow: CliAction;
-  auditVerify: CliAction;
-  auditExport: CliAction;
-  daemonRun: CliAction;
-  protocol: CliAction;
-}
-
-export interface ProtocolCommandRule {
-  requiredOptions?: string[];
-  usageOverride?: string;
-}
-
-const PROTOCOL_COMMAND_RULES: Record<string, ProtocolCommandRule> = {
-  'session status': { requiredOptions: ['session'] },
-  'session capture': { requiredOptions: ['session'] },
-  'session heartbeat': { requiredOptions: ['session'] },
-  'session transition': {
-    requiredOptions: ['session', 'expectedStateVersion', 'idempotencyKey', 'actor', 'input'],
-  },
-  'session next': { requiredOptions: ['session'] },
-  'session gate run': { requiredOptions: ['session'] },
-  'session gate import': { requiredOptions: ['session'] },
-  'session review import': { requiredOptions: ['session'] },
-  'session reconcile': { usageOverride: '(--session <id> | --all) [--json]' },
-  'audit show': { requiredOptions: ['session'] },
-  'audit verify': { requiredOptions: ['session'] },
-  'audit export': { requiredOptions: ['session', 'output'] },
+/**
+ * Options that are required but validated by the command itself, so it can fail with SESSION_REQUIRED and a hint
+ * instead of commander's generic missing-option error. Listed so the protocol still renders them as required.
+ */
+const HANDLER_REQUIRED_OPTIONS: Record<string, string[]> = {
+  'session status': ['session'],
+  'session capture': ['session'],
+  'session heartbeat': ['session'],
 };
 
-const noopAction: CliAction = () => undefined;
+/** Commands whose usage cannot be derived from their options. */
+const USAGE_OVERRIDES: Record<string, string> = {
+  'session reconcile': '(--session <id> | --all) [--json]',
+};
 
-export function createNoopCliHandlers(): ThreadloopCliHandlers {
+export function getProtocolCommandRules(commandPath: string) {
   return {
-    init: noopAction,
-    start: noopAction,
-    capture: noopAction,
-    status: noopAction,
-    artifactGenerate: noopAction,
-    sessionStart: noopAction,
-    sessionList: noopAction,
-    sessionStatus: noopAction,
-    sessionCapture: noopAction,
-    sessionHeartbeat: noopAction,
-    sessionTransition: noopAction,
-    sessionNext: noopAction,
-    sessionGateRun: noopAction,
-    sessionGateImport: noopAction,
-    sessionReviewImport: noopAction,
-    sessionReconcile: noopAction,
-    auditShow: noopAction,
-    auditVerify: noopAction,
-    auditExport: noopAction,
-    daemonRun: noopAction,
-    protocol: noopAction,
+    handlerRequiredOptions: HANDLER_REQUIRED_OPTIONS[commandPath] ?? [],
+    usageOverride: USAGE_OVERRIDES[commandPath],
   };
 }
 
-export function getProtocolCommandRules() {
-  return PROTOCOL_COMMAND_RULES;
-}
-
-export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
+export function createThreadloopProgram() {
   const program = new Command();
 
   program
@@ -107,39 +67,7 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
     })
     .exitOverride();
 
-  program.command('init').description('Initialize ThreadLoop in the current Git repo').action(handlers.init);
-
-  withJsonOption(
-    program
-      .command('start')
-      .description('Start a task-scoped session')
-      .argument('<title>', 'task title')
-      .option('--goal <goal>', 'goal for the task')
-      .option('--constraint <constraint...>', 'constraints that matter for this task')
-      .option('--base <ref>', 'base Git ref used for comparisons; defaults to main when available')
-      .option('--issue <ref>', 'issue reference for branch and PR traceability')
-      .option('--actor <actor>', 'entry actor for the initial intent record', parseEntrySource, 'cli')
-      .option('--goal-edit', 'open $EDITOR for the goal text'),
-  ).action(handlers.start);
-
-  withJsonOption(
-    program
-      .command('capture')
-      .description('Capture a structured checkpoint entry')
-      .argument('<kind>', 'entry kind', parseEntryKind)
-      .argument('[text]', 'entry text')
-      .option('--session <id>', 'session id to target')
-      .option('--because <reason>', 'optional reasoning or context')
-      .option('--actor <actor>', 'entry actor for the captured note', parseEntrySource, 'cli')
-      .option('--edit', 'open $EDITOR for longer text'),
-  ).action(handlers.capture);
-
-  withJsonOption(
-    program
-      .command('status')
-      .description('Show the current task/session status')
-      .option('--session <id>', 'session id to target'),
-  ).action(handlers.status);
+  program.command('init').description('Initialize ThreadLoop in the current Git repo').action(action(initCommand));
 
   const artifact = program.command('artifact').description('Generate artifacts from session context');
   withJsonOption(
@@ -148,7 +76,7 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
       .description('Generate a Markdown artifact from task, notes, and Git context')
       .argument('[kind]', 'artifact kind', parseArtifactKind, 'change-brief')
       .option('--session <id>', 'session id to target'),
-  ).action(handlers.artifactGenerate);
+  ).action(action(artifactGenerateCommand));
 
   const session = program.command('session').description('Manage explicit ThreadLoop sessions');
 
@@ -163,10 +91,10 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
       .option('--issue <ref>', 'issue reference for branch and PR traceability')
       .option('--actor <actor>', 'entry actor for the initial intent record', parseEntrySource, 'cli')
       .option('--goal-edit', 'open $EDITOR for the goal text'),
-  ).action(handlers.sessionStart);
+  ).action(action(sessionStartCommand));
 
   withJsonOption(session.command('list').description('List sessions in the current workspace')).action(
-    handlers.sessionList,
+    action(sessionListCommand),
   );
 
   withJsonOption(
@@ -174,7 +102,7 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
       .command('status')
       .description('Show status for an explicit session')
       .option('--session <id>', 'session id to target'),
-  ).action(handlers.sessionStatus);
+  ).action(action(sessionStatusCommand));
 
   withJsonOption(
     session
@@ -186,7 +114,7 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
       .option('--because <reason>', 'optional reasoning or context')
       .option('--actor <actor>', 'entry actor for the captured note', parseEntrySource, 'cli')
       .option('--edit', 'open $EDITOR for longer text'),
-  ).action(handlers.sessionCapture);
+  ).action(action(sessionCaptureCommand));
 
   withJsonOption(
     session
@@ -194,7 +122,7 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
       .description('Refresh mechanical session metadata without creating a semantic entry')
       .option('--session <id>', 'session id to target')
       .option('--source <source>', 'heartbeat source', parseHeartbeatSource),
-  ).action(handlers.sessionHeartbeat);
+  ).action(action(sessionHeartbeatCommand));
 
   withJsonOption(
     session
@@ -214,14 +142,14 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
         'structured transition input, including proof_plan or pre_pr_review when required',
         parseJsonObject,
       ),
-  ).action(handlers.sessionTransition);
+  ).action(action(sessionTransitionCommand));
 
   withJsonOption(
     session
       .command('next')
       .description('Inspect the deterministic next lifecycle candidate without mutating state')
       .requiredOption('--session <id>', 'session id to inspect', parseRequiredText),
-  ).action(handlers.sessionNext);
+  ).action(action(sessionNextCommand));
 
   const sessionGate = session.command('gate').description('Execute gates declared by the immutable proof plan');
   withJsonOption(
@@ -230,14 +158,14 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
       .description('Run one declared local gate and append an immutable receipt')
       .argument('<gate-id>', 'declared proof-plan gate id', parseRequiredGateId)
       .requiredOption('--session <id>', 'session id to target', parseRequiredText),
-  ).action(handlers.sessionGateRun);
+  ).action(action(sessionGateRunCommand));
   withJsonOption(
     sessionGate
       .command('import')
       .description('Verify and append one signed GitHub Actions gate receipt')
       .argument('<package-path>', 'path to a signed receipt package')
       .requiredOption('--session <id>', 'session id to target', parseRequiredText),
-  ).action(handlers.sessionGateImport);
+  ).action(action(sessionGateImportCommand));
 
   const sessionReview = session.command('review').description('Import authoritative review evidence');
   withJsonOption(
@@ -246,7 +174,7 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
       .description('Verify and append one signed GitHub review snapshot')
       .argument('<package-path>', 'path to a signed review package')
       .requiredOption('--session <id>', 'session id to target', parseRequiredText),
-  ).action(handlers.sessionReviewImport);
+  ).action(action(sessionReviewImportCommand));
 
   withJsonOption(
     session
@@ -254,16 +182,7 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
       .description('Refresh Git-derived metadata for a session without creating semantic entries')
       .option('--session <id>', 'session id to reconcile')
       .option('-a, --all', 'reconcile all active sessions'),
-  ).action(handlers.sessionReconcile);
-
-  const daemon = program.command('daemon').description('Run ThreadLoop daemon for active session management');
-
-  withJsonOption(
-    daemon
-      .command('run')
-      .description('Run daemon to periodically reconcile active sessions')
-      .option('-i, --interval <seconds>', 'reconciliation interval in seconds', parseIntervalSeconds, 60),
-  ).action(handlers.daemonRun);
+  ).action(action(sessionReconcileCommand));
 
   const audit = program.command('audit').description('Inspect and export the authoritative audit ledger');
   withJsonOption(
@@ -271,27 +190,99 @@ export function createThreadloopProgram(handlers: ThreadloopCliHandlers) {
       .command('show')
       .description('Show hash-linked audit events for a session')
       .requiredOption('--session <id>', 'session id to inspect', parseRequiredText),
-  ).action(handlers.auditShow);
+  ).action(action(auditShowCommand));
   withJsonOption(
     audit
       .command('verify')
       .description('Verify a session audit chain and optional retained root')
       .requiredOption('--session <id>', 'session id to verify', parseRequiredText)
       .option('--root <sha256>', 'previously retained audit root', parseSha256),
-  ).action(handlers.auditVerify);
+  ).action(action(auditVerifyCommand));
   withJsonOption(
     audit
       .command('export')
       .description('Verify and atomically create a JSONL audit export')
       .requiredOption('--session <id>', 'session id to export', parseRequiredText)
       .requiredOption('--output <path>', 'new output path; existing files are never overwritten', parseOutputPath),
-  ).action(handlers.auditExport);
+  ).action(action(auditExportCommand));
 
-  withJsonOption(
-    program.command('protocol').description('Print the agent integration protocol').action(handlers.protocol),
+  withJsonOption(program.command('protocol').description('Print the agent integration protocol')).action(
+    action((context, options: { json?: boolean }) => protocolPrintCommand(context, options, program)),
   );
 
   return program;
+}
+
+/** Adapts a command handler to commander, which passes the parsed arguments followed by the options and command. */
+function action<T extends unknown[]>(handler: (context: CommandContext, ...args: T) => void | Promise<void>) {
+  return (...args: unknown[]) => {
+    const command = args.at(-1) as Command;
+    const context = createCommandContext(commandPath(command), command);
+    return Promise.resolve(handler(context, ...(args.slice(0, -1) as T))).catch(handleCliError);
+  };
+}
+
+export function commandPath(command: Command) {
+  const names: string[] = [];
+  for (let current: Command | null = command; current?.parent; current = current.parent) {
+    names.unshift(current.name());
+  }
+  return names.join(' ');
+}
+
+export function handleCliError(error: unknown) {
+  if (
+    error instanceof CommanderError &&
+    (error.code === 'commander.version' || error.code === 'commander.helpDisplayed')
+  ) {
+    process.exitCode = 0;
+    return;
+  }
+  // A missing subcommand already printed usage to stderr; it is still a failed invocation.
+  if (error instanceof CommanderError && error.code === 'commander.help') {
+    process.exitCode = error.exitCode;
+    return;
+  }
+
+  const threadloopError =
+    error instanceof CommanderError
+      ? createInvalidArgumentError(error.message, { commander_code: error.code })
+      : toThreadloopError(error);
+
+  process.stderr.write(
+    `${renderCommandFailure(
+      invokedCommandPath(process.argv.slice(2)),
+      {
+        code: threadloopError.code,
+        message: threadloopError.message,
+        ...(threadloopError.details ? { details: threadloopError.details } : {}),
+      },
+      process.argv.includes('--json'),
+    )}\n`,
+  );
+  process.exitCode = error instanceof CommanderError ? error.exitCode : 1;
+}
+
+/**
+ * Names the command a failed invocation targeted, including one commander rejected before any action ran. Known
+ * command names are followed through the tree; an unknown name under a command group is reported as typed.
+ */
+function invokedCommandPath(argv: string[]) {
+  const tokens = argv.filter((token) => token !== '--json');
+  const names: string[] = [];
+  let current = createThreadloopProgram();
+  for (const token of tokens) {
+    if (current.commands.length === 0 || token.startsWith('-')) {
+      break;
+    }
+    names.push(token);
+    const next = current.commands.find((command) => command.name() === token);
+    if (!next) {
+      break;
+    }
+    current = next;
+  }
+  return names.join(' ') || 'threadloop';
 }
 
 function parseEntryKind(value: string) {
@@ -396,14 +387,6 @@ function parseJsonObject(value: string) {
     throw new InvalidArgumentError('Input must be a non-null JSON object.');
   }
   return parsed as Record<string, unknown>;
-}
-
-function parseIntervalSeconds(value: string): number {
-  const parsed = parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed < 1) {
-    throw new InvalidArgumentError('Interval must be a positive number of seconds (minimum 1)');
-  }
-  return parsed;
 }
 
 function withJsonOption<T extends Command>(command: T) {

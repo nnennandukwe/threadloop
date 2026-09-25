@@ -1,15 +1,13 @@
 import type { ArtifactKind } from '../domain/types.js';
 import { generateArtifact } from '../services/session-service.js';
-import type { CommandContext, SessionOption } from './runtime.js';
-import { toSessionId, writeCommandSuccess } from './runtime.js';
+import { type CommandContext, writeCommandSuccess } from './runtime.js';
 
-export async function artifactGenerateCommand(context: CommandContext, kind: ArtifactKind, options: SessionOption) {
-  const sessionId = toSessionId(options);
-  const result = await generateArtifact(
-    context.cwd,
-    kind,
-    sessionId ? { sessionId } : { allowLegacySingleActive: true },
-  );
+export async function artifactGenerateCommand(
+  context: CommandContext,
+  kind: ArtifactKind,
+  options: { session?: string },
+) {
+  const result = await generateArtifact(context.cwd, kind, options.session?.trim() || undefined);
 
   writeCommandSuccess(context, {
     text: [`Generated ${result.artifact.kind}: ${result.artifact.path}`],

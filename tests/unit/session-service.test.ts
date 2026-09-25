@@ -38,12 +38,11 @@ describe('session service', () => {
       baseRef: null,
       issueRef: 'ISSUE-13',
       actor: 'agent',
-      allowMultipleActive: true,
     });
 
-    const status = await getStatus(repoDir, { sessionId: started.session.id });
-    expect(status.active?.task.issueRef).toBe('ISSUE-13');
-    expect(status.active?.task).toMatchObject({ status: 'queued', stateVersion: 0 });
+    const status = await getStatus(repoDir, started.session.id);
+    expect(status.task.issueRef).toBe('ISSUE-13');
+    expect(status.task).toMatchObject({ status: 'queued', stateVersion: 0 });
     expect(status.entries[0]).toMatchObject({ kind: 'intent', source: 'agent' });
     expect(status.repoSnapshot).not.toBeNull();
   });
@@ -57,12 +56,11 @@ describe('session service', () => {
       goal: 'Refresh scope during artifact generation',
       constraints: [],
       baseRef: null,
-      allowMultipleActive: true,
     });
 
     await writeFile(path.join(repoDir, 'feature.ts'), 'export const feature = true;\n', 'utf8');
 
-    const artifact = await generateArtifact(repoDir, 'change-brief', { sessionId: started.session.id });
+    const artifact = await generateArtifact(repoDir, 'change-brief', started.session.id);
     const content = await readFile(artifact.fullPath, 'utf8');
     const storedSnapshot = await readRepoSnapshot(repoDir, started.session.id);
 
@@ -81,7 +79,6 @@ describe('session service', () => {
       goal: 'Track first task',
       constraints: [],
       baseRef: null,
-      allowMultipleActive: true,
     });
     const second = await startTask({
       cwd: repoDir,
@@ -89,16 +86,9 @@ describe('session service', () => {
       goal: 'Track second task',
       constraints: [],
       baseRef: null,
-      allowMultipleActive: true,
     });
 
-    await expect(
-      captureEntry({
-        cwd: repoDir,
-        kind: 'note',
-        body: 'Implicit capture should fail',
-      }),
-    ).rejects.toSatisfy((error: unknown) => {
+    await expect(generateArtifact(repoDir, 'change-brief')).rejects.toSatisfy((error: unknown) => {
       expect(isThreadloopError(error)).toBe(true);
       expect((error as { code?: string }).code).toBe('SESSION_AMBIGUOUS');
       return true;
@@ -129,7 +119,6 @@ describe('session service', () => {
       goal: 'Own the first session',
       constraints: [],
       baseRef: null,
-      allowMultipleActive: true,
     });
     const second = await startTask({
       cwd: repoDir,
@@ -137,7 +126,6 @@ describe('session service', () => {
       goal: 'Own the second session',
       constraints: [],
       baseRef: null,
-      allowMultipleActive: true,
     });
 
     const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'));
@@ -159,43 +147,5 @@ describe('session service', () => {
       expect((error as { code?: string }).code).toBe('STATE_CORRUPTED');
       return true;
     });
-  });
-
-  it('blocks legacy root start when a session is already active', async () => {
-    const repoDir = await makeRepo();
-    await initThreadloop(repoDir);
-
-    await startTask({
-      cwd: repoDir,
-      title: 'Existing task',
-      goal: 'Keep the repo occupied',
-      constraints: [],
-      baseRef: null,
-      allowMultipleActive: true,
-    });
-
-    await expect(
-      startTask({
-        cwd: repoDir,
-        title: 'Legacy task',
-        goal: 'Should fail for legacy compatibility',
-        constraints: [],
-        baseRef: null,
-      }),
-    ).rejects.toSatisfy((error: unknown) => {
-      expect(isThreadloopError(error)).toBe(true);
-      expect((error as { code?: string }).code).toBe('SESSION_AMBIGUOUS');
-      return true;
-    });
-  });
-
-  it('returns no active session for legacy status when none exist', async () => {
-    const repoDir = await makeRepo();
-    await initThreadloop(repoDir);
-
-    const status = await getStatus(repoDir, { allowLegacySingleActive: true });
-    expect(status.active).toBeNull();
-    expect(status.entries).toEqual([]);
-    expect(status.repoSnapshot).toBeNull();
   });
 });
