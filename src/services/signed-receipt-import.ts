@@ -386,12 +386,6 @@ async function prepareImport<TEnvelope extends ImportEnvelope>(
     throw mapSignedReceiptParseError(error);
   }
 
-  if (lifecycle.schemaVersion < 4) {
-    throw new ThreadloopError(
-      'SIGNED_RECEIPT_IDENTITY_MISMATCH',
-      `This session predates immutable proof plans and cannot accept signed ${kind === 'review' ? 'review' : 'CI'} receipts.`,
-    );
-  }
   if (kind === 'gate' && lifecycle.state !== TASK_STATUS.VERIFYING) {
     throw new ThreadloopError('SIGNED_RECEIPT_CONFLICT', 'Signed gate receipts can be imported only while verifying.', {
       details: { session_id: input.sessionId, lifecycle_state: lifecycle.state },
