@@ -61,16 +61,18 @@ contact_links:
     const repositoryRoot = await makeRepositoryFixture({
       pullRequestTemplate: `## Summary
 
-See the [missing guide](docs/missing.md).
+See the [missing guide](docs/missing.md), a [wrapped link](<https://example.com/guide>), and a [broken escape](docs/%ZZ).
 `,
     });
 
     const errors = await validateCommunityRepository(repositoryRoot);
 
+    expect(errors.some((error) => error.includes('example.com/guide'))).toBe(false);
     expect(errors).toEqual(
       expect.arrayContaining([
         expect.stringContaining('missing required section "Related issue"'),
         expect.stringContaining('local link target does not exist: docs/missing.md'),
+        expect.stringContaining('malformed local link: docs/%ZZ'),
       ]),
     );
   });

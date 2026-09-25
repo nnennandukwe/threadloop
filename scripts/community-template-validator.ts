@@ -138,8 +138,10 @@ export async function validateCommunityRepository(repositoryRoot: string): Promi
     if (content !== undefined) collectLinks(content, file);
   }
 
-  for (const { file, target } of links) {
-    const where = label(file);
+  for (const link of links) {
+    const where = label(link.file);
+    // Markdown allows a destination wrapped in angle brackets.
+    const target = link.target.replace(/^<(.*)>$/, '$1');
     if (/^[A-Za-z][A-Za-z\d+.-]*:/.test(target)) {
       if (!target.startsWith('https://') || !URL.canParse(target)) {
         errors.push(`${where}: external URL must use HTTPS: ${target}`);
@@ -148,9 +150,16 @@ export async function validateCommunityRepository(repositoryRoot: string): Promi
     }
     const local = target.split('#', 1)[0]?.split('?', 1)[0] ?? '';
     if (local === '') continue;
-    const resolved = local.startsWith('/')
-      ? path.join(repositoryRoot, decodeURIComponent(local.slice(1)))
-      : path.resolve(path.dirname(file), decodeURIComponent(local));
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(local);
+    } catch {
+      errors.push(`${where}: malformed local link: ${target}`);
+      continue;
+    }
+    const resolved = decoded.startsWith('/')
+      ? path.join(repositoryRoot, decoded.slice(1))
+      : path.resolve(path.dirname(link.file), decoded);
     const relative = path.relative(repositoryRoot, resolved);
     if (relative.startsWith('..') || path.isAbsolute(relative)) {
       errors.push(`${where}: local link leaves the repository: ${target}`);
