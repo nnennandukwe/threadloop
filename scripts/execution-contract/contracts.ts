@@ -45,7 +45,7 @@ export const attemptReceiptSchema = z.strictObject({
 });
 
 // ThreadLoop admits the whole report after independent evidence verification (specified by #107; future runtime #111).
-export const receiptAdmissionSchema = z.strictObject({
+const receiptAdmissionSchema = z.strictObject({
   admission: z.strictObject({
     schema_version: z.literal('0.1'),
     id: text,
@@ -60,7 +60,7 @@ export const receiptAdmissionSchema = z.strictObject({
 });
 
 // These are already-admitted independent observations, not executor assertions.
-export const recoveryEvidenceSchema = z.strictObject({
+const recoveryEvidenceSchema = z.strictObject({
   evidence: z.strictObject({
     schema_version: z.literal('0.1'),
     id: text,
@@ -133,7 +133,7 @@ export const executionJournalSchema = z.strictObject({
   execution_digest: digest,
 });
 
-export const executionClaimSchema = z.strictObject({
+const executionClaimSchema = z.strictObject({
   schema_version: z.literal('0.1'),
   id: text,
   version: counter.min(1),
@@ -147,7 +147,7 @@ export const executionClaimSchema = z.strictObject({
   closed_at: timestamp.nullable(),
 });
 
-export const attemptSchema = z.strictObject({
+const attemptSchema = z.strictObject({
   schema_version: z.literal('0.1'),
   id: text,
   ...boundFields,

@@ -7,8 +7,8 @@ const text = z.string().min(1).regex(/\S/, 'Text must contain a non-whitespace c
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const counter = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const identity = z.strictObject({ id: text, digest });
-export const versionedIdentitySchema = z.strictObject({ name: text, version: text, digest });
-export const evidenceTypeSchema = z.enum([
+const versionedIdentitySchema = z.strictObject({ name: text, version: text, digest });
+const evidenceTypeSchema = z.enum([
   'approval',
   'command_output',
   'artifact',
@@ -17,14 +17,14 @@ export const evidenceTypeSchema = z.enum([
   'resource_usage',
   'interruption',
 ]);
-export const evidenceSchema = z.strictObject({ evidence_type: evidenceTypeSchema, digest, locator: text.nullable() });
-export const budgetSchema = z.strictObject({
+const evidenceSchema = z.strictObject({ evidence_type: evidenceTypeSchema, digest, locator: text.nullable() });
+const budgetSchema = z.strictObject({
   max_cost_micros: counter,
   max_elapsed_ms: counter,
   max_model_tokens: counter,
   max_tool_calls: counter,
 });
-export const usageSchema = z.strictObject({
+const usageSchema = z.strictObject({
   cost_micros: counter,
   elapsed_ms: counter,
   model_tokens: counter,
@@ -40,7 +40,7 @@ function uniqueArray<T extends z.ZodType>(element: T) {
     .meta({ uniqueItems: true });
 }
 
-export const parametersSchema = z.strictObject({
+const parametersSchema = z.strictObject({
   subject_locator: text,
   capability: versionedIdentitySchema,
   task: z.strictObject({ instructions: text, constraints: z.array(text) }),

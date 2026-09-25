@@ -29,11 +29,9 @@ export function buildGaapRequest(requestValue: unknown, policyValue: unknown): V
       'Mapping policy must match the exact capability, supported policies, and immutable request.',
     );
   const families = input.action_request.request.evidence_requirements.map((requirement) => requirement.family);
+  // The schema already rejects duplicate mapping families.
   const mappingFamilies = policy.evidence_mapping.map((entry) => entry.family);
-  if (
-    new Set(mappingFamilies).size !== mappingFamilies.length ||
-    families.some((family) => !mappingFamilies.includes(family))
-  )
+  if (families.some((family) => !mappingFamilies.includes(family)))
     return invalid('GAAP_EVIDENCE_MAPPING', 'Every required evidence family needs one explicit supported mapping.');
   const required = [
     ...new Set(

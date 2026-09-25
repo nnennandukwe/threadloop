@@ -122,9 +122,9 @@ export function validateControllerInput(input: unknown): ValidationResult<Contro
         );
     }
   }
-  const times: (string | null)[] = [value.evaluation_time, value.observation.valid_until];
+  const deadlines: (string | null)[] = [value.observation.valid_until];
   for (const receipt of value.receipts) {
-    times.push(receipt.valid_until);
+    deadlines.push(receipt.valid_until);
     if (
       receipt.workflow_run_id !== value.binding.workflow_run_id ||
       receipt.graph_digest !== value.binding.graph_digest ||
@@ -158,16 +158,13 @@ export function validateControllerInput(input: unknown): ValidationResult<Contro
         '$.execution.request',
         'Execution must reference executor work in this run and graph.',
       );
-    times.push(request.request.constraints.valid_until);
-    if (value.execution.status === 'in_flight') times.push(value.execution.claim.valid_until);
+    deadlines.push(request.request.constraints.valid_until);
+    if (value.execution.status === 'in_flight') deadlines.push(value.execution.claim.valid_until);
   }
   for (const [path, entries] of sets)
     if (new Set(entries).size !== entries.length)
       reject('DUPLICATE_IDENTITY', '$.' + path, 'Duplicate identities make the snapshot ambiguous.');
-  for (const time of times)
-    if (time !== null && (!Number.isFinite(Date.parse(time)) || new Date(time).toISOString() !== time))
-      reject('INVALID_TIMESTAMP', '$.evaluation_time', 'Use a real UTC instant with exactly three fractional digits.');
-  if (times.slice(1).some((time) => time !== null) && value.evaluation_time === null)
+  if (deadlines.some((deadline) => deadline !== null) && value.evaluation_time === null)
     reject('EVALUATION_TIME_REQUIRED', '$.evaluation_time', 'Validity deadlines require an explicit evaluation time.');
   return errors.length ? { ok: false, diagnostics: errors } : parsed;
 }
@@ -253,7 +250,7 @@ const actionFamilies: Record<ActionRequest['request']['capability'], readonly st
   merge_change: ['completion_observed'],
 };
 
-export function guardFamilies(capability: string, parameters: object): readonly string[] {
+function guardFamilies(capability: string, parameters: object): readonly string[] {
   if (capability === 'repository') return ['repository_observation'];
   if (capability === 'proof_plan_bound') return ['proof_plan'];
   if (capability === 'recorded_prior_state') return ['human_approval'];
@@ -291,16 +288,6 @@ function validateRequestStructure(input: ControllerInput, envelope: ActionReques
       'AUTHORITY_UNAVAILABLE',
       '$.request.authorities',
       'Required ThreadLoop or human authority identity is missing.',
-    );
-  if (
-    request.constraints.valid_until !== null &&
-    (!Number.isFinite(Date.parse(request.constraints.valid_until)) ||
-      new Date(request.constraints.valid_until).toISOString() !== request.constraints.valid_until)
-  )
-    reject(
-      'INVALID_TIMESTAMP',
-      '$.request.constraints.valid_until',
-      'Use a real UTC instant with exactly three fractional digits.',
     );
   const graph = input.compiled_graph.graph;
   const action = graph.required_actions.find((item) => item.id === request.action_id);

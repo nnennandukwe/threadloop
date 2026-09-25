@@ -57,7 +57,7 @@ const stepResult = z.strictObject({
   attempt_id: text.nullable(),
   replayed: z.boolean(),
 });
-export const executionSummarySchema = z.strictObject({
+const executionSummarySchema = z.strictObject({
   revision: counter,
   request_status: z.enum(['open', 'satisfied', 'cancelled', 'invalidated']),
   claims: z.array(
@@ -106,7 +106,7 @@ export const executionSummarySchema = z.strictObject({
   ),
   controller: controllerInputSchema.pick({ execution: true, invalidated_claims: true, existing_requests: true }),
 });
-export const resultSchema = z.discriminatedUnion('status', [
+const resultSchema = z.discriminatedUnion('status', [
   invalidResult,
   z.strictObject({ status: z.literal('compiled'), compiled_graph: compiledGraphSchema }),
   z.strictObject({ status: z.literal('decision'), decision: controllerDecisionSchema }),

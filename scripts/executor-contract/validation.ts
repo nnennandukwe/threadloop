@@ -24,17 +24,12 @@ export function validateExecutorRequest(value: unknown): ValidationResult<Execut
     return invalid('HUMAN_REQUEST', 'Human Action Requests cannot enter the executor interface.');
   if (action.request.idempotency_key !== requestIdentity(action.request.binding, action.request.action_id))
     return invalid('REQUEST_IDENTITY_MISMATCH', 'Action identity must match the exact action slot.');
-  const parameters = request.parameters;
-  const unique = (items: unknown[]) => new Set(items.map(digest)).size === items.length;
+  // The schema already rejects duplicate policies and evidence types.
+  const approvals = request.parameters.approval_context;
+  if (new Set(approvals.map((approval) => approval.approval_id)).size !== approvals.length)
+    return invalid('DUPLICATE_PARAMETER', 'Approval identities must be unique.');
   if (
-    !unique(parameters.policies) ||
-    !unique(parameters.required_verification.evidence_types) ||
-    new Set(parameters.approval_context.map((approval) => approval.approval_id)).size !==
-      parameters.approval_context.length
-  )
-    return invalid('DUPLICATE_PARAMETER', 'Policies, required evidence types, and approval identities must be unique.');
-  if (
-    parameters.approval_context.some(
+    approvals.some(
       (approval) =>
         approval.subject_digest !== action.request.binding.subject.content_digest ||
         approval.evidence.evidence_type !== 'approval',
@@ -205,10 +200,5 @@ export function validateExecutorResult(value: unknown, requestValue: unknown): V
       result.usage.tool_calls > budget.max_tool_calls)
   )
     return invalid('RESULT_USAGE_MISMATCH', 'A successful candidate cannot exceed its explicit resource budget.');
-  if (
-    !Number.isFinite(Date.parse(receipt.finished_at)) ||
-    new Date(receipt.finished_at).toISOString() !== receipt.finished_at
-  )
-    return invalid('INVALID_TIMESTAMP', 'Completion time must be a real UTC instant with millisecond precision.');
   return parsed;
 }

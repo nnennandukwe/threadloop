@@ -25,7 +25,7 @@ import {
   type ReceiptAdmission,
 } from './contracts.js';
 
-export interface OperationResult {
+interface OperationResult {
   disposition: 'applied' | 'rejected' | 'conflict';
   code: string;
   revision: number;
@@ -34,7 +34,7 @@ export interface OperationResult {
   recovery: string;
 }
 
-export interface ExecutionProjection {
+interface ExecutionProjection {
   revision: number;
   evaluated_at: string;
   request_status: 'open' | 'satisfied' | 'cancelled' | 'invalidated';
@@ -756,12 +756,8 @@ function fenced(claim: ExecutionClaim, snapshot: ControllerInput, now: string): 
     snapshot.invalidated_claims.some((item) => same(item, reference(claim)))
   );
 }
-function realTime(value: string): boolean {
-  return Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
-}
 function validDeadline(deadline: string, now: string, request: ActionRequest): boolean {
   return (
-    realTime(deadline) &&
     deadline > now &&
     (request.request.constraints.valid_until === null || deadline <= request.request.constraints.valid_until)
   );
@@ -891,7 +887,6 @@ function submit(
     attempt.started_at === null ||
     receipt.finished_at < attempt.started_at ||
     receipt.finished_at > now ||
-    !realTime(receipt.finished_at) ||
     !sameSubjectIdentity(receipt.resulting_subject, receipt.binding.subject) ||
     new Set(receipt.evidence.map((item) => item.id)).size !== receipt.evidence.length ||
     (receipt.status === 'succeeded' && (receipt.effect === 'unknown' || receipt.evidence.length === 0)) ||
@@ -936,10 +931,9 @@ function admittedReceipt(context: ExecutionContext, envelope: AttemptReceipt, no
     fact.attempt_id === receipt.attempt_id &&
     same(fact.executor, receipt.executor) &&
     context.snapshot.policy.rules.evidence_policies.some((policy) => same(policy, fact.verification_policy)) &&
-    realTime(fact.admitted_at) &&
     fact.admitted_at >= receipt.finished_at &&
     fact.admitted_at <= now &&
-    (fact.valid_until === null || (realTime(fact.valid_until) && fact.valid_until > now))
+    (fact.valid_until === null || fact.valid_until > now)
   );
 }
 
@@ -1008,7 +1002,6 @@ function validRecoveryFact(
     !same(fact.executor, claim.executor) ||
     fact.observed_at < (claim.closed_at ?? claim.acquired_at) ||
     fact.observed_at > now ||
-    !realTime(fact.observed_at) ||
     !sameSubjectIdentity(fact.resulting_subject, claim.binding.subject) ||
     !context.snapshot.policy.rules.evidence_policies.some((policy) => same(policy, fact.verification_policy)) ||
     (fact.kind !== 'effect_occurred' && fact.resulting_subject !== null)
