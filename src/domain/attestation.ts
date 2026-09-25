@@ -138,8 +138,8 @@ const signedGateReceiptArtifactSchema = z.preprocess(
 export type SignedGateReceiptArtifact = z.infer<typeof signedGateReceiptArtifactSchema>;
 export type InTotoReceiptStatement = ReturnType<typeof buildInTotoReceiptStatement>;
 
-export interface CanonicalSignedArtifact<A> {
-  artifact: A;
+export interface CanonicalSignedArtifact<TArtifact> {
+  artifact: TArtifact;
   json: string;
   sha256: string;
 }
@@ -147,8 +147,8 @@ export interface CanonicalSignedArtifact<A> {
 export type GitHubGateJobResult = 'success' | 'failure' | 'cancelled';
 
 /** A signed package after its envelope is decoded, before its statement is bound to the artifact. */
-export interface SignedEnvelope<A> {
-  artifact: A;
+export interface SignedEnvelope<TArtifact> {
+  artifact: TArtifact;
   artifactJson: string;
   artifactSha256: string;
   statementJson: string;
@@ -158,8 +158,8 @@ export interface SignedEnvelope<A> {
   packageSha256: string;
 }
 
-export interface ParsedSignedPackage<A, S> extends SignedEnvelope<A> {
-  statement: S;
+export interface ParsedSignedPackage<TArtifact, TStatement> extends SignedEnvelope<TArtifact> {
+  statement: TStatement;
 }
 
 export type SignedReceiptEnvelope = SignedEnvelope<SignedGateReceiptArtifact>;
@@ -169,10 +169,10 @@ export type ParsedSignedReceiptPackage = ParsedSignedPackage<SignedGateReceiptAr
  * What distinguishes one kind of signed receipt. Envelope decoding, statement binding, and stored-row
  * re-verification are shared, so the gate and review packages cannot drift apart.
  */
-export interface SignedReceiptKind<A, S> {
-  schema: z.ZodType<A>;
-  mediaType: (artifact: A) => string;
-  buildStatement: (artifact: A, artifactSha256: string) => S;
+export interface SignedReceiptKind<TArtifact, TStatement> {
+  schema: z.ZodType<TArtifact>;
+  mediaType: (artifact: TArtifact) => string;
+  buildStatement: (artifact: TArtifact, artifactSha256: string) => TStatement;
   fail: FieldErrorFactory;
   /** Names the artifact in a statement mismatch. */
   label: string;
@@ -438,11 +438,11 @@ function authoritativeGateResult(report: SignedGateReceiptArtifact, jobResult: G
   return 'passed';
 }
 
-export function canonicalizeSignedArtifact<A>(
-  kind: SignedReceiptKind<A, unknown>,
+export function canonicalizeSignedArtifact<TArtifact>(
+  kind: SignedReceiptKind<TArtifact, unknown>,
   value: unknown,
   digest: ProofDigest,
-): CanonicalSignedArtifact<A> {
+): CanonicalSignedArtifact<TArtifact> {
   const artifact = parseFields(kind.schema, value, 'package.artifact', kind.fail);
   const json = canonicalJson(artifact);
   return { artifact, json, sha256: digest(json) };
@@ -472,11 +472,11 @@ const bundleSchema = z.looseObject(
 );
 
 /** Decodes a signed package's envelope and canonicalizes its artifact. The statement is bound separately. */
-export function parseSignedEnvelope<A>(
-  kind: SignedReceiptKind<A, unknown>,
+export function parseSignedEnvelope<TArtifact>(
+  kind: SignedReceiptKind<TArtifact, unknown>,
   value: unknown,
   digest: ProofDigest,
-): SignedEnvelope<A> {
+): SignedEnvelope<TArtifact> {
   const receiptPackage = parseFields(packageKeysSchema, value, 'package', kind.fail);
   const canonicalArtifact = canonicalizeSignedArtifact(kind, receiptPackage.artifact, digest);
   const mediaType = kind.mediaType(canonicalArtifact.artifact);
@@ -506,10 +506,10 @@ export function parseSignedEnvelope<A>(
 }
 
 /** Requires the signed statement to be exactly, byte for byte, the statement the canonical artifact implies. */
-export function bindSignedStatement<A, S>(
-  kind: SignedReceiptKind<A, S>,
-  envelope: SignedEnvelope<A>,
-): ParsedSignedPackage<A, S> {
+export function bindSignedStatement<TArtifact, TStatement>(
+  kind: SignedReceiptKind<TArtifact, TStatement>,
+  envelope: SignedEnvelope<TArtifact>,
+): ParsedSignedPackage<TArtifact, TStatement> {
   let statement: unknown;
   try {
     statement = JSON.parse(envelope.statementJson) as unknown;
@@ -540,19 +540,19 @@ export function bindSignedStatement<A, S>(
  * plan's immutable policy, without repeating Sigstore verification. Null when anything disagrees.
  */
 export function reverifyStoredPackage<
-  A extends { source: { repository: string; ref: string; run_invocation_uri: string } },
-  S,
+  TArtifact extends { source: { repository: string; ref: string; run_invocation_uri: string } },
+  TStatement,
 >(
-  kind: SignedReceiptKind<A, S>,
+  kind: SignedReceiptKind<TArtifact, TStatement>,
   stored: StoredSignedPackage,
   packageJson: string | null | undefined,
   policy: GitHubActionsTrustPolicy,
   digest: ProofDigest,
-): ParsedSignedPackage<A, S> | null {
+): ParsedSignedPackage<TArtifact, TStatement> | null {
   if (!packageJson || digest(packageJson) !== stored.packageSha256) {
     return null;
   }
-  let parsed: ParsedSignedPackage<A, S>;
+  let parsed: ParsedSignedPackage<TArtifact, TStatement>;
   try {
     parsed = bindSignedStatement(kind, parseSignedEnvelope(kind, JSON.parse(packageJson) as unknown, digest));
   } catch {

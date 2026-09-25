@@ -445,8 +445,11 @@ export function evaluateProofEvidence(input: {
 }
 
 /** The receipt with the highest sequence for each key. */
-export function latestBy<R extends { sequence: number }>(receipts: readonly R[], key: (receipt: R) => string) {
-  const latest = new Map<string, R>();
+export function latestBy<TReceipt extends { sequence: number }>(
+  receipts: readonly TReceipt[],
+  key: (receipt: TReceipt) => string,
+) {
+  const latest = new Map<string, TReceipt>();
   for (const receipt of [...receipts].sort((left, right) => left.sequence - right.sequence)) {
     latest.set(key(receipt), receipt);
   }
@@ -457,12 +460,12 @@ export function latestBy<R extends { sequence: number }>(receipts: readonly R[],
  * One aggregate for local and signed CI evidence. `setup_failed` outranks `failed` because a broken environment
  * is the actionable root cause: a gate that never ran its command tells you nothing about the code.
  */
-export function aggregateGateStatus<S extends ProofGateEvidenceStatus>(statuses: readonly S[]): S {
+export function aggregateGateStatus<TStatus extends ProofGateEvidenceStatus>(statuses: readonly TStatus[]): TStatus {
   if (statuses.every((status) => status === 'passed')) {
-    return 'passed' as S;
+    return 'passed' as TStatus;
   }
   const precedence = ['corrupt', 'setup_failed', 'failed', 'stale', 'missing'] as const;
-  return (precedence.find((status) => (statuses as readonly string[]).includes(status)) ?? 'missing') as S;
+  return (precedence.find((status) => (statuses as readonly string[]).includes(status)) ?? 'missing') as TStatus;
 }
 
 function parseAndValidateReceipt(

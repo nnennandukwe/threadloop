@@ -12,12 +12,12 @@ export type FieldErrorFactory = (field: string, detail: string) => Error;
  * CLI has always surfaced. Every leaf rule aborts on failure, so the first issue is the first rule that failed in
  * declaration order, and a cross-field refinement only ever runs against well-formed fields.
  */
-export function parseFields<S extends z.ZodType>(
-  schema: S,
+export function parseFields<TSchema extends z.ZodType>(
+  schema: TSchema,
   value: unknown,
   root: string,
   fail: FieldErrorFactory,
-): z.output<S> {
+): z.output<TSchema> {
   const parsed = schema.safeParse(value);
   if (parsed.success) {
     return parsed.data;
@@ -33,9 +33,9 @@ export function parseFields<S extends z.ZodType>(
  * presence depends on the record itself, such as a version-gated field; it is expected only when that returns
  * true.
  */
-export function exactObject<S extends z.ZodRawShape>(
-  shape: S,
-  optional?: { key: keyof S & string; expected: (record: Record<string, unknown>) => boolean },
+export function exactObject<TShape extends z.ZodRawShape>(
+  shape: TShape,
+  optional?: { key: keyof TShape & string; expected: (record: Record<string, unknown>) => boolean },
 ) {
   const keys = Object.keys(shape);
   return z.preprocess((value, context) => {
@@ -58,7 +58,11 @@ export function reject(context: z.RefinementCtx, path: Array<string | number>, m
 }
 
 /** Rejects `value` with `message` unless `check` holds, and stops any later rule from running against it. */
-export function rule<S extends z.ZodType>(schema: S, check: (value: z.output<S>) => boolean, message: string) {
+export function rule<TSchema extends z.ZodType>(
+  schema: TSchema,
+  check: (value: z.output<TSchema>) => boolean,
+  message: string,
+) {
   return schema.refine(check, { message, abort: true });
 }
 
@@ -129,7 +133,7 @@ export const githubRepository = rule(
 
 export const boolean = z.boolean({ error: 'must be a boolean' });
 
-export function literal<const T extends string | number>(value: T) {
+export function literal<const TValue extends string | number>(value: TValue) {
   return z.literal(value, { error: `must be ${value}` });
 }
 
