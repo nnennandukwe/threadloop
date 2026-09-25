@@ -94,8 +94,10 @@ export async function validateCommunityRepository(repositoryRoot: string): Promi
   };
   const collectLinks = (content: string, file: string) => {
     // A destination is either wrapped in angle brackets, where spaces and parentheses are allowed, or bare.
-    for (const match of content.matchAll(/\]\((?:<([^>\n]*)>|([^)\s]+))/g)) {
-      links.push({ file, target: (match[1] ?? match[2]) as string });
+    // Either form may backslash-escape punctuation, which CommonMark reads as the literal character.
+    for (const match of content.matchAll(/\]\((?:<((?:\\.|[^<>\\\n])*)>|((?:\\.|[^)\s\\])+))/g)) {
+      const target = (match[1] ?? match[2]) as string;
+      links.push({ file, target: target.replace(/\\([!-/:-@[-`{-~])/g, '$1') });
     }
   };
 

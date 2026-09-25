@@ -62,13 +62,18 @@ contact_links:
       pullRequestTemplate: `## Summary
 
 See the [missing guide](docs/missing.md), a [wrapped link](<https://example.com/guide>), a
-[wrapped path](<../docs/user guide (v2).md>), and a [broken escape](docs/%ZZ).
+[wrapped path](<../docs/user guide (v2).md>), an [escaped path](<../docs/a\\>b.md>), and a
+[broken escape](docs/%ZZ).
 `,
     });
 
     const errors = await validateCommunityRepository(repositoryRoot);
 
-    expect(errors.some((error) => error.includes('example.com/guide') || error.includes('docs/user'))).toBe(false);
+    expect(
+      errors.some(
+        (error) => error.includes('example.com/guide') || error.includes('docs/user') || error.includes('docs/a'),
+      ),
+    ).toBe(false);
     expect(errors).toEqual(
       expect.arrayContaining([
         expect.stringContaining('missing required section "Related issue"'),
@@ -93,6 +98,7 @@ async function makeRepositoryFixture(options: RepositoryFixtureOptions): Promise
   await mkdir(templateDirectory, { recursive: true });
   await mkdir(path.join(repositoryRoot, 'docs'));
   await writeFile(path.join(repositoryRoot, 'docs', 'user guide (v2).md'), '# Guide\n', 'utf8');
+  await writeFile(path.join(repositoryRoot, 'docs', 'a>b.md'), '# Guide\n', 'utf8');
 
   await writeFile(
     path.join(templateDirectory, 'bug.yml'),
