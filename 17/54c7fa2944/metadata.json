@@ -1,0 +1,23 @@
+{
+  "cli_version": "0.7.6",
+  "checkpoint_id": "1754c7fa2944",
+  "strategy": "manual-commit",
+  "branch": "refactor/issue-133-services",
+  "checkpoints_count": 8,
+  "files_touched": null,
+  "sessions": [
+    {
+      "metadata": "/17/54c7fa2944/0/metadata.json",
+      "transcript": "/17/54c7fa2944/0/full.jsonl",
+      "content_hash": "/17/54c7fa2944/0/content_hash.txt",
+      "prompt": "/17/54c7fa2944/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 590,
+    "cache_creation_tokens": 684574,
+    "cache_read_tokens": 110971432,
+    "output_tokens": 309756,
+    "api_call_count": 289
+  }
+}
