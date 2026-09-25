@@ -31,7 +31,7 @@ describe('Executor text and evidence identity', () => {
   ])('rejects whitespace-only %s before mapping, without normalizing it', async (field) => {
     const { envelope } = await executorFixture();
     const parameters = envelope.request.parameters;
-    const blank = ' \t\n ';
+    const blank = ' \t\n\u2003';
     parameters.approval_context = [
       {
         approval_id: 'approval',

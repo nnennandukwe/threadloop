@@ -29,7 +29,7 @@ describe('Executor process framing', () => {
     ['{"a":-1}', 'INVALID_JSON_VALUE'],
     ['{"a":"\\ud800"}', 'INVALID_JSON_VALUE'],
     ['{"a":1} log', 'INVALID_JSON'],
-    ['﻿{}', 'INVALID_JSON'],
+    ['\ufeff{}', 'INVALID_JSON'],
   ])('rejects malformed or noncanonical input %j', (source, code) => {
     expect(codes(parseExecutorMessage(Buffer.from(source)))).toEqual([code]);
   });

@@ -1,4 +1,5 @@
-import { lstat, opendir, readFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { lstat, open, opendir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseDocument } from 'yaml';
@@ -11,13 +12,26 @@ export const corpusDirectory = fileURLToPath(
   new URL('../../docs/contracts/controller-conformance-v0.1/', import.meta.url),
 );
 
-/** Committed artifacts are read whole: regular files only, bounded before and after reading. */
+/**
+ * Committed artifacts are read whole: regular files only, never through a symlink, and bounded. The checks and the
+ * read use one descriptor, so the bytes checked are the bytes read even if the path is replaced meanwhile.
+ */
 async function readArtifact(path: string, maxBytes = 16 * 1024 * 1024): Promise<Buffer> {
-  const metadata = await lstat(path);
-  if (!metadata.isFile()) throw new Error(`${path}: expected a regular file.`);
-  const bytes = metadata.size > maxBytes ? null : await readFile(path);
-  if (!bytes || bytes.length > maxBytes) throw new Error(`${path}: byte limit exceeded (${maxBytes} bytes).`);
-  return bytes;
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW).catch((error: NodeJS.ErrnoException) => {
+    throw error.code === 'ELOOP' ? new Error(`${path}: expected a regular file.`) : error;
+  });
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile()) throw new Error(`${path}: expected a regular file.`);
+    if (metadata.size > maxBytes) throw new Error(`${path}: byte limit exceeded (${maxBytes} bytes).`);
+    // One byte past the stated size detects a file that grew after stat.
+    const buffer = Buffer.alloc(metadata.size + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    if (bytesRead > metadata.size) throw new Error(`${path}: changed while it was being read.`);
+    return buffer.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
+  }
 }
 
 async function readJson(path: string, sourceBudget?: { remaining: number }): Promise<unknown> {
