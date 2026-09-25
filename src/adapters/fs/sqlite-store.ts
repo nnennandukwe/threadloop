@@ -364,6 +364,16 @@ export class SignedReviewReceiptAppendConflictError extends Error {}
 
 /** Guard evidence changed between evaluation and the write, so the evaluated decision is no longer current. */
 export class EvidenceChangedError extends Error {}
+
+/** A persisted evidence row can no longer be read, so nothing can be decided relative to it. */
+export class StoredEvidenceCorruptedError extends Error {
+  constructor(
+    message: string,
+    readonly receiptId: string,
+  ) {
+    super(message);
+  }
+}
 export class AuditLedgerUnavailableError extends Error {
   readonly reason: 'schema_version' | 'table_missing';
   readonly schemaVersion: number;
@@ -1619,17 +1629,33 @@ function assertReviewSnapshotAdvances(db: DatabaseSync, artifact: ParsedSignedRe
           `receipt ${artifact.receipt_id} describes #${artifact.pull_request.number}.`,
       );
     }
-    const priorObservedAt = Date.parse(
-      String((JSON.parse(snapshot.artifact_json) as { observed_at?: unknown }).observed_at),
-    );
-    // A prior timestamp that does not parse fails closed: nothing can be proven newer than it.
-    if (!(observedAt >= priorObservedAt)) {
+    const priorObservedAt = readStoredObservedAt(snapshot.artifact_json);
+    if (priorObservedAt === null) {
+      throw new StoredEvidenceCorruptedError(
+        `Stored review receipt ${snapshot.id} has no readable observation time.`,
+        snapshot.id,
+      );
+    }
+    if (observedAt < priorObservedAt) {
       throw new SignedReviewReceiptAppendConflictError(
         `Review receipt ${artifact.receipt_id} was observed before already-imported review receipt ${snapshot.id}. ` +
           'Import a review snapshot observed after it.',
       );
     }
   }
+}
+
+function readStoredObservedAt(artifactJson: string) {
+  let artifact: unknown;
+  try {
+    artifact = JSON.parse(artifactJson);
+  } catch {
+    return null;
+  }
+  const observedAt =
+    typeof artifact === 'object' && artifact !== null ? (artifact as { observed_at?: unknown }).observed_at : undefined;
+  const parsed = typeof observedAt === 'string' ? Date.parse(observedAt) : Number.NaN;
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 export async function appendEntryToSession(repoRoot: string, sessionId: string, draft: Omit<Entry, 'sessionId'>) {

@@ -774,6 +774,48 @@ describe('signed review receipt import', () => {
     expect(reviewReceiptCount(fixture.repoDir)).toBe(1);
   });
 
+  it('reports unreadable stored review evidence as state corruption instead of a bad argument', async () => {
+    const fixture = await makeAuthoritativeReviewingSession();
+    const first = reviewArtifact(fixture, { receipt_id: 'review_before_corruption' });
+    await importSessionReviewReceipt({
+      cwd: fixture.repoDir,
+      sessionId: fixture.sessionId,
+      packagePath: await writePackage(fixture, first),
+      verifyReceipt: () => verifier(first),
+    });
+    const db = new DatabaseSync(path.join(fixture.repoDir, '.threadloop/state/state.db'));
+    try {
+      db.exec(`
+        DROP TRIGGER signed_review_receipts_no_update;
+        UPDATE signed_review_receipts SET artifact_json = 'null';
+        CREATE TRIGGER signed_review_receipts_no_update
+        BEFORE UPDATE ON signed_review_receipts
+        BEGIN
+          SELECT RAISE(ABORT, 'signed review receipts are immutable');
+        END;
+      `);
+    } finally {
+      db.close();
+    }
+    const next = reviewArtifact(fixture, {
+      receipt_id: 'review_after_corruption',
+      observed_at: '2026-07-26T12:05:00.000Z',
+    });
+
+    await expect(
+      importSessionReviewReceipt({
+        cwd: fixture.repoDir,
+        sessionId: fixture.sessionId,
+        packagePath: await writePackage(fixture, next),
+        verifyReceipt: () => verifier(next),
+      }),
+    ).rejects.toMatchObject({
+      code: 'STATE_CORRUPTED',
+      details: { receipt_id: 'review_before_corruption' },
+    });
+    expect(reviewReceiptCount(fixture.repoDir)).toBe(1);
+  });
+
   it('refuses to apply a transition whose guard evidence changed after evaluation, without burning the key', async () => {
     const fixture = await makeAuthoritativeReviewingSession();
     const clean = reviewArtifact(fixture, { receipt_id: 'review_clean_before_race' });
