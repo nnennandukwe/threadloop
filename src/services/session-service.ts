@@ -52,7 +52,7 @@ import {
   runGateWithSetup,
   toRecordedSetupStep,
 } from '../adapters/process/gate-runner.js';
-import { ThreadloopError } from '../contracts/errors.js';
+import { StateCorruptedError, ThreadloopError } from '../contracts/errors.js';
 import {
   canonicalizeTransitionRequest,
   evaluateTransitionGuards,
@@ -75,7 +75,6 @@ import type { GateReceiptPayload } from '../domain/proof.js';
 import { evaluateCiProofEvidence, type CiProofEvidence, type StoredSignedGateReceipt } from '../domain/attestation.js';
 import {
   evaluateReviewEvidence,
-  hasBlockingReview,
   hasCurrentHumanApproval,
   reviewEvidenceFromArtifact,
   type ReviewEvidence,
@@ -1615,9 +1614,17 @@ async function buildProofGuardContext(
   transitionHistory: ReturnType<typeof readSessionTransitionHistoryReadOnly>,
 ): Promise<ProofGuardContext> {
   const plan = proofState.plan;
+  // Work resumes from the commit a gate actually ran and failed on. An invalidated run ended on a HEAD that
+  // moved underneath it, and a setup failure never ran the gate, so neither verified the commit it ended on.
   const latestFailure = [...proofState.receipts]
     .sort((left, right) => right.sequence - left.sequence)
-    .find((receipt) => receipt.result !== 'passed');
+    .find(
+      (receipt) =>
+        receipt.result !== 'passed' &&
+        receipt.result !== 'invalidated' &&
+        receipt.result !== 'setup_failed' &&
+        receipt.headBefore === receipt.headAfter,
+    );
   const latestImplementationEntry = [...transitionHistory]
     .reverse()
     .find(
@@ -1658,16 +1665,16 @@ async function buildProofGuardContext(
   const currentRepairEntry = [...transitionHistory]
     .reverse()
     .find((entry) => isRepairEntryTransition(entry.from_state, entry.to_state));
+  // A review repair starts from the snapshot that authorized it: the newest one imported before the repair was
+  // entered. Re-deriving it from the newest evidence would strand the repair if that evidence later changed.
   const repairBasis =
     currentRepairEntry?.to_state !== TASK_STATUS.REPAIRING
       ? undefined
       : currentRepairEntry.from_state === TASK_STATUS.VERIFYING
         ? latestFailure?.headAfter
-        : (currentRepairEntry.from_state === TASK_STATUS.REVIEWING ||
-              currentRepairEntry.from_state === TASK_STATUS.READY_FOR_HUMAN) &&
-            hasBlockingReview(proofState.reviewEvidence)
-          ? (proofState.reviewEvidence.headSha ?? undefined)
-          : undefined;
+        : [...proofState.signedReviewReceipts]
+            .filter((receipt) => receipt.stateVersion <= currentRepairEntry.from_state_version)
+            .sort((left, right) => right.sequence - left.sequence)[0]?.subjectHeadSha;
   let committedRepairFromFailure = false;
   if (repairBasis && isFullCommitSha(repairBasis) && repairBasis !== repository.headSha) {
     committedRepairFromFailure = await hasCommittedDiff(repoRoot, repairBasis, repository.headSha);
@@ -2121,14 +2128,7 @@ function normalizeOptionalText(value: string | null | undefined) {
 }
 
 function isSchemaStateError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
-  return (
-    message.startsWith('Unsupported ThreadLoop schema version:') ||
-    message.startsWith('Missing ThreadLoop schema version metadata.') ||
-    message.startsWith('Invalid schema for ') ||
-    message.startsWith('Invalid session transition history for ') ||
-    message === 'Invalid .threadloop/state/state.db'
-  );
+  return error instanceof StateCorruptedError;
 }
 
 function isSqliteBusyError(error: unknown) {

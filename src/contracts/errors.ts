@@ -57,6 +57,12 @@ export class ThreadloopError extends Error {
   }
 }
 
+/**
+ * Persisted state is unreadable, inconsistent, or on an unsupported schema. Classified by type rather than by
+ * message, so a reworded message cannot turn corruption into an unclassified failure.
+ */
+export class StateCorruptedError extends Error {}
+
 export function isThreadloopError(error: unknown): error is ThreadloopError {
   return error instanceof ThreadloopError;
 }
@@ -70,6 +76,9 @@ export function toThreadloopError(error: unknown) {
     return error;
   }
 
+  if (error instanceof StateCorruptedError) {
+    return new ThreadloopError('STATE_CORRUPTED', error.message, { cause: error });
+  }
   const message = error instanceof Error ? error.message : String(error);
   return new ThreadloopError('INVALID_ARGUMENT', message, error instanceof Error ? { cause: error } : undefined);
 }
