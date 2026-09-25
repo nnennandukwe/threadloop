@@ -294,14 +294,14 @@ describe('signed gate receipt import', () => {
     const packagePath = await writePackage(fixture, signedArtifact(fixture));
     const oversizedPackageBytes = 10 * 1024 * 1024 + 1;
     await truncate(packagePath, oversizedPackageBytes);
-    let boundedReadCalled = false;
+    // Recorded rather than asserted inside the reader: the importer maps any throw from the reader to
+    // SIGNED_RECEIPT_INVALID, which is the expected outcome here, so an in-callback assertion could never fail.
+    const boundedReads: Array<{ requestedPath: string; maxBytes: number }> = [];
     let signatureVerificationCalled = false;
     const boundedReceiptFileSystem = {
       ...nodeSignedReceiptFileSystem,
       readWithinLimit: async (requestedPath: string, maxBytes: number) => {
-        boundedReadCalled = true;
-        expect(requestedPath).toBe(packagePath);
-        expect(maxBytes).toBe(10 * 1024 * 1024);
+        boundedReads.push({ requestedPath, maxBytes });
         return nodeSignedReceiptFileSystem.readWithinLimit(requestedPath, maxBytes);
       },
     };
@@ -319,7 +319,7 @@ describe('signed gate receipt import', () => {
       }),
     ).rejects.toMatchObject({ code: 'SIGNED_RECEIPT_INVALID' });
 
-    expect(boundedReadCalled).toBe(true);
+    expect(boundedReads).toEqual([{ requestedPath: packagePath, maxBytes: 10 * 1024 * 1024 }]);
     expect(signatureVerificationCalled).toBe(false);
     const db = new DatabaseSync(path.join(fixture.repoDir, '.threadloop/state/state.db'), { readOnly: true });
     try {
@@ -973,11 +973,10 @@ describe('signed gate receipt import', () => {
     await truncate(controlledPath, 10 * 1024 * 1024 + 1);
 
     const originalReadWithinLimit = nodeSignedReceiptFileSystem.readWithinLimit.bind(nodeSignedReceiptFileSystem);
-    let boundedControlledRead = false;
+    // Recorded rather than asserted inside the reader, whose throws are mapped to a corrupt read.
+    const controlledReads: Array<{ fileName: string; maxBytes: number }> = [];
     nodeSignedReceiptFileSystem.readWithinLimit = async (requestedPath, maxBytes) => {
-      boundedControlledRead = true;
-      expect(path.basename(requestedPath)).toBe('signed-receipt.json');
-      expect(maxBytes).toBe(10 * 1024 * 1024);
+      controlledReads.push({ fileName: path.basename(requestedPath), maxBytes });
       return originalReadWithinLimit(requestedPath, maxBytes);
     };
     try {
@@ -986,6 +985,6 @@ describe('signed gate receipt import', () => {
     } finally {
       nodeSignedReceiptFileSystem.readWithinLimit = originalReadWithinLimit;
     }
-    expect(boundedControlledRead).toBe(true);
+    expect(controlledReads).toContainEqual({ fileName: 'signed-receipt.json', maxBytes: 10 * 1024 * 1024 });
   });
 });
