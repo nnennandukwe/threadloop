@@ -1,0 +1,23 @@
+{
+  "cli_version": "0.7.6",
+  "checkpoint_id": "9ca802d7d125",
+  "strategy": "manual-commit",
+  "branch": "refactor/issue-133-storage",
+  "checkpoints_count": 8,
+  "files_touched": null,
+  "sessions": [
+    {
+      "metadata": "/9c/a802d7d125/0/metadata.json",
+      "transcript": "/9c/a802d7d125/0/full.jsonl",
+      "content_hash": "/9c/a802d7d125/0/content_hash.txt",
+      "prompt": "/9c/a802d7d125/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 684,
+    "cache_creation_tokens": 754789,
+    "cache_read_tokens": 146296985,
+    "output_tokens": 351207,
+    "api_call_count": 336
+  }
+}
