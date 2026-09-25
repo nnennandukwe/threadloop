@@ -145,19 +145,14 @@ export async function observeRepository(repoRoot: string): Promise<LiveRepositor
 }
 
 export async function getChangedFiles(repoRoot: string, baseRef: string | null) {
+  // NUL-delimited output is parsed raw: trimming or line-splitting corrupts status columns, quoted names, and
+  // renames.
   if (baseRef && (await refExists(repoRoot, baseRef))) {
-    const output = await git(repoRoot, ['diff', '--name-only', `${baseRef}...HEAD`]);
-    return output ? filterThreadloopPaths(output.split('\n').filter(Boolean)) : [];
+    const output = await gitRaw(repoRoot, ['diff', '--name-only', '-z', `${baseRef}...HEAD`]);
+    return filterThreadloopPaths(output.split('\0').filter(Boolean));
   }
 
-  const output = await git(repoRoot, ['status', '--short']);
-  const files = output
-    ? output
-        .split('\n')
-        .map((line) => line.trim().slice(3))
-        .filter(Boolean)
-    : [];
-  return filterThreadloopPaths(files);
+  return filterThreadloopPaths(parsePorcelainPaths(await gitRaw(repoRoot, ['status', '--porcelain', '-z'])));
 }
 
 export async function getDiffStats(repoRoot: string, baseRef: string | null) {

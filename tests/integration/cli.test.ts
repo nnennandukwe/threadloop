@@ -1253,6 +1253,13 @@ describe('threadloop CLI', () => {
     expect(failure.stderr).not.toContain('Session id must be non-empty.');
   });
 
+  it.each([[[]], [['session']]])('fails with usage on stderr when %j names no runnable command', async (args) => {
+    const failure = await runCliFailure(repoDir, args);
+
+    expect((failure as Error & { code?: number }).code).toBe(1);
+    expect(failure.stderr).toContain('Usage:');
+  });
+
   it('renders current session commands in help output', async () => {
     const rootHelp = await runCli(repoDir, ['--help']);
     expect(rootHelp.stdout).toContain('session');
