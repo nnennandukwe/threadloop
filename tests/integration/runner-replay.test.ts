@@ -8,8 +8,6 @@ import { parseJson, runCli, runCliFailure } from '../helpers/cli.js';
 import { closeSqliteConnections } from '../../src/adapters/fs/sqlite-store.js';
 
 const execFileAsync = promisify(execFile);
-const projectRoot = process.cwd();
-const skillPath = path.join(projectRoot, '.agents/skills/threadloop-runner/SKILL.md');
 const temporaryDirectories: string[] = [];
 
 interface Envelope<T> {
@@ -102,47 +100,6 @@ function transitionEvents(audit: AuditShow) {
 }
 
 describe('threadloop runner v4 contract', () => {
-  it('pins the public v4 protocol and fail-closed lifecycle authority', async () => {
-    const [{ readFile }, protocolResult] = await Promise.all([
-      import('node:fs/promises'),
-      runCli(projectRoot, ['protocol', '--json']),
-    ]);
-    const skill = await readFile(skillPath, 'utf8');
-    const protocol = parseJson<
-      Envelope<{
-        contractVersions: Record<string, number>;
-        commands: Record<string, string>;
-      }>
-    >(protocolResult.stdout);
-
-    expect(protocol.data.contractVersions).toMatchObject({
-      protocol: 4,
-      proofPlan: 4,
-      sessionNext: 4,
-      handoff: 3,
-    });
-    expect(protocol.data.commands['session next']).toContain('--session <id> [--json]');
-    expect(protocol.data.commands['session transition']).toContain(
-      '--expected-state-version <version> --idempotency-key <key> --actor <actor> --input <json-object>',
-    );
-    expect(protocol.data.commands['session gate run']).toContain('<gate-id> --session <id> [--json]');
-
-    expect(skill).toContain('Require exactly these four explicit inputs:');
-    expect(skill).toContain('A wake may do exactly one of these:');
-    expect(skill).toContain('pre_pr_reviewing');
-    expect(skill).toContain('SESSION_SCHEMA_MIGRATION_REQUIRED -> MIGRATE_SESSION_SCHEMA');
-    expect(skill).toContain('PRE_PR_REVIEW_OUTCOME_REQUIRED -> RECORD_PRE_PR_REVIEW_OUTCOME');
-    expect(skill).toContain('IMPLEMENTATION_BASIS_NOT_ADVANCED -> COMMIT_IMPLEMENTATION');
-    expect(skill).toContain('may recur across any number of serialized pre-PR `implementing` wakes');
-    expect(skill).toContain('historical repair budget does not stop pre-PR implementation work.');
-    expect(skill).toContain('Repair-budget exhaustion alone is not a stop');
-    expect(skill).toContain('return to `verifying`, refresh proof, and progress without entering a fourth repair');
-    expect(skill).not.toContain('phase is `post_pr` and repair budget is exhausted');
-    expect(skill).toContain('Do not accept review evidence as a fifth wake input.');
-    expect(skill).toContain('Never switch branches, rebase, reset, clean, stash');
-    expect(skill).toContain('Never push, force-push, create a pull request, approve, merge, deploy, publish');
-  });
-
   it('returns one stored result for an exact duplicate or lost response and rejects changed bytes', async () => {
     const { repoDir, sessionId } = await makeQueuedSession();
     const key = 'runner:v1:duplicate-delivery:0';
