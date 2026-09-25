@@ -187,46 +187,28 @@ export function mapGaapResult(
       }
     }
   }
-  let status: ExecutorResult['result']['attempt_receipt']['receipt']['status'];
-  let reason: ExecutorResult['result']['reason']['code'];
-  switch (body.terminal_status) {
-    case 'completed':
-      status = 'succeeded';
-      reason = 'completed';
-      break;
-    case 'failed':
-      status = 'failed';
-      reason = 'failed';
-      break;
-    case 'interrupted':
-      status = 'interrupted';
-      reason = 'interrupted';
-      break;
-    case 'blocked': {
-      status = 'blocked';
-      const causalDecision = body.events
-        .filter((event) => event.event_type === 'protected_effect_decision')
-        .filter(
-          (event) =>
-            (event.decision.outcome === 'ask' &&
-              ['authority.required', event.decision.code].includes(body.terminal_reason)) ||
-            (event.decision.outcome === 'block' && body.terminal_reason === event.decision.code),
-        )
-        .at(-1);
-      reason =
-        body.terminal_reason === 'runtime.hard_stop'
-          ? 'budget_exhausted'
-          : causalDecision?.decision.outcome === 'ask' &&
-              ['authority.required', causalDecision.decision.code].includes(body.terminal_reason)
-            ? 'authority_required'
-            : causalDecision?.decision.outcome === 'block' && body.terminal_reason === causalDecision.decision.code
-              ? 'effect_denied'
-              : 'blocked';
-      break;
-    }
-    default:
-      return invalid('GAAP_NONTERMINAL_RESULT', 'A one-shot result must be terminal.');
-  }
+  // validateGaapReceipt admits only terminal receipts.
+  const terminal = body.terminal_status as 'completed' | 'blocked' | 'failed' | 'interrupted';
+  const cause = body.events
+    .filter((event) => event.event_type === 'protected_effect_decision')
+    .filter(
+      (event) =>
+        (event.decision.outcome === 'ask' &&
+          ['authority.required', event.decision.code].includes(body.terminal_reason)) ||
+        (event.decision.outcome === 'block' && body.terminal_reason === event.decision.code),
+    )
+    .at(-1)?.decision.outcome;
+  const status = terminal === 'completed' ? 'succeeded' : terminal;
+  const reason: ExecutorResult['result']['reason']['code'] =
+    terminal !== 'blocked'
+      ? terminal
+      : body.terminal_reason === 'runtime.hard_stop'
+        ? 'budget_exhausted'
+        : cause === 'ask'
+          ? 'authority_required'
+          : cause === 'block'
+            ? 'effect_denied'
+            : 'blocked';
   const receipt: ExecutorResult['result']['attempt_receipt']['receipt'] = {
     schema_version: '0.1',
     id: 'gaap_' + sourceDigest.slice(7),

@@ -133,7 +133,7 @@ export const executionJournalSchema = z.strictObject({
   execution_digest: digest,
 });
 
-const executionClaimSchema = z.strictObject({
+export const executionClaimSchema = z.strictObject({
   schema_version: z.literal('0.1'),
   id: text,
   version: counter.min(1),
@@ -147,7 +147,7 @@ const executionClaimSchema = z.strictObject({
   closed_at: timestamp.nullable(),
 });
 
-const attemptSchema = z.strictObject({
+export const attemptSchema = z.strictObject({
   schema_version: z.literal('0.1'),
   id: text,
   ...boundFields,

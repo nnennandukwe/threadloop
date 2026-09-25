@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { publishedSchemas } from '../contract-kernel/kernel.js';
 import { compiledGraphSchema } from '../workflow-graph/contracts.js';
 import { controllerDecisionSchema, controllerInputSchema } from '../controller-contract/contracts.js';
+import { attemptSchema, executionClaimSchema } from '../execution-contract/contracts.js';
 
 const text = z.string().regex(/\S/);
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -65,24 +66,15 @@ const executionSummarySchema = z.strictObject({
       id: text,
       version: counter.min(1),
       attempt_id: text,
-      status: z.enum(['active', 'released', 'expired', 'replaced', 'invalidated', 'cancelled', 'completed']),
+      status: executionClaimSchema.shape.status,
     }),
   ),
   attempts: z.array(
     z.strictObject({
       id: text,
       claim: claimReference,
-      status: z.enum([
-        'pending',
-        'running',
-        'succeeded',
-        'failed',
-        'blocked',
-        'interrupted',
-        'cancelled',
-        'unknown_outcome',
-      ]),
-      effect: z.enum(['not_started', 'none', 'occurred', 'unknown']),
+      status: attemptSchema.shape.status,
+      effect: attemptSchema.shape.effect,
       receipt_id: text.nullable(),
     }),
   ),
