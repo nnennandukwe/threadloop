@@ -28,7 +28,6 @@ import { canonicalizeTransitionRequest, type TransitionRequest } from '../../src
 import {
   buildInTotoReviewStatement,
   canonicalizeSignedReviewReceiptArtifact,
-  REVIEW_IN_TOTO_PAYLOAD_TYPE,
   SIGNED_REVIEW_RECEIPT_MEDIA_TYPE,
   type SignedReviewReceiptArtifact,
 } from '../../src/domain/review.js';
@@ -256,7 +255,7 @@ async function writePackage(
         mediaType: 'application/vnd.dev.sigstore.bundle.v0.3+json',
         dsseEnvelope: {
           payload: Buffer.from(canonicalJson(statement)).toString('base64'),
-          payloadType: REVIEW_IN_TOTO_PAYLOAD_TYPE,
+          payloadType: IN_TOTO_PAYLOAD_TYPE,
           signatures: [{ keyid: '', sig: 'c2lnbmF0dXJl' }],
         },
         verificationMaterial: {

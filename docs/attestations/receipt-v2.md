@@ -94,17 +94,19 @@ context-mismatched, signing fails closed and no package is uploaded.
 
 ## Package and statement
 
-The package media type is `application/vnd.threadloop.signed-receipt.v1+json`. Its `artifact` records the exact gate,
-result, timestamps, output digests, clean/HEAD observations, GitHub source/run identity, runner identity, and sensor
-contract. Its Sigstore bundle carries a DSSE payload of type `application/vnd.in-toto+json`.
+Newly signed packages use media type `application/vnd.threadloop.signed-receipt.v2+json`; see
+[version compatibility](#version-compatibility) for stored v1 packages. The `artifact` records the exact gate, result,
+timestamps, output digests, clean/HEAD observations, GitHub source/run identity, runner identity, and sensor contract.
+Its Sigstore bundle carries a DSSE payload of type `application/vnd.in-toto+json`, whose canonical base64 must decode to
+UTF-8 canonical JSON, so the stored statement is byte-for-byte the signed one.
 
 The payload is an in-toto Statement v1 with exactly two subjects:
 
 - the source repository and its `gitCommit` digest; and
 - `threadloop-gate-receipt.json` and the SHA-256 digest of the canonical artifact.
 
-The predicate type is `https://threadloop.dev/attestations/receipt/v1`. Predicate receipt type `gate` is the only type
-accepted in this version.
+The predicate type is `https://threadloop.dev/attestations/receipt/v2` (`/v1` for a v1 artifact). Predicate receipt type
+`gate` is the only type accepted. The statement must equal exactly the statement the canonical artifact implies.
 
 ## Verification and import
 
@@ -177,8 +179,13 @@ still reports the real duration of the provisioning that was attempted. `exit_st
 command and are null when it never ran.
 
 Recorded setup is bound positionally to the gate's declaration: each step's argv, working directory, and timeout must
-match the step declared at the same index. A recorded sequence shorter than the declaration is legitimate, because a
-failing step stops the run. A recorded step the gate never declared is rejected.
+match the step declared at the same index. A recorded step the gate never declared is rejected. A failing step stops the
+run, so a non-passing step is always the last one recorded. A sequence shorter than the declaration is legitimate only
+for a result the gate can reach before its command runs: `setup_failed`, `invalidated`, or `aborted`, which the signer
+records whenever GitHub cancelled the execution job, including mid-setup. Every other result means the gate command ran,
+so every declared step must be recorded as passed. `setup_failed` requires a declared setup step and a recorded
+non-passing one. Local receipts are held to the same rule, so a local and a signed receipt cannot disagree about one
+execution.
 
 ## Version compatibility
 
