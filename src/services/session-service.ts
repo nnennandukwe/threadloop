@@ -11,6 +11,7 @@ import {
   ensureStateDatabase,
   ensureThreadloopLayout,
   hasSessionTransitionIdempotencyReadOnly,
+  readSessionEvidenceWatermarkReadOnly,
   inspectAuditLedgerReadOnly,
   insertTaskSession,
   readConfig,
@@ -29,6 +30,7 @@ import {
   writeConfig,
   ReceiptAppendConflictError,
   AuditChainCorruptedError,
+  EvidenceChangedError,
   AuditLedgerUnavailableError,
   SessionTransitionHistoryCorruptedError,
 } from '../adapters/fs/sqlite-store.js';
@@ -336,6 +338,7 @@ export async function transitionSession(input: TransitionSessionInput) {
       });
     }
     let boundProofPlan: BoundProofPlan | undefined;
+    let evidenceWatermark: string | undefined;
     let proofGuardContext: ProofGuardContext = {};
     let preparedProofGuardRejection: TransitionGuardDecision | undefined;
     const transitionHistory = lifecycle?.transitionHistory ?? [];
@@ -362,6 +365,7 @@ export async function transitionSession(input: TransitionSessionInput) {
       lifecycle.schemaVersion >= 4 &&
       getTransitionGuardRequirement(lifecycle.state, input.targetState) === 'review'
     ) {
+      evidenceWatermark = readSessionEvidenceWatermarkReadOnly(repoRoot, input.sessionId);
       const preliminary = await evaluateSessionProof(repoRoot, input.sessionId, null);
       if (!preliminary.plan) {
         proofGuardContext = {
@@ -382,6 +386,7 @@ export async function transitionSession(input: TransitionSessionInput) {
       lifecycle.schemaVersion >= 4 &&
       requiresProofGuardContext(lifecycle.state, input.targetState)
     ) {
+      evidenceWatermark = readSessionEvidenceWatermarkReadOnly(repoRoot, input.sessionId);
       const repository = await observeProofRepository(repoRoot);
       const proofState = await evaluateSessionProof(repoRoot, input.sessionId, repository.headSha);
       proofGuardContext = await buildProofGuardContext(repoRoot, proofState, repository, phase, transitionHistory);
@@ -392,6 +397,7 @@ export async function transitionSession(input: TransitionSessionInput) {
         ...input,
         ...canonicalRequest,
         ...(boundProofPlan ? { boundProofPlan } : {}),
+        ...(evidenceWatermark ? { evidenceWatermark } : {}),
       },
       (sourceState, targetState, transitionInput, blockedFromState) =>
         preparedProofGuardRejection ??
@@ -413,6 +419,17 @@ export async function transitionSession(input: TransitionSessionInput) {
     if (isSchemaStateError(error)) {
       throw new ThreadloopError('STATE_CORRUPTED', error instanceof Error ? error.message : String(error), {
         cause: error,
+      });
+    }
+    if (error instanceof EvidenceChangedError) {
+      throw new ThreadloopError('STATE_BUSY', `${error.message} Retry the same idempotency key.`, {
+        cause: error,
+        details: {
+          session_id: input.sessionId,
+          idempotency_key: input.idempotencyKey,
+          reason: 'evidence_changed',
+          hint: 'Retry the identical request with the same idempotency key; it will be evaluated against current evidence.',
+        },
       });
     }
     if (isSqliteBusyError(error)) {

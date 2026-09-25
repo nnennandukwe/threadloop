@@ -69,7 +69,10 @@ migration.
 `threadloop session transition` requires the caller's expected state version and an idempotency key. State mutation,
 transition history, idempotency outcome, audit guard decision, active projection, and session completion are one
 transaction. Accepted transitions append `transition_applied` in that same transaction. Exact replays add no duplicate
-events, while rejected guards retain the unchanged lifecycle and one idempotent `guard_decision`.
+events, while rejected guards retain the unchanged lifecycle and one idempotent `guard_decision`. Receipt imports and
+gate runs do not change the state version, so a transition whose guards read receipt evidence also records which
+receipts existed when it read them. If a receipt arrives before the write, the transition fails with `STATE_BUSY`
+without persisting anything, and retrying the identical request evaluates it against the current evidence.
 
 | Transition                             | Required authority                                                                                  |
 | -------------------------------------- | --------------------------------------------------------------------------------------------------- |

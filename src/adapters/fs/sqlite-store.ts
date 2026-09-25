@@ -329,6 +329,8 @@ export type SessionTransitionResult =
 export interface PersistSessionTransitionInput extends TransitionRequest, CanonicalTransitionRequest {
   idempotencyKey: string;
   boundProofPlan?: BoundProofPlan;
+  /** From `readSessionEvidenceWatermarkReadOnly`, read before the guard context the evaluator depends on. */
+  evidenceWatermark?: string;
 }
 
 export interface AppendGateReceiptInput {
@@ -359,6 +361,19 @@ export interface AppendSignedReviewReceiptInput {
 export class ReceiptAppendConflictError extends Error {}
 export class SignedReceiptAppendConflictError extends Error {}
 export class SignedReviewReceiptAppendConflictError extends Error {}
+
+/** Guard evidence changed between evaluation and the write, so the evaluated decision is no longer current. */
+export class EvidenceChangedError extends Error {}
+
+/** A persisted evidence row can no longer be read, so nothing can be decided relative to it. */
+export class StoredEvidenceCorruptedError extends Error {
+  constructor(
+    message: string,
+    readonly receiptId: string,
+  ) {
+    super(message);
+  }
+}
 export class AuditLedgerUnavailableError extends Error {
   readonly reason: 'schema_version' | 'table_missing';
   readonly schemaVersion: number;
@@ -911,6 +926,29 @@ export function hasSessionTransitionIdempotencyReadOnly(repoRoot: string, sessio
   );
 }
 
+/**
+ * Identifies the receipt evidence a transition guard was evaluated against. Receipts are append-only and do not
+ * bump the lifecycle state version, so the state-version check alone cannot detect evidence that arrived after
+ * the guard context was read.
+ */
+export function readSessionEvidenceWatermarkReadOnly(repoRoot: string, sessionId: string) {
+  return withReadSnapshot(repoRoot, (db) => readEvidenceWatermark(db, sessionId));
+}
+
+function readEvidenceWatermark(db: DatabaseSync, sessionId: string) {
+  const row = db
+    .prepare(
+      `
+        SELECT
+          (SELECT coalesce(max(sequence), 0) FROM gate_receipts WHERE session_id = ?) AS gate,
+          (SELECT coalesce(max(sequence), 0) FROM signed_gate_receipts WHERE session_id = ?) AS signed_gate,
+          (SELECT coalesce(max(sequence), 0) FROM signed_review_receipts WHERE session_id = ?) AS signed_review
+      `,
+    )
+    .get(sessionId, sessionId, sessionId) as { gate: number; signed_gate: number; signed_review: number };
+  return `${row.gate}:${row.signed_gate}:${row.signed_review}`;
+}
+
 export function readSessionLifecycleReadOnly(repoRoot: string, sessionId: string) {
   const { stateDbPath } = threadloopPaths(repoRoot);
   if (!existsSync(stateDbPath)) {
@@ -1132,6 +1170,17 @@ export async function applySessionTransition(
           unchanged: ['lifecycle', 'repair_budget', 'proof', 'review_evidence'],
           recovery: structural.recovery,
         }),
+      );
+    }
+
+    // Checked before the guards run and before anything is persisted, so the caller can retry the same request
+    // and have it evaluated against the evidence that exists now.
+    if (
+      input.evidenceWatermark !== undefined &&
+      readEvidenceWatermark(db, input.sessionId) !== input.evidenceWatermark
+    ) {
+      throw new EvidenceChangedError(
+        `Evidence for ${input.sessionId} changed while the transition was being evaluated.`,
       );
     }
 
@@ -1505,6 +1554,7 @@ export async function appendSignedReviewReceipt(repoRoot: string, input: AppendS
         `Session ${artifact.session_id} proof plan changed while review evidence was being imported.`,
       );
     }
+    assertReviewSnapshotAdvances(db, artifact);
     assertSessionTransitionHistoryAuthority(db, artifact.session_id);
 
     const inserted = db
@@ -1560,6 +1610,52 @@ export async function appendSignedReviewReceipt(repoRoot: string, input: AppendS
     input.promotePackage();
     return { sequence, alreadyImported: false, verifiedAt: input.verifiedAt };
   });
+}
+
+/**
+ * The newest imported review snapshot is authoritative, so a snapshot may only be imported if it is at least as
+ * new as every snapshot already imported for the session and describes the same pull request. Otherwise an
+ * older signed approval could be re-imported after a newer blocking review and hide it.
+ */
+function assertReviewSnapshotAdvances(db: DatabaseSync, artifact: ParsedSignedReviewReceiptPackage['artifact']) {
+  const observedAt = Date.parse(artifact.observed_at);
+  const prior = db
+    .prepare(`SELECT id, pull_request_number, artifact_json FROM signed_review_receipts WHERE session_id = ?`)
+    .all(artifact.session_id) as Array<{ id: string; pull_request_number: number; artifact_json: string }>;
+  for (const snapshot of prior) {
+    if (snapshot.pull_request_number !== artifact.pull_request.number) {
+      throw new SignedReviewReceiptAppendConflictError(
+        `Session ${artifact.session_id} review evidence describes pull request #${snapshot.pull_request_number}; ` +
+          `receipt ${artifact.receipt_id} describes #${artifact.pull_request.number}.`,
+      );
+    }
+    const priorObservedAt = readStoredObservedAt(snapshot.artifact_json);
+    if (priorObservedAt === null) {
+      throw new StoredEvidenceCorruptedError(
+        `Stored review receipt ${snapshot.id} has no readable observation time.`,
+        snapshot.id,
+      );
+    }
+    if (observedAt < priorObservedAt) {
+      throw new SignedReviewReceiptAppendConflictError(
+        `Review receipt ${artifact.receipt_id} was observed before already-imported review receipt ${snapshot.id}. ` +
+          'Import a review snapshot observed after it.',
+      );
+    }
+  }
+}
+
+function readStoredObservedAt(artifactJson: string) {
+  let artifact: unknown;
+  try {
+    artifact = JSON.parse(artifactJson);
+  } catch {
+    return null;
+  }
+  const observedAt =
+    typeof artifact === 'object' && artifact !== null ? (artifact as { observed_at?: unknown }).observed_at : undefined;
+  const parsed = typeof observedAt === 'string' ? Date.parse(observedAt) : Number.NaN;
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 export async function appendEntryToSession(repoRoot: string, sessionId: string, draft: Omit<Entry, 'sessionId'>) {
