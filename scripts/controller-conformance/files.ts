@@ -14,21 +14,28 @@ export const corpusDirectory = fileURLToPath(
 
 /**
  * Committed artifacts are read whole: regular files only, never through a symlink, and bounded. The checks and the
- * read use one descriptor, so the bytes checked are the bytes read even if the path is replaced meanwhile.
+ * read use one descriptor, so the bytes checked are the bytes read even if the path is replaced meanwhile. The
+ * descriptor is opened non-blocking so a FIFO or device is rejected by the regular-file check instead of blocking.
  */
 async function readArtifact(path: string, maxBytes = 16 * 1024 * 1024): Promise<Buffer> {
-  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW).catch((error: NodeJS.ErrnoException) => {
-    throw error.code === 'ELOOP' ? new Error(`${path}: expected a regular file.`) : error;
-  });
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK).catch(
+    (error: NodeJS.ErrnoException) => {
+      throw error.code === 'ELOOP' ? new Error(`${path}: expected a regular file.`) : error;
+    },
+  );
   try {
     const metadata = await handle.stat();
     if (!metadata.isFile()) throw new Error(`${path}: expected a regular file.`);
     if (metadata.size > maxBytes) throw new Error(`${path}: byte limit exceeded (${maxBytes} bytes).`);
-    // One byte past the stated size detects a file that grew after stat.
+    // Reading one byte past the stated size detects growth; a short total detects truncation.
     const buffer = Buffer.alloc(metadata.size + 1);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    if (bytesRead > metadata.size) throw new Error(`${path}: changed while it was being read.`);
-    return buffer.subarray(0, bytesRead);
+    let total = 0;
+    for (;;) {
+      const { bytesRead } = await handle.read(buffer, total, buffer.length - total, total);
+      if (bytesRead === 0 || (total += bytesRead) === buffer.length) break;
+    }
+    if (total !== metadata.size) throw new Error(`${path}: changed while it was being read.`);
+    return buffer.subarray(0, total);
   } finally {
     await handle.close();
   }

@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import { readFile, readdir, mkdtemp, mkdir, writeFile, symlink, rm, cp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -429,6 +430,10 @@ describe('Read-only artifact loading', () => {
       await expect(loadCorpus(directory)).rejects.toThrow('Duplicate');
       await rm(path);
       await symlink(join(directory, 'manifest.json'), path);
+      await expect(loadCorpus(directory)).rejects.toThrow('regular');
+      await rm(path);
+      // A FIFO must be rejected by the regular-file check rather than blocking the open.
+      execFileSync('mkfifo', [path]);
       await expect(loadCorpus(directory)).rejects.toThrow('regular');
       await rm(path);
       await writeFile(join(directory, 'fixtures', 'unexpected.json'), '{}');
