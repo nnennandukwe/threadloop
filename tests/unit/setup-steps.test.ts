@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
-import { canonicalizeProofPlan, evaluateProofEvidence, ProofValidationError } from '../../src/domain/proof.js';
+import {
+  canonicalizeProofPlan,
+  evaluateProofEvidence,
+  ProofValidationError,
+  recordedSetupViolation,
+  type GateReceiptResult,
+} from '../../src/domain/proof.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
 
 const workflowSha = 'a'.repeat(40);
@@ -384,6 +390,11 @@ describe('local proof evidence for recorded setup', () => {
     expect(evidence.status).toBe('failed');
   });
 
+  it('treats a setup_failed receipt for a gate that declares no setup as corrupt', () => {
+    // The signed-artifact rule wins: setup_failed must name the step that failed, which no such gate has.
+    expect(evidenceFor(boundPlan([]), { setup: [] }).status).toBe('corrupt');
+  });
+
   it('keeps a stored v1 receipt without setup valid against a gate that declares none', () => {
     const canonical = canonicalizeProofPlan(planV4([verifyGate]), sha256, { requireReviewPolicy: true });
     const plan = {
@@ -398,5 +409,78 @@ describe('local proof evidence for recorded setup', () => {
     });
 
     expect(evidence.status).toBe('passed');
+  });
+});
+
+describe('recorded setup rule shared by local receipts and signed artifacts', () => {
+  const second = { ...syncStep, id: 'second' };
+  const step = (id: string, result: GateReceiptResult = 'passed') => ({ ...syncStep, id, result });
+
+  it.each([
+    ['passed with every declared step passing', 'passed', [syncStep, second], [step('sync'), step('second')], null],
+    ['passed without declared setup', 'passed', [], [], null],
+    ['setup_failed stopping at the failing step', 'setup_failed', [syncStep, second], [step('sync', 'failed')], null],
+    ['invalidated mid-setup', 'invalidated', [syncStep, second], [step('sync')], null],
+    // A cancelled CI job is signed as aborted whatever point it reached, including mid-setup.
+    ['aborted mid-setup', 'aborted', [syncStep, second], [step('sync', 'failed')], null],
+    ['aborted before any setup ran', 'aborted', [syncStep], [], null],
+    [
+      'setup_failed when the gate declares no setup',
+      'setup_failed',
+      [],
+      [],
+      { path: [], message: 'cannot be setup_failed when the gate declares no setup' },
+    ],
+    [
+      'more steps than declared',
+      'invalidated',
+      [syncStep],
+      [step('sync'), step('second')],
+      { path: [], message: 'must not record more steps than the gate declares' },
+    ],
+    [
+      'setup_failed with nothing recorded',
+      'setup_failed',
+      [syncStep],
+      [],
+      { path: [], message: 'must record the setup step that failed' },
+    ],
+    [
+      'a gate command result with setup missing',
+      'timed_out',
+      [syncStep, second],
+      [step('sync')],
+      { path: [], message: 'must record every declared setup step for this receipt result' },
+    ],
+    [
+      'a step that is not the declared one',
+      'setup_failed',
+      [syncStep, second],
+      [step('second', 'failed')],
+      { path: [0], message: 'must match the setup step the gate declares at the same position' },
+    ],
+    [
+      'setup_failed where every step passed',
+      'setup_failed',
+      [syncStep],
+      [step('sync')],
+      { path: [], message: 'must include a non-passing setup step' },
+    ],
+    [
+      'a gate command result after a failing step',
+      'failed',
+      [syncStep],
+      [step('sync', 'timed_out')],
+      { path: [0, 'result'], message: 'must be passed when the gate command ran' },
+    ],
+    [
+      'steps recorded after the first failing one',
+      'aborted',
+      [syncStep, second],
+      [step('sync', 'failed'), step('second')],
+      { path: [0, 'result'], message: 'the first non-passing setup step must be the last recorded step' },
+    ],
+  ] as const)('%s', (_name, result, declared, recorded, violation) => {
+    expect(recordedSetupViolation(recorded, declared, result)).toEqual(violation);
   });
 });

@@ -397,7 +397,7 @@ function parseAndValidateReceipt(
     parsed.working_directory !== gate.working_directory ||
     parsed.timeout_ms !== gate.timeout_ms ||
     JSON.stringify(parsed.command) !== JSON.stringify(gate.command) ||
-    !recordedSetupMatchesDeclared(parsed.setup, gate.setup, parsed.result)
+    recordedSetupViolation(parsed.setup, gate.setup, parsed.result)
   ) {
     return null;
   }
@@ -405,38 +405,62 @@ function parseAndValidateReceipt(
 }
 
 /**
- * A receipt describes everything that ran, so recorded setup must correspond to declared setup step for step.
- * A short recorded sequence is legitimate: a failing step stops the run, so later steps never execute. What is
- * never legitimate is a recorded step the plan did not declare, or one whose argv, directory, or timeout
- * differs from the declaration.
+ * Why recorded setup does not correspond to the gate's declaration, or null when it does. One rule for local
+ * receipts and signed artifacts, so the two cannot disagree about the same execution. The path is relative to
+ * the recorded setup array.
+ *
+ * Setup is recorded positionally and stops at the first step that does not pass, so a non-passing step is
+ * always the last one recorded. Only a result reachable before the gate command ran may record a short
+ * sequence: `setup_failed`, `invalidated` (a setup step changed the repository), and `aborted`, because the CI
+ * signer reports a cancelled job as `aborted` whenever GitHub cancelled it, including mid-setup. Every other
+ * result means the gate command ran, which requires every declared step to have passed.
  */
-export function recordedSetupMatchesDeclared(
-  recorded: readonly RecordedSetupStep[] | undefined,
-  declared: readonly ProofSetupStep[] | undefined,
+export function recordedSetupViolation(
+  recordedSteps:
+    readonly Pick<RecordedSetupStep, 'id' | 'command' | 'working_directory' | 'timeout_ms' | 'result'>[] | undefined,
+  declaredSteps: readonly ProofSetupStep[] | undefined,
   result: GateReceiptResult,
-): boolean {
-  const recordedSteps = recorded ?? [];
-  const declaredSteps = declared ?? [];
-  // Only a result reachable before the gate command ran may record a short sequence. The CI signer reports a
-  // job GitHub cancelled as `aborted` whatever point it reached, including mid-setup.
-  const requiresCompleteSetup = result !== 'setup_failed' && result !== 'invalidated' && result !== 'aborted';
-  if (
-    recordedSteps.length > declaredSteps.length ||
-    (requiresCompleteSetup && recordedSteps.length !== declaredSteps.length)
-  ) {
-    return false;
+): { path: Array<string | number>; message: string } | null {
+  const recorded = recordedSteps ?? [];
+  const declared = declaredSteps ?? [];
+  const commandRan = result !== 'setup_failed' && result !== 'invalidated' && result !== 'aborted';
+  const violation = (message: string, ...path: Array<string | number>) => ({ path, message });
+  if (result === 'setup_failed' && declared.length === 0) {
+    return violation('cannot be setup_failed when the gate declares no setup');
   }
-  return recordedSteps.every((step, index) => {
-    const expected = declaredSteps[index];
+  if (recorded.length > declared.length) {
+    return violation('must not record more steps than the gate declares');
+  }
+  if (result === 'setup_failed' && recorded.length === 0) {
+    return violation('must record the setup step that failed');
+  }
+  if (commandRan && recorded.length !== declared.length) {
+    return violation('must record every declared setup step for this receipt result');
+  }
+  const mismatch = recorded.findIndex((step, index) => {
+    const expected = declared[index];
     return (
-      expected !== undefined &&
-      (!requiresCompleteSetup || step.result === 'passed') &&
-      step.id === expected.id &&
-      step.working_directory === expected.working_directory &&
-      step.timeout_ms === expected.timeout_ms &&
-      JSON.stringify(step.command) === JSON.stringify(expected.command)
+      !expected ||
+      step.id !== expected.id ||
+      step.working_directory !== expected.working_directory ||
+      step.timeout_ms !== expected.timeout_ms ||
+      canonicalJson(step.command) !== canonicalJson(expected.command)
     );
   });
+  if (mismatch !== -1) {
+    return violation('must match the setup step the gate declares at the same position', mismatch);
+  }
+  const firstNonPassing = recorded.findIndex((step) => step.result !== 'passed');
+  if (firstNonPassing === -1) {
+    return result === 'setup_failed' ? violation('must include a non-passing setup step') : null;
+  }
+  if (commandRan) {
+    return violation('must be passed when the gate command ran', firstNonPassing, 'result');
+  }
+  if (firstNonPassing !== recorded.length - 1) {
+    return violation('the first non-passing setup step must be the last recorded step', firstNonPassing, 'result');
+  }
+  return null;
 }
 
 function isGateReceiptPayload(value: unknown): value is GateReceiptPayload {

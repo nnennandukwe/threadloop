@@ -178,10 +178,13 @@ still reports the real duration of the provisioning that was attempted. `exit_st
 command and are null when it never ran.
 
 Recorded setup is bound positionally to the gate's declaration: each step's argv, working directory, and timeout must
-match the step declared at the same index. A recorded step the gate never declared is rejected. A sequence shorter than
-the declaration is legitimate only for a result the gate can reach before its command runs: `setup_failed`,
-`invalidated`, or `aborted`, which the signer records whenever GitHub cancelled the execution job, including mid-setup.
-Every other result means the gate command ran, so every declared step must be recorded as passed.
+match the step declared at the same index. A recorded step the gate never declared is rejected. A failing step stops the
+run, so a non-passing step is always the last one recorded. A sequence shorter than the declaration is legitimate only
+for a result the gate can reach before its command runs: `setup_failed`, `invalidated`, or `aborted`, which the signer
+records whenever GitHub cancelled the execution job, including mid-setup. Every other result means the gate command ran,
+so every declared step must be recorded as passed. `setup_failed` requires a declared setup step and a recorded
+non-passing one. Local receipts are held to the same rule, so a local and a signed receipt cannot disagree about one
+execution.
 
 ## Version compatibility
 
