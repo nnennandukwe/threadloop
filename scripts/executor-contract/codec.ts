@@ -1,6 +1,6 @@
 import { isProxy } from 'node:util/types';
 import { withRecovery, type ValidationResult } from '../contract-kernel/kernel.js';
-import { executionLimits, withinExecutionLimits } from '../execution-contract/limits.js';
+import { executionLimits } from '../execution-contract/limits.js';
 
 export const { invalid } = withRecovery(
   'Use the published executor contract and exact retained inputs; do not retry an effect to repair evidence.',
@@ -19,6 +19,8 @@ export function validateJsonValue(value: unknown): ValidationResult<unknown> {
   const pending = [{ value, depth: 0 }];
   const seen = new Set<object>();
   let values = 0;
+  // Canonical output bytes: scalars, punctuation, and quoted keys, independent of traversal order.
+  let bytes = 0;
   while (pending.length > 0) {
     const current = pending.pop()!;
     if (++values > executionLimits.values || current.depth > executionLimits.depth)
@@ -28,9 +30,11 @@ export function validateJsonValue(value: unknown): ValidationResult<unknown> {
       if (item.length > executionLimits.jsonBytes)
         return invalid('EXECUTOR_INPUT_LIMIT', 'String exceeds the message byte limit.');
       if (!wellFormed(item)) return invalid('INVALID_JSON_VALUE', 'Unicode must not contain unpaired surrogates.');
+      bytes += Buffer.byteLength(JSON.stringify(item));
     } else if (typeof item === 'number') {
       if (!Number.isSafeInteger(item) || item < 0 || Object.is(item, -0))
         return invalid('INVALID_JSON_VALUE', 'Numbers must be non-negative safe integers.');
+      bytes += String(item).length;
     } else if (item !== null && typeof item === 'object') {
       if (
         isProxy(item) ||
@@ -47,6 +51,7 @@ export function validateJsonValue(value: unknown): ValidationResult<unknown> {
         return invalid('EXECUTOR_INPUT_LIMIT', 'JSON exceeds the value limit.');
       if (Array.isArray(item) && (keys.length !== item.length + 1 || item.length > executionLimits.values))
         return invalid('INVALID_JSON_VALUE', 'Arrays must be dense JSON arrays.');
+      bytes += 2 + Math.max(0, childValues - 1);
       for (const key of keys) {
         if (Array.isArray(item) && key === 'length') continue;
         if (typeof key === 'string' && key.length > executionLimits.jsonBytes)
@@ -64,13 +69,16 @@ export function validateJsonValue(value: unknown): ValidationResult<unknown> {
         const descriptor = Object.getOwnPropertyDescriptor(item, key)!;
         if (!descriptor.enumerable || !('value' in descriptor))
           return invalid('INVALID_JSON_VALUE', 'JSON properties must be enumerable values, not accessors.');
+        if (!Array.isArray(item)) bytes += Buffer.byteLength(JSON.stringify(key)) + 1;
         pending.push({ value: descriptor.value as unknown, depth: current.depth + 1 });
       }
-    } else if (item !== null && typeof item !== 'boolean') {
+    } else if (item === null || typeof item === 'boolean') {
+      bytes += String(item).length;
+    } else {
       return invalid('INVALID_JSON_VALUE', 'Only JSON values are supported.');
     }
   }
-  return withinExecutionLimits(value)
+  return bytes <= executionLimits.jsonBytes
     ? { ok: true, value }
     : invalid('EXECUTOR_INPUT_LIMIT', 'JSON exceeds the 16 MiB development message limit.');
 }
