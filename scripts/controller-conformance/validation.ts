@@ -3,12 +3,7 @@ import { digest, same, validateShape, withRecovery, type ValidationResult } from
 import { compileWorkflowProfile } from '../workflow-graph/compiler.js';
 import { validateControllerInput } from '../controller-contract/validation.js';
 import { validateControllerDecision } from '../controller-contract/decision.js';
-import {
-  createExecutionJournal,
-  applyExecutionOperation,
-  projectControllerExecution,
-  replayExecutionJournal,
-} from '../execution-contract/model.js';
+import { createExecutionJournal, applyExecutionOperation, projectExecution } from '../execution-contract/model.js';
 import { canonicalConformanceJson, conformanceDigest, parseConformanceMessage } from './codec.js';
 import {
   compatibilitySchema,
@@ -63,11 +58,9 @@ function executionResult(input: unknown): ValidationResult<CaseResult> {
     const { disposition, code, revision, claim, attempt_id } = applied.value.result;
     results.push({ disposition, code, revision, claim, attempt_id, replayed: applied.value.replayed });
   }
-  const state = replayExecutionJournal(journal, authority);
-  if (!state.ok) return { ok: true, value: diagnostics(state) };
-  const controller = projectControllerExecution(journal, snapshot, authority);
-  if (!controller.ok) return { ok: true, value: diagnostics(controller) };
-  const value = state.value;
+  const projected = projectExecution(journal, snapshot, authority);
+  if (!projected.ok) return { ok: true, value: diagnostics(projected) };
+  const { projection: value, controller } = projected.value;
   return {
     ok: true,
     value: {
@@ -76,30 +69,24 @@ function executionResult(input: unknown): ValidationResult<CaseResult> {
       projection: {
         revision: value.revision,
         request_status: value.request_status,
-        claims: value.claims.map(({ id, version, status, attempt_id }) => ({ id, version, status, attempt_id })),
-        attempts: value.attempts.map(({ id, claim, status, effect, receipt_id }) => ({
-          id,
-          claim,
-          status,
-          effect,
-          receipt_id,
-        })),
+        claims: value.claims.map((claim) => pick(claim, 'id', 'version', 'status', 'attempt_id')),
+        attempts: value.attempts.map((attempt) => pick(attempt, 'id', 'claim', 'status', 'effect', 'receipt_id')),
         receipts: value.receipts.map(({ envelope, result }) => ({
           id: envelope.receipt.id,
           receipt_digest: envelope.receipt_digest,
           code: result.code,
         })),
-        conflicts: value.conflicts.map(({ namespace, identity, original_digest, incoming_digest, resolved_by }) => ({
-          namespace,
-          identity,
-          original_digest,
-          incoming_digest,
-          resolved_by,
-        })),
-        controller: controller.value,
+        conflicts: value.conflicts.map((conflict) =>
+          pick(conflict, 'namespace', 'identity', 'original_digest', 'incoming_digest', 'resolved_by'),
+        ),
+        controller,
       },
     },
   };
+}
+
+function pick<T extends object, K extends keyof T>(value: T, ...keys: K[]): Pick<T, K> {
+  return Object.fromEntries(keys.map((key) => [key, value[key]])) as Pick<T, K>;
 }
 
 /** Checks available consistency evidence. Never claims a candidate wins selection. */

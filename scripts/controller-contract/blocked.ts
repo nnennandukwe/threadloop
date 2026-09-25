@@ -1,5 +1,6 @@
 import type { ControllerDecision, ControllerInput } from './contracts.js';
 import type { Diagnostic } from '../contract-kernel/kernel.js';
+import { supportsGuard } from './guards.js';
 import { currentObservation, currentReceipt, expired, issue, validateRequestInSnapshot } from './validation.js';
 
 type Reason = Extract<ControllerDecision['decision'], { outcome: 'blocked' }>['reasons'][number];
@@ -83,7 +84,8 @@ function missingEvidence(
   input: ControllerInput,
   guard: ControllerInput['compiled_graph']['graph']['guards'][number],
 ): boolean {
-  const payloads = input.receipts.filter((receipt) => currentReceipt(receipt, input)).map((receipt) => receipt.payload);
+  const receipts = input.receipts.filter((receipt) => currentReceipt(receipt, input));
+  const payloads = receipts.map((receipt) => receipt.payload);
   const missingLocal = () =>
     input.policy.rules.local_gate_ids.some(
       (gate) => !payloads.some((payload) => payload.type === 'local_proof' && payload.gate_id === gate),
@@ -102,31 +104,16 @@ function missingEvidence(
         !payloads.some((payload) => payload.type === 'review') ||
         (guard.parameters.condition === 'proof_set_current' && (missingLocal() || missingIndependent()))
       );
+    // These guards hold exactly when their evidence is present, so absence is the failed check.
     case 'human_approval':
-      return !payloads.some(
-        (payload) =>
-          payload.type === 'human_approval' &&
-          payload.scope === guard.parameters.scope &&
-          input.policy.rules.authorities.some(
-            (authority) => authority.type === 'human' && authority.identity.id === payload.approver.id,
-          ),
-      );
     case 'completion_observed':
-      return !payloads.some(
-        (payload) =>
-          payload.type === 'completion_observed' &&
-          payload.kind === guard.parameters.kind &&
-          (payload.kind !== 'publication' || payload.destination === input.policy.rules.publication_destination),
-      );
+    case 'block_evidence':
+    case 'stop_requested':
+      return !supportsGuard(input, guard, receipts);
     case 'artifact':
       return !payloads.some((payload) => payload.type === 'artifact' && payload.stage === guard.parameters.stage);
-    case 'block_evidence':
-      return !payloads.some(
-        (payload) => payload.type === 'block_evidence' && payload.prior_state === input.binding.source_state,
-      );
     case 'pre_pr_review':
-    case 'stop_requested':
-      return !payloads.some((payload) => payload.type === guard.capability);
+      return !payloads.some((payload) => payload.type === 'pre_pr_review');
     default:
       return false;
   }

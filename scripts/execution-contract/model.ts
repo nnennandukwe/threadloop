@@ -698,13 +698,7 @@ function execute(
     for (const claim of state.claims) {
       if (integrityFailure && !state.invalidated_claims.some((item) => same(item, reference(claim))))
         state.invalidated_claims.push(reference(claim));
-      if (claim.status === 'active')
-        close(
-          claim,
-          state.attempts.find((attempt) => attempt.id === claim.attempt_id)!,
-          command.kind === 'cancel' ? 'cancelled' : 'invalidated',
-          now,
-        );
+      if (claim.status === 'active') close(state, claim, command.kind === 'cancel' ? 'cancelled' : 'invalidated', now);
     }
     return applied(command.kind === 'cancel' ? 'REQUEST_CANCELLED' : 'REQUEST_INVALIDATED');
   }
@@ -712,17 +706,10 @@ function execute(
   if (command.kind === 'submit_receipt') return submit(journal, state, context, command.receipt, now);
   if (command.kind === 'expire') {
     if (!controlActor(context, 'threadloop')) return fail('AUTHORITY_MISMATCH');
-    const claim = state.claims.find(
-      (claim) => same(reference(claim), command.claim) && claim.attempt_id === command.attempt_id,
-    );
+    const claim = targetClaim(state, command);
     if (!claim || claim.status !== 'active') return fail('CLAIM_NOT_CURRENT');
     if (!deadlinePassed(claim.valid_until, now)) return fail('CLAIM_NOT_EXPIRED');
-    close(
-      claim,
-      state.attempts.find((attempt) => attempt.id === claim.attempt_id)!,
-      'expired',
-      now,
-    );
+    close(state, claim, 'expired', now);
     return applied('CLAIM_EXPIRED');
   }
   if (state.conflicts.some((record) => record.resolved_by === null)) return fail('UNRESOLVED_CONFLICT');
@@ -731,13 +718,11 @@ function execute(
   if (context.snapshot.execution.status !== 'idle' && !same(context.snapshot.execution.request, request))
     return fail('OTHER_EXECUTION_OUTSTANDING');
   if (command.kind === 'acquire' || command.kind === 'replace') return acquire(journal, state, context, operation, now);
-  const claim = state.claims.find(
-    (claim) => same(reference(claim), command.claim) && claim.attempt_id === command.attempt_id,
-  );
+  const claim = targetClaim(state, command);
   if (!claim || fenced(claim, context.snapshot, now)) return fail('CLAIM_FENCED');
   if (context.actor.kind !== 'executor' || !same(context.actor.executor, claim.executor))
     return fail('EXECUTOR_MISMATCH');
-  const attempt = state.attempts.find((attempt) => attempt.id === claim.attempt_id)!;
+  const attempt = attemptOf(state, claim);
   if (command.kind === 'renew') {
     if (!validDeadline(command.valid_until, now, request) || command.valid_until <= claim.valid_until)
       return fail('INVALID_CLAIM_DEADLINE');
@@ -752,7 +737,7 @@ function execute(
     attempt.effect = 'unknown';
     return { ...applied('ATTEMPT_STARTED'), claim: reference(claim), attempt_id: attempt.id };
   }
-  close(claim, attempt, 'released', now);
+  close(state, claim, 'released', now);
   return applied('CLAIM_RELEASED');
 }
 
@@ -775,7 +760,17 @@ function validDeadline(deadline: string, now: string, request: ActionRequest): b
     (request.request.constraints.valid_until === null || deadline <= request.request.constraints.valid_until)
   );
 }
-function close(claim: ExecutionClaim, attempt: Attempt, status: ExecutionClaim['status'], now: string): void {
+function targetClaim(
+  state: ExecutionProjection,
+  target: { claim: { id: string; version: number }; attempt_id: string },
+) {
+  return state.claims.find((claim) => same(reference(claim), target.claim) && claim.attempt_id === target.attempt_id);
+}
+function attemptOf(state: ExecutionProjection, claim: ExecutionClaim): Attempt {
+  return state.attempts.find((attempt) => attempt.id === claim.attempt_id)!;
+}
+function close(state: ExecutionProjection, claim: ExecutionClaim, status: ExecutionClaim['status'], now: string): void {
+  const attempt = attemptOf(state, claim);
   claim.status = status;
   claim.closed_at = now;
   if (attempt.status === 'pending' || attempt.status === 'running') {
@@ -806,7 +801,7 @@ function acquire(
     return fail('CLAIM_FENCED');
   if (command.kind === 'replace') {
     if (!previous || !same(command.previous_claim, reference(previous))) return fail('PREVIOUS_CLAIM_MISMATCH');
-    const attempt = state.attempts.find((attempt) => attempt.id === previous.attempt_id)!;
+    const attempt = attemptOf(state, previous);
     const evidence = recoveryFacts(journal, context, previous, attempt, command.evidence_ids, now);
     if (!evidence.ok) return fail(evidence.diagnostics[0]!.code);
     const safety = journal.execution.execution_policy.rules.retry_safety;
@@ -1032,9 +1027,7 @@ function reconcile(
   if (command.kind !== 'reconcile') throw new Error('Invalid recovery dispatch');
   const fail = (code: string) => outcome(code, state.revision);
   if (!controlActor(context, 'human') || context.actor.kind !== 'human') return fail('HUMAN_AUTHORITY_REQUIRED');
-  const claim = state.claims.find(
-    (claim) => same(reference(claim), command.claim) && claim.attempt_id === command.attempt_id,
-  );
+  const claim = targetClaim(state, command);
   const attempt = state.attempts.find((attempt) => attempt.id === command.attempt_id);
   if (!claim || !attempt || claim.status === 'active' || attempt.resolution !== null || attempt.status === 'succeeded')
     return fail('ATTEMPT_NOT_RECONCILABLE');
@@ -1059,14 +1052,7 @@ function reconcile(
     state.request_status === 'open'
   ) {
     state.request_status = command.disposition === 'effect_confirmed' ? 'satisfied' : 'cancelled';
-    for (const current of state.claims)
-      if (current.status === 'active')
-        close(
-          current,
-          state.attempts.find((item) => item.id === current.attempt_id)!,
-          'cancelled',
-          now,
-        );
+    for (const current of state.claims) if (current.status === 'active') close(state, current, 'cancelled', now);
   }
   return outcome('ATTEMPT_RECONCILED', state.revision, 'applied');
 }
