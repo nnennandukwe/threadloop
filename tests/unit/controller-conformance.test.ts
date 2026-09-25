@@ -432,12 +432,13 @@ describe('Read-only artifact loading', () => {
       await symlink(join(directory, 'manifest.json'), path);
       await expect(loadCorpus(directory)).rejects.toThrow('regular');
       await rm(path);
-      // A FIFO must be rejected by the regular-file check rather than blocking the open.
-      execFileSync('mkfifo', [path]);
-      await expect(loadCorpus(directory)).rejects.toThrow('regular');
-      await rm(path);
       await writeFile(join(directory, 'fixtures', 'unexpected.json'), '{}');
       await expect(loadCorpus(directory)).rejects.toThrow('Unlisted');
+      // The manifest is opened directly, so a FIFO there exercises the non-blocking open: it must be rejected by
+      // the regular-file check on the descriptor rather than blocking the open.
+      await rm(join(directory, 'manifest.json'));
+      execFileSync('mkfifo', [join(directory, 'manifest.json')]);
+      await expect(loadCorpus(directory)).rejects.toThrow('expected a regular file');
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
