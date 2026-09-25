@@ -5,7 +5,7 @@ import typescriptEslint from 'typescript-eslint';
 
 export default typescriptEslint.config(
   {
-    ignores: ['.gsd/**', '.threadloop/**', 'coverage/**', 'dist/**', 'node_modules/**'],
+    ignores: ['.claude/worktrees/**', '.gsd/**', '.threadloop/**', 'coverage/**', 'dist/**', 'node_modules/**'],
   },
   {
     files: ['**/*.{js,mjs,cjs}'],

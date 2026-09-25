@@ -1,7 +1,8 @@
 import { initThreadloop } from '../services/session-service.js';
+import { type CommandContext, writeCommandSuccess } from './runtime.js';
 
-export async function initCommand() {
-  const result = await initThreadloop(process.cwd());
+export async function initCommand(context: CommandContext) {
+  const result = await initThreadloop(context.cwd);
   const initMessage = result.created
     ? `Initialized ThreadLoop in ${result.repoRoot}`
     : `ThreadLoop already initialized in ${result.repoRoot}`;
@@ -12,6 +13,5 @@ export async function initCommand() {
         ? 'Updated .git/info/exclude to ignore ThreadLoop state and local receipts'
         : '.git/info/exclude already ignores ThreadLoop state and local receipts';
 
-  console.log(initMessage);
-  console.log(gitignoreMessage);
+  writeCommandSuccess(context, { text: [initMessage, gitignoreMessage], data: result });
 }

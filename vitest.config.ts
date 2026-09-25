@@ -2,7 +2,7 @@ import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    exclude: [...configDefaults.exclude, '**/.worktrees/**'],
+    exclude: [...configDefaults.exclude, '**/.worktrees/**', '.claude/worktrees/**'],
     globalSetup: ['./tests/global-setup.ts'],
     // One budget for the whole suite instead of 18 per-test clocks.
     //

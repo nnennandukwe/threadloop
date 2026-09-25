@@ -219,44 +219,11 @@ Local verification detects mutation; an externally retained `--root`, prior hand
 detect tail truncation. See [Audit export and OpenTelemetry](observability.md) for the supported JSONL `filelog` recipe
 and its non-authoritative telemetry boundary.
 
-### `threadloop daemon run [--json]`
-
-Runs the optional mechanical refresh loop for active sessions in the current workspace.
-
-Options:
-
-- `-i, --interval <seconds>`: reconcile interval in seconds, default `60`
-- `--json`: render machine-readable command output
-
-Behavior:
-
-- periodically calls reconcile for all active sessions
-- records no semantic notes
-- writes running/stopped status in the normal command envelope
-
-### Legacy compatibility commands
-
-ThreadLoop still accepts the root commands below for compatibility. Prefer the session-first commands above for explicit
-session work:
-
-- `threadloop start <title> [--json]`
-- `threadloop capture <kind> [text] [--session <id>] [--json]`
-- `threadloop status [--session <id>] [--json]`
-- `threadloop artifact generate [kind] [--session <id>] [--json]`
-
-Compatibility rules:
-
-- `start` preserves the legacy single-active-session behavior and refuses to open a second legacy root session in the
-  same repo
-- `capture` and `artifact generate` auto-resolve only when exactly one active session exists
-- `status` fails with `SESSION_REQUIRED` when zero sessions match
-- when zero sessions match for `capture` and `artifact generate`, they fail with `SESSION_REQUIRED`
-- when multiple sessions match for any legacy command, they fail with `SESSION_AMBIGUOUS`
-- pass `--session <id>` or use the `threadloop session ...` forms for deterministic targeting
-
 ### `threadloop artifact generate [kind]`
 
-Renders a Markdown artifact from the active session. Use `--session <id>` for deterministic targeting.
+Renders a Markdown artifact for a session. Without `--session`, it targets the only active session and fails with
+`SESSION_REQUIRED` when none is active or `SESSION_AMBIGUOUS` when several are. Pass `--session <id>` for deterministic
+targeting.
 
 Kinds:
 
@@ -315,16 +282,12 @@ Recommended default:
 
 For automation, prefer:
 
-- `threadloop session ...` commands over legacy root commands
 - explicit `--session <id>` on every session-scoped call
 - `--actor agent` on agent-authored `session start` and `session capture` commands
 - one autonomous task per checkout or Git worktree
 - syncing `main`, creating a fresh task branch, and rebasing onto `origin/main` before PR open
 
-Legacy root commands are still available for human compatibility, but they can fail with `SESSION_REQUIRED` or
-`SESSION_AMBIGUOUS` in multi-session repos and should not be treated as the default workflow.
-
-`session heartbeat`, `session reconcile`, and `daemon run` are mechanical operations. They refresh state but do not
-create semantic entries. Use `session capture` for decisions, risks, validation, and reviewer guidance.
+`session heartbeat` and `session reconcile` are mechanical operations. They refresh state but do not create semantic
+entries. Use `session capture` for decisions, risks, validation, and reviewer guidance.
 
 For the full orchestrator/operator workflow, see [agent-mode.md](agent-mode.md).

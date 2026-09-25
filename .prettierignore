@@ -1,5 +1,6 @@
 .gsd
 .claude/settings.local.json
+.claude/worktrees
 .threadloop
 coverage
 dist
