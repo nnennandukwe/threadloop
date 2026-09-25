@@ -5,7 +5,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 import { parseJson, runCli, runCliFailure } from '../helpers/cli.js';
-import { resetSqliteConnections } from '../../src/adapters/fs/sqlite-store.js';
+import { closeSqliteConnections } from '../../src/adapters/fs/sqlite-store.js';
 
 const execFileAsync = promisify(execFile);
 const projectRoot = process.cwd();
@@ -38,7 +38,7 @@ interface AuditShow {
 }
 
 afterEach(async () => {
-  await resetSqliteConnections();
+  closeSqliteConnections();
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 

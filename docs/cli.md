@@ -98,7 +98,7 @@ refresh snapshots, migrate the database, repair projections, or mutate lifecycle
 JSON contract v4 reports the history-derived lifecycle phase and schema status, candidate, repository, local `proof`,
 `ci_proof`, provider-neutral `pre_pr_review`, exact `implementation_basis`, signed review, staleness, post-PR repair
 usage, audit validity/root/coverage, and one `next_human_action`. Completed and blocked sessions return terminal
-reasons. Schema v6 reports `migration_required` without mutating the database.
+reasons. Schema v7 reports `migration_required` without mutating the database.
 
 ### `threadloop session transition <target-state> [options]`
 
@@ -209,11 +209,10 @@ threadloop audit export --session <id> --output <path> [--json]
 canonical JSON, event hashes, and an optional retained root. `export` verifies first and atomically publishes canonical
 JSONL without overwriting an existing path. The export records are shaped as `{"event":{...},"event_sha256":"..."}`.
 
-On schema v6 or newer, `show` and `verify` do not apply lifecycle transitions. Run `threadloop init` explicitly to
-migrate to the current schema; migrated sessions retain their existing forward-only audit coverage and repair counts.
-The migration is one-way: older binaries reject a newer schema, and ThreadLoop has no downgrade command. Before
-migration, stop other ThreadLoop processes and retain a backup of `.threadloop/state/` if binary rollback may be
-required.
+`show` and `verify` never apply lifecycle transitions. Run `threadloop init` explicitly to migrate to the current
+schema; migrated sessions retain their existing forward-only audit coverage and repair counts. The migration is one-way:
+older binaries reject a newer schema, and ThreadLoop has no downgrade command. Before migration, stop other ThreadLoop
+processes and retain a backup of `.threadloop/state/` if binary rollback may be required.
 
 Local verification detects mutation; an externally retained `--root`, prior handoff, or prior export root is required to
 detect tail truncation. See [Audit export and OpenTelemetry](observability.md) for the supported JSONL `filelog` recipe
@@ -261,8 +260,8 @@ ThreadLoop stores state locally in the repo:
 - `.threadloop/state/state.db`
 - `.threadloop/artifacts/*.md`
 
-If an older repo still has `.threadloop/state/state.json`, ThreadLoop migrates that data into SQLite on first access and
-intentionally leaves the JSON file in place as a safety backup. After migration, ThreadLoop reads from SQLite.
+ThreadLoop opens schema v7 and v8 databases. Schema v7 is upgraded in place by `threadloop init`; older schemas existed
+only in development builds and are rejected rather than upgraded.
 
 SQLite schema v8 stores transition/idempotency records, one immutable proof plan per session, append-only local gate,
 signed gate, and signed review receipts, plus a hash-linked append-only audit ledger. New sessions begin with

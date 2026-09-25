@@ -11,7 +11,7 @@ import type { VerifiedSigstoreSigner } from '../../src/adapters/crypto/sigstore.
 import { SigstoreReceiptVerificationError } from '../../src/adapters/crypto/sigstore.js';
 import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
 import { nodeSignedReceiptFileSystem } from '../../src/adapters/fs/signed-receipt-files.js';
-import { applySessionTransition, resetSqliteConnections } from '../../src/adapters/fs/sqlite-store.js';
+import { applySessionTransition, closeSqliteConnections } from '../../src/adapters/fs/sqlite-store.js';
 import {
   buildInTotoReceiptStatement,
   canonicalizeSignedGateReceiptArtifact,
@@ -284,7 +284,7 @@ function verifier(
 }
 
 afterEach(async () => {
-  await resetSqliteConnections();
+  closeSqliteConnections();
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
@@ -363,7 +363,7 @@ describe('signed gate receipt import', () => {
 
   it('maps a missing audit genesis before importing signed gate evidence', async () => {
     const fixture = await makeVerifyingSession();
-    await resetSqliteConnections(fixture.repoDir);
+    closeSqliteConnections(fixture.repoDir);
     const dbPath = path.join(fixture.repoDir, '.threadloop/state/state.db');
     const corrupt = new DatabaseSync(dbPath);
     corrupt.exec(`
@@ -404,7 +404,7 @@ describe('signed gate receipt import', () => {
   it('rejects task-projection drift before importing signed gate evidence', async () => {
     const fixture = await makeVerifyingSession();
     const packagePath = await writePackage(fixture, signedArtifact(fixture));
-    await resetSqliteConnections(fixture.repoDir);
+    closeSqliteConnections(fixture.repoDir);
     const dbPath = path.join(fixture.repoDir, '.threadloop/state/state.db');
     const corrupt = new DatabaseSync(dbPath);
     corrupt.prepare(`UPDATE tasks SET state_version = 5`).run();
@@ -499,7 +499,7 @@ describe('signed gate receipt import', () => {
       },
     });
 
-    await resetSqliteConnections(fixture.repoDir);
+    closeSqliteConnections(fixture.repoDir);
     const db = new DatabaseSync(path.join(fixture.repoDir, '.threadloop/state/state.db'), { readOnly: true });
     try {
       expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '8' });
