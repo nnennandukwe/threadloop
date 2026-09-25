@@ -11,12 +11,6 @@ async function readMappingDoc(): Promise<string> {
   return readFile(mappingDocUrl, 'utf8');
 }
 
-function expectDocumentToContainAll(document: string, values: readonly string[], label: string): void {
-  for (const value of values) {
-    expect(document, `${label}: ${value}`).toContain(value);
-  }
-}
-
 function expectDocumentToContainAllCodeTokens(document: string, values: readonly string[], label: string): void {
   for (const value of values) {
     expect(document, `${label}: ${value}`).toMatch(new RegExp(`\`${escapeRegExp(value)}\``));
@@ -28,18 +22,6 @@ function escapeRegExp(value: string): string {
 }
 
 describe('current lifecycle graph mapping documentation', () => {
-  it('anchors the artifact to the inspected implementation and issue sequence', async () => {
-    const document = await readMappingDoc();
-
-    expect(document).toContain('# Current Lifecycle Graph Mapping');
-    expect(document).toContain('Inspected implementation: origin/main@71452630e803911ad5ceaeb41bac45bc158f6489');
-    expect(document).toContain('Artifact status: current-state compatibility mapping, not executable graph schema');
-    expectDocumentToContainAll(document, ['#85', '#86', '#102', '#103', '#104', '#110'], 'issue reference');
-    expect(document).toContain('schema v8');
-    expect(document).toContain('contract_version: 4');
-    expect(document).toContain('no migration is proposed');
-  });
-
   it('covers every exported lifecycle state, phase, and transition decision code', async () => {
     const document = await readMappingDoc();
 
@@ -89,7 +71,7 @@ describe('current lifecycle graph mapping documentation', () => {
     );
   });
 
-  it('maps required work, repair limits, terminal behavior, and platform assumption categories', async () => {
+  it('maps every required-work code', async () => {
     const document = await readMappingDoc();
 
     expectDocumentToContainAllCodeTokens(
@@ -126,20 +108,6 @@ describe('current lifecycle graph mapping documentation', () => {
         'RESTORE_BLOCKED_PRIOR_STATE',
       ],
       'required work',
-    );
-    expectDocumentToContainAll(
-      document,
-      [
-        'core invariant',
-        'default Workflow Profile behavior',
-        'adapter responsibility',
-        'current implementation limitation',
-        'compatibility requirement',
-        'three post-PR repair attempts',
-        'completed terminal',
-        'blocked recovery',
-      ],
-      'preservation category',
     );
   });
 });

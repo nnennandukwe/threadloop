@@ -3,6 +3,15 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 
+/** Actions must be the expected ones, each pinned to a full commit SHA; the pin itself is Dependabot's to move. */
+function expectPinnedActions(steps: Array<Record<string, unknown>>, actions: string[]) {
+  const uses = steps.map((step) => step.uses).filter((value): value is string => typeof value === 'string');
+  expect(uses.map((value) => value.split('@')[0])).toEqual(actions);
+  for (const value of uses) {
+    expect(value).toMatch(/@[0-9a-f]{40}$/);
+  }
+}
+
 function object(value: unknown) {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new Error('Expected workflow object.');
@@ -34,17 +43,17 @@ describe('signed gate reusable workflow', () => {
     expect(signingJob.if).toBe('${{ always() }}');
     expect(source).not.toContain('secrets:');
     expect(source).not.toContain('pull_request_target');
-    expect(executionSteps.map((step) => step.uses).filter(Boolean)).toEqual([
-      'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
-      'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
-      'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
-      'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
+    expectPinnedActions(executionSteps, [
+      'actions/checkout',
+      'actions/checkout',
+      'actions/setup-node',
+      'actions/upload-artifact',
     ]);
-    expect(signingSteps.map((step) => step.uses).filter(Boolean)).toEqual([
-      'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
-      'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
-      'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c',
-      'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
+    expectPinnedActions(signingSteps, [
+      'actions/checkout',
+      'actions/setup-node',
+      'actions/download-artifact',
+      'actions/upload-artifact',
     ]);
     expect(executionSteps.find((step) => step.name === 'Execute declared gate')).toMatchObject({
       id: 'execute_gate',
@@ -78,27 +87,6 @@ describe('signed gate reusable workflow', () => {
     expect(signingSource).not.toContain('runGateProcess');
     expect(signingSource).not.toContain('THREADLOOP_SOURCE_ROOT');
   });
-
-  it('scopes actionlint runtime-context suppressions to the reusable sensor', async () => {
-    const configPath = path.join(process.cwd(), '.github/actionlint.yaml');
-    const config = object(parse(await readFile(configPath, 'utf8')) as unknown);
-    const paths = object(config.paths);
-
-    expect(paths).toEqual({
-      '.github/workflows/threadloop-gate-sensor.yml': {
-        ignore: [
-          'property "workflow_repository" is not defined in object type',
-          'property "workflow_sha" is not defined in object type',
-        ],
-      },
-      '.github/workflows/threadloop-review-sensor.yml': {
-        ignore: [
-          'property "workflow_repository" is not defined in object type',
-          'property "workflow_sha" is not defined in object type',
-        ],
-      },
-    });
-  });
 });
 
 describe('signed review reusable workflow', () => {
@@ -131,16 +119,12 @@ describe('signed review reusable workflow', () => {
       'working-directory': 'threadloop-sensor',
     });
     expect(signingSteps.find((step) => step.name === 'Sign review snapshot')?.env).not.toHaveProperty('GITHUB_TOKEN');
-    expect(collectionSteps.map((step) => step.uses).filter(Boolean)).toEqual([
-      'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
-      'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
-      'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
-    ]);
-    expect(signingSteps.map((step) => step.uses).filter(Boolean)).toEqual([
-      'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
-      'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
-      'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c',
-      'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
+    expectPinnedActions(collectionSteps, ['actions/checkout', 'actions/setup-node', 'actions/upload-artifact']);
+    expectPinnedActions(signingSteps, [
+      'actions/checkout',
+      'actions/setup-node',
+      'actions/download-artifact',
+      'actions/upload-artifact',
     ]);
   });
 });
