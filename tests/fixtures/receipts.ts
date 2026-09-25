@@ -8,22 +8,29 @@ import {
   type SignedGateReceiptArtifact,
 } from '../../src/domain/attestation.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
+import { ProofValidationError } from '../../src/domain/proof.js';
 
 export const headSha = 'a'.repeat(40);
 export const planSha = 'b'.repeat(64);
 export const workflowSha = 'a'.repeat(40);
+/** The repository and branch every signed-receipt fixture, and every fixture Git repository, claims to come from. */
+export const fixtureRepository = 'https://github.com/example/project';
+export const fixtureBranch = 'issue-41/signed-ci-receipts';
 
 /** A trust policy for one ThreadLoop sensor workflow, bound to a caller workflow on `branch`. */
-export function trustPolicy(sensor: 'gate' | 'review', callerWorkflow: string, branch: string) {
+export function trustPolicy(sensor: 'gate' | 'review', callerWorkflow = 'threadloop.yml', branch = fixtureBranch) {
   return {
     provider: 'github-actions',
     issuer: 'https://token.actions.githubusercontent.com',
-    certificate_identity: `https://github.com/example/project/.github/workflows/${callerWorkflow}@refs/heads/${branch}`,
-    source_repository: 'https://github.com/example/project',
+    certificate_identity: `${fixtureRepository}/.github/workflows/${callerWorkflow}@refs/heads/${branch}`,
+    source_repository: fixtureRepository,
     build_signer_uri: `https://github.com/nnennandukwe/threadloop/.github/workflows/threadloop-${sensor}-sensor.yml@${workflowSha}`,
     build_signer_sha: workflowSha,
   };
 }
+
+export const ciPolicy = () => trustPolicy('gate');
+export const reviewPolicy = () => trustPolicy('review');
 
 /** Runs `action`, requires it to throw an `errorClass`, and returns the error for field assertions. */
 export function captureError<E extends Error>(errorClass: new (...args: never[]) => E, action: () => unknown): E {
@@ -35,6 +42,8 @@ export function captureError<E extends Error>(errorClass: new (...args: never[])
   }
   throw new Error(`Expected ${errorClass.name}.`);
 }
+
+export const captureProofValidationError = (action: () => unknown) => captureError(ProofValidationError, action);
 
 export function gateArtifact(): SignedGateReceiptArtifact {
   return {
@@ -56,10 +65,10 @@ export function gateArtifact(): SignedGateReceiptArtifact {
     clean_after: true,
     output: { stdout_sha256: 'c'.repeat(64), stderr_sha256: 'd'.repeat(64) },
     source: {
-      repository: 'https://github.com/example/project',
-      ref: 'refs/heads/issue-41/signed-ci-receipts',
+      repository: fixtureRepository,
+      ref: `refs/heads/${fixtureBranch}`,
       head_sha: headSha,
-      run_invocation_uri: 'https://github.com/example/project/actions/runs/123/attempts/1',
+      run_invocation_uri: `${fixtureRepository}/actions/runs/123/attempts/1`,
     },
     environment: {
       runner_environment: 'github-hosted',
@@ -68,6 +77,33 @@ export function gateArtifact(): SignedGateReceiptArtifact {
       node_version: 'v22.13.0',
     },
     sensor: { name: 'threadloop-github-actions-gate', contract_version: 2 },
+  };
+}
+
+function sigstoreBundle(statement: Buffer, transparency: boolean) {
+  return {
+    mediaType: 'application/vnd.dev.sigstore.bundle.v0.3+json',
+    dsseEnvelope: {
+      payload: statement.toString('base64'),
+      payloadType: IN_TOTO_PAYLOAD_TYPE,
+      signatures: [{ keyid: '', sig: 'c2lnbmF0dXJl' }],
+    },
+    verificationMaterial: {
+      certificate: { rawBytes: 'Y2VydGlmaWNhdGU=' },
+      tlogEntries: transparency
+        ? [
+            {
+              inclusionProof: {
+                checkpoint: { envelope: 'checkpoint' },
+                logIndex: '1',
+                rootHash: 'cm9vdA==',
+                treeSize: '2',
+                hashes: [],
+              },
+            },
+          ]
+        : [],
+    },
   };
 }
 
@@ -85,30 +121,6 @@ export function signedGatePackage(
   return {
     media_type: options.mediaType ?? signedReceiptMediaType(canonical.artifact.schema_version),
     artifact,
-    bundle: {
-      mediaType: 'application/vnd.dev.sigstore.bundle.v0.3+json',
-      dsseEnvelope: {
-        payload: statement.toString('base64'),
-        payloadType: IN_TOTO_PAYLOAD_TYPE,
-        signatures: [{ keyid: '', sig: 'c2lnbmF0dXJl' }],
-      },
-      verificationMaterial: {
-        certificate: { rawBytes: 'Y2VydGlmaWNhdGU=' },
-        tlogEntries:
-          options.transparency === false
-            ? []
-            : [
-                {
-                  inclusionProof: {
-                    checkpoint: { envelope: 'checkpoint' },
-                    logIndex: '1',
-                    rootHash: 'cm9vdA==',
-                    treeSize: '2',
-                    hashes: [],
-                  },
-                },
-              ],
-      },
-    },
+    bundle: sigstoreBundle(statement, options.transparency !== false),
   };
 }
