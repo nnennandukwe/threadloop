@@ -4,15 +4,10 @@ import { canonicalJson } from '../../src/domain/canonical-json.js';
 import {
   canonicalizeProofPlan,
   evaluateProofEvidence,
-  ProofValidationError,
   recordedSetupViolation,
   type GateReceiptResult,
 } from '../../src/domain/proof.js';
-import { captureError, trustPolicy } from '../fixtures/receipts.js';
-
-const ciPolicy = () => trustPolicy('gate', 'threadloop.yml', 'issue-78/gate-setup-steps');
-const reviewPolicy = () => trustPolicy('review', 'threadloop-review.yml', 'issue-78/gate-setup-steps');
-const captureProofValidationError = (action: () => unknown) => captureError(ProofValidationError, action);
+import { captureProofValidationError, ciPolicy, reviewPolicy } from '../fixtures/receipts.js';
 
 const syncStep = {
   id: 'sync',

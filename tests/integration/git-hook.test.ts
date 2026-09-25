@@ -1,9 +1,9 @@
 import { execFile } from 'node:child_process';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { chmod, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { cleanupTemporaryState, makeTempDir } from '../helpers/session.js';
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = process.cwd();
@@ -14,20 +14,22 @@ async function writeExecutable(directory: string, name: string, contents: string
   await chmod(executable, 0o755);
 }
 
-async function expectHookFailure(hook: string, expectedCode: number, env: NodeJS.ProcessEnv): Promise<void> {
-  let hookFailure: unknown;
-
-  try {
-    await execFileAsync('sh', [path.join('.husky', hook)], {
+/** Runs `hook` with `binDirectory` first on PATH and requires it to exit with `expectedCode`. */
+async function expectHookFailure(hook: string, expectedCode: number, binDirectory: string, commandLog: string) {
+  await expect(
+    execFileAsync('sh', [path.join('.husky', hook)], {
       cwd: repositoryRoot,
-      env,
-    });
-  } catch (error) {
-    hookFailure = error;
-  }
-
-  expect(hookFailure, `${hook} unexpectedly succeeded`).toMatchObject({ code: expectedCode });
+      env: {
+        ...process.env,
+        PATH: `${binDirectory}${path.delimiter}${process.env.PATH ?? ''}`,
+        THREADLOOP_HOOK_LOG: commandLog,
+      },
+    }),
+    `${hook} unexpectedly succeeded`,
+  ).rejects.toMatchObject({ code: expectedCode });
 }
+
+afterEach(cleanupTemporaryState);
 
 describe('Git hook command environment', () => {
   it('removes repository-local Git variables without removing ordinary environment variables', async () => {
@@ -62,63 +64,43 @@ describe('Git hook command environment', () => {
 
 describe('Git hook failure handling', () => {
   it('stops the pre-commit hook when the whitespace check fails', async () => {
-    const temporaryDirectory = await mkdtemp(path.join(tmpdir(), 'threadloop-pre-commit-'));
-    const commandLog = path.join(temporaryDirectory, 'commands.log');
-
-    try {
-      await writeExecutable(
-        temporaryDirectory,
-        'git',
-        `#!/usr/bin/env sh
+    const binDirectory = await makeTempDir('threadloop-pre-commit-');
+    const commandLog = path.join(binDirectory, 'commands.log');
+    await writeExecutable(
+      binDirectory,
+      'git',
+      `#!/usr/bin/env sh
 printf '%s\\n' 'git diff --cached --check' >> "$THREADLOOP_HOOK_LOG"
 exit 23
 `,
-      );
-      await writeExecutable(
-        temporaryDirectory,
-        'npx',
-        `#!/usr/bin/env sh
+    );
+    await writeExecutable(
+      binDirectory,
+      'npx',
+      `#!/usr/bin/env sh
 printf '%s\\n' 'npx lint-staged --concurrent false' >> "$THREADLOOP_HOOK_LOG"
 `,
-      );
+    );
 
-      await expectHookFailure('pre-commit', 23, {
-        ...process.env,
-        PATH: `${temporaryDirectory}${path.delimiter}${process.env.PATH ?? ''}`,
-        THREADLOOP_HOOK_LOG: commandLog,
-      });
-
-      expect(await readFile(commandLog, 'utf8')).toBe('git diff --cached --check\n');
-    } finally {
-      await rm(temporaryDirectory, { recursive: true, force: true });
-    }
+    await expectHookFailure('pre-commit', 23, binDirectory, commandLog);
+    expect(await readFile(commandLog, 'utf8')).toBe('git diff --cached --check\n');
   });
 
   it('stops the pre-push hook when the test suite fails', async () => {
-    const temporaryDirectory = await mkdtemp(path.join(tmpdir(), 'threadloop-pre-push-'));
-    const commandLog = path.join(temporaryDirectory, 'commands.log');
-
-    try {
-      await writeExecutable(
-        temporaryDirectory,
-        'npm',
-        `#!/usr/bin/env sh
+    const binDirectory = await makeTempDir('threadloop-pre-push-');
+    const commandLog = path.join(binDirectory, 'commands.log');
+    await writeExecutable(
+      binDirectory,
+      'npm',
+      `#!/usr/bin/env sh
 printf 'npm %s\\n' "$*" >> "$THREADLOOP_HOOK_LOG"
 if [ "$1" = 'test' ]; then
   exit 29
 fi
 `,
-      );
+    );
 
-      await expectHookFailure('pre-push', 29, {
-        ...process.env,
-        PATH: `${temporaryDirectory}${path.delimiter}${process.env.PATH ?? ''}`,
-        THREADLOOP_HOOK_LOG: commandLog,
-      });
-
-      expect(await readFile(commandLog, 'utf8')).toBe('npm test\n');
-    } finally {
-      await rm(temporaryDirectory, { recursive: true, force: true });
-    }
+    await expectHookFailure('pre-push', 29, binDirectory, commandLog);
+    expect(await readFile(commandLog, 'utf8')).toBe('npm test\n');
   });
 });

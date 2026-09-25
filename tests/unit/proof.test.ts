@@ -1,11 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
-import { canonicalizeProofPlan, ProofValidationError } from '../../src/domain/proof.js';
-import { captureError, trustPolicy, workflowSha } from '../fixtures/receipts.js';
-
-const ciPolicy = () => trustPolicy('gate', 'threadloop.yml', 'issue-41/signed-ci-receipts');
-const reviewPolicy = () => trustPolicy('review', 'threadloop-review.yml', 'issue-42/review-audit-handoff');
-const captureProofValidationError = (action: () => unknown) => captureError(ProofValidationError, action);
+import { canonicalizeProofPlan } from '../../src/domain/proof.js';
+import { captureProofValidationError, ciPolicy, reviewPolicy, workflowSha } from '../fixtures/receipts.js';
 
 describe('proof plan domain', () => {
   it('canonicalizes equivalent exact plans to the same bytes and digest', () => {
