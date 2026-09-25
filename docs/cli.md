@@ -191,9 +191,11 @@ Verifies and appends one signed, provider-neutral GitHub review snapshot. The in
 trust-policy override. ThreadLoop verifies the session, plan, repository, current PR HEAD, canonical artifact, in-toto
 subject, package hashes, Sigstore identity, workflow invocation, and transparency evidence before promotion.
 
-The latest valid imported snapshot is authoritative for blockers, same-HEAD human approval, and observed merge state.
-Import never changes lifecycle state. Identical packages are idempotent; a receipt id reused for different content is a
-conflict. See [Signed review receipt v1](attestations/review-v1.md).
+The latest valid imported snapshot is authoritative for blockers, same-HEAD human approval, and observed merge state. A
+snapshot observed before one already imported for the session, or describing a different pull request, is rejected as
+`SIGNED_RECEIPT_CONFLICT`, so an older approval cannot be re-imported over a newer blocker. Import never changes
+lifecycle state. Identical packages are idempotent; a receipt id reused for different content is a conflict. See
+[Signed review receipt v1](attestations/review-v1.md).
 
 ### Audit commands
 

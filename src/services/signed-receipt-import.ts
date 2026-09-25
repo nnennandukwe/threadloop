@@ -18,6 +18,7 @@ import {
   SessionTransitionHistoryCorruptedError,
   SignedReceiptAppendConflictError,
   SignedReviewReceiptAppendConflictError,
+  StoredEvidenceCorruptedError,
 } from '../adapters/fs/sqlite-store.js';
 import { isThreadloopInitialized } from '../adapters/fs/repo.js';
 import { observeProofRepository, observeRepository, resolveRepoRoot } from '../adapters/git/client.js';
@@ -279,6 +280,16 @@ export async function importSignedReviewReceiptPackage(
     }
     if (error instanceof SignedReviewReceiptAppendConflictError) {
       throw new ThreadloopError('SIGNED_RECEIPT_CONFLICT', error.message, { cause: error });
+    }
+    if (error instanceof StoredEvidenceCorruptedError) {
+      throw new ThreadloopError('STATE_CORRUPTED', error.message, {
+        cause: error,
+        details: {
+          session_id: input.sessionId,
+          receipt_id: error.receiptId,
+          hint: 'Restore .threadloop/state/state.db from trusted storage before importing more review evidence.',
+        },
+      });
     }
     if (isErrorCode(error, 'EEXIST')) {
       throw new ThreadloopError(
