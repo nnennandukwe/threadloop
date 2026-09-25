@@ -29,13 +29,15 @@
     "check:static": "npm run format:check && npm run lint && npm run lint:markdown && npm run typecheck && npm run dead-code && npm run check:community",
     "check": "npm run check:static && npm test && npm run build && npm run smoke:pack",
     "security:dependencies": "npm audit --audit-level=high",
-    "spec:execution:schemas": "tsx scripts/execution-contract/publish-schemas.ts",
-    "spec:executor:schemas": "tsx scripts/executor-contract/publish-schemas.ts",
+    "spec:workflow-graph:schemas": "tsx scripts/contract-kernel/publish-schemas.ts workflow-graph",
+    "spec:controller:schemas": "tsx scripts/contract-kernel/publish-schemas.ts controller",
+    "spec:execution:schemas": "tsx scripts/contract-kernel/publish-schemas.ts execution",
+    "spec:executor:schemas": "tsx scripts/contract-kernel/publish-schemas.ts executor",
     "sensor:ci-gate:run": "tsx scripts/run-ci-gate-sensor.ts",
     "sensor:ci-gate:sign": "tsx scripts/sign-ci-gate-receipt.ts",
     "sensor:github-review:collect": "tsx scripts/collect-github-review-snapshot.ts",
     "sensor:github-review:sign": "tsx scripts/sign-github-review-receipt.ts",
-    "spec:conformance:schemas": "tsx scripts/controller-conformance/publish-schemas.ts",
+    "spec:conformance:schemas": "tsx scripts/contract-kernel/publish-schemas.ts controller-conformance",
     "spec:conformance:check": "tsx scripts/controller-conformance/check.ts"
   },
   "keywords": [
@@ -56,7 +58,7 @@
     "gray-matter": "^4.0.3",
     "prompts": "^2.4.2",
     "sigstore": "4.1.1",
-    "zod": "^4.1.11"
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
