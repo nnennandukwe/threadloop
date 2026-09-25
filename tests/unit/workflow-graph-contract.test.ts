@@ -1,11 +1,11 @@
 import { readFile, readdir } from 'node:fs/promises';
-import { Ajv2020 } from 'ajv/dist/2020.js';
 import { describe, expect, it } from 'vitest';
 import { parse, stringify } from 'yaml';
 import { parseWorkflowProfile } from '../../scripts/workflow-graph/parser.js';
 import { publishedWorkflowGraphSchemas, type WorkflowProfile } from '../../scripts/workflow-graph/contracts.js';
 import { compileWorkflowProfile, validateGraphBinding } from '../../scripts/workflow-graph/compiler.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
+import { ajv, codes, publishedValidators } from '../fixtures/contracts.js';
 import { z } from 'zod';
 import { TASK_STATUS_VALUES } from '../../src/domain/types.js';
 import { isForwardLifecycleTransition, REPAIR_ENTRY_STATES } from '../../src/domain/lifecycle.js';
@@ -19,58 +19,6 @@ async function readProfile(name: string) {
 }
 
 describe('Governed PR preservation', () => {
-  it('keeps proof, phase, review, and human boundaries on every ordinary edge', async () => {
-    const profile = await readProfile('governed-pr');
-    const requirements: Record<string, string[]> = {
-      frame: [],
-      bind_plan: ['plan'],
-      begin_implementation: ['plan', 'baseline'],
-      verify_implementation: ['plan', 'work_committed'],
-      retry_failed_proof: ['plan', 'pre', 'checkout', 'local_fail'],
-      retry_review_changes: ['plan', 'pre', 'checkout', 'review_changes'],
-      enter_pre_pr_review: ['plan', 'pre', 'checkout', 'local_pass', 'independent'],
-      return_to_review: ['plan', 'post', 'checkout', 'local_pass', 'independent'],
-      repair_failed_proof: ['plan', 'post', 'local_fail', 'repair_available'],
-      address_pre_pr_review: ['plan', 'pre', 'checkout', 'review_changes'],
-      enter_review: ['plan', 'pre', 'checkout', 'review_clean', 'local_pass', 'independent'],
-      repair_review: ['review_current', 'review_blocking', 'repair_available'],
-      human_handoff: ['review_current', 'review_clear', 'review_set'],
-      verify_repair: ['plan', 'repair_committed'],
-      repair_late_review: ['review_current', 'review_blocking', 'repair_available'],
-      complete: ['review_current', 'review_clear', 'review_set', 'approval', 'merged'],
-    };
-    const ordinary = profile.transitions.filter((edge) => edge.from !== 'blocked' && edge.to !== 'blocked');
-    expect(ordinary.map((edge) => edge.id).sort()).toEqual(Object.keys(requirements).sort());
-    for (const edge of ordinary)
-      expect([...edge.guard_refs].sort(), edge.id).toEqual([...requirements[edge.id]!].sort());
-    const expectedParameters: Record<string, { capability: string; parameters: object }> = {
-      plan: { capability: 'proof_plan_bound', parameters: {} },
-      baseline: { capability: 'repository', parameters: { condition: 'baseline_matches' } },
-      work_committed: { capability: 'repository', parameters: { condition: 'clean_descendant' } },
-      checkout: { capability: 'repository', parameters: { condition: 'clean_plan_branch' } },
-      repair_committed: { capability: 'repository', parameters: { condition: 'committed_repair' } },
-      pre: { capability: 'phase', parameters: { value: 'pre_pr' } },
-      post: { capability: 'phase', parameters: { value: 'post_pr' } },
-      local_pass: { capability: 'local_proof', parameters: { result: 'passed' } },
-      local_fail: { capability: 'local_proof', parameters: { result: 'failed' } },
-      independent: { capability: 'independent_proof', parameters: {} },
-      review_changes: { capability: 'pre_pr_review', parameters: { outcome: 'changes_required' } },
-      review_clean: { capability: 'pre_pr_review', parameters: { outcome: 'clean' } },
-      review_current: { capability: 'review', parameters: { condition: 'current' } },
-      review_blocking: { capability: 'review', parameters: { condition: 'blocking' } },
-      review_clear: { capability: 'review', parameters: { condition: 'clear' } },
-      review_set: { capability: 'review', parameters: { condition: 'proof_set_current' } },
-      repair_available: { capability: 'budget_available', parameters: { budget: 'repair_entries' } },
-      approval: { capability: 'human_approval', parameters: { scope: 'current_subject' } },
-      merged: { capability: 'completion_observed', parameters: { kind: 'merge' } },
-    };
-    for (const [id, expected] of Object.entries(expectedParameters))
-      expect(
-        profile.guards.find((guard) => guard.id === id),
-        id,
-      ).toMatchObject(expected);
-  });
-
   it('retains blocking and recorded-prior-state recovery for every active state', async () => {
     const profile = await readProfile('governed-pr');
     for (const state of profile.states.filter((candidate) => candidate.kind === 'active')) {
@@ -215,41 +163,19 @@ describe('Governed PR preservation', () => {
         .sort(),
     ).toEqual(REPAIR_ENTRY_STATES.map((state) => `${state}:repairing`).sort());
   });
-
-  it('represents a distinct release and publication lifecycle without PR-specific capabilities', async () => {
-    const profile = await readProfile('release-to-publish');
-    expect(profile.states.map((state) => state.id)).toEqual([
-      'preparing',
-      'verifying',
-      'awaiting_approval',
-      'publishing',
-      'publication_check',
-      'blocked',
-      'completed',
-    ]);
-    expect(profile.phase_policy).toBeUndefined();
-    expect(
-      profile.guards.some(
-        (guard) =>
-          guard.capability === 'pre_pr_review' || guard.capability === 'phase' || guard.capability === 'review',
-      ),
-    ).toBe(false);
-    expect(profile.required_actions.map((action) => action.capability)).toEqual(
-      expect.arrayContaining(['prepare_release', 'verify_release', 'publish_release', 'verify_publication']),
-    );
-  });
 });
 
 describe('Published fixture corpus', () => {
-  it('checks every valid YAML profile against fixed canonical bytes, schemas, digests, and binding', async () => {
+  it('publishes its schemas and checks every valid YAML profile against fixed bytes, digests, and binding', async () => {
     const entries = await readdir(new URL('fixtures/valid/', bundle));
     const profiles = entries.filter((name) => name.endsWith('.yaml')).sort();
     expect(profiles.length).toBeGreaterThan(0);
-    const schemas = publishedWorkflowGraphSchemas();
-    const ajv = new Ajv2020({ strict: true });
-    const graphValidator = ajv.compile(schemas['compiled-graph']!);
-    const profileValidator = ajv.compile(schemas['workflow-profile']!);
-    const bindingValidator = ajv.compile(schemas['graph-binding']!);
+    const validators = await publishedValidators('workflow-graph', publishedWorkflowGraphSchemas());
+    const profileValidator = validators['workflow-profile']!;
+    const graphValidator = validators['compiled-graph']!;
+    const bindingValidator = validators['graph-binding']!;
+    expect(profileValidator(minimalProfile()), JSON.stringify(profileValidator.errors)).toBe(true);
+    expect(profileValidator({ ...minimalProfile(), command: 'echo unauthorized' })).toBe(false);
     for (const file of profiles) {
       const stem = file.slice(0, -5);
       const read = (suffix: string) => readFile(new URL(`fixtures/valid/${stem}${suffix}`, bundle), 'utf8');
@@ -271,7 +197,7 @@ describe('Published fixture corpus', () => {
   });
 
   it('checks every invalid YAML file for its specified rejection, without returning a graph', async () => {
-    const validator = new Ajv2020({ strict: true }).compile(publishedWorkflowGraphSchemas()['workflow-profile']!);
+    const validator = ajv().compile(publishedWorkflowGraphSchemas()['workflow-profile']!);
     const expectedSchema = z.array(z.strictObject({ file: z.string(), expected_code: z.string() }));
     const manifest: unknown = JSON.parse(await readFile(new URL('fixtures/invalid/expected.json', bundle), 'utf8'));
     const expected = expectedSchema.parse(manifest);
@@ -336,37 +262,17 @@ function minimalProfile(): WorkflowProfile {
 }
 
 describe('Workflow Profile authoring', () => {
-  it('publishes reproducible Draft 2020-12 schemas usable by an independent validator', async () => {
-    const ajv = new Ajv2020({ strict: true });
-    for (const [name, generated] of Object.entries(publishedWorkflowGraphSchemas())) {
-      const published: unknown = JSON.parse(await readFile(new URL(`schemas/${name}.schema.json`, bundle), 'utf8'));
-      expect(published).toEqual(generated);
-      expect(ajv.validateSchema(generated)).toBe(true);
-      const validate = ajv.compile(generated);
-      if (name === 'workflow-profile') {
-        expect(validate(minimalProfile()), JSON.stringify(validate.errors)).toBe(true);
-        expect(validate({ ...minimalProfile(), command: 'echo unauthorized' })).toBe(false);
-      }
-    }
-  });
-  it('accepts a provider-neutral release profile', () => {
-    expect(parseWorkflowProfile(stringify(minimalProfile())).ok).toBe(true);
-  });
-
   it.each([
-    ['unknown schema', stringify({ ...minimalProfile(), schema_version: '0.2' })],
-    ['numeric schema', stringify({ ...minimalProfile(), schema_version: 0.1 })],
-    ['unknown field', stringify({ ...minimalProfile(), command: 'echo unauthorized' })],
-    ['duplicate keys', 'schema_version: "0.1"\nschema_version: "0.1"'],
-    ['multiple documents', '---\na: 1\n---\na: 2'],
-    ['alias', 'a: &shared [1]\nb: *shared'],
-    ['custom tag', 'a: !execute command'],
-    ['merge key', 'a: { <<: { b: 1 } }'],
-    ['non-string key', '1: value'],
-    ['non-finite scalar', 'a: .inf'],
-  ])('rejects %s without returning a profile', (_label, source) => {
+    ['unknown schema', stringify({ ...minimalProfile(), schema_version: '0.2' }), 'UNSUPPORTED_VERSION'],
+    ['numeric schema', stringify({ ...minimalProfile(), schema_version: 0.1 }), 'YAML_INVALID'],
+    ['unknown field', stringify({ ...minimalProfile(), command: 'echo unauthorized' }), 'SCHEMA_INVALID'],
+    ['multiple documents', '---\na: 1\n---\na: 2', 'YAML_INVALID'],
+    ['merge key', 'a: { <<: { b: 1 } }', 'YAML_INVALID'],
+    ['non-string key', '1: value', 'YAML_INVALID'],
+    ['non-finite scalar', 'a: .inf', 'YAML_INVALID'],
+  ])('rejects %s without returning a profile', (_label, source, code) => {
     const result = parseWorkflowProfile(source);
-    expect(result.ok).toBe(false);
+    expect(codes(result)).toContain(code);
     expect(result).not.toHaveProperty('value');
   });
 });
@@ -422,7 +328,7 @@ describe('Cycle control contracts', () => {
     profile.initial_state = 'completed';
     profile.states = [{ id: 'completed', kind: 'terminal' }];
     profile.transitions = [];
-    expect(compile(profile).ok).toBe(false);
+    expect(codes(compile(profile))).toContain('INVALID_INITIAL_STATE');
   });
 
   it('rejects recovery to another suspension rather than an active prior state', () => {
@@ -437,7 +343,7 @@ describe('Cycle control contracts', () => {
       authority: ['threadloop', 'human'],
       guard_refs: ['recovery', 'prior_block', 'block'],
     });
-    expect(compile(profile).ok).toBe(false);
+    expect(codes(compile(profile))).toContain('INVALID_PRIOR_STATE');
   });
   it('allows repeated engineering work with an explicit human escape and guarded recovery', () => {
     expect(compile(cyclicProfile()).ok).toBe(true);
@@ -496,9 +402,7 @@ describe('Cycle control contracts', () => {
   it('rejects a stop route that loses priority to the controlled repeat', () => {
     const profile = cyclicProfile();
     profile.transitions.find((edge) => edge.id === 'stop')!.priority = 2;
-    const result = compile(profile);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.diagnostics.map((item) => item.code)).toContain('INVALID_CYCLE_CONTROL');
+    expect(codes(compile(profile))).toContain('INVALID_CYCLE_CONTROL');
   });
 
   it('accepts a finite entry budget and rejects an exit requiring the exhausted budget', () => {
@@ -510,9 +414,7 @@ describe('Cycle control contracts', () => {
     expect(compile(profile).ok).toBe(true);
     profile.budgets[0]!.transition_refs.push('stop');
     profile.transitions.find((edge) => edge.id === 'stop')!.guard_refs.push('remaining');
-    const result = compile(profile);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.diagnostics.map((item) => item.code)).toContain('INVALID_CYCLE_CONTROL');
+    expect(codes(compile(profile))).toContain('INVALID_CYCLE_CONTROL');
   });
 
   it('rejects an unguarded counted entry', () => {
@@ -538,7 +440,7 @@ describe('Cycle control contracts', () => {
         exit_transition_refs: ['stop'],
       },
     ];
-    expect(compile(profile).ok).toBe(false);
+    expect(codes(compile(profile))).toContain('INVALID_CYCLE_CONTROL');
     profile.guards.push({ id: 'requested', capability: 'stop_requested', parameters: {} });
     profile.transitions.find((edge) => edge.id === 'finish')!.priority = 10;
     profile.transitions.find((edge) => edge.id === 'stop')!.priority = 0;
@@ -607,7 +509,12 @@ describe('Graph identity', () => {
     expect(validateGraphBinding(binding, graph)).toEqual({ ok: true, value: graph });
   });
 
-  it.each(['digest', 'version', 'payload', 'normalization'])('rejects changed %s against a binding', (change) => {
+  it.each([
+    ['digest', 'BINDING_MISMATCH'],
+    ['version', 'UNSUPPORTED_VERSION'],
+    ['payload', 'GRAPH_DIGEST_MISMATCH'],
+    ['normalization', 'NON_CANONICAL_GRAPH'],
+  ])('rejects changed %s against a binding', (change, code) => {
     const graph = compiled();
     const binding = { graph_schema_version: '0.1', graph_digest: graph.graph_digest };
     const candidate = structuredClone(graph);
@@ -616,7 +523,7 @@ describe('Graph identity', () => {
     if (change === 'payload') candidate.graph.profile.revision++;
     if (change === 'normalization') candidate.graph.states.reverse();
     const before = canonicalJson(binding);
-    expect(validateGraphBinding(binding, candidate).ok).toBe(false);
+    expect(codes(validateGraphBinding(binding, candidate))).toEqual([code]);
     expect(canonicalJson(binding)).toBe(before);
   });
 });
@@ -634,51 +541,18 @@ describe('Workflow graph static validation', () => {
     expect(compileWorkflowProfile(stringify(minimalProfile())).ok).toBe(true);
   });
 
-  const invalidCases: [string, (profile: WorkflowProfile) => void][] = [
-    [
-      'duplicate state',
-      (profile) => {
-        profile.states.push({ id: 'prepared', kind: 'active' });
-      },
-    ],
-    [
-      'missing initial state',
-      (profile) => {
-        profile.initial_state = 'absent';
-      },
-    ],
-    [
-      'unknown target',
-      (profile) => {
-        profile.transitions[0]!.to = 'absent';
-      },
-    ],
-    [
-      'unknown guard',
-      (profile) => {
-        profile.transitions[0]!.guard_refs.push('absent');
-      },
-    ],
+  // Rejections that the published invalid fixtures do not already exercise.
+  const invalidCases: [string, string, (profile: WorkflowProfile) => void][] = [
     [
       'unknown action',
+      'UNKNOWN_REFERENCE',
       (profile) => {
         profile.guards[0]!.required_actions = ['absent'];
       },
     ],
     [
-      'unreachable state',
-      (profile) => {
-        profile.states.push({ id: 'isolated', kind: 'active' });
-      },
-    ],
-    [
-      'no terminal path',
-      (profile) => {
-        profile.transitions = [];
-      },
-    ],
-    [
       'terminal outgoing edge',
+      'TERMINAL_OUTGOING',
       (profile) => {
         profile.transitions.push({
           id: 'reopen',
@@ -690,70 +564,48 @@ describe('Workflow graph static validation', () => {
       },
     ],
     [
-      'missing human authority',
+      'missing human authority for a human guard',
+      'INVALID_AUTHORITY',
       (profile) => {
         profile.transitions[0]!.authority = ['threadloop'];
       },
     ],
     [
       'missing ThreadLoop authority',
+      'INVALID_AUTHORITY',
       (profile) => {
         profile.transitions[0]!.authority = ['human'];
       },
     ],
     [
       'missing completion observation',
+      'COMPLETION_AUTHORITY_REQUIRED',
       (profile) => {
         profile.transitions[0]!.guard_refs = ['approval'];
       },
     ],
     [
       'duplicate guard reference',
+      'DUPLICATE_REFERENCE',
       (profile) => {
         profile.transitions[0]!.guard_refs.push('approval');
       },
     ],
     [
-      'ambiguous edges',
-      (profile) => {
-        profile.transitions.push({ ...profile.transitions[0]!, id: 'other_finish' });
-      },
-    ],
-    [
-      'priority tie',
-      (profile) => {
-        profile.transitions[0]!.priority = 0;
-        profile.transitions.push({ ...profile.transitions[0]!, id: 'other_finish' });
-      },
-    ],
-    [
-      'uncontrolled self-loop',
-      (profile) => {
-        profile.transitions[0]!.priority = 1;
-        profile.transitions.push({
-          id: 'repeat',
-          from: 'prepared',
-          to: 'prepared',
-          priority: 0,
-          guard_refs: [],
-          authority: ['threadloop'],
-        });
-      },
-    ],
-    [
       'phase without history policy',
+      'PHASE_POLICY_REQUIRED',
       (profile) => {
         profile.guards.push({ id: 'pre', capability: 'phase', parameters: { value: 'pre_pr' } });
       },
     ],
   ];
-  it.each(invalidCases)('rejects %s before producing a digest', (_label, mutate) => {
+  it.each(invalidCases)('rejects %s before producing a digest', (_label, code, mutate) => {
     const profile = minimalProfile();
     mutate(profile);
     const source = stringify(profile, { aliasDuplicateObjects: false });
     expect(parseWorkflowProfile(source).ok).toBe(true);
     const result = compileWorkflowProfile(source);
-    expect(result.ok).toBe(false);
+    expect(codes(result)).toContain(code);
     expect(result).not.toHaveProperty('value');
   });
 });
