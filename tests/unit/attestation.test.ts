@@ -7,6 +7,7 @@ import {
   canonicalizeSignedGateReceiptArtifact,
   evaluateCiProofEvidence,
   IN_TOTO_PAYLOAD_TYPE,
+  parseSignedReceiptEnvelope,
   parseSignedReceiptPackage,
   SIGNED_RECEIPT_MEDIA_TYPE_V1,
   SIGNED_RECEIPT_MEDIA_TYPE_V2,
@@ -281,6 +282,21 @@ describe('signed receipt attestation domain', () => {
     expect(captureAttestationError(() => parseSignedReceiptPackage(receiptPackage, sha256)).field).toBe(
       'statement.subject[1].digest.sha256',
     );
+  });
+
+  it('rejects a signed payload that is not UTF-8, so the stored statement is always the signed bytes', () => {
+    const receiptPackage = packageFor();
+    const signed = Buffer.from(receiptPackage.bundle.dsseEnvelope.payload, 'base64');
+    // A lone 0xff decodes to U+FFFD, so the decoded text would no longer be the bytes that were signed.
+    receiptPackage.bundle.dsseEnvelope.payload = Buffer.concat([
+      signed.subarray(0, 10),
+      Buffer.from([0xff]),
+      signed.subarray(10),
+    ]).toString('base64');
+
+    const error = captureAttestationError(() => parseSignedReceiptEnvelope(receiptPackage, sha256));
+    expect(error.field).toBe('package.bundle.dsseEnvelope.payload');
+    expect(error.message).toBe('package.bundle.dsseEnvelope.payload must encode UTF-8 text.');
   });
 
   it.each([

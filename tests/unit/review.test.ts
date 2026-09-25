@@ -100,6 +100,27 @@ describe('signed review evidence', () => {
     });
   });
 
+  it('rejects a signed payload that is not UTF-8, so the stored statement is always the signed bytes', () => {
+    const canonical = reviewDomain.canonicalizeSignedReviewReceiptArtifact(reviewArtifact(), sha256);
+    const statement = Buffer.from(
+      canonicalJson(reviewDomain.buildInTotoReviewStatement(canonical.artifact, canonical.sha256)),
+    );
+    const payload = Buffer.concat([statement.subarray(0, 10), Buffer.from([0xff]), statement.subarray(10)]);
+
+    expect(() =>
+      reviewDomain.parseSignedReviewReceiptEnvelope(
+        {
+          media_type: reviewDomain.SIGNED_REVIEW_RECEIPT_MEDIA_TYPE,
+          artifact: reviewArtifact(),
+          bundle: {
+            dsseEnvelope: { payload: payload.toString('base64'), payloadType: 'application/vnd.in-toto+json' },
+          },
+        },
+        sha256,
+      ),
+    ).toThrow('package.bundle.dsseEnvelope.payload must encode UTF-8 text.');
+  });
+
   it('revalidates an observed report against the trusted signing context', () => {
     const report = reviewArtifact();
     const authorized = reviewDomain.authorizeReviewReportForSigning(report, {

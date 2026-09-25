@@ -96,7 +96,8 @@ context-mismatched, signing fails closed and no package is uploaded.
 
 The package media type is `application/vnd.threadloop.signed-receipt.v1+json`. Its `artifact` records the exact gate,
 result, timestamps, output digests, clean/HEAD observations, GitHub source/run identity, runner identity, and sensor
-contract. Its Sigstore bundle carries a DSSE payload of type `application/vnd.in-toto+json`.
+contract. Its Sigstore bundle carries a DSSE payload of type `application/vnd.in-toto+json`, whose canonical base64 must
+decode to UTF-8 canonical JSON, so the stored statement is byte-for-byte the signed one.
 
 The payload is an in-toto Statement v1 with exactly two subjects:
 

@@ -311,7 +311,13 @@ export function parseSignedReceiptEnvelope(value: unknown, digest: ProofDigest):
   if (!isCanonicalBase64(payload)) {
     throw invalid('package.bundle.dsseEnvelope.payload', 'must be canonical base64');
   }
-  const statementJson = Buffer.from(payload, 'base64').toString('utf8');
+  const statementBytes = Buffer.from(payload, 'base64');
+  const statementJson = statementBytes.toString('utf8');
+  // Decoding replaces invalid UTF-8 with U+FFFD. Without this check the statement text, and the digest stored
+  // for it, could describe bytes other than the ones that were signed.
+  if (!Buffer.from(statementJson, 'utf8').equals(statementBytes)) {
+    throw invalid('package.bundle.dsseEnvelope.payload', 'must encode UTF-8 text');
+  }
   const packageValue = {
     media_type: expectedMediaType,
     artifact: canonicalArtifact.artifact,
