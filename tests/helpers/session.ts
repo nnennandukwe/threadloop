@@ -99,10 +99,10 @@ export function proofPlan({
   setup,
 }: {
   gateId?: string;
-  command?: string[];
+  command?: string[] | undefined;
   timeoutMs?: number;
   workingDirectory?: string;
-  setup?: ProofSetupStep[];
+  setup?: ProofSetupStep[] | undefined;
 } = {}) {
   return {
     contract_version: 4,

@@ -68,3 +68,15 @@ export function tamperAuditEventHash(repoDir: string, sequence: number) {
     { readOnly: false },
   );
 }
+
+/** Deletes a session's whole audit ledger, genesis included. */
+export function deleteAuditLedger(repoDir: string, sessionId: string) {
+  withStateDb(
+    repoDir,
+    (db) =>
+      withTriggersDisabled(db, 'audit_events', () =>
+        db.prepare(`DELETE FROM audit_events WHERE session_id = ?`).run(sessionId),
+      ),
+    { readOnly: false },
+  );
+}
