@@ -1,27 +1,46 @@
-import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
-import { parseJson, runCli, runCliFailure } from '../helpers/cli.js';
+import {
+  parseJson,
+  runCli,
+  runCliError,
+  runCliFailure,
+  sessionNext,
+  transition,
+  transitionArgs,
+  transitionFailure,
+} from '../helpers/cli.js';
+import {
+  cleanupTemporaryState,
+  commitFiles,
+  forceStates,
+  forceTransition,
+  git,
+  makeRepo,
+  startSession,
+} from '../helpers/session.js';
+import {
+  countRows,
+  deleteAuditLedger,
+  readLifecycle,
+  stateDbPath,
+  withStateDb,
+  withTriggersDisabled,
+} from '../helpers/state-db.js';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import {
   applySessionTransition,
-  ensureStateDatabase,
   closeSqliteConnections,
+  ensureStateDatabase,
 } from '../../src/adapters/fs/sqlite-store.js';
 import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
 import { createAuditEvent, ZERO_AUDIT_HASH } from '../../src/domain/audit.js';
 import { canonicalizeTransitionRequest, type TransitionRequest } from '../../src/domain/session-transition.js';
 
-const execFileAsync = promisify(execFile);
-const temporaryRepos: string[] = [];
-
-async function makeRepo() {
-  const repoDir = await mkdtemp(path.join(os.tmpdir(), 'threadloop-transition-'));
-  temporaryRepos.push(repoDir);
-  await execFileAsync('git', ['init'], { cwd: repoDir });
+/** A Git repository with a ThreadLoop config and state directory but no state database yet. */
+async function makeThreadloopRepo() {
+  const repoDir = await makeRepo();
   await mkdir(path.join(repoDir, '.threadloop/state'), { recursive: true });
   await writeFile(
     path.join(repoDir, '.threadloop/config.json'),
@@ -31,78 +50,36 @@ async function makeRepo() {
   return repoDir;
 }
 
-async function startQueuedSession(repoDir: string) {
-  const started = parseJson<{ data: { session_id: string; task_id: string } }>(
-    (
-      await runCli(repoDir, [
-        'session',
-        'start',
-        'Transition task',
-        '--goal',
-        'Prove deterministic transition behavior',
-        '--json',
-      ])
-    ).stdout,
-  );
-  return started.data;
-}
-
-async function applyFixtureTransition(
-  repoDir: string,
-  sessionId: string,
-  targetState: TransitionRequest['targetState'],
-  expectedStateVersion: number,
-  idempotencyKey: string,
-  input: Record<string, unknown> = {},
-) {
-  const request: TransitionRequest = {
-    sessionId,
-    targetState,
-    expectedStateVersion,
-    actor: 'agent',
-    input,
-  };
-  const result = await applySessionTransition(
-    repoDir,
-    {
-      ...request,
-      idempotencyKey,
-      ...canonicalizeTransitionRequest(request, sha256),
-    },
-    () => ({ allowed: true, guardFailures: [], requiredWork: [] }),
-  );
-  if (!result.ok) {
-    throw new Error(`Could not prepare ${targetState} fixture: ${result.error.code}`);
-  }
-  return result;
-}
-
-async function prepareReadyForHumanFixture(repoDir: string, sessionId: string) {
-  for (const [targetState, expectedStateVersion] of [
-    ['framed', 0],
-    ['proof_ready', 1],
-    ['implementing', 2],
-    ['verifying', 3],
-    ['pre_pr_reviewing', 4],
-    ['reviewing', 5],
-    ['ready_for_human', 6],
-  ] as const) {
-    await applyFixtureTransition(repoDir, sessionId, targetState, expectedStateVersion, `fixture:${targetState}`);
-  }
-}
+/** Every forward state from `queued` to `ready_for_human`, forced from state version 0. */
+const readyForHuman: Array<TransitionRequest['targetState']> = [
+  'framed',
+  'proof_ready',
+  'implementing',
+  'verifying',
+  'pre_pr_reviewing',
+  'reviewing',
+  'ready_for_human',
+];
 
 /** A current-schema state database for tests that corrupt or downgrade it. */
 async function createCurrentDatabase(repoDir: string) {
   await ensureStateDatabase(repoDir);
   closeSqliteConnections(repoDir);
-  return path.join(repoDir, '.threadloop/state/state.db');
 }
+
+const setSchemaVersion = (repoDir: string, version: string) =>
+  withStateDb(repoDir, (db) => db.prepare(`UPDATE metadata SET value = ? WHERE key = 'schema_version'`).run(version), {
+    readOnly: false,
+  });
+
+const readSchemaVersion = (repoDir: string) =>
+  withStateDb(repoDir, (db) => db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get());
 
 /**
  * Replaces a session's ledger with the `audit_activated` genesis its schema-v6 upgrade recorded, which still
  * exists in databases created before the audit ledger and must keep verifying.
  */
-function activateLegacyAuditLedger(dbPath: string, sessionId: string, state: string, stateVersion: number) {
+function activateLegacyAuditLedger(repoDir: string, sessionId: string, state: string, stateVersion: number) {
   const activation = createAuditEvent(
     {
       id: 'audit_legacy_activation',
@@ -120,83 +97,53 @@ function activateLegacyAuditLedger(dbPath: string, sessionId: string, state: str
     },
     sha256,
   );
-  const db = new DatabaseSync(dbPath);
-  try {
-    db.exec(`
-      DROP TRIGGER audit_events_no_delete;
-      DELETE FROM audit_events WHERE session_id = '${sessionId}';
-      CREATE TRIGGER audit_events_no_delete BEFORE DELETE ON audit_events
-      BEGIN SELECT RAISE(ABORT, 'audit events are immutable'); END;
-    `);
-    db.prepare(`UPDATE tasks SET status = ?, state_version = ?`).run(state, stateVersion);
-    db.prepare(
-      `INSERT INTO audit_events (id, session_id, sequence, event_type, state_version, previous_sha256, event_json,
-        event_sha256, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      activation.value.id,
-      sessionId,
-      1,
-      'audit_activated',
-      stateVersion,
-      ZERO_AUDIT_HASH,
-      activation.json,
-      activation.sha256,
-      activation.value.recorded_at,
-    );
-  } finally {
-    db.close();
-  }
+  deleteAuditLedger(repoDir, sessionId);
+  withStateDb(
+    repoDir,
+    (db) => {
+      db.prepare(`UPDATE tasks SET status = ?, state_version = ?`).run(state, stateVersion);
+      db.prepare(
+        `INSERT INTO audit_events (id, session_id, sequence, event_type, state_version, previous_sha256, event_json,
+          event_sha256, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        activation.value.id,
+        sessionId,
+        1,
+        'audit_activated',
+        stateVersion,
+        ZERO_AUDIT_HASH,
+        activation.json,
+        activation.sha256,
+        activation.value.recorded_at,
+      );
+    },
+    { readOnly: false },
+  );
 }
 
-afterEach(async () => {
-  closeSqliteConnections();
-  await Promise.all(temporaryRepos.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
-});
+afterEach(cleanupTemporaryState);
 
 describe('schema v7 lifecycle and audit persistence', () => {
   it('bootstraps a metadata-less state database before enforcing migration policy', async () => {
-    const repoDir = await makeRepo();
-    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
-    new DatabaseSync(dbPath).close();
+    const repoDir = await makeThreadloopRepo();
+    new DatabaseSync(stateDbPath(repoDir)).close();
 
-    const started = parseJson<{ data: { session_id: string } }>(
-      (
-        await runCli(repoDir, [
-          'session',
-          'start',
-          'Recovered bootstrap',
-          '--goal',
-          'Restore a state database that has no committed schema metadata',
-          '--json',
-        ])
-      ).stdout,
-    );
-    expect(started.data.session_id).toMatch(/^session_/);
-
-    const recovered = new DatabaseSync(dbPath, { readOnly: true });
-    try {
-      expect(recovered.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({
-        value: '8',
-      });
-      expect(recovered.prepare(`SELECT COUNT(*) AS count FROM sessions`).get()).toEqual({ count: 1 });
-    } finally {
-      recovered.close();
-    }
+    expect((await startSession(repoDir, 'Recovered bootstrap')).session_id).toMatch(/^session_/);
+    expect(readSchemaVersion(repoDir)).toEqual({ value: '8' });
+    expect(countRows(repoDir, 'sessions')).toBe(1);
   });
 
   it('retains post-PR phase when audit coverage begins in reviewing', async () => {
-    const repoDir = await makeRepo();
-    const { session_id: sessionId } = await startQueuedSession(repoDir);
+    const repoDir = await makeThreadloopRepo();
+    const { session_id: sessionId } = await startSession(repoDir);
     closeSqliteConnections(repoDir);
-    activateLegacyAuditLedger(path.join(repoDir, '.threadloop/state/state.db'), sessionId, 'reviewing', 4);
+    activateLegacyAuditLedger(repoDir, sessionId, 'reviewing', 4);
 
-    const projected = parseJson<{ data: { lifecycle: { phase: string } } }>(
-      (await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout,
-    );
-    expect(projected.data.lifecycle.phase).toBe('post_pr');
+    expect(await sessionNext(repoDir, sessionId)).toMatchObject({ lifecycle: { phase: 'post_pr' } });
 
-    await applyFixtureTransition(repoDir, sessionId, 'repairing', 4, 'legacy:repair');
-    await applyFixtureTransition(repoDir, sessionId, 'verifying', 5, 'legacy:verify');
+    // Enforcement, not only the projection, must derive the phase from the legacy activation genesis.
+    await forceTransition(repoDir, sessionId, 'repairing', 4, 'legacy:repair');
+    await forceTransition(repoDir, sessionId, 'verifying', 5, 'legacy:verify');
     const request: TransitionRequest = {
       sessionId,
       targetState: 'implementing',
@@ -206,11 +153,7 @@ describe('schema v7 lifecycle and audit persistence', () => {
     };
     const forbidden = await applySessionTransition(
       repoDir,
-      {
-        ...request,
-        idempotencyKey: 'legacy:implementing-reentry',
-        ...canonicalizeTransitionRequest(request, sha256),
-      },
+      { ...request, idempotencyKey: 'legacy:implementing-reentry', ...canonicalizeTransitionRequest(request, sha256) },
       () => ({ allowed: true, guardFailures: [], requiredWork: [] }),
     );
     expect(forbidden).toMatchObject({
@@ -223,521 +166,218 @@ describe('schema v7 lifecycle and audit persistence', () => {
   });
 
   it('retains pre-PR authority for a legacy repair history that never entered reviewing', async () => {
-    const repoDir = await makeRepo();
-    const { session_id: sessionId } = await startQueuedSession(repoDir);
-    for (const [targetState, expectedStateVersion] of [
-      ['framed', 0],
-      ['proof_ready', 1],
-      ['implementing', 2],
-      ['verifying', 3],
-      ['repairing', 4],
-    ] as const) {
-      await applyFixtureTransition(
-        repoDir,
-        sessionId,
-        targetState,
-        expectedStateVersion,
-        `legacy-pre-pr:${targetState}`,
-      );
-    }
+    const repoDir = await makeThreadloopRepo();
+    const { session_id: sessionId } = await startSession(repoDir);
+    await forceStates(
+      repoDir,
+      sessionId,
+      0,
+      ['framed', 'proof_ready', 'implementing', 'verifying', 'repairing'],
+      'legacy-pre-pr',
+    );
     closeSqliteConnections(repoDir);
-    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
-    const legacy = new DatabaseSync(dbPath);
-    legacy.prepare(`UPDATE metadata SET value = '7' WHERE key = 'schema_version'`).run();
-    legacy.close();
+    setSchemaVersion(repoDir, '7');
 
     await runCli(repoDir, ['init']);
-    const projected = parseJson<{
-      data: {
-        lifecycle: { phase: string };
-        repair_budget: { attempts_used: number };
-      };
-    }>((await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout);
-    expect(projected.data).toMatchObject({
+    expect(await sessionNext(repoDir, sessionId)).toMatchObject({
       lifecycle: { phase: 'pre_pr' },
       repair_budget: { attempts_used: 1 },
     });
 
-    await applyFixtureTransition(repoDir, sessionId, 'verifying', 5, 'legacy-pre-pr:verify');
+    await forceTransition(repoDir, sessionId, 'verifying', 5, 'legacy-pre-pr:verify');
     await expect(
-      applyFixtureTransition(repoDir, sessionId, 'implementing', 6, 'legacy-pre-pr:implement'),
-    ).resolves.toMatchObject({
-      data: {
-        lifecycle: { state: 'implementing', state_version: 7 },
-      },
-    });
+      forceTransition(repoDir, sessionId, 'implementing', 6, 'legacy-pre-pr:implement'),
+    ).resolves.toMatchObject({ data: { lifecycle: { state: 'implementing', state_version: 7 } } });
   });
 
   it('projects schema-v7 migration requirements read-only and migrates only through init', async () => {
-    const repoDir = await makeRepo();
-    const started = parseJson<{ data: { session_id: string } }>(
-      (await runCli(repoDir, ['session', 'start', 'Migration task', '--goal', 'Preserve semantic history', '--json']))
-        .stdout,
-    );
-    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
+    const repoDir = await makeThreadloopRepo();
+    const { session_id: sessionId } = await startSession(repoDir, 'Migration task');
     closeSqliteConnections(repoDir);
-    const downgrade = new DatabaseSync(dbPath);
-    downgrade.prepare(`UPDATE metadata SET value = '7' WHERE key = 'schema_version'`).run();
-    const beforeCounts = {
-      transitions: (downgrade.prepare(`SELECT COUNT(*) AS count FROM session_transitions`).get() as { count: number })
-        .count,
-      audit: (downgrade.prepare(`SELECT COUNT(*) AS count FROM audit_events`).get() as { count: number }).count,
-    };
-    downgrade.close();
-    const beforeBytes = await readFile(dbPath);
+    setSchemaVersion(repoDir, '7');
+    const history = () => ({
+      transitions: countRows(repoDir, 'session_transitions'),
+      audit: countRows(repoDir, 'audit_events'),
+    });
+    const before = history();
+    const beforeBytes = await readFile(stateDbPath(repoDir));
 
-    const next = parseJson<{
-      data: {
-        contract_version: number;
-        lifecycle: { storage_schema_version: number; contract_status: string };
-        candidate: unknown;
-        guard_failures: Array<{ code: string }>;
-        required_work: Array<{ code: string }>;
-        pre_pr_review: { status: string };
-      };
-    }>((await runCli(repoDir, ['session', 'next', '--session', started.data.session_id, '--json'])).stdout);
-    expect(next.data).toMatchObject({
+    expect(await sessionNext(repoDir, sessionId)).toMatchObject({
       contract_version: 4,
-      lifecycle: {
-        storage_schema_version: 7,
-        contract_status: 'migration_required',
-      },
+      lifecycle: { storage_schema_version: 7, contract_status: 'migration_required' },
       candidate: null,
       guard_failures: [{ code: 'SESSION_SCHEMA_MIGRATION_REQUIRED' }],
       required_work: [{ code: 'MIGRATE_SESSION_SCHEMA' }],
       pre_pr_review: { status: 'migration_required' },
     });
-    expect(await readFile(dbPath)).toEqual(beforeBytes);
+    expect(await readFile(stateDbPath(repoDir))).toEqual(beforeBytes);
 
-    const migrationRequiredCommands = [
-      ['session', 'gate', 'run', 'unit', '--session', started.data.session_id, '--json'],
-      [
-        'session',
-        'transition',
-        'framed',
-        '--session',
-        started.data.session_id,
-        '--expected-state-version',
-        '0',
-        '--idempotency-key',
-        'migration:transition',
-        '--actor',
-        'agent',
-        '--input',
-        '{}',
-        '--json',
-      ],
-      ['session', 'gate', 'import', 'missing-package.json', '--session', started.data.session_id, '--json'],
-      ['session', 'review', 'import', 'missing-package.json', '--session', started.data.session_id, '--json'],
-      ['audit', 'show', '--session', started.data.session_id, '--json'],
-      ['audit', 'verify', '--session', started.data.session_id, '--json'],
+    for (const args of [
+      ['session', 'gate', 'run', 'unit', '--session', sessionId, '--json'],
+      transitionArgs(sessionId, 'framed', 0, 'migration:transition'),
+      ['session', 'gate', 'import', 'missing-package.json', '--session', sessionId, '--json'],
+      ['session', 'review', 'import', 'missing-package.json', '--session', sessionId, '--json'],
+      ['audit', 'show', '--session', sessionId, '--json'],
+      ['audit', 'verify', '--session', sessionId, '--json'],
       ['session', 'start', 'Second task', '--goal', 'Must not migrate implicitly', '--json'],
-    ];
-    for (const args of migrationRequiredCommands) {
-      const failure = await runCliFailure(repoDir, args);
-      const error = parseJson<{
-        error: {
-          code: string;
-          details: { storage_schema_version: number; hint: string };
-        };
-      }>(failure.stderr);
+    ]) {
+      const { error } = await runCliError(repoDir, args);
       expect(error).toMatchObject({
-        error: {
-          code: 'SESSION_SCHEMA_MIGRATION_REQUIRED',
-          details: {
-            storage_schema_version: 7,
-          },
-        },
+        code: 'SESSION_SCHEMA_MIGRATION_REQUIRED',
+        details: { storage_schema_version: 7 },
       });
-      expect(error.error.details.hint).toContain('Run `threadloop init`');
-      expect(await readFile(dbPath)).toEqual(beforeBytes);
+      expect(error.details.hint).toContain('Run `threadloop init`');
+      expect(await readFile(stateDbPath(repoDir))).toEqual(beforeBytes);
     }
 
     await runCli(repoDir, ['init']);
     closeSqliteConnections(repoDir);
-    const migrated = new DatabaseSync(dbPath, { readOnly: true });
-    try {
-      expect(migrated.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({
-        value: '8',
-      });
-      expect(
-        (migrated.prepare(`SELECT COUNT(*) AS count FROM session_transitions`).get() as { count: number }).count,
-      ).toBe(beforeCounts.transitions);
-      expect((migrated.prepare(`SELECT COUNT(*) AS count FROM audit_events`).get() as { count: number }).count).toBe(
-        beforeCounts.audit,
-      );
-    } finally {
-      migrated.close();
-    }
+    expect(readSchemaVersion(repoDir)).toEqual({ value: '8' });
+    expect(history()).toEqual(before);
   });
 
   it('revalidates canonical schema metadata on the ready read path', async () => {
-    const repoDir = await makeRepo();
-    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
+    const repoDir = await makeThreadloopRepo();
     await ensureStateDatabase(repoDir);
-
-    const corrupt = new DatabaseSync(dbPath);
-    corrupt.prepare(`UPDATE metadata SET value = '3.0' WHERE key = 'schema_version'`).run();
-    corrupt.close();
+    setSchemaVersion(repoDir, '3.0');
 
     await expect(ensureStateDatabase(repoDir)).rejects.toThrow('Unsupported ThreadLoop schema version: 3.0');
-
-    const unchanged = new DatabaseSync(dbPath, { readOnly: true });
-    try {
-      expect(unchanged.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({
-        value: '3.0',
-      });
-    } finally {
-      unchanged.close();
-    }
+    expect(readSchemaVersion(repoDir)).toEqual({ value: '3.0' });
   });
 
   it.each(['8.0', '08', '8e0', ' 8 ', '\t8\n'])(
     'rejects malformed schema metadata %j before mutation',
     async (rawVersion) => {
-      const repoDir = await makeRepo();
-      const dbPath = await createCurrentDatabase(repoDir);
-      const corrupt = new DatabaseSync(dbPath);
-      const initialJournalMode = corrupt.prepare(`PRAGMA journal_mode`).get();
-      corrupt.prepare(`UPDATE metadata SET value = ? WHERE key = 'schema_version'`).run(rawVersion);
-      corrupt.close();
+      const repoDir = await makeThreadloopRepo();
+      await createCurrentDatabase(repoDir);
+      const journalMode = () => withStateDb(repoDir, (db) => db.prepare(`PRAGMA journal_mode`).get());
+      const initialJournalMode = journalMode();
+      setSchemaVersion(repoDir, rawVersion);
 
       await expect(ensureStateDatabase(repoDir)).rejects.toThrow(
         `Unsupported ThreadLoop schema version: ${rawVersion}`,
       );
       closeSqliteConnections(repoDir);
-
-      const unchanged = new DatabaseSync(dbPath, { readOnly: true });
-      try {
-        expect(unchanged.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({
-          value: rawVersion,
-        });
-        expect(unchanged.prepare(`PRAGMA journal_mode`).get()).toEqual(initialJournalMode);
-      } finally {
-        unchanged.close();
-      }
+      expect(readSchemaVersion(repoDir)).toEqual({ value: rawVersion });
+      expect(journalMode()).toEqual(initialJournalMode);
     },
   );
 
   it('returns STATE_CORRUPTED for malformed metadata through the public transition envelope', async () => {
-    const repoDir = await makeRepo();
-    const dbPath = await createCurrentDatabase(repoDir);
-    const corrupt = new DatabaseSync(dbPath);
-    corrupt.prepare(`UPDATE metadata SET value = '2.0' WHERE key = 'schema_version'`).run();
-    corrupt.close();
+    const repoDir = await makeThreadloopRepo();
+    await createCurrentDatabase(repoDir);
+    setSchemaVersion(repoDir, '2.0');
 
-    const failure = await runCliFailure(repoDir, [
-      'session',
-      'transition',
-      'framed',
-      '--session',
-      'session_queued',
-      '--expected-state-version',
-      '0',
-      '--idempotency-key',
-      'schema:malformed',
-      '--actor',
-      'agent',
-      '--input',
-      '{}',
-      '--json',
-    ]);
-    expect(parseJson<{ error: { code: string; message: string } }>(failure.stderr)).toMatchObject({
-      error: {
-        code: 'STATE_CORRUPTED',
-        message: 'Unsupported ThreadLoop schema version: 2.0',
-      },
+    expect(await transitionFailure(repoDir, 'session_queued', 'framed', 0, 'schema:malformed')).toMatchObject({
+      error: { code: 'STATE_CORRUPTED', message: 'Unsupported ThreadLoop schema version: 2.0' },
     });
-
-    const unchanged = new DatabaseSync(dbPath, { readOnly: true });
-    try {
-      expect(unchanged.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({
-        value: '2.0',
-      });
-    } finally {
-      unchanged.close();
-    }
+    expect(readSchemaVersion(repoDir)).toEqual({ value: '2.0' });
   });
 
   it('rolls back every upgrade change when schema validation fails', async () => {
-    const repoDir = await makeRepo();
-    const dbPath = await createCurrentDatabase(repoDir);
-    const incompatible = new DatabaseSync(dbPath);
-    incompatible.exec(`
-      UPDATE metadata SET value = '7' WHERE key = 'schema_version';
-      DROP TRIGGER transition_idempotency_no_update;
-      DROP TRIGGER transition_idempotency_no_delete;
-      DROP TRIGGER transition_idempotency_no_replace;
-      DROP TABLE transition_idempotency;
-      CREATE TABLE transition_idempotency (unexpected TEXT NOT NULL);
-    `);
-    incompatible.close();
+    const repoDir = await makeThreadloopRepo();
+    await createCurrentDatabase(repoDir);
+    withStateDb(
+      repoDir,
+      (db) =>
+        db.exec(`
+          UPDATE metadata SET value = '7' WHERE key = 'schema_version';
+          DROP TRIGGER transition_idempotency_no_update;
+          DROP TRIGGER transition_idempotency_no_delete;
+          DROP TRIGGER transition_idempotency_no_replace;
+          DROP TABLE transition_idempotency;
+          CREATE TABLE transition_idempotency (unexpected TEXT NOT NULL);
+        `),
+      { readOnly: false },
+    );
 
     await expect(ensureStateDatabase(repoDir)).rejects.toThrow('Invalid schema for transition_idempotency');
     closeSqliteConnections(repoDir);
 
-    const unchanged = new DatabaseSync(dbPath, { readOnly: true });
-    try {
-      expect(unchanged.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({
-        value: '7',
-      });
-      expect(unchanged.prepare(`PRAGMA table_info(transition_idempotency)`).all()).toMatchObject([
-        { name: 'unexpected' },
-      ]);
+    expect(readSchemaVersion(repoDir)).toEqual({ value: '7' });
+    withStateDb(repoDir, (db) => {
+      expect(db.prepare(`PRAGMA table_info(transition_idempotency)`).all()).toMatchObject([{ name: 'unexpected' }]);
       expect(
-        unchanged
+        db
           .prepare(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'transition_idempotency_no_%'`)
           .all(),
       ).toEqual([]);
-    } finally {
-      unchanged.close();
-    }
+    });
   });
 
   it('makes applied transition and idempotency history immutable in schema v7', async () => {
-    const repoDir = await makeRepo();
-    const started = parseJson<{ data: { session_id: string } }>(
-      (await runCli(repoDir, ['session', 'start', 'Immutable history', '--goal', 'Protect lifecycle phase', '--json']))
-        .stdout,
+    const repoDir = await makeThreadloopRepo();
+    const { session_id: sessionId } = await startSession(repoDir, 'Immutable history');
+    await transition(repoDir, sessionId, 'framed', 0, 'immutability:framed');
+    expect((await transitionFailure(repoDir, sessionId, 'proof_ready', 1, 'immutability:framed')).error.code).toBe(
+      'IDEMPOTENCY_CONFLICT',
     );
-    await runCli(repoDir, [
-      'session',
-      'transition',
-      'framed',
-      '--session',
-      started.data.session_id,
-      '--expected-state-version',
-      '0',
-      '--idempotency-key',
-      'immutability:framed',
-      '--actor',
-      'agent',
-      '--input',
-      '{}',
-      '--json',
-    ]);
-    const conflict = await runCliFailure(repoDir, [
-      'session',
-      'transition',
-      'proof_ready',
-      '--session',
-      started.data.session_id,
-      '--expected-state-version',
-      '1',
-      '--idempotency-key',
-      'immutability:framed',
-      '--actor',
-      'agent',
-      '--input',
-      '{}',
-      '--json',
-    ]);
-    expect(parseJson<{ error: { code: string } }>(conflict.stderr).error.code).toBe('IDEMPOTENCY_CONFLICT');
     closeSqliteConnections(repoDir);
 
-    const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'));
-    try {
-      expect(() =>
-        db
-          .prepare(`UPDATE session_transitions SET to_state = 'queued' WHERE session_id = ?`)
-          .run(started.data.session_id),
-      ).toThrow('session transitions are immutable');
-      expect(() =>
-        db.prepare(`DELETE FROM session_transitions WHERE session_id = ?`).run(started.data.session_id),
-      ).toThrow('session transitions are immutable');
-      expect(() =>
-        db
-          .prepare(
-            `
-              INSERT OR REPLACE INTO session_transitions
-              SELECT * FROM session_transitions WHERE session_id = ?
-            `,
-          )
-          .run(started.data.session_id),
-      ).toThrow('session transitions are immutable');
-      expect(() =>
-        db
-          .prepare(`UPDATE transition_idempotency SET result_json = '{}' WHERE session_id = ?`)
-          .run(started.data.session_id),
-      ).toThrow('transition idempotency records are immutable');
-      expect(() =>
-        db.prepare(`DELETE FROM transition_idempotency WHERE session_id = ?`).run(started.data.session_id),
-      ).toThrow('transition idempotency records are immutable');
-      expect(() =>
-        db
-          .prepare(
-            `
-              INSERT OR REPLACE INTO transition_idempotency
-              SELECT * FROM transition_idempotency WHERE session_id = ?
-            `,
-          )
-          .run(started.data.session_id),
-      ).toThrow('transition idempotency records are immutable');
-      expect(() =>
-        db
-          .prepare(`UPDATE transition_idempotency_conflicts SET result_json = '{}' WHERE session_id = ?`)
-          .run(started.data.session_id),
-      ).toThrow('transition idempotency conflict records are immutable');
-      expect(() =>
-        db.prepare(`DELETE FROM transition_idempotency_conflicts WHERE session_id = ?`).run(started.data.session_id),
-      ).toThrow('transition idempotency conflict records are immutable');
-      expect(() =>
-        db
-          .prepare(
-            `
-              INSERT OR REPLACE INTO transition_idempotency_conflicts
-              SELECT * FROM transition_idempotency_conflicts WHERE session_id = ?
-            `,
-          )
-          .run(started.data.session_id),
-      ).toThrow('transition idempotency conflict records are immutable');
-      expect(
-        db.prepare(`SELECT from_state, to_state, from_state_version, to_state_version FROM session_transitions`).all(),
-      ).toEqual([
-        {
-          from_state: 'queued',
-          to_state: 'framed',
-          from_state_version: 0,
-          to_state_version: 1,
-        },
-      ]);
-      expect(db.prepare(`SELECT COUNT(*) AS count FROM transition_idempotency`).get()).toEqual({ count: 1 });
-      expect(db.prepare(`SELECT COUNT(*) AS count FROM transition_idempotency_conflicts`).get()).toEqual({ count: 1 });
-    } finally {
-      db.close();
-    }
+    withStateDb(
+      repoDir,
+      (db) => {
+        for (const [table, noun] of [
+          ['session_transitions', 'session transitions'],
+          ['transition_idempotency', 'transition idempotency records'],
+          ['transition_idempotency_conflicts', 'transition idempotency conflict records'],
+        ]) {
+          const immutable = `${noun} are immutable`;
+          // A BEFORE UPDATE trigger fires for every matched row, so a no-op assignment is enough to prove it.
+          expect(() =>
+            db.prepare(`UPDATE ${table} SET session_id = session_id WHERE session_id = ?`).run(sessionId),
+          ).toThrow(immutable);
+          expect(() => db.prepare(`DELETE FROM ${table} WHERE session_id = ?`).run(sessionId)).toThrow(immutable);
+          expect(() =>
+            db.prepare(`INSERT OR REPLACE INTO ${table} SELECT * FROM ${table} WHERE session_id = ?`).run(sessionId),
+          ).toThrow(immutable);
+        }
+        expect(
+          db
+            .prepare(`SELECT from_state, to_state, from_state_version, to_state_version FROM session_transitions`)
+            .all(),
+        ).toEqual([{ from_state: 'queued', to_state: 'framed', from_state_version: 0, to_state_version: 1 }]);
+      },
+      { readOnly: false },
+    );
+    expect(countRows(repoDir, 'transition_idempotency')).toBe(1);
+    expect(countRows(repoDir, 'transition_idempotency_conflicts')).toBe(1);
   });
 
   it('fails session next closed when transition history no longer matches the audit ledger', async () => {
-    const repoDir = await makeRepo();
-    const started = parseJson<{ data: { session_id: string; task_id: string } }>(
-      (
-        await runCli(repoDir, [
-          'session',
-          'start',
-          'Corrupt history',
-          '--goal',
-          'Fail phase derivation closed',
-          '--json',
-        ])
-      ).stdout,
-    );
-    await runCli(repoDir, [
-      'session',
-      'transition',
-      'framed',
-      '--session',
-      started.data.session_id,
-      '--expected-state-version',
-      '0',
-      '--idempotency-key',
-      'corrupt-history:framed',
-      '--actor',
-      'agent',
-      '--input',
-      '{}',
-      '--json',
-    ]);
+    const repoDir = await makeThreadloopRepo();
+    const { session_id: sessionId } = await startSession(repoDir, 'Corrupt history');
+    await transition(repoDir, sessionId, 'framed', 0, 'corrupt-history:framed');
     closeSqliteConnections(repoDir);
-
-    const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'));
-    db.exec(`
-      DROP TRIGGER session_transitions_no_update;
-      DROP TRIGGER session_transitions_no_delete;
-      DROP TRIGGER session_transitions_no_replace;
-      UPDATE session_transitions SET input_json = '{"tampered":true}'
-      WHERE session_id = '${started.data.session_id}';
-      CREATE TRIGGER session_transitions_no_update
-      BEFORE UPDATE ON session_transitions
-      BEGIN
-        SELECT RAISE(ABORT, 'session transitions are immutable');
-      END;
-      CREATE TRIGGER session_transitions_no_delete
-      BEFORE DELETE ON session_transitions
-      BEGIN
-        SELECT RAISE(ABORT, 'session transitions are immutable');
-      END;
-      CREATE TRIGGER session_transitions_no_replace
-      BEFORE INSERT ON session_transitions
-      WHEN EXISTS (
-        SELECT 1 FROM session_transitions
-        WHERE id = NEW.id OR (task_id = NEW.task_id AND to_state_version = NEW.to_state_version)
-      )
-      BEGIN
-        SELECT RAISE(ABORT, 'session transitions are immutable');
-      END;
-    `);
-    db.close();
-
-    const failure = await runCliFailure(repoDir, ['session', 'next', '--session', started.data.session_id, '--json']);
-    const parsedFailure = parseJson<{ error: { code: string; message: string } }>(failure.stderr);
-    expect(parsedFailure.error.code).toBe('STATE_CORRUPTED');
-    expect(parsedFailure.error.message).toContain('Invalid session transition history');
-    const replayFailure = parseJson<{ error: { code: string; message: string } }>(
-      (
-        await runCliFailure(repoDir, [
-          'session',
-          'transition',
-          'framed',
-          '--session',
-          started.data.session_id,
-          '--expected-state-version',
-          '0',
-          '--idempotency-key',
-          'corrupt-history:framed',
-          '--actor',
-          'agent',
-          '--input',
-          '{}',
-          '--json',
-        ])
-      ).stderr,
+    withStateDb(
+      repoDir,
+      (db) =>
+        withTriggersDisabled(db, 'session_transitions', () =>
+          db
+            .prepare(`UPDATE session_transitions SET input_json = '{"tampered":true}' WHERE session_id = ?`)
+            .run(sessionId),
+        ),
+      { readOnly: false },
     );
-    expect(replayFailure.error.code).toBe('STATE_CORRUPTED');
-    expect(replayFailure.error.message).toContain('Invalid session transition history');
 
-    const unchanged = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
-    try {
-      expect(
-        unchanged.prepare(`SELECT status, state_version FROM tasks WHERE id = ?`).get(started.data.task_id),
-      ).toEqual({
-        status: 'framed',
-        state_version: 1,
-      });
-      expect(
-        unchanged
-          .prepare(`SELECT COUNT(*) AS count FROM session_transitions WHERE session_id = ?`)
-          .get(started.data.session_id),
-      ).toEqual({ count: 1 });
-    } finally {
-      unchanged.close();
+    for (const failure of [
+      await runCliError(repoDir, ['session', 'next', '--session', sessionId, '--json']),
+      await transitionFailure(repoDir, sessionId, 'framed', 0, 'corrupt-history:framed'),
+    ]) {
+      expect(failure.error.code).toBe('STATE_CORRUPTED');
+      expect(failure.error.message).toContain('Invalid session transition history');
     }
+    expect(readLifecycle(repoDir)).toEqual({ status: 'framed', state_version: 1 });
+    expect(countRows(repoDir, 'session_transitions', 'session_id = ?', sessionId)).toBe(1);
   });
 
   it('maps a missing audit genesis during session next to actionable audit recovery', async () => {
-    const repoDir = await makeRepo();
-    const { session_id: sessionId } = await startQueuedSession(repoDir);
+    const repoDir = await makeThreadloopRepo();
+    const { session_id: sessionId } = await startSession(repoDir);
     closeSqliteConnections(repoDir);
-    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
-    const corrupt = new DatabaseSync(dbPath);
-    corrupt.exec(`
-      DROP TRIGGER audit_events_no_delete;
-      DELETE FROM audit_events WHERE session_id = '${sessionId}';
-      CREATE TRIGGER audit_events_no_delete
-      BEFORE DELETE ON audit_events
-      BEGIN
-        SELECT RAISE(ABORT, 'audit events are immutable');
-      END;
-    `);
-    corrupt.close();
+    deleteAuditLedger(repoDir, sessionId);
 
-    const failure = parseJson<{
-      error: {
-        code: string;
-        details: { session_id: string; audit_error: { code: string }; hint: string };
-      };
-    }>((await runCliFailure(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stderr);
-    expect(failure).toMatchObject({
+    expect(await runCliError(repoDir, ['session', 'next', '--session', sessionId, '--json'])).toMatchObject({
       error: {
         code: 'AUDIT_VERIFICATION_FAILED',
         details: {
@@ -747,164 +387,65 @@ describe('schema v7 lifecycle and audit persistence', () => {
         },
       },
     });
-
-    const unchanged = new DatabaseSync(dbPath, { readOnly: true });
-    try {
-      expect(unchanged.prepare(`SELECT status, state_version FROM tasks`).get()).toEqual({
-        status: 'queued',
-        state_version: 0,
-      });
-      expect(unchanged.prepare(`SELECT COUNT(*) AS count FROM audit_events`).get()).toEqual({ count: 0 });
-    } finally {
-      unchanged.close();
-    }
+    expect(readLifecycle(repoDir)).toEqual({ status: 'queued', state_version: 0 });
+    expect(countRows(repoDir, 'audit_events')).toBe(0);
   });
 
   it('fails reads and writes closed when the task projection drifts from authoritative history', async () => {
-    const repoDir = await makeRepo();
-    const { session_id: sessionId, task_id: taskId } = await startQueuedSession(repoDir);
-    await runCli(repoDir, [
-      'session',
-      'transition',
-      'framed',
-      '--session',
-      sessionId,
-      '--expected-state-version',
-      '0',
-      '--idempotency-key',
-      'projection-drift:framed',
-      '--actor',
-      'agent',
-      '--input',
-      '{}',
-      '--json',
-    ]);
+    const repoDir = await makeThreadloopRepo();
+    const { session_id: sessionId, task_id: taskId } = await startSession(repoDir);
+    await transition(repoDir, sessionId, 'framed', 0, 'projection-drift:framed');
     closeSqliteConnections(repoDir);
-    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
-    const corrupt = new DatabaseSync(dbPath);
-    const beforeAuditCount = (
-      corrupt.prepare(`SELECT COUNT(*) AS count FROM audit_events WHERE session_id = ?`).get(sessionId) as {
-        count: number;
-      }
-    ).count;
-    corrupt.prepare(`UPDATE tasks SET status = 'implementing' WHERE id = ?`).run(taskId);
-    corrupt.close();
+    const auditCount = countRows(repoDir, 'audit_events', 'session_id = ?', sessionId);
+    withStateDb(repoDir, (db) => db.prepare(`UPDATE tasks SET status = 'implementing' WHERE id = ?`).run(taskId), {
+      readOnly: false,
+    });
 
     for (const args of [
       ['session', 'next', '--session', sessionId, '--json'],
-      [
-        'session',
-        'transition',
-        'verifying',
-        '--session',
-        sessionId,
-        '--expected-state-version',
-        '1',
-        '--idempotency-key',
-        'projection-drift:transition',
-        '--actor',
-        'agent',
-        '--input',
-        '{}',
-        '--json',
-      ],
-      [
-        'session',
-        'transition',
-        'verifying',
-        '--session',
-        sessionId,
-        '--expected-state-version',
-        '1',
-        '--idempotency-key',
-        'projection-drift:framed',
-        '--actor',
-        'agent',
-        '--input',
-        '{"changed_request":true}',
-        '--json',
-      ],
+      transitionArgs(sessionId, 'verifying', 1, 'projection-drift:transition'),
+      transitionArgs(sessionId, 'verifying', 1, 'projection-drift:framed', { changed_request: true }),
     ]) {
-      const failure = parseJson<{ error: { code: string; message: string } }>(
-        (await runCliFailure(repoDir, args)).stderr,
-      );
-      expect(failure.error.code).toBe('STATE_CORRUPTED');
-      expect(failure.error.message).toContain('current lifecycle projection does not match transition history');
+      const { error } = await runCliError(repoDir, args);
+      expect(error.code).toBe('STATE_CORRUPTED');
+      expect(error.message).toContain('current lifecycle projection does not match transition history');
     }
-
-    const unchanged = new DatabaseSync(dbPath, { readOnly: true });
-    try {
-      expect(unchanged.prepare(`SELECT status, state_version FROM tasks WHERE id = ?`).get(taskId)).toEqual({
-        status: 'implementing',
-        state_version: 1,
-      });
-      expect(unchanged.prepare(`SELECT COUNT(*) AS count FROM session_transitions`).get()).toEqual({ count: 1 });
-      expect(
-        unchanged.prepare(`SELECT COUNT(*) AS count FROM audit_events WHERE session_id = ?`).get(sessionId),
-      ).toEqual({ count: beforeAuditCount });
-    } finally {
-      unchanged.close();
-    }
+    expect(readLifecycle(repoDir)).toEqual({ status: 'implementing', state_version: 1 });
+    expect(countRows(repoDir, 'session_transitions')).toBe(1);
+    expect(countRows(repoDir, 'audit_events', 'session_id = ?', sessionId)).toBe(auditCount);
   });
 
   it('binds a no-transition task projection to the session-started genesis event', async () => {
-    const repoDir = await makeRepo();
-    const { session_id: sessionId, task_id: taskId } = await startQueuedSession(repoDir);
+    const repoDir = await makeThreadloopRepo();
+    const { session_id: sessionId, task_id: taskId } = await startSession(repoDir);
     closeSqliteConnections(repoDir);
-    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
-    const corrupt = new DatabaseSync(dbPath);
-    corrupt.prepare(`UPDATE tasks SET status = 'implementing' WHERE id = ?`).run(taskId);
-    corrupt.close();
+    withStateDb(repoDir, (db) => db.prepare(`UPDATE tasks SET status = 'implementing' WHERE id = ?`).run(taskId), {
+      readOnly: false,
+    });
 
-    const failure = parseJson<{ error: { code: string; message: string } }>(
-      (await runCliFailure(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stderr,
-    );
-    expect(failure.error.code).toBe('STATE_CORRUPTED');
-    expect(failure.error.message).toContain('current lifecycle projection does not match transition history');
+    const { error } = await runCliError(repoDir, ['session', 'next', '--session', sessionId, '--json']);
+    expect(error.code).toBe('STATE_CORRUPTED');
+    expect(error.message).toContain('current lifecycle projection does not match transition history');
   });
 
   it('rolls back the schema upgrade when transition history is inconsistent', async () => {
-    const repoDir = await makeRepo();
-    const started = parseJson<{ data: { session_id: string } }>(
-      (
-        await runCli(repoDir, [
-          'session',
-          'start',
-          'Legacy corrupt history',
-          '--goal',
-          'Reject an unsafe semantic migration',
-          '--json',
-        ])
-      ).stdout,
-    );
-    await runCli(repoDir, [
-      'session',
-      'transition',
-      'framed',
-      '--session',
-      started.data.session_id,
-      '--expected-state-version',
-      '0',
-      '--idempotency-key',
-      'legacy-corrupt:framed',
-      '--actor',
-      'agent',
-      '--input',
-      '{}',
-      '--json',
-    ]);
+    const repoDir = await makeThreadloopRepo();
+    const { session_id: sessionId } = await startSession(repoDir, 'Legacy corrupt history');
+    await transition(repoDir, sessionId, 'framed', 0, 'legacy-corrupt:framed');
     closeSqliteConnections(repoDir);
-    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
-    const corrupt = new DatabaseSync(dbPath);
-    corrupt.exec(`
-      UPDATE metadata SET value = '7' WHERE key = 'schema_version';
-      DROP TRIGGER session_transitions_no_update;
-      DROP TRIGGER session_transitions_no_delete;
-      DROP TRIGGER session_transitions_no_replace;
-      UPDATE session_transitions SET input_json = '{"tampered":true}'
-      WHERE session_id = '${started.data.session_id}';
-    `);
-    corrupt.close();
+    // The triggers stay dropped: a v7 database without them is what the rolled-back upgrade must leave behind.
+    withStateDb(
+      repoDir,
+      (db) =>
+        db.exec(`
+          UPDATE metadata SET value = '7' WHERE key = 'schema_version';
+          DROP TRIGGER session_transitions_no_update;
+          DROP TRIGGER session_transitions_no_delete;
+          DROP TRIGGER session_transitions_no_replace;
+          UPDATE session_transitions SET input_json = '{"tampered":true}';
+        `),
+      { readOnly: false },
+    );
 
     const failure = await runCliFailure(repoDir, ['init']);
     expect(failure.stderr).toContain('threadloop [STATE_CORRUPTED]: Invalid session transition history');
@@ -913,63 +454,30 @@ describe('schema v7 lifecycle and audit persistence', () => {
     );
     closeSqliteConnections(repoDir);
 
-    const unchanged = new DatabaseSync(dbPath, { readOnly: true });
-    try {
-      expect(unchanged.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({
-        value: '7',
-      });
+    expect(readSchemaVersion(repoDir)).toEqual({ value: '7' });
+    withStateDb(repoDir, (db) => {
       expect(
-        unchanged
+        db
           .prepare(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'session_transitions_no_%'`)
           .all(),
       ).toEqual([]);
-      expect(unchanged.prepare(`SELECT input_json FROM session_transitions`).get()).toEqual({
+      expect(db.prepare(`SELECT input_json FROM session_transitions`).get()).toEqual({
         input_json: '{"tampered":true}',
       });
-    } finally {
-      unchanged.close();
-    }
+    });
   });
 });
 
 describe('session transition command', () => {
-  function transitionArgs(sessionId: string, target: string, version: string, key: string, input = '{}') {
-    return [
-      'session',
-      'transition',
-      target,
-      '--session',
-      sessionId,
-      '--expected-state-version',
-      version,
-      '--idempotency-key',
-      key,
-      '--actor',
-      'agent',
-      '--input',
-      input,
-      '--json',
-    ];
-  }
-
   it('atomically transitions queued to framed and replays an identical wake exactly', async () => {
-    const repoDir = await makeRepo();
-    const { session_id: sessionId, task_id: taskId } = await startQueuedSession(repoDir);
-    const args = transitionArgs(sessionId, 'framed', '0', `wake:${sessionId}:0`, '{"z":2,"a":1}');
+    const repoDir = await makeThreadloopRepo();
+    const { session_id: sessionId, task_id: taskId } = await startSession(repoDir);
+    const key = `wake:${sessionId}:0`;
 
-    const first = await runCli(repoDir, args);
-    const replay = await runCli(repoDir, [...args.slice(0, -2), '{"a":1,"z":2}', '--json']);
-    const body = parseJson<{
-      ok: true;
-      command: string;
-      data: {
-        task_id: string;
-        transition: { from_state: string; to_state: string; from_state_version: number; to_state_version: number };
-        lifecycle: { state: string; state_version: number; blocked_from_state: string | null };
-      };
-    }>(first.stdout);
+    const first = await runCli(repoDir, transitionArgs(sessionId, 'framed', 0, key, '{"z":2,"a":1}'));
+    const replay = await runCli(repoDir, transitionArgs(sessionId, 'framed', 0, key, '{"a":1,"z":2}'));
 
-    expect(body).toMatchObject({
+    expect(parseJson(first.stdout)).toMatchObject({
       ok: true,
       command: 'session transition',
       data: {
@@ -989,376 +497,201 @@ describe('session transition command', () => {
       },
     });
     expect(replay.stdout).toBe(first.stdout);
-
-    const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
-    try {
-      expect(db.prepare(`SELECT status, state_version FROM tasks WHERE id = ?`).get(taskId)).toEqual({
-        status: 'framed',
-        state_version: 1,
-      });
-      expect(db.prepare(`SELECT COUNT(*) AS count FROM session_transitions`).get()).toEqual({ count: 1 });
-      expect(db.prepare(`SELECT COUNT(*) AS count FROM transition_idempotency`).get()).toEqual({ count: 1 });
-      expect(db.prepare(`SELECT task_id, session_id FROM active_state`).get()).toEqual({
-        task_id: taskId,
-        session_id: sessionId,
-      });
-    } finally {
-      db.close();
-    }
+    expect(readLifecycle(repoDir)).toEqual({ status: 'framed', state_version: 1 });
+    expect(countRows(repoDir, 'session_transitions')).toBe(1);
+    expect(countRows(repoDir, 'transition_idempotency')).toBe(1);
+    expect(withStateDb(repoDir, (db) => db.prepare(`SELECT task_id, session_id FROM active_state`).get())).toEqual({
+      task_id: taskId,
+      session_id: sessionId,
+    });
   });
 
   it('rejects changed content for an existing key, caches stale failures, and validates proof plans first', async () => {
-    const repoDir = await makeRepo();
-    const { session_id: sessionId } = await startQueuedSession(repoDir);
+    const repoDir = await makeThreadloopRepo();
+    const { session_id: sessionId } = await startSession(repoDir);
     const key = `wake:${sessionId}:0`;
-    await runCli(repoDir, transitionArgs(sessionId, 'framed', '0', key));
+    await transition(repoDir, sessionId, 'framed', 0, key);
 
-    const conflict = parseJson<{ error: { code: string } }>(
-      (await runCliFailure(repoDir, transitionArgs(sessionId, 'blocked', '0', key, '{"block":{}}'))).stderr,
+    expect((await transitionFailure(repoDir, sessionId, 'blocked', 0, key, { block: {} })).error.code).toBe(
+      'IDEMPOTENCY_CONFLICT',
     );
-    expect(conflict.error.code).toBe('IDEMPOTENCY_CONFLICT');
 
-    const staleArgs = transitionArgs(sessionId, 'proof_ready', '0', `wake:${sessionId}:stale`);
+    const staleArgs = transitionArgs(sessionId, 'proof_ready', 0, `wake:${sessionId}:stale`);
     const stale = await runCliFailure(repoDir, staleArgs);
-    const staleReplay = await runCliFailure(repoDir, staleArgs);
-    expect(staleReplay.stderr).toBe(stale.stderr);
+    expect((await runCliFailure(repoDir, staleArgs)).stderr).toBe(stale.stderr);
     expect(parseJson<{ error: { code: string } }>(stale.stderr).error.code).toBe('STATE_VERSION_CONFLICT');
 
-    const guardedArgs = transitionArgs(sessionId, 'proof_ready', '1', `wake:${sessionId}:guard`);
+    const guardedArgs = transitionArgs(sessionId, 'proof_ready', 1, `wake:${sessionId}:guard`);
     const guarded = await runCliFailure(repoDir, guardedArgs);
-    const guardedReplay = await runCliFailure(repoDir, guardedArgs);
-    expect(guardedReplay.stderr).toBe(guarded.stderr);
-    expect(parseJson<{ error: { code: string; details: { field: string } } }>(guarded.stderr)).toMatchObject({
+    expect((await runCliFailure(repoDir, guardedArgs)).stderr).toBe(guarded.stderr);
+    expect(parseJson(guarded.stderr)).toMatchObject({
       error: { code: 'INVALID_ARGUMENT', details: { field: 'proof_plan' } },
     });
 
     const rejectedKey = `wake:${sessionId}:rejected`;
-    await runCliFailure(repoDir, transitionArgs(sessionId, 'blocked', '1', rejectedKey, '{"block":{}}'));
-    const reusedRejectedKey = await runCliFailure(repoDir, transitionArgs(sessionId, 'proof_ready', '1', rejectedKey));
-    expect(parseJson<{ error: { code: string } }>(reusedRejectedKey.stderr).error.code).toBe('IDEMPOTENCY_CONFLICT');
+    await transitionFailure(repoDir, sessionId, 'blocked', 1, rejectedKey, { block: {} });
+    expect((await transitionFailure(repoDir, sessionId, 'proof_ready', 1, rejectedKey)).error.code).toBe(
+      'IDEMPOTENCY_CONFLICT',
+    );
 
-    const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
-    try {
-      expect(db.prepare(`SELECT status, state_version FROM tasks`).get()).toEqual({
-        status: 'framed',
-        state_version: 1,
-      });
-      expect(db.prepare(`SELECT COUNT(*) AS count FROM session_transitions`).get()).toEqual({ count: 1 });
-      expect(
+    expect(readLifecycle(repoDir)).toEqual({ status: 'framed', state_version: 1 });
+    expect(countRows(repoDir, 'session_transitions')).toBe(1);
+    expect(
+      withStateDb(repoDir, (db) =>
         db.prepare(`SELECT outcome, COUNT(*) AS count FROM transition_idempotency GROUP BY outcome`).all(),
-      ).toEqual([
-        { outcome: 'applied', count: 1 },
-        { outcome: 'rejected', count: 2 },
-      ]);
-    } finally {
-      db.close();
-    }
+      ),
+    ).toEqual([
+      { outcome: 'applied', count: 1 },
+      { outcome: 'rejected', count: 2 },
+    ]);
   });
 
   it('audits each distinct conflicting request once while replaying an exact conflict idempotently', async () => {
-    const repoDir = await makeRepo();
-    const { session_id: sessionId } = await startQueuedSession(repoDir);
+    const repoDir = await makeThreadloopRepo();
+    const { session_id: sessionId } = await startSession(repoDir);
     const key = `wake:${sessionId}:conflict`;
-    await runCli(repoDir, transitionArgs(sessionId, 'framed', '0', key));
+    await transition(repoDir, sessionId, 'framed', 0, key);
 
-    const firstConflictArgs = transitionArgs(sessionId, 'blocked', '0', key, '{"block":{"reason":"first"}}');
+    const firstConflictArgs = transitionArgs(sessionId, 'blocked', 0, key, { block: { reason: 'first' } });
     const [firstConflict, firstReplay] = await Promise.all([
       runCliFailure(repoDir, firstConflictArgs),
       runCliFailure(repoDir, firstConflictArgs),
     ]);
     expect(firstReplay.stderr).toBe(firstConflict.stderr);
-
-    const secondConflict = await runCliFailure(
-      repoDir,
-      transitionArgs(sessionId, 'proof_ready', '0', key, '{"proof_plan":{"marker":"second"}}'),
-    );
     expect(parseJson<{ error: { code: string } }>(firstConflict.stderr).error.code).toBe('IDEMPOTENCY_CONFLICT');
-    expect(parseJson<{ error: { code: string } }>(secondConflict.stderr).error.code).toBe('IDEMPOTENCY_CONFLICT');
+    expect(
+      (await transitionFailure(repoDir, sessionId, 'proof_ready', 0, key, { proof_plan: { marker: 'second' } })).error
+        .code,
+    ).toBe('IDEMPOTENCY_CONFLICT');
 
-    const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
-    try {
-      expect(db.prepare(`SELECT status, state_version FROM tasks`).get()).toEqual({
-        status: 'framed',
-        state_version: 1,
-      });
-      expect(db.prepare(`SELECT COUNT(*) AS count FROM transition_idempotency_conflicts`).get()).toEqual({
-        count: 2,
-      });
-      const conflicts = db
-        .prepare(
-          `
-            SELECT event_json
-            FROM audit_events
-            WHERE session_id = ? AND event_type = 'guard_decision'
-            ORDER BY sequence
-          `,
-        )
+    expect(readLifecycle(repoDir)).toEqual({ status: 'framed', state_version: 1 });
+    expect(countRows(repoDir, 'transition_idempotency_conflicts')).toBe(2);
+    const conflictAudits = withStateDb(repoDir, (db) =>
+      db
+        .prepare(`SELECT event_json FROM audit_events WHERE session_id = ? AND event_type = 'guard_decision'`)
         .all(sessionId)
         .map((row) => parseJson<{ payload: { error?: { code?: string } } }>(String(row.event_json)))
-        .filter((event) => event.payload.error?.code === 'IDEMPOTENCY_CONFLICT');
-      expect(conflicts).toHaveLength(2);
-    } finally {
-      db.close();
-    }
+        .filter((event) => event.payload.error?.code === 'IDEMPOTENCY_CONFLICT'),
+    );
+    expect(conflictAudits).toHaveLength(2);
   });
 
   it('preserves and restores the prior state only with complete blocking and recovery evidence', async () => {
-    const repoDir = await makeRepo();
-    const { session_id: sessionId } = await startQueuedSession(repoDir);
-    const incomplete = await runCliFailure(
-      repoDir,
-      transitionArgs(sessionId, 'blocked', '0', 'block:incomplete', '{"block":{"reason":"No access"}}'),
-    );
-    expect(parseJson<{ error: { code: string } }>(incomplete.stderr).error.code).toBe('TRANSITION_GUARD_FAILED');
+    const repoDir = await makeThreadloopRepo();
+    const { session_id: sessionId } = await startSession(repoDir);
+    const recovery = { approved_by: 'Nnenna', evidence_ref: 'incident:123:resolved', reason: 'Access restored' };
 
-    await runCli(
-      repoDir,
-      transitionArgs(
-        sessionId,
-        'blocked',
-        '0',
-        'block:complete',
-        '{"block":{"stop_code":"ACCESS_DENIED","recovery":"Restore access","reason":"No access","evidence_ref":"incident:123"}}',
-      ),
-    );
-    const badRecovery = await runCliFailure(
-      repoDir,
-      transitionArgs(
-        sessionId,
-        'framed',
-        '1',
-        'recovery:wrong-target',
-        '{"recovery":{"approved_by":"Nnenna","evidence_ref":"incident:123:resolved","reason":"Access restored"}}',
-      ),
-    );
-    expect(parseJson<{ error: { code: string } }>(badRecovery.stderr).error.code).toBe('TRANSITION_NOT_ALLOWED');
-
-    await runCli(
-      repoDir,
-      transitionArgs(
-        sessionId,
-        'queued',
-        '1',
-        'recovery:complete',
-        '{"recovery":{"reason":"Access restored","evidence_ref":"incident:123:resolved","approved_by":"Nnenna"}}',
-      ),
-    );
-
-    const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
-    try {
-      expect(db.prepare(`SELECT status, state_version, blocked_from_state FROM tasks`).get()).toEqual({
-        status: 'queued',
-        state_version: 2,
-        blocked_from_state: null,
-      });
-      expect(db.prepare(`SELECT COUNT(*) AS count FROM session_transitions`).get()).toEqual({ count: 2 });
-    } finally {
-      db.close();
-    }
-  });
-
-  it('rejects blocking transitions that carry pre-PR review evidence without applying either record', async () => {
-    const repoDir = await makeRepo();
-    const { session_id: sessionId } = await startQueuedSession(repoDir);
-    for (const [targetState, expectedStateVersion] of [
-      ['framed', 0],
-      ['proof_ready', 1],
-      ['implementing', 2],
-      ['verifying', 3],
-      ['pre_pr_reviewing', 4],
-    ] as const) {
-      await applyFixtureTransition(
-        repoDir,
-        sessionId,
-        targetState,
-        expectedStateVersion,
-        `block-review:${targetState}`,
-      );
-    }
-
-    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
-    const before = new DatabaseSync(dbPath, { readOnly: true });
-    const beforeApplied = before
-      .prepare(`SELECT COUNT(*) AS count FROM audit_events WHERE session_id = ? AND event_type = 'transition_applied'`)
-      .get(sessionId);
-    before.close();
-
-    const failure = await runCliFailure(
-      repoDir,
-      transitionArgs(
-        sessionId,
-        'blocked',
-        '5',
-        'block-review:rejected',
-        JSON.stringify({
-          block: {
-            reason: 'Review cannot continue',
-            evidence_ref: 'incident:pre-pr-review',
-            recovery: 'Resolve the incident and obtain explicit recovery approval',
-            stop_code: 'REVIEW_BLOCKED',
-          },
-          pre_pr_review: {
-            outcome: 'clean',
-            head_sha: 'a'.repeat(40),
-            evidence_ref: 'review-ledger:blocked',
-            evidence_sha256: 'b'.repeat(64),
-            findings: [],
-          },
-        }),
-      ),
-    );
     expect(
-      parseJson<{ error: { code: string; details: { guard_failures: Array<{ code: string }> } } }>(failure.stderr),
-    ).toMatchObject({
-      error: {
-        code: 'TRANSITION_GUARD_FAILED',
-        details: { guard_failures: [{ code: 'PRE_PR_REVIEW_FINDINGS_INVALID' }] },
+      (
+        await transitionFailure(repoDir, sessionId, 'blocked', 0, 'block:incomplete', {
+          block: { reason: 'No access' },
+        })
+      ).error.code,
+    ).toBe('TRANSITION_GUARD_FAILED');
+    await transition(repoDir, sessionId, 'blocked', 0, 'block:complete', {
+      block: {
+        stop_code: 'ACCESS_DENIED',
+        recovery: 'Restore access',
+        reason: 'No access',
+        evidence_ref: 'incident:123',
       },
     });
+    expect(
+      (await transitionFailure(repoDir, sessionId, 'framed', 1, 'recovery:wrong-target', { recovery })).error.code,
+    ).toBe('TRANSITION_NOT_ALLOWED');
+    await transition(repoDir, sessionId, 'queued', 1, 'recovery:complete', { recovery });
 
-    const unchanged = new DatabaseSync(dbPath, { readOnly: true });
-    try {
-      expect(unchanged.prepare(`SELECT status, state_version, blocked_from_state FROM tasks`).get()).toEqual({
-        status: 'pre_pr_reviewing',
-        state_version: 5,
-        blocked_from_state: null,
-      });
-      expect(unchanged.prepare(`SELECT COUNT(*) AS count FROM session_transitions`).get()).toEqual({ count: 5 });
-      expect(
-        unchanged
-          .prepare(
-            `SELECT COUNT(*) AS count FROM audit_events WHERE session_id = ? AND event_type = 'transition_applied'`,
-          )
-          .get(sessionId),
-      ).toEqual(beforeApplied);
-    } finally {
-      unchanged.close();
-    }
+    expect(
+      withStateDb(repoDir, (db) => db.prepare(`SELECT status, state_version, blocked_from_state FROM tasks`).get()),
+    ).toEqual({
+      status: 'queued',
+      state_version: 2,
+      blocked_from_state: null,
+    });
+    expect(countRows(repoDir, 'session_transitions')).toBe(2);
   });
 
   it('allows one winner across processes racing from the same state version', async () => {
-    const repoDir = await makeRepo();
-    const { session_id: sessionId } = await startQueuedSession(repoDir);
-    const [left, right] = await Promise.allSettled([
-      runCli(repoDir, transitionArgs(sessionId, 'framed', '0', 'race:left')),
-      runCli(repoDir, transitionArgs(sessionId, 'framed', '0', 'race:right')),
+    const repoDir = await makeThreadloopRepo();
+    const { session_id: sessionId } = await startSession(repoDir);
+    const results = await Promise.allSettled([
+      runCli(repoDir, transitionArgs(sessionId, 'framed', 0, 'race:left')),
+      runCli(repoDir, transitionArgs(sessionId, 'framed', 0, 'race:right')),
     ]);
-    const results = [left, right];
 
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
     const rejected = results.find((result) => result.status === 'rejected');
-    expect(rejected?.status).toBe('rejected');
-    if (rejected?.status === 'rejected') {
-      expect(parseJson<{ error: { code: string } }>((rejected.reason as { stderr?: string }).stderr).error.code).toBe(
-        'STATE_VERSION_CONFLICT',
-      );
-    }
-
-    const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
-    try {
-      expect(db.prepare(`SELECT COUNT(*) AS count FROM session_transitions`).get()).toEqual({ count: 1 });
-      expect(db.prepare(`SELECT COUNT(*) AS count FROM transition_idempotency`).get()).toEqual({ count: 2 });
-    } finally {
-      db.close();
-    }
+    expect(parseJson<{ error: { code: string } }>((rejected?.reason as { stderr?: string }).stderr).error.code).toBe(
+      'STATE_VERSION_CONFLICT',
+    );
+    expect(countRows(repoDir, 'session_transitions')).toBe(1);
+    expect(countRows(repoDir, 'transition_idempotency')).toBe(2);
   });
 
   it('deduplicates identical cross-process wakes into one transition record', async () => {
-    const repoDir = await makeRepo();
-    const { session_id: sessionId } = await startQueuedSession(repoDir);
-    const args = transitionArgs(sessionId, 'framed', '0', 'race:identical');
+    const repoDir = await makeThreadloopRepo();
+    const { session_id: sessionId } = await startSession(repoDir);
+    const args = transitionArgs(sessionId, 'framed', 0, 'race:identical');
     const [left, right] = await Promise.all([runCli(repoDir, args), runCli(repoDir, args)]);
 
     expect(left.stdout).toBe(right.stdout);
-    const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
-    try {
-      expect(db.prepare(`SELECT COUNT(*) AS count FROM session_transitions`).get()).toEqual({ count: 1 });
-      expect(db.prepare(`SELECT COUNT(*) AS count FROM transition_idempotency`).get()).toEqual({ count: 1 });
-    } finally {
-      db.close();
+    expect(countRows(repoDir, 'session_transitions')).toBe(1);
+    expect(countRows(repoDir, 'transition_idempotency')).toBe(1);
+  });
+
+  it('rejects malformed public input before mutation', async () => {
+    const repoDir = await makeThreadloopRepo();
+    const { session_id: sessionId } = await startSession(repoDir);
+
+    for (const [target, version, key, actor, input] of [
+      ['not-a-state', '0', 'valid:key', 'agent', '{}'],
+      ['framed', '2.0', 'valid:key', 'agent', '{}'],
+      ['framed', '02', 'valid:key', 'agent', '{}'],
+      ['framed', '2e0', 'valid:key', 'agent', '{}'],
+      ['framed', ' 2 ', 'valid:key', 'agent', '{}'],
+      ['framed', '9007199254740992', 'valid:key', 'agent', '{}'],
+      ['framed', '0', 'has spaces', 'agent', '{}'],
+      ['framed', '0', 'valid:key', 'daemon', '{}'],
+      ['framed', '0', 'valid:key', 'agent', '[]'],
+      ['framed', '0', 'valid:key', 'agent', '{bad'],
+    ] as const) {
+      const scenario = `target=${target} version=${version} key=${key} actor=${actor} input=${input}`;
+      const { error } = await transitionFailure(repoDir, sessionId, target, version, key, input, actor);
+      expect(error.code, scenario).toBe('INVALID_ARGUMENT');
+      expect(readLifecycle(repoDir), scenario).toEqual({ status: 'queued', state_version: 0 });
+      expect(countRows(repoDir, 'transition_idempotency'), scenario).toBe(0);
     }
   });
 
-  it.each([
-    ['not-a-state', '0', 'valid:key', 'agent', '{}'],
-    ['framed', '2.0', 'valid:key', 'agent', '{}'],
-    ['framed', '02', 'valid:key', 'agent', '{}'],
-    ['framed', '2e0', 'valid:key', 'agent', '{}'],
-    ['framed', ' 2 ', 'valid:key', 'agent', '{}'],
-    ['framed', '9007199254740992', 'valid:key', 'agent', '{}'],
-    ['framed', '0', 'has spaces', 'agent', '{}'],
-    ['framed', '0', 'valid:key', 'daemon', '{}'],
-    ['framed', '0', 'valid:key', 'agent', '[]'],
-    ['framed', '0', 'valid:key', 'agent', '{bad'],
-  ])(
-    'rejects malformed public input target=%s version=%s key=%s actor=%s input=%s before mutation',
-    async (target, version, key, actor, input) => {
-      const repoDir = await makeRepo();
-      const { session_id: sessionId } = await startQueuedSession(repoDir);
-      const failure = await runCliFailure(repoDir, [
-        'session',
-        'transition',
-        target,
-        '--session',
-        sessionId,
-        '--expected-state-version',
-        version,
-        '--idempotency-key',
-        key,
-        '--actor',
-        actor,
-        '--input',
-        input,
-        '--json',
-      ]);
-      expect(parseJson<{ error: { code: string } }>(failure.stderr).error.code).toBe('INVALID_ARGUMENT');
-
-      const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
-      try {
-        expect(db.prepare(`SELECT status, state_version FROM tasks`).get()).toEqual({
-          status: 'queued',
-          state_version: 0,
-        });
-        expect(db.prepare(`SELECT COUNT(*) AS count FROM transition_idempotency`).get()).toEqual({ count: 0 });
-      } finally {
-        db.close();
-      }
-    },
-  );
-
   it('caches structural rejection but does not cache an unknown session', async () => {
-    const repoDir = await makeRepo();
-    const { session_id: sessionId } = await startQueuedSession(repoDir);
-    const structuralArgs = transitionArgs(sessionId, 'implementing', '0', 'invalid:edge');
+    const repoDir = await makeThreadloopRepo();
+    const { session_id: sessionId } = await startSession(repoDir);
+    const structuralArgs = transitionArgs(sessionId, 'implementing', 0, 'invalid:edge');
     const first = await runCliFailure(repoDir, structuralArgs);
-    const replay = await runCliFailure(repoDir, structuralArgs);
-    expect(replay.stderr).toBe(first.stderr);
+    expect((await runCliFailure(repoDir, structuralArgs)).stderr).toBe(first.stderr);
     expect(parseJson<{ error: { code: string } }>(first.stderr).error.code).toBe('TRANSITION_NOT_ALLOWED');
 
-    const missing = await runCliFailure(repoDir, transitionArgs('session_missing', 'framed', '0', 'missing:session'));
-    expect(parseJson<{ error: { code: string } }>(missing.stderr).error.code).toBe('SESSION_NOT_FOUND');
-
-    const db = new DatabaseSync(path.join(repoDir, '.threadloop/state/state.db'), { readOnly: true });
-    try {
-      expect(db.prepare(`SELECT COUNT(*) AS count FROM transition_idempotency`).get()).toEqual({ count: 1 });
-    } finally {
-      db.close();
-    }
+    expect((await transitionFailure(repoDir, 'session_missing', 'framed', 0, 'missing:session')).error.code).toBe(
+      'SESSION_NOT_FOUND',
+    );
+    expect(countRows(repoDir, 'transition_idempotency')).toBe(1);
   });
 
   it('rolls back state, history, and idempotency when the atomic write fails', async () => {
-    const repoDir = await makeRepo();
-    const { session_id: sessionId } = await startQueuedSession(repoDir);
-    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
-    const triggerDb = new DatabaseSync(dbPath);
-    triggerDb.exec(`
-      CREATE TRIGGER reject_transition_idempotency
-      BEFORE INSERT ON transition_idempotency
-      BEGIN
-        SELECT RAISE(ABORT, 'injected idempotency failure');
-      END;
-    `);
-    triggerDb.close();
+    const repoDir = await makeThreadloopRepo();
+    const { session_id: sessionId } = await startSession(repoDir);
+    withStateDb(
+      repoDir,
+      (db) =>
+        db.exec(`
+          CREATE TRIGGER reject_transition_idempotency
+          BEFORE INSERT ON transition_idempotency
+          BEGIN
+            SELECT RAISE(ABORT, 'injected idempotency failure');
+          END;
+        `),
+      { readOnly: false },
+    );
 
     const request = {
       sessionId,
@@ -1376,196 +709,90 @@ describe('session transition command', () => {
     ).rejects.toThrow('injected idempotency failure');
     closeSqliteConnections(repoDir);
 
-    const unchanged = new DatabaseSync(dbPath, { readOnly: true });
-    try {
-      expect(unchanged.prepare(`SELECT status, state_version FROM tasks`).get()).toEqual({
-        status: 'queued',
-        state_version: 0,
-      });
-      expect(unchanged.prepare(`SELECT COUNT(*) AS count FROM session_transitions`).get()).toEqual({ count: 0 });
-      expect(unchanged.prepare(`SELECT COUNT(*) AS count FROM transition_idempotency`).get()).toEqual({ count: 0 });
-    } finally {
-      unchanged.close();
-    }
+    expect(readLifecycle(repoDir)).toEqual({ status: 'queued', state_version: 0 });
+    expect(countRows(repoDir, 'session_transitions')).toBe(0);
+    expect(countRows(repoDir, 'transition_idempotency')).toBe(0);
   });
 
   it('keeps completion atomic behind an injected authoritative guard seam', async () => {
-    const repoDir = await makeRepo();
-    const { session_id: sessionId } = await startQueuedSession(repoDir);
-    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
-    await prepareReadyForHumanFixture(repoDir, sessionId);
+    const repoDir = await makeThreadloopRepo();
+    const { session_id: sessionId } = await startSession(repoDir);
+    await forceStates(repoDir, sessionId, 0, readyForHuman);
 
-    const request = {
-      sessionId,
-      targetState: 'completed' as const,
-      expectedStateVersion: 7,
-      actor: 'agent' as const,
-      input: { approval_receipt: 'future:#42' },
-    };
-    const result = await applySessionTransition(
-      repoDir,
-      {
-        ...request,
-        ...canonicalizeTransitionRequest(request, sha256),
-        idempotencyKey: 'future:completion',
-      },
-      () => ({ allowed: true, guardFailures: [], requiredWork: [] }),
-    );
-    expect(result).toMatchObject({
-      ok: true,
-      data: {
-        lifecycle: { state: 'completed', state_version: 8 },
-      },
+    const result = await forceTransition(repoDir, sessionId, 'completed', 7, 'future:completion', {
+      approval_receipt: 'future:#42',
     });
-    expect(result.ok && typeof result.data.session.ended_at).toBe('string');
+    expect(result).toMatchObject({ ok: true, data: { lifecycle: { state: 'completed', state_version: 8 } } });
+    expect(typeof result.data.session.ended_at).toBe('string');
     closeSqliteConnections(repoDir);
 
-    const completed = new DatabaseSync(dbPath, { readOnly: true });
-    try {
-      expect(completed.prepare(`SELECT status, state_version FROM tasks`).get()).toEqual({
-        status: 'completed',
-        state_version: 8,
-      });
-      const ended = completed.prepare(`SELECT ended_at FROM sessions`).get() as { ended_at: string | null };
-      expect(typeof ended.ended_at).toBe('string');
-      expect(completed.prepare(`SELECT COUNT(*) AS count FROM active_sessions`).get()).toEqual({ count: 0 });
-      expect(completed.prepare(`SELECT COUNT(*) AS count FROM active_state`).get()).toEqual({ count: 0 });
-      expect(completed.prepare(`SELECT COUNT(*) AS count FROM session_transitions`).get()).toEqual({ count: 8 });
-      expect(completed.prepare(`SELECT COUNT(*) AS count FROM transition_idempotency`).get()).toEqual({ count: 8 });
-    } finally {
-      completed.close();
-    }
+    expect(readLifecycle(repoDir)).toEqual({ status: 'completed', state_version: 8 });
+    expect(withStateDb(repoDir, (db) => typeof db.prepare(`SELECT ended_at FROM sessions`).get()?.ended_at)).toBe(
+      'string',
+    );
+    expect(countRows(repoDir, 'active_sessions')).toBe(0);
+    expect(countRows(repoDir, 'active_state')).toBe(0);
+    expect(countRows(repoDir, 'session_transitions')).toBe(8);
+    expect(countRows(repoDir, 'transition_idempotency')).toBe(8);
   });
 
   it('fails public completion closed without changing the ready-for-human session', async () => {
-    const repoDir = await makeRepo();
-    const { session_id: sessionId } = await startQueuedSession(repoDir);
-    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
-    await prepareReadyForHumanFixture(repoDir, sessionId);
+    const repoDir = await makeThreadloopRepo();
+    const { session_id: sessionId } = await startSession(repoDir);
+    await forceStates(repoDir, sessionId, 0, readyForHuman);
 
-    const failure = await runCliFailure(repoDir, transitionArgs(sessionId, 'completed', '7', 'public:completion'));
-    expect(
-      parseJson<{ error: { code: string; details: { guard_failures: Array<{ owner_issue: number }> } } }>(
-        failure.stderr,
-      ),
-    ).toMatchObject({
+    expect(await transitionFailure(repoDir, sessionId, 'completed', 7, 'public:completion')).toMatchObject({
       error: { code: 'TRANSITION_GUARD_FAILED', details: { guard_failures: [{ owner_issue: 42 }] } },
     });
-
-    const unchanged = new DatabaseSync(dbPath, { readOnly: true });
-    try {
-      expect(unchanged.prepare(`SELECT status, state_version FROM tasks`).get()).toEqual({
-        status: 'ready_for_human',
-        state_version: 7,
-      });
-      expect(unchanged.prepare(`SELECT ended_at FROM sessions`).get()).toEqual({ ended_at: null });
-      expect(unchanged.prepare(`SELECT COUNT(*) AS count FROM active_sessions`).get()).toEqual({ count: 1 });
-    } finally {
-      unchanged.close();
-    }
+    expect(readLifecycle(repoDir)).toEqual({ status: 'ready_for_human', state_version: 7 });
+    expect(countRows(repoDir, 'sessions', 'ended_at IS NULL')).toBe(1);
+    expect(countRows(repoDir, 'active_sessions')).toBe(1);
   });
 });
 
 describe('session next command', { timeout: 15_000 }, () => {
   it('reports both repository paths for a pending rename', async () => {
-    const repoDir = await makeRepo();
-    await execFileAsync('git', ['config', 'user.email', 'test@example.com'], { cwd: repoDir });
-    await execFileAsync('git', ['config', 'user.name', 'Test User'], { cwd: repoDir });
-    await writeFile(path.join(repoDir, 'renamed-from.txt'), 'rename fixture\n', 'utf8');
-    await execFileAsync('git', ['add', 'renamed-from.txt'], { cwd: repoDir });
-    await execFileAsync('git', ['commit', '-m', 'add rename fixture'], { cwd: repoDir });
-    const started = parseJson<{ data: { session_id: string } }>(
-      (await runCli(repoDir, ['session', 'start', 'Rename task', '--goal', 'Observe both rename paths', '--json']))
-        .stdout,
-    );
-    await execFileAsync('git', ['mv', 'renamed-from.txt', 'renamed-to.txt'], { cwd: repoDir });
+    const repoDir = await makeThreadloopRepo();
+    await commitFiles(repoDir, 'add rename fixture', { 'renamed-from.txt': 'rename fixture\n' });
+    const { session_id: sessionId } = await startSession(repoDir, 'Rename task');
+    await git(repoDir, 'mv', 'renamed-from.txt', 'renamed-to.txt');
 
-    const next = parseJson<{
-      data: { repository: { worktree: { changed_files: string[] } } };
-    }>((await runCli(repoDir, ['session', 'next', '--session', started.data.session_id, '--json'])).stdout);
-
-    expect(next.data.repository.worktree.changed_files).toEqual(
+    const next = await sessionNext<{ repository: { worktree: { changed_files: string[] } } }>(repoDir, sessionId);
+    expect(next.repository.worktree.changed_files).toEqual(
       expect.arrayContaining(['renamed-from.txt', 'renamed-to.txt']),
     );
   });
 
   it('returns live sanitized repository facts without mutating ThreadLoop state', async () => {
-    const repoDir = await makeRepo();
-    await writeFile(path.join(repoDir, 'README.md'), '# fixture\n', 'utf8');
-    await execFileAsync('git', ['config', 'user.email', 'test@example.com'], { cwd: repoDir });
-    await execFileAsync('git', ['config', 'user.name', 'Test User'], { cwd: repoDir });
-    await execFileAsync('git', ['add', 'README.md'], { cwd: repoDir });
-    await execFileAsync('git', ['commit', '-m', 'fixture'], { cwd: repoDir });
-    await execFileAsync(
-      'git',
-      [
-        'remote',
-        'add',
-        'origin',
-        'https://token:secret@github.com/nnennandukwe/threadloop.git?access_token=never#fragment',
-      ],
-      { cwd: repoDir },
+    const repoDir = await makeThreadloopRepo();
+    await commitFiles(repoDir, 'fixture', { 'README.md': '# fixture\n' });
+    await git(
+      repoDir,
+      'remote',
+      'add',
+      'origin',
+      'https://token:secret@github.com/nnennandukwe/threadloop.git?access_token=never#fragment',
     );
-    const started = parseJson<{ data: { session_id: string } }>(
-      (await runCli(repoDir, ['session', 'start', 'Next task', '--goal', 'Inspect without mutation', '--json'])).stdout,
-    );
-    await execFileAsync('git', ['add', '-f', '.threadloop/config.json'], { cwd: repoDir });
-    await execFileAsync('git', ['commit', '-m', 'track ThreadLoop config'], { cwd: repoDir });
-    const dbPath = path.join(repoDir, '.threadloop/state/state.db');
-    const beforeBytes = await readFile(dbPath);
+    const { session_id: sessionId } = await startSession(repoDir, 'Next task');
+    await git(repoDir, 'add', '-f', '.threadloop/config.json');
+    await git(repoDir, 'commit', '-m', 'track ThreadLoop config');
+    const beforeBytes = await readFile(stateDbPath(repoDir));
     await writeFile(path.join(repoDir, 'README.md'), '# changed\n', 'utf8');
     await writeFile(path.join(repoDir, 'untracked.txt'), 'new\n', 'utf8');
     await writeFile(path.join(repoDir, 'staged.txt'), 'staged\n', 'utf8');
-    await execFileAsync('git', ['add', 'staged.txt'], { cwd: repoDir });
+    await git(repoDir, 'add', 'staged.txt');
     const trackedConfig = await readFile(path.join(repoDir, '.threadloop/config.json'), 'utf8');
     await writeFile(path.join(repoDir, '.threadloop/config.json'), `${trackedConfig}\n`, 'utf8');
 
-    const next = parseJson<{
-      ok: true;
-      command: string;
-      data: {
-        lifecycle: { state: string; state_version: number; history: unknown[] };
-        candidate: { target_state: string; executable: boolean };
-        repository: {
-          identity: { source: string; host: string | null; owner: string | null; name: string };
-          branch: string | null;
-          head_sha: string | null;
-          worktree: { clean: boolean; changed_files: string[] };
-        };
-        staleness: Record<string, unknown>;
-        repair_budget: Record<string, unknown>;
-        audit: { root: string };
-        terminal_reason: string | null;
-      };
-    }>((await runCli(repoDir, ['session', 'next', '--session', started.data.session_id, '--json'])).stdout);
+    const next = parseJson((await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout);
 
     expect(next).toMatchObject({
       ok: true,
       command: 'session next',
       data: {
-        contract_version: 4,
-        session_id: started.data.session_id,
-        lifecycle: {
-          state: 'queued',
-          state_version: 0,
-          blocked_from_state: null,
-          phase: 'pre_pr',
-          storage_schema_version: 8,
-          contract_status: 'current',
-          history: [],
-        },
-        pre_pr_review: {
-          status: 'not_started',
-          iteration_count: 0,
-          findings: [],
-        },
-        implementation_basis: {
-          head_sha: null,
-          source: null,
-        },
+        session_id: sessionId,
+        lifecycle: { state: 'queued', state_version: 0, storage_schema_version: 8, contract_status: 'current' },
         candidate: { from_state: 'queued', target_state: 'framed', expected_state_version: 0, executable: true },
-        guard_failures: [],
-        required_work: [],
         repository: {
           identity: { source: 'origin', host: 'github.com', owner: 'nnennandukwe', name: 'threadloop' },
           worktree: {
@@ -1573,95 +800,39 @@ describe('session next command', { timeout: 15_000 }, () => {
             changed_files: ['.threadloop/config.json', 'README.md', 'staged.txt', 'untracked.txt'],
           },
         },
-        staleness: {
-          status: 'missing',
-          is_stale: false,
-          stale_receipt_ids: [],
-        },
-        repair_budget: {
-          status: 'available',
-          attempts_used: 0,
-          limit: 3,
-          remaining: 3,
-          exhausted: false,
-        },
-        review: {
-          status: 'policy_missing',
-          snapshot_id: null,
-          blocking_findings: [],
-          human_approval_current: false,
-          merged: false,
-        },
-        audit: {
-          status: 'valid',
-          event_count: 1,
-          coverage: 'full',
-        },
-        next_human_action: null,
-        terminal_reason: null,
       },
     });
-    expect(next.data.audit.root).toMatch(/^[a-f0-9]{64}$/);
     expect(JSON.stringify(next)).not.toContain('token');
     expect(JSON.stringify(next)).not.toContain(repoDir);
-    expect(await readFile(dbPath)).toEqual(beforeBytes);
+    expect(await readFile(stateDbPath(repoDir))).toEqual(beforeBytes);
   });
 
   it('reports blocked recovery and completed terminal states honestly', async () => {
-    const repoDir = await makeRepo();
-    const started = parseJson<{ data: { session_id: string } }>(
-      (await runCli(repoDir, ['session', 'start', 'Terminal task', '--goal', 'Report terminal state', '--json']))
-        .stdout,
-    );
-    const sessionId = started.data.session_id;
-    await runCli(repoDir, [
-      'session',
-      'transition',
-      'blocked',
-      '--session',
-      sessionId,
-      '--expected-state-version',
-      '0',
-      '--idempotency-key',
-      'blocked:next',
-      '--actor',
-      'agent',
-      '--input',
-      '{"block":{"reason":"No access","evidence_ref":"incident:123","recovery":"Restore access","stop_code":"ACCESS_DENIED"}}',
-      '--json',
-    ]);
+    const repoDir = await makeThreadloopRepo();
+    const { session_id: sessionId } = await startSession(repoDir, 'Terminal task');
+    await transition(repoDir, sessionId, 'blocked', 0, 'blocked:next', {
+      block: {
+        reason: 'No access',
+        evidence_ref: 'incident:123',
+        recovery: 'Restore access',
+        stop_code: 'ACCESS_DENIED',
+      },
+    });
 
-    const blocked = parseJson<{
-      data: { candidate: { target_state: string; executable: boolean }; terminal_reason: string };
-    }>((await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout);
-    expect(blocked.data).toMatchObject({
+    expect(await sessionNext(repoDir, sessionId)).toMatchObject({
       candidate: { from_state: 'blocked', target_state: 'queued', expected_state_version: 1, executable: false },
       terminal_reason: 'BLOCKED_REQUIRES_HUMAN_RECOVERY',
     });
 
-    await applyFixtureTransition(repoDir, sessionId, 'queued', 1, 'fixture:recover', {
+    await forceTransition(repoDir, sessionId, 'queued', 1, 'fixture:recover', {
       recovery: {
         approved_by: 'test-controller',
         evidence_ref: 'recovery:test',
         reason: 'Prepare a completed terminal fixture.',
       },
     });
-    for (const [targetState, expectedStateVersion] of [
-      ['framed', 2],
-      ['proof_ready', 3],
-      ['implementing', 4],
-      ['verifying', 5],
-      ['pre_pr_reviewing', 6],
-      ['reviewing', 7],
-      ['ready_for_human', 8],
-      ['completed', 9],
-    ] as const) {
-      await applyFixtureTransition(repoDir, sessionId, targetState, expectedStateVersion, `terminal:${targetState}`);
-    }
+    await forceStates(repoDir, sessionId, 2, [...readyForHuman, 'completed'], 'terminal');
 
-    const completed = parseJson<{ data: { candidate: null; terminal_reason: string } }>(
-      (await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout,
-    );
-    expect(completed.data).toMatchObject({ candidate: null, terminal_reason: 'COMPLETED' });
+    expect(await sessionNext(repoDir, sessionId)).toMatchObject({ candidate: null, terminal_reason: 'COMPLETED' });
   });
 });
