@@ -90,15 +90,13 @@ export async function startFramedSession(
   return sessionId;
 }
 
-/** A contract-v4 proof plan with one gate, bound to the fixture repository's gate and review trust policies. */
+/** A contract-v4 proof plan with one `check` gate, bound to the fixture gate and review trust policies. */
 export function proofPlan({
-  gateId = 'check',
   command = ['node', '-e', 'process.stdout.write("ok\\n")'],
   timeoutMs = 5_000,
   workingDirectory = '.',
   setup,
 }: {
-  gateId?: string;
   command?: string[] | undefined;
   timeoutMs?: number;
   workingDirectory?: string;
@@ -111,7 +109,7 @@ export function proofPlan({
     review: trustPolicy('review'),
     gates: [
       {
-        id: gateId,
+        id: 'check',
         ...(setup ? { setup } : {}),
         command,
         working_directory: workingDirectory,
