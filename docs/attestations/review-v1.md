@@ -129,6 +129,10 @@ Only after verification does ThreadLoop promote the canonical package to
 projection and audit event transactionally. Identical imports are idempotent. Reusing a receipt id for different bytes
 is a conflict. Concurrent identical imports produce one row and one event.
 
+Imports are ordered by observation, not arrival. A snapshot whose `observed_at` is earlier than any snapshot already
+imported for the session, or whose pull request number differs from theirs, is a conflict. This keeps "latest" equal to
+"most recently observed": a previously signed approval cannot be imported after a newer blocking review to hide it.
+
 ## Lifecycle policy
 
 The latest valid imported receipt is authoritative:
