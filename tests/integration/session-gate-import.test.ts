@@ -985,6 +985,10 @@ describe('signed gate receipt import', () => {
     } finally {
       nodeSignedReceiptFileSystem.readWithinLimit = originalReadWithinLimit;
     }
-    expect(controlledReads).toContainEqual({ fileName: 'signed-receipt.json', maxBytes: 10 * 1024 * 1024 });
+    // Every controlled read must be bounded, not merely one of them.
+    expect(controlledReads.length).toBeGreaterThan(0);
+    expect(controlledReads).toEqual(
+      controlledReads.map(() => ({ fileName: 'signed-receipt.json', maxBytes: 10 * 1024 * 1024 })),
+    );
   });
 });
