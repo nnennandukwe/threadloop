@@ -1,2 +1,0 @@
-a: &shared [1]
-b: *shared
