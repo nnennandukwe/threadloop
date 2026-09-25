@@ -43,7 +43,6 @@ import {
   observeRepository,
   hasCommittedDiff,
   refExists,
-  resolveRepoRoot,
   snapshotRepo,
 } from '../adapters/git/client.js';
 import {
@@ -63,6 +62,7 @@ import {
 } from '../domain/session-transition.js';
 import type { ProofGuardContext, TransitionGuardDecision, TransitionRequest } from '../domain/session-transition.js';
 import {
+  bindStoredProofPlan,
   canonicalizeProofPlan,
   evaluateProofEvidence,
   hasReviewTrustPolicy,
@@ -105,7 +105,7 @@ import {
   importSignedReviewReceiptPackage,
   type SignedReceiptImportInput,
 } from './signed-receipt-import.js';
-import { mapAuditChainCorruption } from './audit-service-errors.js';
+import { assertInitializedReadOnly, mapAuditChainCorruption, resolveRepositoryRoot } from './preconditions.js';
 import { readControlledSignedReceiptPackageContents } from './signed-receipt-files.js';
 
 export interface StartTaskInput {
@@ -174,7 +174,7 @@ export async function initThreadloop(cwd: string) {
         'Restore the audit ledger from trusted storage, then rerun `threadloop init`.',
       );
     }
-    if (isSchemaStateError(error)) {
+    if (error instanceof StateCorruptedError) {
       throw new ThreadloopError('STATE_CORRUPTED', error instanceof Error ? error.message : String(error), {
         cause: error,
         details: {
@@ -388,11 +388,6 @@ export async function transitionSession(input: TransitionSessionInput) {
     if (error instanceof AuditChainCorruptedError) {
       throw mapAuditChainCorruption(input.sessionId, error);
     }
-    if (isSchemaStateError(error)) {
-      throw new ThreadloopError('STATE_CORRUPTED', error instanceof Error ? error.message : String(error), {
-        cause: error,
-      });
-    }
     if (error instanceof EvidenceChangedError) {
       throw new ThreadloopError('STATE_BUSY', `${error.message} Retry the same idempotency key.`, {
         cause: error,
@@ -550,7 +545,7 @@ export async function runSessionGate(input: RunSessionGateInput) {
     if (error instanceof AuditChainCorruptedError) {
       throw mapAuditChainCorruption(input.sessionId, error);
     }
-    if (isSchemaStateError(error)) {
+    if (error instanceof StateCorruptedError) {
       throw new ThreadloopError('STATE_CORRUPTED', error instanceof Error ? error.message : String(error), {
         cause: error,
         details: {
@@ -587,28 +582,17 @@ export async function runSessionGate(input: RunSessionGateInput) {
     });
   }
 
-  let canonicalPlan: ReturnType<typeof canonicalizeProofPlan>;
-  try {
-    canonicalPlan = canonicalizeProofPlan(JSON.parse(context.plan.json) as unknown, sha256);
-  } catch (error) {
-    throw new ThreadloopError('PROOF_PLAN_CORRUPTED', 'The stored proof plan is invalid.', {
-      cause: error,
-      details: {
-        session_id: input.sessionId,
-        hint: 'Restore the proof plan from a trusted backup or start a new session.',
-      },
-    });
-  }
-  if (canonicalPlan.json !== context.plan.json || canonicalPlan.sha256 !== context.plan.sha256) {
-    throw new ThreadloopError('PROOF_PLAN_CORRUPTED', 'The stored proof plan digest does not match its contents.', {
+  const bound = bindStoredProofPlan(context.plan, sha256);
+  if ('problem' in bound) {
+    throw new ThreadloopError('PROOF_PLAN_CORRUPTED', bound.problem, {
       details: {
         session_id: input.sessionId,
         expected_sha256: context.plan.sha256,
-        actual_sha256: canonicalPlan.sha256,
         hint: 'Restore the proof plan from a trusted backup or start a new session.',
       },
     });
   }
+  const canonicalPlan = bound.plan;
   const gate = canonicalPlan.plan.gates.find((candidate) => candidate.id === input.gateId);
   if (!gate) {
     throw new ThreadloopError('GATE_NOT_DECLARED', `Gate ${input.gateId} is not declared in the proof plan.`, {
@@ -714,16 +698,9 @@ export async function runSessionGate(input: RunSessionGateInput) {
     };
   });
   const result = classifyGateOutcome({ setup: gateExecution.setup, gate: gateExecution.gate, invalidated });
-  const headAfter = after?.headSha ?? before.headSha;
-  const cleanAfter = after?.clean ?? false;
-  const execution = {
-    contract_version: 2,
-    receipt_id: receiptId,
-    session_id: input.sessionId,
-    gate_id: gate.id,
-    plan_sha256: context.plan.sha256,
-    result,
-    setup: recordedSetupArtifacts,
+  // The execution artifact and the receipt describe one run, so they share these fields verbatim.
+  const identity = { session_id: input.sessionId, gate_id: gate.id, plan_sha256: context.plan.sha256, result };
+  const run = {
     command: gate.command,
     working_directory: gate.working_directory,
     timeout_ms: gate.timeout_ms,
@@ -733,9 +710,17 @@ export async function runSessionGate(input: RunSessionGateInput) {
     exit_status: gateExecution.gate?.exitStatus ?? null,
     signal: gateExecution.gate?.signal ?? null,
     head_before: before.headSha,
-    head_after: headAfter,
+    head_after: after?.headSha ?? before.headSha,
     clean_before: before.clean,
-    clean_after: cleanAfter,
+    clean_after: after?.clean ?? false,
+  };
+  const sensor = { name: 'threadloop-local-gate', contract_version: 2 } as const;
+  const execution = {
+    contract_version: 2,
+    receipt_id: receiptId,
+    ...identity,
+    setup: recordedSetupArtifacts,
+    ...run,
     // Null when failing setup blocked the gate command, so no gate output exists to describe.
     stdout: gateExecution.gate
       ? { path: relativeStdoutPath, sha256: gateExecution.gate.stdout.sha256, bytes: gateExecution.gate.stdout.bytes }
@@ -744,40 +729,17 @@ export async function runSessionGate(input: RunSessionGateInput) {
       ? { path: relativeStderrPath, sha256: gateExecution.gate.stderr.sha256, bytes: gateExecution.gate.stderr.bytes }
       : null,
     error: gateExecution.gate?.error ?? null,
-    sensor: {
-      name: 'threadloop-local-gate',
-      contract_version: 2,
-    },
+    sensor,
   };
   const executionBytes = Buffer.from(`${canonicalJson(execution)}\n`, 'utf8');
   await writeFile(executionPath, executionBytes, { flag: 'wx' });
   const receipt: GateReceiptPayload = {
     id: receiptId,
-    session_id: input.sessionId,
-    gate_id: gate.id,
-    plan_sha256: context.plan.sha256,
-    result,
+    ...identity,
     setup: recordedSetup,
-    command: gate.command,
-    working_directory: gate.working_directory,
-    timeout_ms: gate.timeout_ms,
-    started_at: gateExecution.window.startedAt,
-    ended_at: gateExecution.window.endedAt,
-    duration_ms: gateExecution.window.durationMs,
-    exit_status: gateExecution.gate?.exitStatus ?? null,
-    signal: gateExecution.gate?.signal ?? null,
-    head_before: before.headSha,
-    head_after: headAfter,
-    clean_before: before.clean,
-    clean_after: cleanAfter,
-    artifact: {
-      path: relativeExecutionPath,
-      sha256: sha256(executionBytes),
-    },
-    sensor: {
-      name: 'threadloop-local-gate',
-      contract_version: 2,
-    },
+    ...run,
+    artifact: { path: relativeExecutionPath, sha256: sha256(executionBytes) },
+    sensor,
   };
   const receiptJson = canonicalJson(receipt);
   let sequence: number;
@@ -1043,7 +1005,7 @@ async function loadSessionAudit(input: SessionAuditInput, expectedRoot?: string)
     if (error instanceof AuditChainCorruptedError) {
       throw mapAuditChainCorruption(input.sessionId, error, 'Restore the ledger from trusted storage.');
     }
-    if (isSchemaStateError(error)) {
+    if (error instanceof StateCorruptedError) {
       throw new ThreadloopError('STATE_CORRUPTED', error instanceof Error ? error.message : String(error), {
         cause: error,
         details: {
@@ -1479,72 +1441,14 @@ async function evaluateSessionProof(
 }> {
   const stored = readSessionProofEvidenceReadOnly(repoRoot, sessionId);
   if (!stored.plan) {
-    return {
-      evidence: {
-        status: 'missing',
-        gates: [],
-        staleReceiptIds: [],
-        failedReceiptIds: [],
-        setupFailedReceiptIds: [],
-        corruptReceiptIds: [],
-      },
-      ciEvidence: { status: 'policy_missing', policy: null, gates: [] },
-      reviewEvidence: emptySessionReviewEvidence('policy_missing'),
-      attemptsUsed: stored.attemptsUsed,
-      plan: null,
-      receipts: stored.receipts,
-      signedReceipts: stored.signedReceipts,
-      signedReviewReceipts: stored.signedReviewReceipts,
-    };
+    return unevaluatedProofState(stored, 'missing');
   }
 
-  let canonical: ReturnType<typeof canonicalizeProofPlan>;
-  try {
-    canonical = canonicalizeProofPlan(JSON.parse(stored.plan.json) as unknown, sha256);
-  } catch {
-    return {
-      evidence: {
-        status: 'corrupt',
-        gates: [],
-        staleReceiptIds: [],
-        failedReceiptIds: [],
-        setupFailedReceiptIds: [],
-        corruptReceiptIds: [],
-      },
-      ciEvidence: { status: 'corrupt', policy: null, gates: [] },
-      reviewEvidence: emptySessionReviewEvidence('corrupt'),
-      attemptsUsed: stored.attemptsUsed,
-      plan: null,
-      receipts: stored.receipts,
-      signedReceipts: stored.signedReceipts,
-      signedReviewReceipts: stored.signedReviewReceipts,
-    };
+  const bound = bindStoredProofPlan(stored.plan, sha256);
+  if ('problem' in bound) {
+    return unevaluatedProofState(stored, 'corrupt');
   }
-  if (canonical.json !== stored.plan.json || canonical.sha256 !== stored.plan.sha256) {
-    return {
-      evidence: {
-        status: 'corrupt',
-        gates: [],
-        staleReceiptIds: [],
-        failedReceiptIds: [],
-        setupFailedReceiptIds: [],
-        corruptReceiptIds: [],
-      },
-      ciEvidence: { status: 'corrupt', policy: null, gates: [] },
-      reviewEvidence: emptySessionReviewEvidence('corrupt'),
-      attemptsUsed: stored.attemptsUsed,
-      plan: null,
-      receipts: stored.receipts,
-      signedReceipts: stored.signedReceipts,
-      signedReviewReceipts: stored.signedReviewReceipts,
-    };
-  }
-  const plan: BoundProofPlan = {
-    ...canonical,
-    baselineBranch: stored.plan.baselineBranch,
-    baselineHeadSha: stored.plan.baselineHeadSha,
-    createdAt: stored.plan.createdAt,
-  };
+  const { plan } = bound;
   const [artifactDigests, packageContents, reviewPackageContents] = await Promise.all([
     readReceiptArtifactDigests(repoRoot, sessionId, stored.receipts),
     readControlledSignedReceiptPackageContents({
@@ -1587,6 +1491,31 @@ async function evaluateSessionProof(
     }),
     attemptsUsed: stored.attemptsUsed,
     plan,
+    receipts: stored.receipts,
+    signedReceipts: stored.signedReceipts,
+    signedReviewReceipts: stored.signedReviewReceipts,
+  };
+}
+
+/** Proof state when no plan can be evaluated: absent plans report policy_missing, corrupt plans corrupt. */
+function unevaluatedProofState(
+  stored: ReturnType<typeof readSessionProofEvidenceReadOnly>,
+  planStatus: 'missing' | 'corrupt',
+): Awaited<ReturnType<typeof evaluateSessionProof>> {
+  const trustStatus = planStatus === 'missing' ? 'policy_missing' : 'corrupt';
+  return {
+    evidence: {
+      status: planStatus,
+      gates: [],
+      staleReceiptIds: [],
+      failedReceiptIds: [],
+      setupFailedReceiptIds: [],
+      corruptReceiptIds: [],
+    },
+    ciEvidence: { status: trustStatus, policy: null, gates: [] },
+    reviewEvidence: emptySessionReviewEvidence(trustStatus),
+    attemptsUsed: stored.attemptsUsed,
+    plan: null,
     receipts: stored.receipts,
     signedReceipts: stored.signedReceipts,
     signedReviewReceipts: stored.signedReviewReceipts,
@@ -1948,16 +1877,6 @@ async function loadStateContext(cwd: string): Promise<StateContext> {
   return { repoRoot, state: await readState(repoRoot) };
 }
 
-async function resolveRepositoryRoot(cwd: string) {
-  try {
-    return await resolveRepoRoot(cwd);
-  } catch (error) {
-    throw new ThreadloopError('NOT_GIT_REPOSITORY', 'ThreadLoop requires a Git repository. Run `git init` first.', {
-      cause: error,
-    });
-  }
-}
-
 async function initializeThreadloopRepo(repoRoot: string) {
   await ensureThreadloopLayout(repoRoot);
 
@@ -2007,16 +1926,6 @@ function assertSchemaDoesNotRequireExplicitMigration(repoRoot: string) {
       },
     });
   }
-}
-
-async function assertInitializedReadOnly(repoRoot: string) {
-  if (!isThreadloopInitialized(repoRoot)) {
-    throw new ThreadloopError(
-      'THREADLOOP_NOT_INITIALIZED',
-      'ThreadLoop is not initialized in this repo. Run `threadloop init` first.',
-    );
-  }
-  await readConfig(repoRoot);
 }
 
 function resolveActiveSession(state: StateData, sessionId: string): ResolvedSession {
@@ -2125,10 +2034,6 @@ function slugify(value: string) {
 function normalizeOptionalText(value: string | null | undefined) {
   const normalized = value?.trim();
   return normalized ? normalized : null;
-}
-
-function isSchemaStateError(error: unknown) {
-  return error instanceof StateCorruptedError;
 }
 
 function isSqliteBusyError(error: unknown) {
