@@ -240,33 +240,43 @@ function emptyProjection(time: string): ExecutionProjection {
   };
 }
 
+type ControllerExecution = Pick<ControllerInput, 'execution' | 'invalidated_claims' | 'existing_requests'>;
+
 export function projectControllerExecution(
   journal: unknown,
   snapshot: unknown,
   authority: ExecutionAuthority,
-): ValidationResult<Pick<ControllerInput, 'execution' | 'invalidated_claims' | 'existing_requests'>> {
+): ValidationResult<ControllerExecution> {
+  const projected = projectExecution(journal, snapshot, authority);
+  return projected.ok ? { ok: true, value: projected.value.controller } : projected;
+}
+
+/** One replay for callers that also need the retained history behind the controller projection. */
+export function projectExecution(
+  journal: unknown,
+  snapshot: unknown,
+  authority: ExecutionAuthority,
+): ValidationResult<{ journal: ExecutionJournal; projection: ExecutionProjection; controller: ControllerExecution }> {
   if (![journal, snapshot].every(withinExecutionLimits))
     return invalid(
       'EXECUTION_INPUT_LIMIT',
       'Input exceeds the bounded development validator limits; no projection is produced.',
     );
-  const parsed = validateShape(executionJournalSchema, journal);
-  if (!parsed.ok) return parsed;
-  const replayed = replayExecutionJournal(parsed.value, authority);
+  const replayed = replay(journal, authority);
   if (!replayed.ok) return replayed;
   const current = validateControllerInput(snapshot);
   if (!current.ok) return current;
+  const { journal: history, projection: state } = replayed.value;
   if (
     !isExecutionAdmitted(authority, {
       kind: 'projection',
-      execution_digest: parsed.value.execution_digest,
+      execution_digest: history.execution_digest,
       snapshot: current.value,
     })
   )
     return invalid('UNTRUSTED_EXECUTION_INPUT', 'Independent authority must admit the current projection snapshot.');
   const input = current.value;
-  const state = replayed.value;
-  const request = parsed.value.execution.action_request;
+  const request = history.execution.action_request;
   const now = input.evaluation_time;
   if (now === null || now < state.evaluated_at)
     return invalid('INVALID_PROJECTION_TIME', 'Projection requires current explicit authority time.');
@@ -327,7 +337,14 @@ export function projectControllerExecution(
     else if (unresolved)
       execution = blocked(state.request_status === 'cancelled' ? 'cancelled' : 'unknown_outcome', unresolved);
   }
-  return { ok: true, value: { execution, invalidated_claims: invalidated, existing_requests: existing } };
+  return {
+    ok: true,
+    value: {
+      journal: history,
+      projection: state,
+      controller: { execution, invalidated_claims: invalidated, existing_requests: existing },
+    },
+  };
 }
 
 /** Reconstructs statuses from retained operations; an asserted mutable projection is never trusted. */
@@ -342,7 +359,7 @@ export function replayExecutionJournal(
 function replay(
   journal: unknown,
   authority: ExecutionAuthority,
-): ValidationResult<{ projection: ExecutionProjection; index: ReplayIndex }> {
+): ValidationResult<{ journal: ExecutionJournal; projection: ExecutionProjection; index: ReplayIndex }> {
   if (!withinExecutionLimits(journal))
     return invalid(
       'EXECUTION_INPUT_LIMIT',
@@ -371,7 +388,7 @@ function replay(
     prefix.execution.entries.push(entry);
     prefix.execution_digest = hasher.append(entry);
   }
-  return { ok: true, value: { projection, index } };
+  return { ok: true, value: { journal: value, projection, index } };
 }
 
 /** Hash the invariant fields once and extend only the entries array during replay. */
@@ -422,16 +439,15 @@ export function applyExecutionOperation(
       'EXECUTION_INPUT_LIMIT',
       'Input exceeds the bounded development validator limits; no append is proposed.',
     );
-  const history = validateShape(executionJournalSchema, journal);
-  if (!history.ok) return history;
-  const state = replay(history.value, authority);
+  const state = replay(journal, authority);
   if (!state.ok) return state;
+  const history = state.value.journal;
   const parsedContext = validateShape(executionContextSchema, context);
   if (!parsedContext.ok) return parsedContext;
   const parsedOperation = validateShape(executionOperationSchema, operation);
   if (!parsedOperation.ok) return parsedOperation;
   const applied = step(
-    history.value,
+    history,
     state.value.projection,
     parsedContext.value,
     parsedOperation.value,
@@ -440,19 +456,16 @@ export function applyExecutionOperation(
   );
   if (!applied.ok) return applied;
   const proposed = applied.value.replayed
-    ? { ok: true as const, value: history.value }
+    ? { ok: true as const, value: history }
     : sealJournal({
-        ...history.value.execution,
-        entries: [
-          ...history.value.execution.entries,
-          { context: parsedContext.value, operation: parsedOperation.value },
-        ],
+        ...history.execution,
+        entries: [...history.execution.entries, { context: parsedContext.value, operation: parsedOperation.value }],
       });
   if (!proposed.ok) return proposed;
   return {
     ok: true,
     value: {
-      expected_execution_digest: history.value.execution_digest,
+      expected_execution_digest: history.execution_digest,
       journal: proposed.value,
       projection: state.value.projection,
       ...applied.value,

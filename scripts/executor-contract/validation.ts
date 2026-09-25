@@ -1,9 +1,8 @@
 import { digest, same, validateShape, type ValidationResult } from '../contract-kernel/kernel.js';
 import { executorRequestSchema, executorResultSchema, type ExecutorRequest, type ExecutorResult } from './contracts.js';
 import { invalid, validateJsonValue } from './codec.js';
-import { projectControllerExecution, replayExecutionJournal, requestReference } from '../execution-contract/model.js';
+import { projectExecution, requestReference } from '../execution-contract/model.js';
 import type { ExecutionAuthority } from '../execution-contract/authority.js';
-import { executionJournalSchema } from '../execution-contract/contracts.js';
 import { sameSubjectIdentity } from '../controller-contract/contracts.js';
 import { requestIdentity } from '../controller-contract/validation.js';
 
@@ -56,24 +55,21 @@ export function validateExecutorContext(
 ): ValidationResult<ExecutorRequest> {
   const parsed = validateExecutorRequest(value);
   if (!parsed.ok) return parsed;
-  const projection = projectControllerExecution(journal, snapshot, authority);
+  const projection = projectExecution(journal, snapshot, authority);
   if (!projection.ok) return projection;
-  const history = validateShape(executionJournalSchema, journal);
-  if (!history.ok) return history;
-  const replay = replayExecutionJournal(history.value, authority);
-  if (!replay.ok) return replay;
+  const { journal: history, projection: replay, controller } = projection.value;
   const request = parsed.value.request;
-  const current = projection.value.execution;
+  const current = controller.execution;
   if (
     current.status !== 'in_flight' ||
     current.attempt.status !== 'running' ||
     !same(current.request, request.action_request) ||
     !same({ id: current.claim.id, version: current.claim.version }, request.claim) ||
     current.attempt.id !== request.attempt_id ||
-    !same(replay.value.claims.at(-1)?.executor, request.executor) ||
+    !same(replay.claims.at(-1)?.executor, request.executor) ||
     !same(request.execution_policy, {
-      id: history.value.execution.execution_policy.id,
-      digest: history.value.execution.execution_policy.digest,
+      id: history.execution.execution_policy.id,
+      digest: history.execution.execution_policy.digest,
     })
   )
     return invalid(
@@ -94,18 +90,22 @@ export function validateExecutorContext(
 
 export function validateExecutorResult(value: unknown, requestValue: unknown): ValidationResult<ExecutorResult> {
   const request = validateExecutorRequest(requestValue);
-  if (!request.ok) return request;
+  return request.ok ? checkExecutorResult(value, request.value) : request;
+}
+
+/** Result checks against an already validated request. */
+export function checkExecutorResult(value: unknown, validRequest: ExecutorRequest): ValidationResult<ExecutorResult> {
   const bounded = validateJsonValue(value);
   if (!bounded.ok) return bounded;
   const parsed = validateShape(executorResultSchema, value);
   if (!parsed.ok) return parsed;
   const { result } = parsed.value;
   const receipt = result.attempt_receipt.receipt;
-  const input = request.value.request;
+  const input = validRequest.request;
   if (digest(result) !== parsed.value.result_digest || digest(receipt) !== result.attempt_receipt.receipt_digest)
     return invalid('RESULT_DIGEST_MISMATCH', 'Result and Attempt receipt must match their canonical digests.');
   if (
-    result.request_digest !== request.value.request_digest ||
+    result.request_digest !== validRequest.request_digest ||
     !same(receipt.request, requestReference(input.action_request)) ||
     !same(receipt.binding, input.action_request.request.binding) ||
     !same(receipt.execution_policy, input.execution_policy) ||

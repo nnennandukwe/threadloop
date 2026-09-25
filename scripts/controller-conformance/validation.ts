@@ -246,6 +246,14 @@ export function validateCorpus(
 }
 
 export function buildSubjectRequest(fixtureValue: unknown, manifestValue: unknown): ValidationResult<SubjectRequest> {
+  const bound = bindRequest(fixtureValue, manifestValue);
+  return bound.ok ? { ok: true, value: bound.value.request } : bound;
+}
+
+function bindRequest(
+  fixtureValue: unknown,
+  manifestValue: unknown,
+): ValidationResult<{ fixture: Fixture; request: SubjectRequest }> {
   const manifest = validateManifest(manifestValue);
   if (!manifest.ok) return manifest;
   const parsed = validateFixture(fixtureValue);
@@ -271,7 +279,7 @@ export function buildSubjectRequest(fixtureValue: unknown, manifestValue: unknow
     input: structuredClone(fixture.input),
     input_digest: entry.input_digest,
   };
-  return { ok: true, value: { request, request_digest: conformanceDigest(request) } };
+  return { ok: true, value: { fixture, request: { request, request_digest: conformanceDigest(request) } } };
 }
 
 export function validateSubjectResponse(
@@ -326,22 +334,17 @@ export function compareCaseResult(
   bytes: Uint8Array,
   expectedSubject: unknown,
 ): ValidationResult<true> {
-  const bound = buildSubjectRequest(fixtureValue, manifestValue);
+  const bound = bindRequest(fixtureValue, manifestValue);
   if (!bound.ok) return bound;
-  const fixture = validateFixture(fixtureValue);
-  if (!fixture.ok) return fixture;
+  const { fixture } = bound.value;
   const response = validateSubjectResponse(bytes, requestValue, expectedSubject);
   if (!response.ok) return response;
-  if (!same(bound.value, requestValue))
+  if (!same(bound.value.request, requestValue))
     return failure('FIXTURE_BINDING_MISMATCH', 'Comparison fixture and manifest must match the exact request.');
   const request = requestSchema.parse(requestValue).request;
-  if (
-    request.case_id !== fixture.value.id ||
-    request.operation !== fixture.value.operation ||
-    !same(request.input, fixture.value.input)
-  )
+  if (request.case_id !== fixture.id || request.operation !== fixture.operation || !same(request.input, fixture.input))
     return failure('FIXTURE_BINDING_MISMATCH', 'Comparison requires the same case and input as the validated request.');
-  return same(machineResult(response.value.response.result), machineResult(fixture.value.expected))
+  return same(machineResult(response.value.response.result), machineResult(fixture.expected))
     ? { ok: true, value: true }
     : failure('RESULT_MISMATCH', 'Validated response differs from the harness-held expected machine result.');
 }

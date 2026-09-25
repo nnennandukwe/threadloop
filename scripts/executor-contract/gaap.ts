@@ -1,21 +1,30 @@
 import { digest, same, validateShape, type ValidationResult } from '../contract-kernel/kernel.js';
-import { gaapMappingPolicySchema, resultObservationSchema, type Evidence, type ExecutorResult } from './contracts.js';
+import {
+  gaapMappingPolicySchema,
+  resultObservationSchema,
+  type Evidence,
+  type ExecutorRequest,
+  type ExecutorResult,
+} from './contracts.js';
 import type { GaapEvidence, GaapRequest } from './gaap-types.js';
 import { invalid, parseExecutorMessage, validateJsonValue } from './codec.js';
-import { validateExecutorRequest, validateExecutorResult } from './validation.js';
+import { checkExecutorResult, validateExecutorRequest } from './validation.js';
 import { requestReference } from '../execution-contract/model.js';
 import { sameSubjectIdentity } from '../controller-contract/contracts.js';
 import { validateGaapReceipt, validateGaapRequest } from './gaap-validation.js';
 
 export function buildGaapRequest(requestValue: unknown, policyValue: unknown): ValidationResult<GaapRequest> {
   const request = validateExecutorRequest(requestValue);
-  if (!request.ok) return request;
+  return request.ok ? mapRequest(request.value, policyValue) : request;
+}
+
+function mapRequest(request: ExecutorRequest, policyValue: unknown): ValidationResult<GaapRequest> {
   const bounded = validateJsonValue(policyValue);
   if (!bounded.ok) return bounded;
   const parsed = validateShape(gaapMappingPolicySchema, policyValue);
   if (!parsed.ok) return parsed;
   const { policy, policy_digest: policyDigest } = parsed.value;
-  const input = request.value.request;
+  const input = request.request;
   const parameters = input.parameters;
   if (
     digest(policy) !== policyDigest ||
@@ -59,7 +68,7 @@ export function buildGaapRequest(requestValue: unknown, policyValue: unknown): V
   });
   return validateGaapRequest({
     schema_version: 'gaap.agent-run-request/0.1.0',
-    request_id: 'threadloop_request_' + request.value.request_digest,
+    request_id: 'threadloop_request_' + request.request_digest,
     run_id: 'threadloop_attempt_' + runIdentity,
     subject: {
       kind: input.action_request.request.binding.subject.kind,
@@ -87,7 +96,7 @@ export function mapGaapResult(
 ): ValidationResult<ExecutorResult> {
   const request = validateExecutorRequest(requestValue);
   if (!request.ok) return request;
-  const mapped = buildGaapRequest(request.value, policy);
+  const mapped = mapRequest(request.value, policy);
   if (!mapped.ok) return mapped;
   const parsed = parseExecutorMessage(bytes);
   if (!parsed.ok) return parsed;
@@ -249,7 +258,7 @@ export function mapGaapResult(
     reason: { code: reason, message: body.terminal_reason },
   };
   // Return detached JSON; shared references from the inputs must not escape or imply trust.
-  return validateExecutorResult(
+  return checkExecutorResult(
     JSON.parse(JSON.stringify({ result, result_digest: digest(result) })) as unknown,
     request.value,
   );
