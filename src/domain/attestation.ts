@@ -1,25 +1,44 @@
-import { canonicalJson } from './canonical-json.js';
+import { z } from 'zod';
+import { canonicalJson, isPlainObject } from './canonical-json.js';
 import {
-  GATE_RECEIPT_RESULTS,
+  aggregateGateStatus,
+  declaredGateSchema,
+  gateReceiptResult,
   hasCiTrustPolicy,
+  latestBy,
+  recordedSetupStepSchema,
   recordedSetupViolation,
   type BoundProofPlan,
   type GitHubActionsTrustPolicy,
   type GateReceiptResult,
   type ProofDigest,
   type ProofGate,
-  type RecordedSetupStep,
 } from './proof.js';
+import {
+  boolean,
+  canonicalTimestamp,
+  commitSha,
+  escapeRegExp,
+  exactObject,
+  githubRepository,
+  identifier,
+  integer,
+  literal,
+  parseFields,
+  reject,
+  rule,
+  sha256Digest,
+  text,
+  type FieldErrorFactory,
+} from './validation.js';
 
 export const SIGNED_RECEIPT_MEDIA_TYPE_V1 = 'application/vnd.threadloop.signed-receipt.v1+json';
 /** The version newly signed receipts use. Stored v1 packages stay readable. */
 export const SIGNED_RECEIPT_MEDIA_TYPE_V2 = 'application/vnd.threadloop.signed-receipt.v2+json';
 export const IN_TOTO_STATEMENT_TYPE = 'https://in-toto.io/Statement/v1';
 export const IN_TOTO_PAYLOAD_TYPE = 'application/vnd.in-toto+json';
-export const THREADLOOP_RECEIPT_PREDICATE_TYPE_V1 = 'https://threadloop.dev/attestations/receipt/v1';
-export const THREADLOOP_RECEIPT_PREDICATE_TYPE_V2 = 'https://threadloop.dev/attestations/receipt/v2';
 
-export type SignedReceiptSchemaVersion = 1 | 2;
+type SignedReceiptSchemaVersion = 1 | 2;
 
 /**
  * The media type, predicate type, and artifact schema_version move together. Pairing them explicitly stops a
@@ -27,76 +46,6 @@ export type SignedReceiptSchemaVersion = 1 | 2;
  */
 export function signedReceiptMediaType(schemaVersion: SignedReceiptSchemaVersion) {
   return schemaVersion === 1 ? SIGNED_RECEIPT_MEDIA_TYPE_V1 : SIGNED_RECEIPT_MEDIA_TYPE_V2;
-}
-
-export function threadloopReceiptPredicateType(schemaVersion: SignedReceiptSchemaVersion) {
-  return schemaVersion === 1 ? THREADLOOP_RECEIPT_PREDICATE_TYPE_V1 : THREADLOOP_RECEIPT_PREDICATE_TYPE_V2;
-}
-
-export interface SignedGateReceiptArtifact {
-  /** 1 predates declared setup and carries no `setup` key; 2 always carries one, possibly empty. */
-  schema_version: SignedReceiptSchemaVersion;
-  receipt_id: string;
-  session_id: string;
-  plan_sha256: string;
-  gate: ProofGate;
-  result: GateReceiptResult;
-  setup?: RecordedSetupStep[];
-  started_at: string;
-  ended_at: string;
-  duration_ms: number;
-  exit_status: number | null;
-  signal: string | null;
-  head_before: string;
-  head_after: string;
-  clean_before: boolean;
-  clean_after: boolean;
-  output: {
-    stdout_sha256: string;
-    stderr_sha256: string;
-  };
-  source: {
-    repository: string;
-    ref: string;
-    head_sha: string;
-    run_invocation_uri: string;
-  };
-  environment: {
-    runner_environment: 'github-hosted';
-    runner_os: string;
-    runner_arch: string;
-    node_version: string;
-  };
-  sensor: {
-    name: 'threadloop-github-actions-gate';
-    contract_version: SignedReceiptSchemaVersion;
-  };
-}
-
-export interface InTotoReceiptStatement {
-  _type: typeof IN_TOTO_STATEMENT_TYPE;
-  subject: [
-    { name: string; digest: { gitCommit: string } },
-    { name: 'threadloop-gate-receipt.json'; digest: { sha256: string } },
-  ];
-  predicateType: typeof THREADLOOP_RECEIPT_PREDICATE_TYPE_V1 | typeof THREADLOOP_RECEIPT_PREDICATE_TYPE_V2;
-  predicate: {
-    schema_version: SignedReceiptSchemaVersion;
-    receipt_type: 'gate';
-    session_id: string;
-    plan_sha256: string;
-    gate_id: string;
-    result: GateReceiptResult;
-    subject_head_sha: string;
-    artifact: {
-      name: 'threadloop-gate-receipt.json';
-      sha256: string;
-    };
-    sensor: {
-      name: 'threadloop-github-actions-gate';
-      contract_version: SignedReceiptSchemaVersion;
-    };
-  };
 }
 
 export class AttestationValidationError extends Error {
@@ -109,30 +58,97 @@ export class AttestationValidationError extends Error {
   }
 }
 
-export interface CanonicalSignedGateReceiptArtifact {
-  artifact: SignedGateReceiptArtifact;
+const attestationError: FieldErrorFactory = (field, detail) => new AttestationValidationError(field, detail);
+
+/**
+ * A signed artifact embeds its gate in canonical form. An empty `setup` that a plan would normalize away is
+ * rejected rather than rewritten, so the artifact bytes a signer saw are the bytes that get canonicalized.
+ */
+const canonicalGateSchema = z.preprocess((gate, context) => {
+  if (isPlainObject(gate) && Array.isArray(gate.setup) && gate.setup.length === 0) {
+    reject(context, ['setup'], 'must contain 1-32 declared setup steps when present');
+  }
+  return gate;
+}, declaredGateSchema);
+
+const signedGateReceiptArtifactSchema = z.preprocess(
+  (artifact, context) => {
+    if (isPlainObject(artifact) && artifact.schema_version !== 1 && artifact.schema_version !== 2) {
+      reject(context, ['schema_version'], 'must be 1 or 2');
+    }
+    return artifact;
+  },
+  exactObject(
+    {
+      schema_version: z.literal([1, 2]),
+      receipt_id: identifier(160),
+      session_id: identifier(160),
+      plan_sha256: sha256Digest,
+      gate: canonicalGateSchema,
+      result: gateReceiptResult,
+      setup: z.array(recordedSetupStepSchema, { error: 'must be an array of recorded setup steps' }).exactOptional(),
+      started_at: canonicalTimestamp,
+      ended_at: canonicalTimestamp,
+      duration_ms: integer(0, 86_400_000),
+      exit_status: integer(-2_147_483_648, 2_147_483_647).nullable(),
+      signal: text(128).nullable(),
+      head_before: commitSha,
+      head_after: commitSha,
+      clean_before: boolean,
+      clean_after: boolean,
+      output: exactObject({ stdout_sha256: sha256Digest, stderr_sha256: sha256Digest }),
+      source: exactObject({
+        repository: githubRepository,
+        ref: rule(text(1_024), (ref) => /^refs\/heads\/[A-Za-z0-9._/-]+$/.test(ref), 'must be an exact branch ref'),
+        head_sha: commitSha,
+        run_invocation_uri: text(1_024),
+      }).superRefine((source, context) => {
+        const runAttempt = new RegExp(
+          `^${escapeRegExp(source.repository)}/actions/runs/[1-9][0-9]*/attempts/[1-9][0-9]*$`,
+        );
+        if (!runAttempt.test(source.run_invocation_uri)) {
+          reject(context, ['run_invocation_uri'], 'must identify an exact GitHub Actions run attempt');
+        }
+      }),
+      environment: exactObject({
+        runner_environment: literal('github-hosted'),
+        runner_os: text(128),
+        runner_arch: text(128),
+        node_version: text(128),
+      }),
+      sensor: exactObject({
+        name: literal('threadloop-github-actions-gate'),
+        contract_version: z.literal([1, 2], { error: 'must be 1 or 2' }),
+      }),
+    },
+    // 1 predates declared setup and carries no `setup` key; 2 always carries one, possibly empty.
+    { key: 'setup', expected: (artifact) => artifact.schema_version === 2 },
+  ).superRefine((artifact, context) => {
+    const violation = recordedSetupViolation(artifact.setup, artifact.gate.setup, artifact.result);
+    if (violation) {
+      reject(context, ['setup', ...violation.path], violation.message);
+    }
+    // The sensor contract and the artifact schema move together, so a v2 artifact cannot claim a v1 sensor.
+    if (artifact.sensor.contract_version !== artifact.schema_version) {
+      reject(context, ['sensor', 'contract_version'], `must be ${artifact.schema_version}`);
+    }
+  }),
+);
+
+export type SignedGateReceiptArtifact = z.infer<typeof signedGateReceiptArtifactSchema>;
+export type InTotoReceiptStatement = ReturnType<typeof buildInTotoReceiptStatement>;
+
+export interface CanonicalSignedArtifact<A> {
+  artifact: A;
   json: string;
   sha256: string;
 }
 
 export type GitHubGateJobResult = 'success' | 'failure' | 'cancelled';
 
-export interface GateReportSigningContext {
-  receiptId: string;
-  sessionId: string;
-  planSha256: string;
-  gate: ProofGate;
-  sourceRepository: string;
-  sourceRef: string;
-  sourceHeadSha: string;
-  runInvocationUri: string;
-  runnerOs: string;
-  runnerArch: string;
-  nodeVersion: string;
-  jobResult: GitHubGateJobResult;
-}
-
-export interface SignedReceiptEnvelope extends CanonicalSignedGateReceiptArtifact {
+/** A signed package after its envelope is decoded, before its statement is bound to the artifact. */
+export interface SignedEnvelope<A> {
+  artifact: A;
   artifactJson: string;
   artifactSha256: string;
   statementJson: string;
@@ -142,19 +158,34 @@ export interface SignedReceiptEnvelope extends CanonicalSignedGateReceiptArtifac
   packageSha256: string;
 }
 
-export interface ParsedSignedReceiptPackage extends SignedReceiptEnvelope {
-  statement: InTotoReceiptStatement;
+export interface ParsedSignedPackage<A, S> extends SignedEnvelope<A> {
+  statement: S;
 }
 
-export interface StoredSignedGateReceipt {
-  sequence: number;
-  id: string;
-  sessionId: string;
-  gateId: string;
-  planSha256: string;
-  subjectHeadSha: string;
-  result: 'passed';
-  packagePath: string;
+export type SignedReceiptEnvelope = SignedEnvelope<SignedGateReceiptArtifact>;
+export type ParsedSignedReceiptPackage = ParsedSignedPackage<SignedGateReceiptArtifact, InTotoReceiptStatement>;
+
+/**
+ * What distinguishes one kind of signed receipt. Envelope decoding, statement binding, and stored-row
+ * re-verification are shared, so the gate and review packages cannot drift apart.
+ */
+export interface SignedReceiptKind<A, S> {
+  schema: z.ZodType<A>;
+  mediaType: (artifact: A) => string;
+  buildStatement: (artifact: A, artifactSha256: string) => S;
+  fail: FieldErrorFactory;
+  /** Names the artifact in a statement mismatch. */
+  label: string;
+  /**
+   * Whether a statement mismatch names the first differing statement field. The import maps
+   * `statement.subject*` and `statement.predicate.artifact*` fields to SIGNED_RECEIPT_ARTIFACT_MISMATCH; review
+   * mismatches have always been reported at `statement`, so they stay SIGNED_RECEIPT_INVALID.
+   */
+  reportsStatementField: boolean;
+}
+
+/** The verified projection stored beside a signed package, which re-verification compares against. */
+export interface StoredSignedPackage {
   packageSha256: string;
   artifactJson: string;
   artifactSha256: string;
@@ -167,12 +198,22 @@ export interface StoredSignedGateReceipt {
   sourceRepository: string;
   sourceRef: string;
   runInvocationUri: string;
+}
+
+export interface StoredSignedGateReceipt extends StoredSignedPackage {
+  sequence: number;
+  id: string;
+  sessionId: string;
+  gateId: string;
+  planSha256: string;
+  subjectHeadSha: string;
+  result: 'passed';
+  packagePath: string;
   stateVersion: number;
   verifiedAt: string;
 }
 
 export type CiProofGateStatus = 'missing' | 'passed' | 'stale' | 'corrupt';
-export type CiProofStatus = 'policy_missing' | CiProofGateStatus;
 
 export interface CiProofGateEvidence {
   gate_id: string;
@@ -185,51 +226,57 @@ export interface CiProofGateEvidence {
 }
 
 export interface CiProofEvidence {
-  status: CiProofStatus;
+  status: 'policy_missing' | CiProofGateStatus;
   policy: GitHubActionsTrustPolicy | null;
   gates: CiProofGateEvidence[];
 }
 
+const gateReceiptKind: SignedReceiptKind<SignedGateReceiptArtifact, InTotoReceiptStatement> = {
+  schema: signedGateReceiptArtifactSchema,
+  // Pinned to the artifact's own version, so a v2 artifact cannot arrive under the v1 media type.
+  mediaType: (artifact) => signedReceiptMediaType(artifact.schema_version),
+  buildStatement: buildInTotoReceiptStatement,
+  fail: attestationError,
+  label: 'receipt',
+  reportsStatementField: true,
+};
+
 export function canonicalizeSignedGateReceiptArtifact(
   value: unknown,
   digest: ProofDigest,
-): CanonicalSignedGateReceiptArtifact {
-  const artifact = validateSignedGateReceiptArtifact(value);
-  const json = canonicalJson(artifact);
-  return { artifact, json, sha256: digest(json) };
+): CanonicalSignedArtifact<SignedGateReceiptArtifact> {
+  return canonicalizeSignedArtifact(gateReceiptKind, value, digest);
 }
 
 export function authorizeGateReportForSigning(
   value: unknown,
-  context: GateReportSigningContext,
+  context: {
+    receiptId: string;
+    sessionId: string;
+    planSha256: string;
+    gate: ProofGate;
+    sourceRepository: string;
+    sourceRef: string;
+    sourceHeadSha: string;
+    runInvocationUri: string;
+    runnerOs: string;
+    runnerArch: string;
+    nodeVersion: string;
+    jobResult: GitHubGateJobResult;
+  },
 ): SignedGateReceiptArtifact {
-  const report = validateSignedGateReceiptArtifact(value);
-  const expected = {
-    session_id: context.sessionId,
-    plan_sha256: context.planSha256,
-    gate: context.gate,
-    source: {
-      repository: context.sourceRepository,
-      ref: context.sourceRef,
-      head_sha: context.sourceHeadSha,
-      run_invocation_uri: context.runInvocationUri,
-    },
-  };
+  const report = parseFields(signedGateReceiptArtifactSchema, value, 'package.artifact', attestationError);
   for (const [field, actual, wanted] of [
-    ['package.artifact.session_id', report.session_id, expected.session_id],
-    ['package.artifact.plan_sha256', report.plan_sha256, expected.plan_sha256],
-    ['package.artifact.gate', canonicalJson(report.gate), canonicalJson(expected.gate)],
-    ['package.artifact.source.repository', report.source.repository, expected.source.repository],
-    ['package.artifact.source.ref', report.source.ref, expected.source.ref],
-    ['package.artifact.source.head_sha', report.source.head_sha, expected.source.head_sha],
-    [
-      'package.artifact.source.run_invocation_uri',
-      report.source.run_invocation_uri,
-      expected.source.run_invocation_uri,
-    ],
+    ['package.artifact.session_id', report.session_id, context.sessionId],
+    ['package.artifact.plan_sha256', report.plan_sha256, context.planSha256],
+    ['package.artifact.gate', canonicalJson(report.gate), canonicalJson(context.gate)],
+    ['package.artifact.source.repository', report.source.repository, context.sourceRepository],
+    ['package.artifact.source.ref', report.source.ref, context.sourceRef],
+    ['package.artifact.source.head_sha', report.source.head_sha, context.sourceHeadSha],
+    ['package.artifact.source.run_invocation_uri', report.source.run_invocation_uri, context.runInvocationUri],
   ] as const) {
     if (actual !== wanted) {
-      throw invalid(field, 'does not match the trusted signing context');
+      throw attestationError(field, 'does not match the trusted signing context');
     }
   }
 
@@ -238,38 +285,29 @@ export function authorizeGateReportForSigning(
     // Spreading `report` carries recorded setup through signing unchanged, so the signed artifact keeps
     // describing exactly what the sensor observed.
     ...report,
-    receipt_id: requireIdentifier(context.receiptId, 'signing.receipt_id', 160),
+    receipt_id: parseFields(identifier(160), context.receiptId, 'signing.receipt_id', attestationError),
     result,
     exit_status:
       result === 'passed' ? 0 : report.exit_status === 0 || report.exit_status === null ? 1 : report.exit_status,
     signal: result === 'passed' ? null : report.signal,
     environment: {
       runner_environment: 'github-hosted',
-      runner_os: requireText(context.runnerOs, 'signing.runner_os', 128),
-      runner_arch: requireText(context.runnerArch, 'signing.runner_arch', 128),
-      node_version: requireText(context.nodeVersion, 'signing.node_version', 128),
+      runner_os: parseFields(text(128), context.runnerOs, 'signing.runner_os', attestationError),
+      runner_arch: parseFields(text(128), context.runnerArch, 'signing.runner_arch', attestationError),
+      node_version: parseFields(text(128), context.nodeVersion, 'signing.node_version', attestationError),
     },
   };
 }
 
-export function buildInTotoReceiptStatement(
-  artifact: SignedGateReceiptArtifact,
-  artifactSha256: string,
-): InTotoReceiptStatement {
-  requireSha256(artifactSha256, 'statement.subject[1].digest.sha256');
+export function buildInTotoReceiptStatement(artifact: SignedGateReceiptArtifact, artifactSha256: string) {
+  parseFields(sha256Digest, artifactSha256, 'statement.subject[1].digest.sha256', attestationError);
   return {
     _type: IN_TOTO_STATEMENT_TYPE,
     subject: [
-      {
-        name: artifact.source.repository,
-        digest: { gitCommit: artifact.source.head_sha },
-      },
-      {
-        name: 'threadloop-gate-receipt.json',
-        digest: { sha256: artifactSha256 },
-      },
+      { name: artifact.source.repository, digest: { gitCommit: artifact.source.head_sha } },
+      { name: 'threadloop-gate-receipt.json', digest: { sha256: artifactSha256 } },
     ],
-    predicateType: threadloopReceiptPredicateType(artifact.schema_version),
+    predicateType: `https://threadloop.dev/attestations/receipt/v${artifact.schema_version}`,
     predicate: {
       schema_version: artifact.schema_version,
       receipt_type: 'gate',
@@ -278,16 +316,10 @@ export function buildInTotoReceiptStatement(
       gate_id: artifact.gate.id,
       result: artifact.result,
       subject_head_sha: artifact.source.head_sha,
-      artifact: {
-        name: 'threadloop-gate-receipt.json',
-        sha256: artifactSha256,
-      },
-      sensor: {
-        name: 'threadloop-github-actions-gate',
-        contract_version: artifact.schema_version,
-      },
+      artifact: { name: 'threadloop-gate-receipt.json', sha256: artifactSha256 },
+      sensor: { name: 'threadloop-github-actions-gate', contract_version: artifact.schema_version },
     },
-  };
+  } as const;
 }
 
 export function parseSignedReceiptPackage(value: unknown, digest: ProofDigest): ParsedSignedReceiptPackage {
@@ -295,61 +327,11 @@ export function parseSignedReceiptPackage(value: unknown, digest: ProofDigest): 
 }
 
 export function parseSignedReceiptEnvelope(value: unknown, digest: ProofDigest): SignedReceiptEnvelope {
-  const receiptPackage = requireExactObject(value, 'package', ['media_type', 'artifact', 'bundle']);
-  const canonicalArtifact = canonicalizeSignedGateReceiptArtifact(receiptPackage.artifact, digest);
-  // Pinned to the artifact's own version, so a v2 artifact cannot arrive under the v1 media type.
-  const expectedMediaType = signedReceiptMediaType(canonicalArtifact.artifact.schema_version);
-  if (receiptPackage.media_type !== expectedMediaType) {
-    throw invalid('package.media_type', `must be ${expectedMediaType}`);
-  }
-  const bundle = requireObject(receiptPackage.bundle, 'package.bundle');
-  const envelope = requireObject(bundle.dsseEnvelope, 'package.bundle.dsseEnvelope');
-  if (envelope.payloadType !== IN_TOTO_PAYLOAD_TYPE) {
-    throw invalid('package.bundle.dsseEnvelope.payloadType', `must be ${IN_TOTO_PAYLOAD_TYPE}`);
-  }
-  const payload = requireText(envelope.payload, 'package.bundle.dsseEnvelope.payload', 16_000_000);
-  if (!isCanonicalBase64(payload)) {
-    throw invalid('package.bundle.dsseEnvelope.payload', 'must be canonical base64');
-  }
-  const statementBytes = Buffer.from(payload, 'base64');
-  const statementJson = statementBytes.toString('utf8');
-  // Decoding replaces invalid UTF-8 with U+FFFD. Without this check the statement text, and the digest stored
-  // for it, could describe bytes other than the ones that were signed.
-  if (!Buffer.from(statementJson, 'utf8').equals(statementBytes)) {
-    throw invalid('package.bundle.dsseEnvelope.payload', 'must encode UTF-8 text');
-  }
-  const packageValue = {
-    media_type: expectedMediaType,
-    artifact: canonicalArtifact.artifact,
-    bundle,
-  };
-  const packageJson = canonicalJson(packageValue);
-  return {
-    ...canonicalArtifact,
-    artifactJson: canonicalArtifact.json,
-    artifactSha256: canonicalArtifact.sha256,
-    statementJson,
-    statementSha256: digest(statementJson),
-    bundle,
-    packageJson,
-    packageSha256: digest(packageJson),
-  };
+  return parseSignedEnvelope(gateReceiptKind, value, digest);
 }
 
 export function validateSignedReceiptStatement(envelope: SignedReceiptEnvelope): ParsedSignedReceiptPackage {
-  let statementValue: unknown;
-  try {
-    statementValue = JSON.parse(envelope.statementJson) as unknown;
-  } catch {
-    throw invalid('package.bundle.dsseEnvelope.payload', 'must encode a JSON statement');
-  }
-  if (canonicalJson(statementValue) !== envelope.statementJson) {
-    throw invalid('package.bundle.dsseEnvelope.payload', 'must encode canonical JSON');
-  }
-  return {
-    ...envelope,
-    statement: validateInTotoReceiptStatement(statementValue, envelope),
-  };
+  return bindSignedStatement(gateReceiptKind, envelope);
 }
 
 export function evaluateCiProofEvidence(input: {
@@ -362,19 +344,11 @@ export function evaluateCiProofEvidence(input: {
 }): CiProofEvidence {
   const proofPlan = input.plan.plan;
   if (!hasCiTrustPolicy(proofPlan)) {
-    return {
-      status: 'policy_missing',
-      policy: null,
-      gates: input.plan.plan.gates.map((gate) => emptyCiGate(gate.id)),
-    };
+    return { status: 'policy_missing', policy: null, gates: proofPlan.gates.map((gate) => emptyCiGate(gate.id)) };
   }
   const policy = proofPlan.ci;
-
-  const latestByGate = new Map<string, StoredSignedGateReceipt>();
-  for (const receipt of [...input.receipts].sort((left, right) => left.sequence - right.sequence)) {
-    latestByGate.set(receipt.gateId, receipt);
-  }
-  const gates = input.plan.plan.gates.map((gate): CiProofGateEvidence => {
+  const latestByGate = latestBy(input.receipts, (receipt) => receipt.gateId);
+  const gates = proofPlan.gates.map((gate): CiProofGateEvidence => {
     const receipt = latestByGate.get(gate.id);
     if (!receipt) {
       return emptyCiGate(gate.id);
@@ -387,46 +361,31 @@ export function evaluateCiProofEvidence(input: {
       package_sha256: receipt.packageSha256,
       verified_at: receipt.verifiedAt,
     };
-    const packageJson = input.packageContents.get(receipt.id);
-    if (!packageJson || input.digest(packageJson) !== receipt.packageSha256) {
-      return { ...common, status: 'corrupt' };
-    }
-    let parsed: ParsedSignedReceiptPackage;
-    try {
-      parsed = parseSignedReceiptPackage(JSON.parse(packageJson) as unknown, input.digest);
-    } catch {
-      return { ...common, status: 'corrupt' };
-    }
+    const parsed = reverifyStoredPackage(
+      gateReceiptKind,
+      receipt,
+      input.packageContents.get(receipt.id),
+      policy,
+      input.digest,
+    );
+    const artifact = parsed?.artifact;
     if (
-      parsed.packageJson !== packageJson ||
-      parsed.packageSha256 !== receipt.packageSha256 ||
-      parsed.artifactJson !== receipt.artifactJson ||
-      parsed.artifactSha256 !== receipt.artifactSha256 ||
-      parsed.statementJson !== receipt.statementJson ||
-      parsed.statementSha256 !== receipt.statementSha256 ||
-      parsed.artifact.receipt_id !== receipt.id ||
-      parsed.artifact.session_id !== input.sessionId ||
-      parsed.artifact.gate.id !== receipt.gateId ||
-      parsed.artifact.plan_sha256 !== receipt.planSha256 ||
-      parsed.artifact.source.head_sha !== receipt.subjectHeadSha ||
+      !artifact ||
+      artifact.receipt_id !== receipt.id ||
+      artifact.session_id !== input.sessionId ||
+      artifact.gate.id !== receipt.gateId ||
+      artifact.plan_sha256 !== receipt.planSha256 ||
+      artifact.source.head_sha !== receipt.subjectHeadSha ||
       receipt.result !== 'passed' ||
-      parsed.artifact.result !== 'passed' ||
-      parsed.artifact.exit_status !== 0 ||
-      parsed.artifact.signal !== null ||
-      !parsed.artifact.clean_before ||
-      !parsed.artifact.clean_after ||
-      parsed.artifact.head_before !== receipt.subjectHeadSha ||
-      parsed.artifact.head_after !== receipt.subjectHeadSha ||
-      canonicalJson(parsed.artifact.gate) !== canonicalJson(gate) ||
-      recordedSetupViolation(parsed.artifact.setup, gate.setup, parsed.artifact.result) ||
-      receipt.issuer !== policy.issuer ||
-      receipt.certificateIdentity !== policy.certificate_identity ||
-      receipt.buildSignerUri !== policy.build_signer_uri ||
-      receipt.buildSignerSha !== policy.build_signer_sha ||
-      receipt.sourceRepository !== policy.source_repository ||
-      parsed.artifact.source.repository !== receipt.sourceRepository ||
-      parsed.artifact.source.ref !== receipt.sourceRef ||
-      parsed.artifact.source.run_invocation_uri !== receipt.runInvocationUri
+      artifact.result !== 'passed' ||
+      artifact.exit_status !== 0 ||
+      artifact.signal !== null ||
+      !artifact.clean_before ||
+      !artifact.clean_after ||
+      artifact.head_before !== receipt.subjectHeadSha ||
+      artifact.head_after !== receipt.subjectHeadSha ||
+      canonicalJson(artifact.gate) !== canonicalJson(gate) ||
+      recordedSetupViolation(artifact.setup, gate.setup, artifact.result)
     ) {
       return { ...common, status: 'corrupt' };
     }
@@ -440,11 +399,7 @@ export function evaluateCiProofEvidence(input: {
     return { ...common, status: 'passed' };
   });
 
-  return {
-    status: aggregateCiProofStatus(gates),
-    policy,
-    gates,
-  };
+  return { status: aggregateGateStatus(gates.map((gate) => gate.status)), policy, gates };
 }
 
 function emptyCiGate(gateId: string): CiProofGateEvidence {
@@ -456,158 +411,6 @@ function emptyCiGate(gateId: string): CiProofGateEvidence {
     subject_head_sha: null,
     package_sha256: null,
     verified_at: null,
-  };
-}
-
-function aggregateCiProofStatus(gates: CiProofGateEvidence[]): CiProofStatus {
-  if (gates.every((gate) => gate.status === 'passed')) {
-    return 'passed';
-  }
-  for (const status of ['corrupt', 'stale', 'missing'] as const) {
-    if (gates.some((gate) => gate.status === status)) {
-      return status;
-    }
-  }
-  return 'missing';
-}
-
-function validateSignedGateReceiptArtifact(value: unknown): SignedGateReceiptArtifact {
-  const field = 'package.artifact';
-  const candidate = requireObject(value, field);
-  if (candidate.schema_version !== 1 && candidate.schema_version !== 2) {
-    throw invalid(`${field}.schema_version`, 'must be 1 or 2');
-  }
-  const schemaVersion: SignedReceiptSchemaVersion = candidate.schema_version === 2 ? 2 : 1;
-  const artifact = requireExactObject(candidate, field, [
-    'schema_version',
-    'receipt_id',
-    'session_id',
-    'plan_sha256',
-    'gate',
-    'result',
-    ...(schemaVersion === 2 ? ['setup'] : []),
-    'started_at',
-    'ended_at',
-    'duration_ms',
-    'exit_status',
-    'signal',
-    'head_before',
-    'head_after',
-    'clean_before',
-    'clean_after',
-    'output',
-    'source',
-    'environment',
-    'sensor',
-  ]);
-  const receiptId = requireIdentifier(artifact.receipt_id, `${field}.receipt_id`, 160);
-  const sessionId = requireIdentifier(artifact.session_id, `${field}.session_id`, 160);
-  const planSha256 = requireSha256(artifact.plan_sha256, `${field}.plan_sha256`);
-  const gate = validateGate(artifact.gate, `${field}.gate`);
-  if (!GATE_RECEIPT_RESULTS.includes(artifact.result as GateReceiptResult)) {
-    throw invalid(`${field}.result`, `must be one of: ${GATE_RECEIPT_RESULTS.join(', ')}`);
-  }
-  const result = artifact.result as GateReceiptResult;
-  const setup = schemaVersion === 2 ? validateRecordedSetup(artifact.setup, `${field}.setup`, gate, result) : undefined;
-  const startedAt = requireTimestamp(artifact.started_at, `${field}.started_at`);
-  const endedAt = requireTimestamp(artifact.ended_at, `${field}.ended_at`);
-  const durationMs = requireSafeInteger(artifact.duration_ms, `${field}.duration_ms`, 0, 86_400_000);
-  const exitStatus =
-    artifact.exit_status === null
-      ? null
-      : requireSafeInteger(artifact.exit_status, `${field}.exit_status`, -2_147_483_648, 2_147_483_647);
-  const signal = artifact.signal === null ? null : requireText(artifact.signal, `${field}.signal`, 128);
-  const headBefore = requireCommitSha(artifact.head_before, `${field}.head_before`);
-  const headAfter = requireCommitSha(artifact.head_after, `${field}.head_after`);
-  if (typeof artifact.clean_before !== 'boolean') {
-    throw invalid(`${field}.clean_before`, 'must be a boolean');
-  }
-  if (typeof artifact.clean_after !== 'boolean') {
-    throw invalid(`${field}.clean_after`, 'must be a boolean');
-  }
-
-  const output = requireExactObject(artifact.output, `${field}.output`, ['stdout_sha256', 'stderr_sha256']);
-  const stdoutSha256 = requireSha256(output.stdout_sha256, `${field}.output.stdout_sha256`);
-  const stderrSha256 = requireSha256(output.stderr_sha256, `${field}.output.stderr_sha256`);
-
-  const source = requireExactObject(artifact.source, `${field}.source`, [
-    'repository',
-    'ref',
-    'head_sha',
-    'run_invocation_uri',
-  ]);
-  const repository = requireGitHubRepository(source.repository, `${field}.source.repository`);
-  const sourceRef = requireText(source.ref, `${field}.source.ref`, 1_024);
-  if (!/^refs\/heads\/[A-Za-z0-9._/-]+$/.test(sourceRef)) {
-    throw invalid(`${field}.source.ref`, 'must be an exact branch ref');
-  }
-  const sourceHeadSha = requireCommitSha(source.head_sha, `${field}.source.head_sha`);
-  const runInvocationUri = requireText(source.run_invocation_uri, `${field}.source.run_invocation_uri`, 1_024);
-  if (
-    !new RegExp(`^${escapeRegExp(repository)}/actions/runs/[1-9][0-9]*/attempts/[1-9][0-9]*$`).test(runInvocationUri)
-  ) {
-    throw invalid(`${field}.source.run_invocation_uri`, 'must identify an exact GitHub Actions run attempt');
-  }
-
-  const environment = requireExactObject(artifact.environment, `${field}.environment`, [
-    'runner_environment',
-    'runner_os',
-    'runner_arch',
-    'node_version',
-  ]);
-  if (environment.runner_environment !== 'github-hosted') {
-    throw invalid(`${field}.environment.runner_environment`, 'must be github-hosted');
-  }
-  const runnerOs = requireText(environment.runner_os, `${field}.environment.runner_os`, 128);
-  const runnerArch = requireText(environment.runner_arch, `${field}.environment.runner_arch`, 128);
-  const nodeVersion = requireText(environment.node_version, `${field}.environment.node_version`, 128);
-
-  const sensor = requireExactObject(artifact.sensor, `${field}.sensor`, ['name', 'contract_version']);
-  if (sensor.name !== 'threadloop-github-actions-gate') {
-    throw invalid(`${field}.sensor.name`, 'must be threadloop-github-actions-gate');
-  }
-  // The sensor contract and the artifact schema move together, so a v2 artifact cannot claim a v1 sensor.
-  if (sensor.contract_version !== schemaVersion) {
-    throw invalid(`${field}.sensor.contract_version`, `must be ${schemaVersion}`);
-  }
-
-  return {
-    schema_version: schemaVersion,
-    receipt_id: receiptId,
-    session_id: sessionId,
-    plan_sha256: planSha256,
-    gate,
-    result,
-    ...(setup ? { setup } : {}),
-    started_at: startedAt,
-    ended_at: endedAt,
-    duration_ms: durationMs,
-    exit_status: exitStatus,
-    signal,
-    head_before: headBefore,
-    head_after: headAfter,
-    clean_before: artifact.clean_before,
-    clean_after: artifact.clean_after,
-    output: {
-      stdout_sha256: stdoutSha256,
-      stderr_sha256: stderrSha256,
-    },
-    source: {
-      repository,
-      ref: sourceRef,
-      head_sha: sourceHeadSha,
-      run_invocation_uri: runInvocationUri,
-    },
-    environment: {
-      runner_environment: 'github-hosted',
-      runner_os: runnerOs,
-      runner_arch: runnerArch,
-      node_version: nodeVersion,
-    },
-    sensor: {
-      name: 'threadloop-github-actions-gate',
-      contract_version: schemaVersion,
-    },
   };
 }
 
@@ -627,299 +430,187 @@ function authoritativeGateResult(report: SignedGateReceiptArtifact, jobResult: G
     report.head_before !== report.source.head_sha ||
     report.head_after !== report.source.head_sha
   ) {
-    throw invalid('package.artifact.result', 'cannot be passed because the captured gate report is not a clean pass');
+    throw attestationError(
+      'package.artifact.result',
+      'cannot be passed because the captured gate report is not a clean pass',
+    );
   }
   return 'passed';
 }
 
-function validateInTotoReceiptStatement(
+export function canonicalizeSignedArtifact<A>(
+  kind: SignedReceiptKind<A, unknown>,
   value: unknown,
-  artifact: CanonicalSignedGateReceiptArtifact,
-): InTotoReceiptStatement {
-  const statement = requireExactObject(value, 'statement', ['_type', 'subject', 'predicateType', 'predicate']);
-  if (statement._type !== IN_TOTO_STATEMENT_TYPE) {
-    throw invalid('statement._type', `must be ${IN_TOTO_STATEMENT_TYPE}`);
-  }
-  // Pinned to the artifact's version, so the statement cannot describe a v2 receipt as a v1 predicate.
-  const expectedPredicateType = threadloopReceiptPredicateType(artifact.artifact.schema_version);
-  if (statement.predicateType !== expectedPredicateType) {
-    throw invalid('statement.predicateType', `must be ${expectedPredicateType}`);
-  }
-  if (!Array.isArray(statement.subject) || statement.subject.length !== 2) {
-    throw invalid('statement.subject', 'must contain exactly the repository HEAD and receipt artifact');
-  }
-  const sourceSubject = requireExactObject(statement.subject[0], 'statement.subject[0]', ['name', 'digest']);
-  if (sourceSubject.name !== artifact.artifact.source.repository) {
-    throw invalid('statement.subject[0].name', 'must match package.artifact.source.repository');
-  }
-  const sourceDigest = requireExactObject(sourceSubject.digest, 'statement.subject[0].digest', ['gitCommit']);
-  if (sourceDigest.gitCommit !== artifact.artifact.source.head_sha) {
-    throw invalid('statement.subject[0].digest.gitCommit', 'must match package.artifact.source.head_sha');
-  }
-  const artifactSubject = requireExactObject(statement.subject[1], 'statement.subject[1]', ['name', 'digest']);
-  if (artifactSubject.name !== 'threadloop-gate-receipt.json') {
-    throw invalid('statement.subject[1].name', 'must be threadloop-gate-receipt.json');
-  }
-  const artifactDigest = requireExactObject(artifactSubject.digest, 'statement.subject[1].digest', ['sha256']);
-  if (artifactDigest.sha256 !== artifact.sha256) {
-    throw invalid('statement.subject[1].digest.sha256', 'must match the canonical package artifact digest');
-  }
-
-  const predicate = requireExactObject(statement.predicate, 'statement.predicate', [
-    'schema_version',
-    'receipt_type',
-    'session_id',
-    'plan_sha256',
-    'gate_id',
-    'result',
-    'subject_head_sha',
-    'artifact',
-    'sensor',
-  ]);
-  if (predicate.schema_version !== artifact.artifact.schema_version) {
-    throw invalid('statement.predicate.schema_version', `must be ${artifact.artifact.schema_version}`);
-  }
-  if (predicate.receipt_type !== 'gate') {
-    throw invalid('statement.predicate.receipt_type', 'must be gate');
-  }
-  assertEqual(predicate.session_id, artifact.artifact.session_id, 'statement.predicate.session_id');
-  assertEqual(predicate.plan_sha256, artifact.artifact.plan_sha256, 'statement.predicate.plan_sha256');
-  assertEqual(predicate.gate_id, artifact.artifact.gate.id, 'statement.predicate.gate_id');
-  assertEqual(predicate.result, artifact.artifact.result, 'statement.predicate.result');
-  assertEqual(predicate.subject_head_sha, artifact.artifact.source.head_sha, 'statement.predicate.subject_head_sha');
-
-  const predicateArtifact = requireExactObject(predicate.artifact, 'statement.predicate.artifact', ['name', 'sha256']);
-  assertEqual(predicateArtifact.name, 'threadloop-gate-receipt.json', 'statement.predicate.artifact.name');
-  assertEqual(predicateArtifact.sha256, artifact.sha256, 'statement.predicate.artifact.sha256');
-  const sensor = requireExactObject(predicate.sensor, 'statement.predicate.sensor', ['name', 'contract_version']);
-  assertEqual(sensor.name, 'threadloop-github-actions-gate', 'statement.predicate.sensor.name');
-  assertEqual(sensor.contract_version, artifact.artifact.schema_version, 'statement.predicate.sensor.contract_version');
-
-  return value as InTotoReceiptStatement;
+  digest: ProofDigest,
+): CanonicalSignedArtifact<A> {
+  const artifact = parseFields(kind.schema, value, 'package.artifact', kind.fail);
+  const json = canonicalJson(artifact);
+  return { artifact, json, sha256: digest(json) };
 }
 
-function validateGate(value: unknown, field: string): ProofGate {
-  const record = requireObject(value, field);
-  const declaresSetup = 'setup' in record;
-  const gate = requireExactObject(
-    record,
-    field,
-    declaresSetup
-      ? ['id', 'setup', 'command', 'working_directory', 'timeout_ms']
-      : ['id', 'command', 'working_directory', 'timeout_ms'],
-  );
-  const id = requireIdentifier(gate.id, `${field}.id`, 128);
-  const execution = validateGateExecution(gate, field);
-  if (!declaresSetup) {
-    return { id, ...execution };
+const packageKeysSchema = exactObject({ media_type: z.unknown(), artifact: z.unknown(), bundle: z.unknown() });
+
+/**
+ * Node's base64 decoder skips characters outside the alphabet and accepts URL-safe ones, so only a string that
+ * re-encodes to itself is known to carry exactly the bytes it appears to.
+ */
+const bundleSchema = z.looseObject(
+  {
+    dsseEnvelope: z.looseObject(
+      {
+        payloadType: literal(IN_TOTO_PAYLOAD_TYPE),
+        payload: rule(
+          text(16_000_000),
+          (payload) => Buffer.from(payload, 'base64').toString('base64') === payload,
+          'must be canonical base64',
+        ),
+      },
+      { error: 'must be an object' },
+    ),
+  },
+  { error: 'must be an object' },
+);
+
+/** Decodes a signed package's envelope and canonicalizes its artifact. The statement is bound separately. */
+export function parseSignedEnvelope<A>(
+  kind: SignedReceiptKind<A, unknown>,
+  value: unknown,
+  digest: ProofDigest,
+): SignedEnvelope<A> {
+  const receiptPackage = parseFields(packageKeysSchema, value, 'package', kind.fail);
+  const canonicalArtifact = canonicalizeSignedArtifact(kind, receiptPackage.artifact, digest);
+  const mediaType = kind.mediaType(canonicalArtifact.artifact);
+  if (receiptPackage.media_type !== mediaType) {
+    throw kind.fail('package.media_type', `must be ${mediaType}`);
   }
-  if (!Array.isArray(gate.setup) || gate.setup.length === 0 || gate.setup.length > 32) {
-    throw invalid(`${field}.setup`, 'must contain 1-32 declared setup steps when present');
+  const envelope = parseFields(bundleSchema, receiptPackage.bundle, 'package.bundle', kind.fail).dsseEnvelope;
+  const bundle = receiptPackage.bundle as Record<string, unknown>;
+  const statementBytes = Buffer.from(envelope.payload, 'base64');
+  const statementJson = statementBytes.toString('utf8');
+  // Decoding replaces invalid UTF-8 with U+FFFD. Without this check the statement text, and the digest stored
+  // for it, could describe bytes other than the ones that were signed.
+  if (!Buffer.from(statementJson, 'utf8').equals(statementBytes)) {
+    throw kind.fail('package.bundle.dsseEnvelope.payload', 'must encode UTF-8 text');
   }
-  const setup = gate.setup.map((step, index) => {
-    const stepField = `${field}.setup[${index}]`;
-    const stepRecord = requireExactObject(step, stepField, ['id', 'command', 'working_directory', 'timeout_ms']);
-    return {
-      id: requireIdentifier(stepRecord.id, `${stepField}.id`, 128),
-      ...validateGateExecution(stepRecord, stepField),
-    };
-  });
-  return { id, setup, ...execution };
+  const packageJson = canonicalJson({ media_type: mediaType, artifact: canonicalArtifact.artifact, bundle });
+  return {
+    artifact: canonicalArtifact.artifact,
+    artifactJson: canonicalArtifact.json,
+    artifactSha256: canonicalArtifact.sha256,
+    statementJson,
+    statementSha256: digest(statementJson),
+    bundle,
+    packageJson,
+    packageSha256: digest(packageJson),
+  };
 }
 
-function validateGateExecution(record: Record<string, unknown>, field: string) {
-  if (!Array.isArray(record.command) || record.command.length === 0 || record.command.length > 128) {
-    throw invalid(`${field}.command`, 'must contain 1-128 exact argv strings');
+/** Requires the signed statement to be exactly, byte for byte, the statement the canonical artifact implies. */
+export function bindSignedStatement<A, S>(
+  kind: SignedReceiptKind<A, S>,
+  envelope: SignedEnvelope<A>,
+): ParsedSignedPackage<A, S> {
+  let statement: unknown;
+  try {
+    statement = JSON.parse(envelope.statementJson) as unknown;
+  } catch {
+    throw kind.fail('package.bundle.dsseEnvelope.payload', 'must encode a JSON statement');
   }
-  const command = record.command.map((argument, index) => requireText(argument, `${field}.command[${index}]`, 32_768));
-  const workingDirectory = requireText(record.working_directory, `${field}.working_directory`, 4_096);
-  if (
-    workingDirectory.startsWith('/') ||
-    workingDirectory === '..' ||
-    workingDirectory.startsWith('../') ||
-    workingDirectory.includes('\0')
-  ) {
-    throw invalid(`${field}.working_directory`, 'must be repository-relative and must not escape the repository');
+  if (canonicalJson(statement) !== envelope.statementJson) {
+    throw kind.fail('package.bundle.dsseEnvelope.payload', 'must encode canonical JSON');
   }
-  const timeoutMs = requireSafeInteger(record.timeout_ms, `${field}.timeout_ms`, 1, 86_400_000);
-  return { command, working_directory: workingDirectory, timeout_ms: timeoutMs };
+  const expected = kind.buildStatement(envelope.artifact, envelope.artifactSha256);
+  const difference = firstDifference(statement, expected);
+  if (difference && kind.reportsStatementField) {
+    throw kind.fail(
+      `statement${difference.path}`,
+      difference.expected === null
+        ? `does not exactly bind the canonical ${kind.label} artifact`
+        : `must be ${difference.expected}`,
+    );
+  }
+  if (difference) {
+    throw kind.fail('statement', `does not exactly bind the canonical ${kind.label} artifact`);
+  }
+  return { ...envelope, statement: expected };
 }
 
 /**
- * Validates each recorded step's own fields, then holds the sequence to recordedSetupViolation, the one rule
- * local receipts are held to as well.
+ * Re-parses a stored package and checks it against the verified projection stored beside it and against the
+ * plan's immutable policy, without repeating Sigstore verification. Null when anything disagrees.
  */
-function validateRecordedSetup(
-  value: unknown,
-  field: string,
-  gate: ProofGate,
-  result: GateReceiptResult,
-): RecordedSetupStep[] {
-  if (!Array.isArray(value)) {
-    throw invalid(field, 'must be an array of recorded setup steps');
+export function reverifyStoredPackage<
+  A extends { source: { repository: string; ref: string; run_invocation_uri: string } },
+  S,
+>(
+  kind: SignedReceiptKind<A, S>,
+  stored: StoredSignedPackage,
+  packageJson: string | null | undefined,
+  policy: GitHubActionsTrustPolicy,
+  digest: ProofDigest,
+): ParsedSignedPackage<A, S> | null {
+  if (!packageJson || digest(packageJson) !== stored.packageSha256) {
+    return null;
   }
-  const recorded = value.map((step, index) => {
-    const stepField = `${field}[${index}]`;
-    const record = requireExactObject(step, stepField, [
-      'id',
-      'command',
-      'working_directory',
-      'timeout_ms',
-      'result',
-      'started_at',
-      'ended_at',
-      'duration_ms',
-      'exit_status',
-      'signal',
-      'head_before',
-      'head_after',
-      'clean_before',
-      'clean_after',
-      'output',
-    ]);
-    const execution = validateGateExecution(record, stepField);
-    const id = requireIdentifier(record.id, `${stepField}.id`, 128);
-    if (!GATE_RECEIPT_RESULTS.includes(record.result as GateReceiptResult)) {
-      throw invalid(`${stepField}.result`, `must be one of: ${GATE_RECEIPT_RESULTS.join(', ')}`);
+  let parsed: ParsedSignedPackage<A, S>;
+  try {
+    parsed = bindSignedStatement(kind, parseSignedEnvelope(kind, JSON.parse(packageJson) as unknown, digest));
+  } catch {
+    return null;
+  }
+  const source = parsed.artifact.source;
+  const matches =
+    parsed.packageJson === packageJson &&
+    parsed.packageSha256 === stored.packageSha256 &&
+    parsed.artifactJson === stored.artifactJson &&
+    parsed.artifactSha256 === stored.artifactSha256 &&
+    parsed.statementJson === stored.statementJson &&
+    parsed.statementSha256 === stored.statementSha256 &&
+    stored.issuer === policy.issuer &&
+    stored.certificateIdentity === policy.certificate_identity &&
+    stored.buildSignerUri === policy.build_signer_uri &&
+    stored.buildSignerSha === policy.build_signer_sha &&
+    stored.sourceRepository === policy.source_repository &&
+    source.repository === stored.sourceRepository &&
+    source.ref === stored.sourceRef &&
+    source.run_invocation_uri === stored.runInvocationUri;
+  return matches ? parsed : null;
+}
+
+/**
+ * The first value in `actual` that differs from `expected`, with its path and the scalar it should have been, or
+ * null when the two are equal. `expected` is null when the difference is in shape rather than in one value.
+ */
+function firstDifference(
+  actual: unknown,
+  expected: unknown,
+  path = '',
+): { path: string; expected: string | number | null } | null {
+  if (typeof expected === 'string' || typeof expected === 'number') {
+    return actual === expected ? null : { path, expected };
+  }
+  if (typeof expected !== 'object' || expected === null) {
+    return actual === expected ? null : { path, expected: null };
+  }
+  const expectedKeys = Object.keys(expected);
+  const sameShape =
+    typeof actual === 'object' &&
+    actual !== null &&
+    Array.isArray(actual) === Array.isArray(expected) &&
+    Object.keys(actual).length === expectedKeys.length &&
+    expectedKeys.every((key) => Object.hasOwn(actual, key));
+  if (!sameShape) {
+    return { path, expected: null };
+  }
+  for (const key of expectedKeys) {
+    const difference = firstDifference(
+      (actual as Record<string, unknown>)[key],
+      (expected as Record<string, unknown>)[key],
+      Array.isArray(expected) ? `${path}[${key}]` : `${path}.${key}`,
+    );
+    if (difference) {
+      return difference;
     }
-    if (typeof record.clean_before !== 'boolean' || typeof record.clean_after !== 'boolean') {
-      throw invalid(stepField, 'must record clean_before and clean_after as booleans');
-    }
-    const output = requireExactObject(record.output, `${stepField}.output`, ['stdout_sha256', 'stderr_sha256']);
-    return {
-      id,
-      ...execution,
-      result: record.result as GateReceiptResult,
-      started_at: requireTimestamp(record.started_at, `${stepField}.started_at`),
-      ended_at: requireTimestamp(record.ended_at, `${stepField}.ended_at`),
-      duration_ms: requireSafeInteger(record.duration_ms, `${stepField}.duration_ms`, 0, 86_400_000),
-      exit_status:
-        record.exit_status === null
-          ? null
-          : requireSafeInteger(record.exit_status, `${stepField}.exit_status`, -2_147_483_648, 2_147_483_647),
-      signal: record.signal === null ? null : requireText(record.signal, `${stepField}.signal`, 128),
-      head_before: requireCommitSha(record.head_before, `${stepField}.head_before`),
-      head_after: requireCommitSha(record.head_after, `${stepField}.head_after`),
-      clean_before: record.clean_before,
-      clean_after: record.clean_after,
-      output: {
-        stdout_sha256: requireSha256(output.stdout_sha256, `${stepField}.output.stdout_sha256`),
-        stderr_sha256: requireSha256(output.stderr_sha256, `${stepField}.output.stderr_sha256`),
-      },
-    };
-  });
-  const violation = recordedSetupViolation(recorded, gate.setup, result);
-  if (violation) {
-    const path = violation.path.map((key) => (typeof key === 'number' ? `[${key}]` : `.${key}`)).join('');
-    throw invalid(`${field}${path}`, violation.message);
   }
-  return recorded;
-}
-
-function requireObject(value: unknown, field: string) {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw invalid(field, 'must be an object');
-  }
-  return value as Record<string, unknown>;
-}
-
-function requireExactObject(value: unknown, field: string, expectedKeys: string[]) {
-  const record = requireObject(value, field);
-  const keys = Object.keys(record).sort();
-  const expected = [...expectedKeys].sort();
-  if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) {
-    throw invalid(field, `must contain exactly: ${expectedKeys.join(', ')}`);
-  }
-  return record;
-}
-
-function requireText(value: unknown, field: string, maximumLength: number) {
-  if (typeof value !== 'string' || value.trim().length === 0 || value.length > maximumLength || value.includes('\0')) {
-    throw invalid(field, `must be a non-empty string no longer than ${maximumLength} characters`);
-  }
-  return value;
-}
-
-function requireIdentifier(value: unknown, field: string, maximumLength: number) {
-  const text = requireText(value, field, maximumLength);
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(text)) {
-    throw invalid(field, 'must match [A-Za-z0-9][A-Za-z0-9._-]*');
-  }
-  return text;
-}
-
-function requireSha256(value: unknown, field: string) {
-  if (typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value)) {
-    throw invalid(field, 'must be a lowercase SHA-256 digest');
-  }
-  return value;
-}
-
-function requireCommitSha(value: unknown, field: string) {
-  if (typeof value !== 'string' || !/^[0-9a-f]{40}$/.test(value)) {
-    throw invalid(field, 'must be a full lowercase Git commit SHA');
-  }
-  return value;
-}
-
-function requireTimestamp(value: unknown, field: string) {
-  const text = requireText(value, field, 64);
-  const parsed = new Date(text);
-  if (!Number.isFinite(parsed.valueOf()) || parsed.toISOString() !== text) {
-    throw invalid(field, 'must be a canonical UTC ISO-8601 timestamp');
-  }
-  return text;
-}
-
-function requireSafeInteger(value: unknown, field: string, minimum: number, maximum: number) {
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < minimum || value > maximum) {
-    throw invalid(field, `must be an integer from ${minimum} through ${maximum}`);
-  }
-  return value;
-}
-
-function requireGitHubRepository(value: unknown, field: string) {
-  const repository = requireText(value, field, 512);
-  if (!/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) {
-    throw invalid(field, 'must be an exact GitHub repository URI without a .git suffix');
-  }
-  return repository;
-}
-
-function isCanonicalBase64(value: string) {
-  if (value.length % 4 !== 0) {
-    return false;
-  }
-  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
-  const body = value.slice(0, padding === 0 ? undefined : -padding);
-  if (
-    body.includes('=') ||
-    !Array.from(body).every((character) => {
-      const code = character.charCodeAt(0);
-      return (
-        (code >= 48 && code <= 57) ||
-        (code >= 65 && code <= 90) ||
-        (code >= 97 && code <= 122) ||
-        character === '+' ||
-        character === '/'
-      );
-    })
-  ) {
-    return false;
-  }
-  return Buffer.from(value, 'base64').toString('base64') === value;
-}
-
-function assertEqual(actual: unknown, expected: unknown, field: string) {
-  if (actual !== expected) {
-    throw invalid(field, 'does not match the canonical receipt artifact');
-  }
-}
-
-function escapeRegExp(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function invalid(field: string, message: string) {
-  return new AttestationValidationError(field, message);
+  return null;
 }

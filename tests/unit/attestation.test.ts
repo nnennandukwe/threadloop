@@ -358,6 +358,11 @@ describe('signed receipt attestation domain', () => {
       { ...artifact(), source: { ...artifact().source, run_invocation_uri: 'https://example.com/run/1' } },
       'package.artifact.source.run_invocation_uri',
     ],
+    [
+      'an empty declared setup',
+      { ...artifact(), gate: { ...artifact().gate, setup: [] } },
+      'package.artifact.gate.setup',
+    ],
   ])('rejects %s', (_name, value, field) => {
     expect(captureAttestationError(() => canonicalizeSignedGateReceiptArtifact(value, sha256)).field).toBe(field);
   });
