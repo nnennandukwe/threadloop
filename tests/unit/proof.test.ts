@@ -1,42 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import { canonicalizeProofPlan, ProofValidationError } from '../../src/domain/proof.js';
+import { captureError, trustPolicy, workflowSha } from '../fixtures/receipts.js';
 
-const workflowSha = 'a'.repeat(40);
-
-function ciPolicy() {
-  return {
-    provider: 'github-actions',
-    issuer: 'https://token.actions.githubusercontent.com',
-    certificate_identity:
-      'https://github.com/example/project/.github/workflows/threadloop.yml@refs/heads/issue-41/signed-ci-receipts',
-    source_repository: 'https://github.com/example/project',
-    build_signer_uri: `https://github.com/nnennandukwe/threadloop/.github/workflows/threadloop-gate-sensor.yml@${workflowSha}`,
-    build_signer_sha: workflowSha,
-  };
-}
-
-function reviewPolicy() {
-  return {
-    provider: 'github-actions',
-    issuer: 'https://token.actions.githubusercontent.com',
-    certificate_identity:
-      'https://github.com/example/project/.github/workflows/threadloop-review.yml@refs/heads/issue-42/review-audit-handoff',
-    source_repository: 'https://github.com/example/project',
-    build_signer_uri: `https://github.com/nnennandukwe/threadloop/.github/workflows/threadloop-review-sensor.yml@${workflowSha}`,
-    build_signer_sha: workflowSha,
-  };
-}
-
-function captureProofValidationError(action: () => unknown) {
-  try {
-    action();
-    throw new Error('Expected proof validation to fail.');
-  } catch (error) {
-    expect(error).toBeInstanceOf(ProofValidationError);
-    return error as ProofValidationError;
-  }
-}
+const ciPolicy = () => trustPolicy('gate', 'threadloop.yml', 'issue-41/signed-ci-receipts');
+const reviewPolicy = () => trustPolicy('review', 'threadloop-review.yml', 'issue-42/review-audit-handoff');
+const captureProofValidationError = (action: () => unknown) => captureError(ProofValidationError, action);
 
 describe('proof plan domain', () => {
   it('canonicalizes equivalent exact plans to the same bytes and digest', () => {
@@ -247,12 +216,6 @@ describe('proof plan domain', () => {
       field: 'proof_plan',
     },
   ])('rejects $name', ({ plan, field }) => {
-    try {
-      canonicalizeProofPlan(plan, sha256);
-      throw new Error('Expected proof plan validation to fail.');
-    } catch (error) {
-      expect(error).toBeInstanceOf(ProofValidationError);
-      expect((error as ProofValidationError).field).toBe(field);
-    }
+    expect(captureProofValidationError(() => canonicalizeProofPlan(plan, sha256)).field).toBe(field);
   });
 });
