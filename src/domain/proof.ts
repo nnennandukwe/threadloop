@@ -417,7 +417,9 @@ export function recordedSetupMatchesDeclared(
 ): boolean {
   const recordedSteps = recorded ?? [];
   const declaredSteps = declared ?? [];
-  const requiresCompleteSetup = result !== 'setup_failed' && result !== 'invalidated';
+  // Only a result reachable before the gate command ran may record a short sequence. The CI signer reports a
+  // job GitHub cancelled as `aborted` whatever point it reached, including mid-setup.
+  const requiresCompleteSetup = result !== 'setup_failed' && result !== 'invalidated' && result !== 'aborted';
   if (
     recordedSteps.length > declaredSteps.length ||
     (requiresCompleteSetup && recordedSteps.length !== declaredSteps.length)

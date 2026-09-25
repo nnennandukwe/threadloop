@@ -375,6 +375,15 @@ describe('local proof evidence for recorded setup', () => {
     expect(evidence.status).toBe('corrupt');
   });
 
+  it('treats an aborted receipt that stopped mid-setup as a failure, not corruption', () => {
+    const evidence = evidenceFor(boundPlan([syncStep, { ...syncStep, id: 'second' }]), {
+      result: 'aborted',
+      setup: [recordedStep({ result: 'passed', exit_status: 0 })],
+    });
+
+    expect(evidence.status).toBe('failed');
+  });
+
   it('keeps a stored v1 receipt without setup valid against a gate that declares none', () => {
     const canonical = canonicalizeProofPlan(planV4([verifyGate]), sha256, { requireReviewPolicy: true });
     const plan = {

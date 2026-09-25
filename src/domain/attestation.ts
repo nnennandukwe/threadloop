@@ -759,7 +759,8 @@ function validateRecordedSetup(
     throw invalid(field, 'must be an array of recorded setup steps');
   }
   const declared = gate.setup ?? [];
-  const requiresCompleteSetup = result !== 'setup_failed' && result !== 'invalidated';
+  // Mirrors recordedSetupMatchesDeclared: a job cancelled mid-setup is signed as `aborted` with partial setup.
+  const requiresCompleteSetup = result !== 'setup_failed' && result !== 'invalidated' && result !== 'aborted';
   if (result === 'setup_failed' && declared.length === 0) {
     throw invalid(field, 'cannot be setup_failed when the gate declares no setup');
   }

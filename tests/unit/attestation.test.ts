@@ -190,6 +190,53 @@ describe('signed receipt attestation domain', () => {
     ).toBe('package.artifact.session_id');
   });
 
+  it('signs a job cancelled after setup failed as aborted, keeping the partial setup it recorded', () => {
+    const base = artifact();
+    const syncStep = { id: 'sync', command: ['uv', 'sync'], working_directory: '.', timeout_ms: 600_000 };
+    const gate = { ...base.gate, setup: [syncStep, { ...syncStep, id: 'second' }] };
+    const report = {
+      ...base,
+      gate,
+      result: 'setup_failed' as const,
+      exit_status: null,
+      setup: [
+        {
+          ...syncStep,
+          result: 'failed' as const,
+          started_at: '2026-07-23T18:00:00.000Z',
+          ended_at: '2026-07-23T18:00:05.000Z',
+          duration_ms: 5_000,
+          exit_status: 1,
+          signal: null,
+          head_before: headSha,
+          head_after: headSha,
+          clean_before: true,
+          clean_after: true,
+          output: { stdout_sha256: 'e'.repeat(64), stderr_sha256: 'f'.repeat(64) },
+        },
+      ],
+    };
+
+    const authorized = authorizeGateReportForSigning(report, {
+      receiptId: 'receipt_signer_generated',
+      sessionId: 'session_123',
+      planSha256: planSha,
+      gate,
+      sourceRepository: base.source.repository,
+      sourceRef: base.source.ref,
+      sourceHeadSha: headSha,
+      runInvocationUri: base.source.run_invocation_uri,
+      runnerOs: 'Linux',
+      runnerArch: 'X64',
+      nodeVersion: 'v22.13.0',
+      jobResult: 'cancelled',
+    });
+
+    expect(authorized).toMatchObject({ result: 'aborted', exit_status: 1, setup: report.setup });
+    // The signer re-canonicalizes what it authorized, so the aborted artifact must stay valid.
+    expect(canonicalizeSignedGateReceiptArtifact(authorized, sha256).artifact.result).toBe('aborted');
+  });
+
   it('keeps legacy proof plans readable but reports missing immutable CI policy', () => {
     const evidence = evaluateCiProofEvidence({
       sessionId: 'session_123',
