@@ -229,9 +229,14 @@ export async function runGateProcess(input: GateProcessInput): Promise<GateProce
   const stderrDigest = new DigestTransform();
   const stdoutWrite = createWriteStream(input.stdoutPath, { flags: 'wx' });
   const stderrWrite = createWriteStream(input.stderrPath, { flags: 'wx' });
+  // The gate leads its own process group so a timeout or abort can terminate everything it started. Signalling
+  // only the direct child would leave a grandchild holding the output pipes, and the gate would outlive its
+  // timeout until that grandchild exited.
+  const ownsProcessGroup = process.platform !== 'win32';
   const child = spawn(executable, args, {
     cwd: input.cwd,
     shell: false,
+    detached: ownsProcessGroup,
     stdio: ['ignore', 'pipe', 'pipe'],
     env: input.env ?? process.env,
   });
@@ -244,20 +249,52 @@ export async function runGateProcess(input: GateProcessInput): Promise<GateProce
   let processError: NodeJS.ErrnoException | null = null;
   let forceTimer: NodeJS.Timeout | undefined;
 
+  /** Signals the gate's process tree. Returns false only when a live tree could not be signalled. */
+  const signalGate = (signal: NodeJS.Signals) => {
+    if (!ownsProcessGroup || child.pid === undefined) {
+      return child.kill(signal) || child.exitCode !== null || child.signalCode !== null;
+    }
+    try {
+      process.kill(-child.pid, signal);
+      return true;
+    } catch (error) {
+      // ESRCH: every process in the group has already exited, so there is nothing left to terminate.
+      return (error as NodeJS.ErrnoException).code === 'ESRCH';
+    }
+  };
+
   const terminate = () => {
-    if (child.exitCode !== null || child.signalCode !== null) {
+    if (forceTimer) {
       return;
     }
-    if (!child.kill('SIGTERM')) {
+    if (!signalGate('SIGTERM')) {
       cleanupFailed = true;
     }
     forceTimer = setTimeout(() => {
-      if (child.exitCode === null && child.signalCode === null && !child.kill('SIGKILL')) {
+      if (!signalGate('SIGKILL')) {
         cleanupFailed = true;
       }
     }, 2_000);
     forceTimer.unref();
   };
+
+  // A detached gate no longer shares the terminal's process group, so an interrupt aimed at ThreadLoop would
+  // not reach it. Forward the signal to the gate's tree, then re-raise it so ThreadLoop exits exactly as it
+  // would have without the handler.
+  const forwardedSignals = ownsProcessGroup ? (['SIGINT', 'SIGTERM', 'SIGHUP'] as const) : [];
+  const removeSignalForwarding = () => {
+    for (const signal of forwardedSignals) {
+      process.removeListener(signal, forwardSignal);
+    }
+  };
+  function forwardSignal(signal: NodeJS.Signals) {
+    signalGate(signal);
+    removeSignalForwarding();
+    process.kill(process.pid, signal);
+  }
+  for (const signal of forwardedSignals) {
+    process.once(signal, forwardSignal);
+  }
 
   const timeout = setTimeout(() => {
     timedOut = true;
@@ -285,6 +322,7 @@ export async function runGateProcess(input: GateProcessInput): Promise<GateProce
   if (forceTimer) {
     clearTimeout(forceTimer);
   }
+  removeSignalForwarding();
   input.abortSignal?.removeEventListener('abort', onAbort);
   const streamResults = await Promise.all([stdoutPipeline, stderrPipeline]);
   const streamError = streamResults.find((result) => !result.ok);
