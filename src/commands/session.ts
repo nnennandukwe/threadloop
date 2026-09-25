@@ -338,20 +338,19 @@ export async function sessionReconcileCommand(context: CommandContext, options: 
   }
 
   writeCommandSuccess(context, {
-    text: results.map((r) => {
-      const changed = r.currentSnapshot.changedFiles.length;
-      const prev = r.previousSnapshot ? ` (was ${r.previousSnapshot.headSha.slice(0, 7)})` : ' (initial)';
-      return `Reconciled ${r.sessionId}: ${r.currentSnapshot.branch} @ ${r.currentSnapshot.headSha.slice(0, 7)}${prev}, ${changed} files changed`;
+    text: results.map(({ sessionId, currentSnapshot, previousSnapshot }) => {
+      const previous = previousSnapshot ? ` (was ${previousSnapshot.headSha.slice(0, 7)})` : ' (initial)';
+      return `Reconciled ${sessionId}: ${currentSnapshot.branch} @ ${currentSnapshot.headSha.slice(0, 7)}${previous}, ${currentSnapshot.changedFiles.length} files changed`;
     }),
     data: {
       reconciled: results.length,
-      sessions: results.map((r) => ({
-        session_id: r.sessionId,
-        branch: r.currentSnapshot.branch,
-        head_sha: r.currentSnapshot.headSha,
-        changed_files: r.currentSnapshot.changedFiles.length,
-        previous_head_sha: r.previousSnapshot?.headSha ?? null,
-        reconciled_at: r.reconciledAt,
+      sessions: results.map(({ sessionId, currentSnapshot, previousSnapshot, reconciledAt }) => ({
+        session_id: sessionId,
+        branch: currentSnapshot.branch,
+        head_sha: currentSnapshot.headSha,
+        changed_files: currentSnapshot.changedFiles.length,
+        previous_head_sha: previousSnapshot?.headSha ?? null,
+        reconciled_at: reconciledAt,
       })),
     },
   });
