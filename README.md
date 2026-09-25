@@ -76,8 +76,7 @@ Implemented storage:
 - `.threadloop/artifacts/*.md`
 - `.threadloop/artifacts/receipts/<session-id>/<receipt-id>/`
 
-Legacy repos with `.threadloop/state/state.json` migrate into SQLite on first init/read/write. The JSON file is
-intentionally left in place as a safety backup during this phase, but ThreadLoop reads from SQLite after migration.
+ThreadLoop opens schema v7 and v8 state databases and upgrades v7 in place with `threadloop init`.
 
 ## Install
 
@@ -142,7 +141,7 @@ npm run smoke:pack
 
 - creates `.threadloop/` if needed
 - creates or opens `.threadloop/state/state.db`
-- migrates legacy `.threadloop/state/state.json` into SQLite when present
+- upgrades a schema-v7 state database to the current schema
 - ensures `.threadloop/state/` and `.threadloop/artifacts/receipts/` are ignored via `.git/info/exclude`
 - leaves normal `.threadloop/artifacts/*.md` review artifacts visible
 
@@ -152,7 +151,6 @@ The current TypeScript/Node implementation provides:
 
 - SQLite-backed durable state
 - transactional writes for core mutations
-- migration from legacy `state.json`
 - explicit `session` namespace commands
 - `--json` machine-output contract for session commands
 - reconcile and snapshot persistence
