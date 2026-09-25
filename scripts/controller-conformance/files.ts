@@ -1,5 +1,4 @@
-import { constants } from 'node:fs';
-import { lstat, open, opendir } from 'node:fs/promises';
+import { lstat, opendir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseDocument } from 'yaml';
@@ -12,50 +11,13 @@ export const corpusDirectory = fileURLToPath(
   new URL('../../docs/contracts/controller-conformance-v0.1/', import.meta.url),
 );
 
+/** Committed artifacts are read whole: regular files only, bounded before and after reading. */
 async function readArtifact(path: string, maxBytes = 16 * 1024 * 1024): Promise<Buffer> {
-  const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)).catch(
-    (error: unknown) => {
-      if (error instanceof Error && 'code' in error && error.code === 'ELOOP')
-        throw new Error(`${path}: expected a regular file, not a symlink.`, { cause: error });
-      throw error;
-    },
-  );
-  let content: Buffer;
-  try {
-    const opened = await handle.stat();
-    const named = await lstat(path);
-    if (!opened.isFile() || !named.isFile() || opened.dev !== named.dev || opened.ino !== named.ino)
-      throw new Error(`${path}: expected the same regular file that was opened.`);
-    if (opened.size > maxBytes) throw new Error(`${path}: byte limit exceeded (${maxBytes} bytes).`);
-    const chunks: Buffer[] = [];
-    let size = 0;
-    // Read at most the budget plus one byte, even if the file grows after stat.
-    while (true) {
-      const chunk = Buffer.alloc(Math.min(64 * 1024, maxBytes + 1 - size));
-      const { bytesRead } = await handle.read(chunk, 0, chunk.length, null);
-      if (!bytesRead) {
-        content = Buffer.concat(chunks, size);
-        break;
-      }
-      size += bytesRead;
-      if (size > maxBytes) throw new Error(`${path}: byte limit exceeded (${maxBytes} bytes).`);
-      chunks.push(chunk.subarray(0, bytesRead));
-    }
-  } catch (error) {
-    const closeFailure = await handle.close().then(
-      () => undefined,
-      (closeError: unknown) => ({ error: closeError }),
-    );
-    if (closeFailure)
-      throw new AggregateError(
-        [error, closeFailure.error],
-        `${path}: ${error instanceof Error ? error.message : String(error)}; descriptor close also failed.`,
-        { cause: error },
-      );
-    throw error;
-  }
-  await handle.close();
-  return content;
+  const metadata = await lstat(path);
+  if (!metadata.isFile()) throw new Error(`${path}: expected a regular file.`);
+  const bytes = metadata.size > maxBytes ? null : await readFile(path);
+  if (!bytes || bytes.length > maxBytes) throw new Error(`${path}: byte limit exceeded (${maxBytes} bytes).`);
+  return bytes;
 }
 
 async function readJson(path: string, sourceBudget?: { remaining: number }): Promise<unknown> {
