@@ -22,7 +22,7 @@
     "format": "prettier . --write",
     "format:check": "prettier . --check",
     "lint": "eslint . --max-warnings=0",
-    "lint:markdown": "markdownlint-cli2",
+    "lint:markdown": "markdownlint \"**/*.md\"",
     "typecheck": "tsc --noEmit",
     "dead-code": "knip",
     "check:community": "tsx scripts/check-community.ts",
@@ -50,11 +50,11 @@
     "@sigstore/sign": "5.0.0",
     "ajv": "8.20.0",
     "commander": "^15.0.0",
-    "gray-matter": "^4.0.3",
     "prompts": "^2.4.2",
     "sigstore": "5.0.0",
     "threadloop-contracts": "git+https://github.com/nnennandukwe/threadloop-contracts.git#4ed9a94a2a089b9ae950d93297f7a6b9b939d3a6",
-    "zod": "4.6.5"
+    "zod": "4.6.5",
+    "yaml": "2.9.1"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
@@ -66,22 +66,21 @@
     "husky": "9.1.7",
     "knip": "6.37.0",
     "lint-staged": "16.4.0",
-    "markdownlint-cli2": "0.23.3",
     "prettier": "3.9.8",
-    "tsup": "8.5.1",
+    "tsup": "9.0.0",
     "tsx": "4.23.13",
     "typescript": "6.0.3",
     "typescript-eslint": "8.70.0",
     "vitest": "4.1.11",
-    "yaml": "2.9.1"
+    "markdownlint-cli": "0.49.1"
   },
   "overrides": {
-    "markdownlint-cli2": {
+    "markdownlint-cli": {
       "js-yaml": "5.5.0",
       "smol-toml": "1.9.1"
     },
-    "gray-matter": {
-      "js-yaml": "3.15.2"
+    "micromark-extension-math": {
+      "katex": "0.18.11"
     }
   }
 }

@@ -1,0 +1,6 @@
+.claude/worktrees/**
+**/.gsd/**
+**/.threadloop/**
+**/coverage/**
+**/dist/**
+**/node_modules/**

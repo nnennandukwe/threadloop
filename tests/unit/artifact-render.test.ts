@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderArtifact } from '../../src/renderers/markdown/artifacts.js';
+import { parse as parseYaml } from 'yaml';
 
 describe('artifact rendering', () => {
   it('keeps a multi-line capture inside its bullet', () => {
@@ -52,5 +53,14 @@ describe('artifact rendering', () => {
     });
 
     expect(rendered).toContain('- Retry idempotent jobs\n  \n  - only on timeout\n');
+    const delimiter = rendered.indexOf('\n---\n', 4);
+    const metadata: unknown = parseYaml(rendered.slice(4, delimiter));
+    expect(metadata).toMatchObject({
+      task_id: 'task_1',
+      session_id: 'session_1',
+      issue_ref: null,
+      generated_at: '2026-09-25T00:00:00.000Z',
+      branch: 'main',
+    });
   });
 });
