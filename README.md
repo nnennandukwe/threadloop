@@ -8,8 +8,8 @@ Repository maintainers and developer-tooling teams use ThreadLoop to govern AI-a
 verification, review, and human completion. Agents perform work; ThreadLoop owns advancement through the outer software
 development lifecycle (SDLC). Completion requires current evidence of same-HEAD human approval and the merged PR.
 
-ThreadLoop currently runs a fixed governed PR lifecycle. It is neither an agent harness nor a general-purpose DAG
-engine. It does not supply a model/tool loop, model routing, or protected-effect permission enforcement.
+ThreadLoop currently runs a fixed governed PR lifecycle. It's neither an agent harness nor a general-purpose DAG engine.
+It doesn't supply a model/tool loop, model routing, or protected-effect permission enforcement.
 
 ## Capability status
 
@@ -17,17 +17,22 @@ engine. It does not supply a model/tool loop, model routing, or protected-effect
 | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Implemented now**                              | Fixed PR lifecycle, durable SQLite state, current-HEAD proof and signed review checks, bounded post-PR repair, human completion, review artifacts, and verified audit export.                                                                                          |
 | **Accepted in Controller Contract v0.1**         | Workflow Profile and Compiled Graph, Controller Decision and Action Request, Execution Claim and Attempt, executor/GAAP mapping, and controller conformance specifications, published in [threadloop-contracts](https://github.com/nnennandukwe/threadloop-contracts). |
-| **Deferred to the controller-runtime milestone** | Configurable graph execution, durable Execution Claim enforcement, GAAP process invocation and authenticated receipt admission, and conformance by a real controller through the external suite.                                                                       |
+| **Deferred to the controller-runtime milestone** | Configurable graph execution and conformance by a real controller through the external suite.                                                                                                                                                                          |
 | **Deferred to the Rust migration**               | A Rust ThreadLoop replacement, after the contract freeze and separate runtime milestone demonstrate the required behavior.                                                                                                                                             |
 
+The optional [GAAP executor bridge](docs/gaap-executor.md) implements explicit host adoption, durable Execution Claims,
+one bounded process invocation, independent signed receipt verification, and evidence persistence before guard
+reevaluation. It uses a separate state directory and doesn't advance lifecycle or bind existing sessions to a graph.
+
 The contracts and their offline compiler and validators live in
-[threadloop-contracts](https://github.com/nnennandukwe/threadloop-contracts); nothing there is executable through the
-ThreadLoop CLI. Existing sessions do not acquire graph bindings or Execution Claims from the accepted specifications.
+[threadloop-contracts](https://github.com/nnennandukwe/threadloop-contracts); its frozen execution validators and
+mapping helpers also support the optional executor bridge. Existing sessions don't acquire graph bindings or Execution
+Claims from the accepted specifications.
 
 The [contract freeze #110](https://github.com/nnennandukwe/threadloop/issues/110) is complete.
 [RunInvariant PR #4](https://github.com/nnennandukwe/run-invariant/pull/4) merged the external harness for this corpus.
 Synthetic subjects exercise that harness; conformance by a real ThreadLoop controller remains unproven. These milestones
-do not establish a release or completion of the separate runtime milestone.
+don't establish a release or completion of the separate runtime milestone.
 
 The [architecture guide](docs/architecture.md) explains the four system roles, the YAML-to-canonical-JSON contract, and
 the relationship between a ThreadLoop Workflow Run and a GAAP Agent Run. It links the normative contracts and separates
@@ -66,6 +71,14 @@ Repository and artifact commands:
 
 - `threadloop init`
 - `threadloop artifact generate [change-brief|pr-summary|handoff] [--session <id>] [--json]`
+
+Optional executor commands (see the [host configuration and recovery guide](docs/gaap-executor.md)):
+
+- `threadloop executor register --state <directory> --binding <file> --config <file> [--json]`
+- `threadloop executor run --state <directory> [--json]`
+- `threadloop executor inspect --state <directory> [--json]`
+- `threadloop executor admit <observation-id> --state <directory> [--json]`
+- `threadloop executor evaluate --state <directory> [--json]`
 
 Without `--session`, `artifact generate` targets the only active session. It fails with `SESSION_REQUIRED` when none is
 active and `SESSION_AMBIGUOUS` when several are.
@@ -112,7 +125,7 @@ threadloop session capture decision "Retry only idempotent jobs" --session "$ses
 threadloop session status --session "$session_id" --json
 ```
 
-Use this path for day-to-day local development. It does not require adding ThreadLoop to the consumer repo's
+Use this path for day-to-day local development. It doesn't require adding ThreadLoop to the consumer repo's
 dependencies.
 
 ### 2. `npm pack` for install verification
@@ -168,13 +181,13 @@ The current TypeScript/Node implementation provides:
   audit, and next-human-action projections
 - protocol v4 and governed handoff v3
 
-Use one autonomous task per checkout or worktree. The current operator model does not promise safe concurrent autonomous
+Use one autonomous task per checkout or worktree. The current operator model doesn't promise safe concurrent autonomous
 tasks in one checkout.
 
 ## Quick start
 
 After using either local install flow above, run this in the consumer Git repository. Start on a dedicated task branch
-from updated `main`; ThreadLoop does not create the branch for you. With the tarball install, prefix `threadloop` with
+from updated `main`; ThreadLoop doesn't create the branch for you. With the tarball install, prefix `threadloop` with
 `npx`.
 
 ```bash
@@ -192,11 +205,11 @@ threadloop artifact generate change-brief --session "$session_id"
 The first command returns a `session_id` and creates `.threadloop/state/state.db` when needed. Replace the example ID
 with that returned value. `session next` reports the candidate and missing work without advancing state; the explicit
 transition enters `framed`. The final command renders a change brief under `.threadloop/artifacts/` for you to inspect.
-Captured notes and generated artifacts do not satisfy proof guards by themselves.
+Captured notes and generated artifacts don't satisfy proof guards by themselves.
 
 Continue with the [agent-mode flow](docs/agent-mode.md) and [consumer onboarding](docs/consumer-onboarding.md): bind a
 proof plan, run its declared gates, import trusted signed evidence, and follow review and human-completion guards. The
-quickstart does not complete a governed PR.
+quickstart doesn't complete a governed PR.
 
 ## Autonomous agent mode
 
@@ -284,7 +297,7 @@ installation. See the [contribution guide](CONTRIBUTING.md) for hook behavior an
   exists.
 - Compatibility root `status` fails with `SESSION_REQUIRED` when zero sessions match.
 - `.threadloop/state/` is ignored via `.git/info/exclude` by default.
-- `.threadloop/artifacts/receipts/` is ignored locally; normal review artifacts are not hidden.
+- `.threadloop/artifacts/receipts/` is ignored locally; normal review artifacts aren't hidden.
 - Artifacts are local by default and may be committed when useful.
 
 ## Docs

@@ -10,11 +10,11 @@ import {
 import { gaapFixture, signGaapTestStatement } from './gaap.js';
 import { observeGaapWorkspace } from '../../src/adapters/fs/gaap-files.js';
 import { gaapContentDigest, gaapObjectDigest } from '../../src/domain/gaap-content.js';
-import { canonicalGaapJson } from '../../src/domain/gaap-json.js';
+import { canonicalGaapJson, parseGaapJson } from '../../src/domain/gaap-json.js';
 
-let input = '';
-for await (const chunk of process.stdin) input += String(chunk);
-const request = JSON.parse(input) as ExecutorRequest;
+const chunks: Buffer[] = [];
+for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk as Uint8Array));
+const request = parseGaapJson(Buffer.concat(chunks)) as ExecutorRequest;
 const mode = process.env.TEST_GAAP_MODE;
 if (mode === 'timeout') await new Promise(() => setInterval(() => {}, 1000));
 if (mode === 'nonzero') process.exit(9);

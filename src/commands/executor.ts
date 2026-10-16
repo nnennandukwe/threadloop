@@ -50,11 +50,16 @@ export async function executorRunCommand(context: CommandContext, options: Optio
   try {
     await execute(context, async () => {
       const result = await runGaapExecutor(new GaapState(options.state), cancellation.signal);
-      if (!['admitted', 'committed_with_warning', 'already_admitted'].includes(result.status)) {
+      if (result.status === 'rejected' || result.status === 'uncertain') {
         throw new ThreadloopError(
           'EXECUTOR_REJECTED',
           'Execution produced no admitted evidence. Inspect the retained observation before recovery.',
-          { details: { ...result } },
+          {
+            details: {
+              ...result,
+              hint: `Observation ${result.observation_id}: ${result.reason.slice(0, 1024)}. Run threadloop executor inspect --state ${"'" + options.state.replaceAll("'", "'\\''") + "'"} before recovery.`,
+            },
+          },
         );
       }
       return result;

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmdirSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import {
@@ -241,23 +241,39 @@ export async function runGaapExecutor(store: GaapState, abortSignal?: AbortSigna
   }
   requireGaapDirectory(outputs);
   const outputDirectory = mkdtempSync(path.join(outputs, 'attempt-'));
-  const launched = store.mutate(registered.revision, (root, database) => {
-    if (!same(physicalSubject(root).subject, root.binding.action_request.request.binding.subject))
-      throw new GaapEvidenceError('executor.subject', 'The workspace changed before dispatch.');
-    const snapshot = nowSnapshot(root, new Date().toISOString());
-    operate(root, snapshot, {
-      kind: 'start',
-      claim: root.request.request.claim,
-      attempt_id: root.request.request.attempt_id,
+  let launched: GaapRoot;
+  try {
+    launched = store.mutate(registered.revision, (root, database) => {
+      if (!same(physicalSubject(root).subject, root.binding.action_request.request.binding.subject))
+        throw new GaapEvidenceError('executor.subject', 'The workspace changed before dispatch.');
+      const snapshot = nowSnapshot(root, new Date().toISOString());
+      operate(root, snapshot, {
+        kind: 'start',
+        claim: root.request.request.claim,
+        attempt_id: root.request.request.attempt_id,
+      });
+      project(root, snapshot);
+      checked(validateExecutorContext(root.request, root.journal, snapshot, authority(root)));
+      database
+        .prepare('INSERT INTO launch VALUES (?,?,?)')
+        .run(root.request.request.attempt_id, root.request.request_digest, outputDirectory);
+      store.hit('dispatch.before_commit');
+      return structuredClone(root);
     });
-    project(root, snapshot);
-    checked(validateExecutorContext(root.request, root.journal, snapshot, authority(root)));
-    database
-      .prepare('INSERT INTO launch VALUES (?,?,?)')
-      .run(root.request.request.attempt_id, root.request.request_digest, outputDirectory);
-    store.hit('dispatch.before_commit');
-    return structuredClone(root);
-  });
+  } catch (error) {
+    // A committed launch owns this path even if reporting its commit failed.
+    if (!(error instanceof GaapStateCommittedError)) {
+      try {
+        rmdirSync(outputDirectory);
+      } catch (cleanupError) {
+        throw new GaapEvidenceError(
+          'executor.cleanup',
+          `${error instanceof Error ? error.message : String(error)} Retained output directory ${outputDirectory}: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+        );
+      }
+    }
+    throw error;
+  }
   // The launch intent and started journal are durable before this call can spawn.
   store.hit('dispatch.after_commit');
   const replay = checked(replayExecutionJournal(launched.journal, authority(launched)));

@@ -6,10 +6,29 @@ session-first; root commands remain only for compatibility.
 
 These commands operate the fixed governed PR lifecycle. The [architecture guide](architecture.md) distinguishes them
 from the accepted Controller Contract v0.1 specifications and their tooling in
-[threadloop-contracts](https://github.com/nnennandukwe/threadloop-contracts). There is no packaged profile compiler,
-configurable graph executor, or GAAP process adapter command.
+[threadloop-contracts](https://github.com/nnennandukwe/threadloop-contracts). The optional `executor` commands implement
+the [GAAP process bridge](gaap-executor.md) with separate host-owned state. There's no packaged profile compiler or
+configurable graph executor.
 
 ## Commands
+
+### `threadloop executor <command> --state <directory> [--json]`
+
+Operates one host-adopted Action Request and Attempt in a separate state directory outside the subject repository. Every
+command supports `--json`. The [executor guide](gaap-executor.md) defines binding/configuration formats, trust, process
+limits, evidence admission, recovery and the reproducible native Goose examples.
+
+| Command                                     | Behavior                                                                                                                               |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `register --binding <file> --config <file>` | Validate explicit host adoption, acquire a fresh claim and persist its pending Attempt.                                                |
+| `run`                                       | Commit launch intent, invoke one bounded process, retain output, independently verify evidence, persist admission and evaluate guards. |
+| `inspect`                                   | Reverify retained evidence and show journal, observations, admissions and evaluations.                                                 |
+| `admit <observation-id>`                    | Reimport a retained successful transport observation without invoking the executor.                                                    |
+| `evaluate`                                  | Reevaluate guards against retained admitted evidence without invoking the executor.                                                    |
+
+A rejected or uncertain run exits with failure and retains its observation when possible. Inspect before recovery; `run`
+won't repeat a started Attempt. Admission doesn't advance the lifecycle or supply ThreadLoop's own proof. Existing
+fixed-lifecycle sessions aren't changed or migrated by these commands.
 
 ### `threadloop init`
 
@@ -93,7 +112,7 @@ Use `--session <id>` for one explicit session or `--all` for all active sessions
 ### `threadloop session next --session <id> [--json]`
 
 Reads one deterministic transition candidate, current lifecycle state/version, guard failures, required work, and live
-sanitized repository identity, branch, HEAD, and worktree cleanliness. This command does not heartbeat, reconcile,
+sanitized repository identity, branch, HEAD, and worktree cleanliness. This command doesn't heartbeat, reconcile,
 refresh snapshots, migrate the database, repair projections, or mutate lifecycle state.
 
 JSON contract v4 reports the history-derived lifecycle phase and schema status, candidate, repository, local `proof`,
@@ -121,7 +140,7 @@ combined repair budget.
 
 Pre-PR review input has `outcome: "clean"` with an empty `findings` array, or `outcome: "changes_required"` with one or
 more uniquely identified findings. It must include the exact live `head_sha`, a non-empty `evidence_ref`, and a
-lower-case SHA-256 digest. It authorizes only the matching pre-PR transition; it is not a signed-review receipt.
+lower-case SHA-256 digest. It authorizes only the matching pre-PR transition; it's not a signed-review receipt.
 
 Proof-plan input:
 
@@ -162,18 +181,18 @@ All gates are required. Gate ids must be unique, commands are exact argv arrays,
 resolve inside the repository, and timeouts must be positive integers no greater than one day. New proof plans require
 contract v4 with independent immutable CI and review policies. Both policies must match the checkout's GitHub origin and
 named branch. A v4 gate may declare ordered `setup` steps that provision the toolchain before the gate command; each
-step is validated exactly as the gate command is. Stored v1/v2/v3 plans remain readable, and v1/v2 cannot authorize
+step is validated exactly as the gate command is. Stored v1/v2/v3 plans remain readable, and v1/v2 can't authorize
 review transitions.
 
 ### `threadloop session gate run <gate-id> --session <id> [--json]`
 
 Runs one gate declared by the session's immutable proof plan. The command accepts no executable, argument, directory,
-timeout, or shell override. It is available only in `verifying` on a clean committed worktree.
+timeout, or shell override. It's available only in `verifying` on a clean committed worktree.
 
 The runner executes each declared `setup` step in order and then the gate command, capturing stdout and stderr
 separately for every one of them, waiting for process and stream closure, and recording non-zero, timeout, abort, spawn,
-cleanup, and repository-drift outcomes before appending an immutable receipt. A setup step that does not pass stops the
-run: no later step executes, the gate command does not run, and the receipt records `setup_failed`, which is an operator
+cleanup, and repository-drift outcomes before appending an immutable receipt. A setup step that doesn't pass stops the
+run: no later step executes, the gate command doesn't run, and the receipt records `setup_failed`, which is an operator
 handoff rather than code repair and consumes no repair budget. Gate execution never changes lifecycle state. A later
 receipt for the same gate supersedes an earlier receipt by database sequence.
 
@@ -181,7 +200,7 @@ receipt for the same gate supersedes an earlier receipt by database sequence.
 
 Verifies and appends one signed GitHub Actions gate receipt. The input is limited to 10 MiB and the command accepts no
 trust-policy override. Identical reimports are no-ops; conflicting receipt ids fail closed. Successful import appends
-proof only and does not change lifecycle state or `state_version`.
+proof only and doesn't change lifecycle state or `state_version`.
 
 See [Signed gate receipt v2](attestations/receipt-v2.md) for the package, Sigstore verification, reusable workflow, and
 failure contracts.
@@ -194,7 +213,7 @@ subject, package hashes, Sigstore identity, workflow invocation, and transparenc
 
 The latest valid imported snapshot is authoritative for blockers, same-HEAD human approval, and observed merge state. A
 snapshot observed before one already imported for the session, or describing a different pull request, is rejected as
-`SIGNED_RECEIPT_CONFLICT`, so an older approval cannot be re-imported over a newer blocker. Import never changes
+`SIGNED_RECEIPT_CONFLICT`, so an older approval can't be re-imported over a newer blocker. Import never changes
 lifecycle state. Identical packages are idempotent; a receipt id reused for different content is a conflict. See
 [Signed review receipt v1](attestations/review-v1.md).
 
@@ -276,7 +295,7 @@ Recommended default:
 
 - keep `.threadloop/state/` uncommitted
 - keep `.threadloop/artifacts/receipts/` local and uncommitted
-- commit artifacts only when they are useful for review or handoff
+- commit artifacts only when they're useful for review or handoff
 
 ## Agent-mode guidance
 
@@ -287,7 +306,7 @@ For automation, prefer:
 - one autonomous task per checkout or Git worktree
 - syncing `main`, creating a fresh task branch, and rebasing onto `origin/main` before PR open
 
-`session heartbeat` and `session reconcile` are mechanical operations. They refresh state but do not create semantic
+`session heartbeat` and `session reconcile` are mechanical operations. They refresh state but don't create semantic
 entries. Use `session capture` for decisions, risks, validation, and reviewer guidance.
 
 For the full orchestrator/operator workflow, see [agent-mode.md](agent-mode.md).

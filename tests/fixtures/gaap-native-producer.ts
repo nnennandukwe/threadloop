@@ -12,9 +12,9 @@ import { observeGaapWorkspace } from '../../src/adapters/fs/gaap-files.js';
 import { canonicalGaapJson, parseGaapJson } from '../../src/domain/gaap-json.js';
 import type { GaapStatement } from '../../src/domain/gaap-types.js';
 
-let input = '';
-for await (const chunk of process.stdin) input += String(chunk);
-const request = parseGaapJson(Buffer.from(input)) as ExecutorRequest;
+const chunks: Buffer[] = [];
+for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk as Uint8Array));
+const request = parseGaapJson(Buffer.concat(chunks)) as ExecutorRequest;
 const policy: unknown = JSON.parse(process.env.GAAP_NATIVE_MAPPING!);
 const expected = buildGaapRequest(request, policy);
 if (!expected.ok) throw new Error(JSON.stringify(expected.diagnostics));

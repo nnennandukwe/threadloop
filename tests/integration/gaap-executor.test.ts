@@ -1,5 +1,5 @@
-import { rm, writeFile } from 'node:fs/promises';
-import { writeFileSync as requireWrite } from 'node:fs';
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { readdirSync as requireReadDirectories, writeFileSync as requireWrite } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { controllerFixture } from '../fixtures/gaap-controller.js';
@@ -74,10 +74,45 @@ describe('durable GAAP executor admission', () => {
       if (enabled && point === 'dispatch.before_commit') throw new Error('injected dispatch failure');
     });
     registerGaapExecutor(store, fixture.binding, fixture.host);
+    const outputs = path.join(fixture.state, 'outputs');
+    await mkdir(outputs);
+    await writeFile(path.join(outputs, 'prior-evidence'), 'preserve prior evidence');
     await expect(runGaapExecutor(store)).rejects.toThrow('dispatch failure');
+    expect(await readdir(outputs)).toEqual(['prior-evidence']);
+    expect(await readFile(path.join(outputs, 'prior-evidence'), 'utf8')).toBe('preserve prior evidence');
     expect(store.inspect().launches).toHaveLength(0);
     enabled = false;
     expect((await runGaapExecutor(store)).status).toBe('admitted');
+  });
+  it('reports the owned path when failed reservation cleanup finds retained files', async () => {
+    const fixture = await setup();
+    const outputs = path.join(fixture.state, 'outputs');
+    const store = new GaapState(fixture.state, (point) => {
+      if (point === 'dispatch.before_commit') {
+        const directory = requireReadDirectories(outputs)[0]!;
+        requireWrite(path.join(outputs, directory, 'retain.txt'), 'retain unexpected evidence');
+        throw new Error('injected reservation failure');
+      }
+    });
+    registerGaapExecutor(store, fixture.binding, fixture.host);
+    await expect(runGaapExecutor(store)).rejects.toThrow(/reservation failure.*Retained output directory/);
+    expect(store.inspect().launches).toHaveLength(0);
+    const directory = (await readdir(outputs))[0]!;
+    expect(await readFile(path.join(outputs, directory, 'retain.txt'), 'utf8')).toBe('retain unexpected evidence');
+  });
+  it('retains a committed launch directory when commit reporting fails', async () => {
+    const fixture = await setup();
+    let enabled = false;
+    const store = new GaapState(fixture.state, (point) => {
+      if (enabled && point === 'state.after_commit') throw new Error('injected dispatch commit reporting failure');
+    });
+    registerGaapExecutor(store, fixture.binding, fixture.host);
+    enabled = true;
+    await expect(runGaapExecutor(store)).rejects.toThrow('dispatch commit reporting failure');
+    const retained = store.inspect();
+    expect(retained.launches).toHaveLength(1);
+    expect(await readdir(String(retained.launches[0]!.output_directory))).toEqual([]);
+    await expect(runGaapExecutor(new GaapState(fixture.state))).rejects.toThrow('already started');
   });
   it('reports an admission COMMIT followed by reporting failure as committed', async () => {
     const fixture = await setup();
