@@ -94,3 +94,7 @@ doesn't rewrite an earlier receipt. ThreadLoop independently verifies and persis
 that the edited workspace hasn't satisfied its own commit/proof guards or changed lifecycle state. The provider performs
 no inference and incurs no external billing. Synthetic process failure tests are labeled separately from this native
 execution.
+
+Pass `--case bad_patch` to retain the three executed effects when independent verification blocks completion. ThreadLoop
+must admit that terminal evidence as an unknown execution outcome requiring reconciliation, while leaving its own
+lifecycle state unchanged.

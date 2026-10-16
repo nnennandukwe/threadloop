@@ -29,6 +29,34 @@ async function setup(mode = 'success') {
   return fixture;
 }
 describe('durable GAAP executor admission', () => {
+  it('keeps the started Attempt uncertain when retaining its process response fails', async () => {
+    const fixture = await setup();
+    const store = new GaapState(fixture.state, (point) => {
+      if (point === 'observation.before_commit') throw new Error('injected observation failure');
+    });
+    registerGaapExecutor(store, fixture.binding, fixture.host);
+    await expect(runGaapExecutor(store)).rejects.toThrow('observation failure');
+    const reopened = new GaapState(fixture.state);
+    const inspection = await inspectGaapExecutor(reopened);
+    expect(inspection.launch_count).toBe(1);
+    expect(inspection.observations).toHaveLength(0);
+    expect(inspection.admitted).toHaveLength(0);
+    await expect(runGaapExecutor(reopened)).rejects.toThrow('already started');
+  });
+  it('rolls back the whole evidence generation when its final COMMIT preparation fails', async () => {
+    const fixture = await setup();
+    let prepared = false;
+    const store = new GaapState(fixture.state, (point) => {
+      if (point === 'admission.result') prepared = true;
+      if (prepared && point === 'state.before_commit') throw new Error('injected final write failure');
+    });
+    registerGaapExecutor(store, fixture.binding, fixture.host);
+    expect((await runGaapExecutor(store)).status).toBe('rejected');
+    const retained = store.inspect();
+    expect(retained.accepted).toHaveLength(0);
+    expect(retained.blobs).toHaveLength(0);
+    expect((await inspectGaapExecutor(store)).projection.attempts[0]?.status).toBe('running');
+  });
   it('retries a failed registration after removing only its own uncommitted database', async () => {
     const fixture = await setup();
     const failed = new GaapState(fixture.state, (point) => {

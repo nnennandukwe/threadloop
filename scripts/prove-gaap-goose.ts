@@ -15,7 +15,10 @@ import type { GaapRequest } from 'threadloop-contracts/executor';
 const [configuration, binary, attestor, output] = process.argv.slice(2);
 if (!configuration || !binary || !attestor || !output)
   throw new Error('Pass CONFIG HOST ATTESTOR NEW_OUTPUT_DIRECTORY.');
-const config = JSON.parse(readFileSync(configuration, 'utf8')) as { agent: { working_directory: string } };
+const config = JSON.parse(readFileSync(configuration, 'utf8')) as {
+  agent: { working_directory: string };
+  case: string;
+};
 const workspace = config.agent.working_directory;
 const template = parseGaapJson(execFileSync(binary, ['--describe', configuration], { timeout: 15000 })) as GaapRequest;
 const fixture = await gaapFixture();
@@ -66,6 +69,7 @@ writeFileSync(
   JSON.stringify(
     {
       schema_version: 'threadloop.gaap-native-proof/1',
+      case: config.case,
       consumer_commit: git(project, 'rev-parse', 'HEAD'),
       consumer_tree_dirty: git(project, 'status', '--porcelain') !== '',
       gaap_commit: git(path.dirname(binary), 'rev-parse', 'HEAD'),

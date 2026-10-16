@@ -15,6 +15,7 @@ def main():
     parser.add_argument('--gaap', required=True, type=pathlib.Path)
     parser.add_argument('--goose', required=True, type=pathlib.Path)
     parser.add_argument('--output', required=True, type=pathlib.Path)
+    parser.add_argument('--case', choices=['allow', 'bad_patch'], default='allow')
     args = parser.parse_args()
     gaap = args.gaap.resolve(strict=True)
     goose = args.goose.resolve(strict=True)
@@ -43,7 +44,7 @@ def main():
     config_file = state / 'config' / 'config.yaml'
     config_file.write_text('extensions:\n  developer:\n    enabled: false\n    type: builtin\n    name: developer\n')
     transcript = []
-    server = upstream.provider('allow', transcript, workspace)
+    server = upstream.provider(args.case, transcript, workspace)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     python = pathlib.Path(sys.executable).resolve()
@@ -53,7 +54,7 @@ def main():
     agent = {'executable': str(goose), 'arguments': ['acp'], 'environment': environment, 'working_directory': str(workspace), 'expected_name': 'goose', 'expected_version': '1.54.0', 'artifacts': [upstream.artifact(goose), upstream.artifact(config_file)]}
     ingress = {'executable': str(python), 'arguments': [str(reference / 'server.py'), 'ingress', str(socket), token], 'environment': {}, 'working_directory': str(workspace), 'expected_name': 'gaap-proposals', 'expected_version': '1', 'artifacts': [upstream.artifact(python), upstream.artifact(reference / 'server.py')]}
     configuration = output / 'native-host.json'
-    configuration.write_text(json.dumps({'agent': agent, 'proposal_server': ingress, 'python': str(python), 'server': str(reference / 'server.py'), 'socket': str(socket), 'token': token, 'output': str(output / 'unused.json'), 'case': 'allow'}))
+    configuration.write_text(json.dumps({'agent': agent, 'proposal_server': ingress, 'python': str(python), 'server': str(reference / 'server.py'), 'socket': str(socket), 'token': token, 'output': str(output / 'unused.json'), 'case': args.case}))
     project = pathlib.Path(__file__).resolve().parent.parent
     try:
         subprocess.run(['node', str(project / 'node_modules' / 'tsx' / 'dist' / 'cli.mjs'), str(project / 'scripts' / 'prove-gaap-goose.ts'), str(configuration), str(binary), str(attestor), str(output)], cwd=str(project), check=True, timeout=120)
