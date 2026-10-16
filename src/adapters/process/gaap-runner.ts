@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import path from 'node:path';
 import { canonicalExecutorJson, validateExecutorRequest, type ExecutorRequest } from 'threadloop-contracts/executor';
 import { GaapEvidenceError } from '../../domain/gaap-json.js';
@@ -87,13 +87,29 @@ export async function runGaapProcess(input: GaapProcessInput): Promise<GaapProce
       error: 'The process deadline expired while preparing the request.',
     };
   return new Promise((resolve) => {
-    const child = spawn(input.executable, [...input.arguments], {
-      cwd: input.cwd,
-      env: { ...input.environment },
-      shell: false,
-      detached: true,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      child = spawn(input.executable, [...input.arguments], {
+        cwd: input.cwd,
+        env: { ...input.environment },
+        shell: false,
+        detached: true,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } catch (cause) {
+      resolve({
+        status: 'spawn_failed',
+        stdout: Buffer.alloc(0),
+        stderr: Buffer.alloc(0),
+        exitCode: null,
+        signal: null,
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        inputDelivered: false,
+        error: cause instanceof Error ? cause.message : String(cause),
+      });
+      return;
+    }
     let status: GaapProcessResult['status'] = 'ok';
     let error: string | null = null;
     let inputDelivered = false;
@@ -193,8 +209,8 @@ export async function runGaapProcess(input: GaapProcessInput): Promise<GaapProce
     });
     child.stdin.on('error', (cause: Error) => terminate('input_failed', cause.message));
     child.once('error', (cause: Error) => {
-      status = 'spawn_failed';
-      error = cause.message;
+      if (status === 'ok') status = 'spawn_failed';
+      error = error === null ? cause.message : error + ' ' + cause.message;
       boundedDrain();
     });
     child.once('exit', (code, value) => {

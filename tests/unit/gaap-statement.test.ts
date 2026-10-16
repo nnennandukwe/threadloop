@@ -26,6 +26,19 @@ async function verify(fixture: Awaited<ReturnType<typeof gaapFixture>>, resign =
 }
 
 describe('independent GAAP predicate and retained content', () => {
+  it('rejects a re-signed completed ledger without its final workflow authorization', async () => {
+    const fixture = await gaapFixture();
+    const receipt = fixture.statement.predicate.receipt;
+    receipt.body.events = receipt.body.events.filter(
+      (event) =>
+        event.event_type !== 'protected_effect_decision' || event.decision.code !== 'workflow.completion_authorized',
+    );
+    receipt.body.events.forEach((event, index) => {
+      event.sequence = index + 1;
+    });
+    receipt.receipt_digest = gaapObjectDigest(receipt.body);
+    await expect(verify(fixture, true)).rejects.toThrow('Completion requires');
+  });
   it.each(['allow', 'ask', 'bad_patch', 'unreported', 'report_only', 'cancel_before_dispatch'])(
     'verifies original real Goose %s bytes without rewriting identity or status',
     async (name) => {
@@ -176,3 +189,53 @@ it('accepts signed formatting changes but rejects floating-point literals in int
     ),
   ).rejects.toThrow();
 });
+
+it.each(['\u0085', '\u2003', '\u3000'])('rejects Rust-blank verifier identities %j', async (identity) => {
+  const fixture = await gaapFixture();
+  for (const event of fixture.statement.predicate.receipt.body.events)
+    if (event.event_type === 'verification') event.verifier_id = identity;
+  fixture.statement.predicate.receipt.receipt_digest = gaapObjectDigest(fixture.statement.predicate.receipt.body);
+  await expect(verify(fixture, true)).rejects.toThrow();
+});
+
+it('accepts a nonblank verifier identity containing Unicode whitespace', async () => {
+  const fixture = await gaapFixture();
+  for (const event of fixture.statement.predicate.receipt.body.events)
+    if (event.event_type === 'verification') event.verifier_id = '\u0085independent-verifier\u0085';
+  fixture.statement.predicate.receipt.receipt_digest = gaapObjectDigest(fixture.statement.predicate.receipt.body);
+  await expect(verify(fixture, true)).resolves.toBeDefined();
+});
+
+it.each(['example.com', 'example\u0085.com'])(
+  'validates network scope whitespace with Rust rules: %j',
+  async (host) => {
+    const fixture = await gaapFixture();
+    const predicate = fixture.statement.predicate;
+    const effect = predicate.effects[0]!;
+    const originalResult = effect.result.result_digest;
+    const originalRequest = gaapObjectDigest(effect.request);
+    effect.request.requested_scopes = [{ scope_type: 'network', host, port: 443, protocol: 'https' }];
+    const requestDigest = gaapObjectDigest(effect.request);
+    effect.result.body.effect_request_digest = requestDigest;
+    effect.result.body.decision.effect_request_digest = requestDigest;
+    for (const event of predicate.receipt.body.events) {
+      if (
+        (event.event_type === 'protected_effect_decision' ||
+          event.event_type === 'tool_execution' ||
+          event.event_type === 'mutation') &&
+        event.protected_effect_digest === originalRequest
+      )
+        event.protected_effect_digest = requestDigest;
+      if (event.event_type === 'tool_execution' && event.action_digest === originalRequest)
+        event.action_digest = requestDigest;
+    }
+    effect.result.result_digest = gaapObjectDigest(effect.result.body);
+    for (const event of predicate.receipt.body.events)
+      if (event.event_type === 'tool_execution')
+        for (const reference of event.evidence)
+          if (reference.digest === originalResult) reference.digest = effect.result.result_digest;
+    predicate.receipt.receipt_digest = gaapObjectDigest(predicate.receipt.body);
+    if (host === 'example.com') await expect(verify(fixture, true)).resolves.toBeDefined();
+    else await expect(verify(fixture, true)).rejects.toThrow();
+  },
+);

@@ -97,6 +97,22 @@ describe('one-shot canonical GAAP process transport', () => {
     expect(result.status).toBe('spawn_failed');
     expect(result.error).toContain('ENOENT');
   });
+  it('retains synchronous invalid-launch failures as transport observations', async () => {
+    const f = await fixture('');
+    f.input.arguments.push('invalid\0argument');
+    const result = await runGaapProcess(f.input);
+    expect(result.status).toBe('spawn_failed');
+    expect(result.inputDelivered).toBe(false);
+    expect(result.error).toContain('null');
+  });
+  it('preserves cancellation when an asynchronous spawn failure races it', async () => {
+    const f = await fixture('');
+    f.input.executable = path.join(f.root, 'missing');
+    const controller = new AbortController();
+    const execution = runGaapProcess({ ...f.input, abortSignal: controller.signal });
+    controller.abort();
+    expect((await execution).status).toBe('cancelled');
+  });
   it('stops descendants after their leader exits even if they inherit output pipes', async () => {
     const f = await fixture(
       "import {spawn} from 'node:child_process';for await(const chunk of process.stdin){} const child=spawn(process.execPath,['-e','setInterval(()=>{},100)'],{stdio:['ignore',1,2]});process.stdout.write(String(child.pid));process.exit(0);",

@@ -198,7 +198,7 @@ function verifyEffectIdentity(statement: GaapStatement, effect: GaapEffect, dige
       assert(
         typeof scope.host === 'string' &&
           !scope.host.includes('://') &&
-          !/\s/u.test(scope.host) &&
+          !/\p{White_Space}/u.test(scope.host) &&
           typeof scope.port === 'number' &&
           scope.port > 0,
         'Network scopes require a host without a scheme and a nonzero port.',

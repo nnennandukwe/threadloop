@@ -75,7 +75,7 @@ export async function verifyGaapStatement(
   return { statement: value, signerFingerprints: [...envelope.signerFingerprints], ...content };
 }
 function blankText(value: unknown): boolean {
-  if (typeof value === 'string') return value.trim().length === 0;
+  if (typeof value === 'string') return /^[\p{White_Space}]*$/u.test(value);
   if (value !== null && typeof value === 'object') return Object.values(value).some(blankText);
   return false;
 }
