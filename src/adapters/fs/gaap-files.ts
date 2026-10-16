@@ -5,6 +5,11 @@ import path from 'node:path';
 import { gaapContentDigest, gaapObjectDigest } from '../../domain/gaap-content.js';
 import { GaapEvidenceError } from '../../domain/gaap-json.js';
 
+const MAX_WORKSPACE_ENTRIES = 64;
+const MAX_WORKSPACE_PATH_BYTES = 1024;
+// A conflicted index can list three stages per path, with SHA-256 IDs and metadata.
+const MAX_GIT_OUTPUT_BYTES = 3 * MAX_WORKSPACE_ENTRIES * (MAX_WORKSPACE_PATH_BYTES + 128);
+
 /** No symlink traversal, device reads or receipt-directed filenames. */
 export function readGaapFile(filename: string, maximum: number): Buffer {
   requireGaapDirectory(path.dirname(path.resolve(filename)));
@@ -53,7 +58,12 @@ export function observeGaapWorkspace(workspace: string) {
     for (const name of readdirSync(directory).sort()) {
       if (!relative && name === '.git') continue;
       const entry = relative ? relative + '/' + name : name;
-      if (++descendants > 64 || Buffer.byteLength(entry) > 1024 || name.includes('\\') || depth >= 8)
+      if (
+        ++descendants > MAX_WORKSPACE_ENTRIES ||
+        Buffer.byteLength(entry) > MAX_WORKSPACE_PATH_BYTES ||
+        name.includes('\\') ||
+        depth >= 8
+      )
         throw new GaapEvidenceError('snapshot.limit', 'Workspace entries exceed the portable snapshot profile.');
       const filename = path.join(directory, name);
       const stat = lstatSync(filename);
@@ -74,7 +84,7 @@ export function observeGaapWorkspace(workspace: string) {
   const git = (...args: string[]) =>
     execFileSync('git', ['-c', 'core.fsmonitor=false', '-C', root, ...args], {
       encoding: 'utf8',
-      maxBuffer: 64 * 1024,
+      maxBuffer: MAX_GIT_OUTPUT_BYTES,
       timeout: 5000,
       env: {
         PATH: process.env.PATH,

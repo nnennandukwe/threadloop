@@ -40,6 +40,39 @@ it("doesn't report a clean repository when the index differs from both HEAD and 
   await writeFile(filename, original);
   expect(observeGaapWorkspace(fixture.workspace).clean).toBe(false);
 });
+it('observes a bounded physical workspace when deleted tracked entries exceed 64 KiB', async () => {
+  const fixture = await controllerFixture();
+  roots.push(fixture.root);
+  const git = (...args: string[]) => ['-C', fixture.workspace, ...args];
+  const blob = execFileSync('git', git('hash-object', '-w', '--stdin'), {
+    input: 'historical tracked content',
+    encoding: 'utf8',
+  }).trim();
+  const entries = Array.from(
+    { length: 1200 },
+    (_, index) => `100644 ${blob}\tdeleted-${index.toString().padStart(8, '0')}.txt\n`,
+  ).join('');
+  execFileSync('git', git('update-index', '--index-info'), { input: entries });
+  execFileSync(
+    'git',
+    git(
+      '-c',
+      'user.name=ThreadLoop Test',
+      '-c',
+      'user.email=test@example.invalid',
+      '-c',
+      'commit.gpgsign=false',
+      'commit',
+      '-m',
+      'tracked entries absent from the current workspace',
+    ),
+  );
+  const listing = execFileSync('git', git('ls-tree', '-rz', '--full-tree', 'HEAD'));
+  expect(listing.length).toBeGreaterThan(64 * 1024);
+  const observed = observeGaapWorkspace(fixture.workspace);
+  expect(observed.clean).toBe(false);
+  expect(Object.keys(observed.manifest)).toEqual(['.', 'source.txt']);
+});
 it('observes committed bytes without executing repository-configured fsmonitor or filters', async () => {
   const fixture = await controllerFixture();
   roots.push(fixture.root);
