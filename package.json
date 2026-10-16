@@ -33,7 +33,10 @@
     "sensor:ci-gate:sign": "tsx scripts/sign-ci-gate-receipt.ts",
     "sensor:github-review:collect": "tsx scripts/collect-github-review-snapshot.ts",
     "sensor:github-review:sign": "tsx scripts/sign-github-review-receipt.ts",
-    "prove:gaap:goose": "python3 scripts/prove-gaap-goose.py"
+    "prove:gaap:goose": "python3 scripts/prove-gaap-goose.py",
+    "test:controller": "vitest run tests/unit/controller-generated.test.ts tests/unit/controller-generated-mutants.test.ts tests/integration/controller-generated-process.test.ts tests/integration/controller-history-replay.test.ts",
+    "test:controller:deep": "tsx scripts/controller-generated/deep.ts",
+    "test:controller:replay": "tsx scripts/controller-generated/replay.ts"
   },
   "keywords": [
     "cli",
@@ -64,6 +67,7 @@
     "@types/prompts": "2.4.9",
     "eslint": "10.10.0",
     "eslint-plugin-security": "4.0.1",
+    "fast-check": "4.10.2",
     "globals": "17.12.0",
     "husky": "9.1.7",
     "knip": "6.37.0",

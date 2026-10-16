@@ -5,5 +5,9 @@
   "vitest": {
     "entry": ["tests/**/*.test.ts"]
   },
-  "entry": ["scripts/prove-gaap-goose.ts", "tests/fixtures/gaap-native-producer.ts"]
+  "entry": [
+    "scripts/prove-gaap-goose.ts",
+    "tests/fixtures/gaap-native-producer.ts",
+    "scripts/controller-generated/*.ts"
+  ]
 }
