@@ -151,8 +151,9 @@ export function verifyGaapEffects(statement: GaapStatement): void {
         event.decision.outcome === 'allow',
     );
     assert(
-      completions.every((event) => event.protected_effect_digest === event.subject_digest),
-      'The selected GAAP v1 producer requires completion to bind its verified subject as the completion effect.',
+      completions.length > 0 &&
+        completions.every((event) => event.protected_effect_digest === event.subject_digest),
+      'Completion requires an authorization bound to the verified subject as the completion effect.',
     );
   }
 }
