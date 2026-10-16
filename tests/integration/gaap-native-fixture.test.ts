@@ -13,9 +13,22 @@ import { verifyGaapStatement } from '../../src/domain/gaap-statement.js';
 import type { GaapBinding } from '../../src/domain/gaap-binding.js';
 import type { ReceiptAdmission } from 'threadloop-contracts/execution';
 
-it('independently verifies the public real Goose run bound before execution to a ThreadLoop claim and Attempt', async () => {
-  const directory = new URL('../fixtures/gaap/goose-threadloop-bound/', import.meta.url);
-  const fixture = await gaapFixture('threadloop-bound');
+it.each([
+  {
+    name: 'threadloop-bound',
+    commit: 'a0dca15d479a09c6210d55852e7f20e8dc36da3f',
+    terminal: 'completed',
+    attempt: 'succeeded',
+  },
+  {
+    name: 'threadloop-bad-patch',
+    commit: 'c6f6bb0ec9f3cb532777f6e736f5e66d96764078',
+    terminal: 'blocked',
+    attempt: 'unknown_outcome',
+  },
+])('independently verifies real claim-bound Goose $name', async ({ name, commit, terminal, attempt }) => {
+  const directory = new URL('../fixtures/gaap/goose-' + name + '/', import.meta.url);
+  const fixture = await gaapFixture(name);
   const json = async (name: string): Promise<unknown> =>
     JSON.parse(await readFile(new URL(name, directory), 'utf8')) as unknown;
   const request = validateExecutorRequest(await json('executor-request.json'));
@@ -33,7 +46,7 @@ it('independently verifies the public real Goose run bound before execution to a
     claim: unknown;
     attempt_id: string;
   };
-  expect(provenance.consumer_commit).toBe('a0dca15d479a09c6210d55852e7f20e8dc36da3f');
+  expect(provenance.consumer_commit).toBe(commit);
   expect(provenance.gaap_commit).toBe('0a82687d6070081e0a5cb613698f0724dc6f00cb');
   expect(provenance.consumer_tree_dirty || provenance.gaap_tree_dirty).toBe(false);
   expect(provenance.request_digest).toBe(request.value.request_digest);
@@ -47,7 +60,7 @@ it('independently verifies the public real Goose run bound before execution to a
     { name: 'gaap-governed-goose', version: '0.1.0', digest: provenance.implementation_digest },
   );
   expect(verified.statement.predicate.effects).toHaveLength(3);
-  expect(verified.statement.predicate.receipt.body.terminal_status).toBe('completed');
+  expect(verified.statement.predicate.receipt.body.terminal_status).toBe(terminal);
   const parsed = parseExecutorMessage(await readFile(new URL('executor-result.canonical', directory)));
   if (!parsed.ok) throw new Error(JSON.stringify(parsed.diagnostics));
   const result = parsed.value as ExecutorResult;
@@ -64,6 +77,7 @@ it('independently verifies the public real Goose run bound before execution to a
   expect(admission.admission.attempt_id).toBe(request.value.request.attempt_id);
   expect(admission.admission.receipt.digest).toBe(result.result.attempt_receipt.receipt_digest);
   const inspection = (await json('inspection.json')) as {
+    projection: { attempts: Array<{ status: string }> };
     workflow_state: string;
     state_version: number;
     launch_count: number;
@@ -72,6 +86,10 @@ it('independently verifies the public real Goose run bound before execution to a
   };
   expect(inspection).toMatchObject({ workflow_state: 'implementing', state_version: 2, launch_count: 1 });
   expect(inspection.admitted).toHaveLength(1);
+  expect(inspection.projection.attempts[0]?.status).toBe(attempt);
+  expect(receipt.resulting_subject?.content_digest).not.toBe(
+    request.value.request.action_request.request.binding.subject.content_digest,
+  );
   expect(inspection.evaluations[0]?.lifecycle_mutated).toBe(false);
   expect(inspection.evaluations[0]?.candidates.every((candidate) => !candidate.available)).toBe(true);
 });
