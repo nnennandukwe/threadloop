@@ -1,4 +1,1 @@
-[[IgnoredVulns]]
-id = "GHSA-g7r4-m6w7-qqqr"
-ignoreUntil = 2026-10-03
-reason = "Build-only esbuild 0.27 is constrained by tsup 8.5.1 and ThreadLoop does not expose the affected development server. Temporary risk decision tracked by https://github.com/nnennandukwe/threadloop/issues/113."
+# No advisory exceptions. The expired #113 esbuild exception was removed after the supported tsup upgrade.

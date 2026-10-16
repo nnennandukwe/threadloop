@@ -1,0 +1,51 @@
+{
+  "admission": {
+    "acceptance": {
+      "digest": "2456474d88264512131605da649a25e0533980862f6fdcb29495b365fcca0e1c",
+      "id": "gaap_threadloop_attempt_c2f37a033a3d63291713ecf947152f6790ae31118a47ffb4409364c5be7a8a7b"
+    },
+    "admitted_at": "2026-10-16T02:06:34.624Z",
+    "attempt_id": "a73907bd-b456-485f-9e5c-f61c4b3e752c",
+    "binding": {
+      "graph_digest": "7df5f3b655e61bc872f83de08c6ce7b0c0c714de15256ada7b13127264bcd2dc",
+      "graph_schema_version": "0.1",
+      "source_state": "implementing",
+      "state_version": 2,
+      "subject": {
+        "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
+        "kind": "repository",
+        "repository_id": "owned-test-repository",
+        "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
+      },
+      "workflow_run_id": "workflow_1"
+    },
+    "claim": {
+      "id": "036d2b26-b0b4-45df-8bd0-35f52c19565a",
+      "version": 1
+    },
+    "execution_policy": {
+      "digest": "f03bfc3e9f9fed6bb873764816513011831726e2d96a67c6fadb2f28b0944f94",
+      "id": "owned-test-execution"
+    },
+    "executor": {
+      "id": "test-executor",
+      "incarnation": "one"
+    },
+    "id": "f8d0bbb3-cc74-46d9-9102-7081aeb6f35a",
+    "receipt": {
+      "digest": "a7907de9d98ef5dd20033a6b2156503f893a6fb6b8a13a8172fd2d8e34e068f0",
+      "id": "gaap_a7b14dfd76390eb4562eda7836f58f0534991fd94cff2f5b39cb20029213b1f9"
+    },
+    "request": {
+      "idempotency_key": "467410a478b20c9b5011de9ea7b2e3048007b2c8672d5220a17be28c537af791",
+      "request_digest": "686e15ff3801b41baa4d4f12cae4c539f4c243480aedbbb59d94d62412ba414e"
+    },
+    "schema_version": "0.1",
+    "valid_until": null,
+    "verification_policy": {
+      "digest": "2c708c040f8cd1ebc5bf2462f7d95506f3081449fac188b66ff860395112fdc7",
+      "id": "explicit-native-public-fixture-only"
+    }
+  },
+  "admission_digest": "c0017ea7144ef2e3b1111e3f0c95c17e419391eb791cf5025c5f6b6904d8eb38"
+}

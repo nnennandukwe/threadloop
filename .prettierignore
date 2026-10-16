@@ -6,3 +6,9 @@ coverage
 dist
 node_modules
 package-lock.json
+
+# Exact upstream signed Goose fixture and content-addressed bytes.
+tests/fixtures/gaap/goose-*/**
+
+# Exact GAAP predicate schema pinned to its upstream commit.
+src/contracts/gaap/terminal-run-v1.schema.json

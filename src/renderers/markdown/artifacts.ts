@@ -1,4 +1,4 @@
-import matter from 'gray-matter';
+import { stringify as stringifyYaml } from 'yaml';
 import type { ArtifactKind, Entry, RepoSnapshot, Session, Task } from '../../domain/types.js';
 
 export interface HandoffGovernance {
@@ -291,5 +291,5 @@ export function renderArtifact(input: ArtifactRenderInput) {
         ? renderPrSummary(input)
         : renderHandoff(input);
 
-  return matter.stringify(body.trimEnd() + '\n', frontmatterFor(input));
+  return '---\n' + stringifyYaml(frontmatterFor(input), { lineWidth: 0 }) + '---\n' + body.trimEnd() + '\n';
 }

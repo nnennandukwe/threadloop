@@ -35,3 +35,12 @@ regexTarget = "match"
 # Keep credential fields and all paths outside this versioned corpus scanned.
 paths = ['''^docs/contracts/controller-conformance-v0\.1/(fixtures/case_[0-9]{3}\.json|shared\.json)$''']
 regexes = ['''^idempotency_key":\s*"[a-f0-9]{64}"$''']
+
+[[rules.allowlists]]
+description = "Native ThreadLoop-Goose exports retain public SHA-256 Action Request identities"
+condition = "AND"
+regexTarget = "match"
+# These are unchanged requestIdentity() fields in exported native evidence, including earlier committed captures.
+# Keep every other field and every path outside these six exported record types scanned.
+paths = ['''^tests/fixtures/gaap/goose-threadloop-(bound|bad-patch)/(binding\.json|admission\.json|execution-journal\.json|executor-request\.json|executor-result\.canonical|inspection\.json)$''']
+regexes = ['''^idempotency_key":\s*"[a-f0-9]{64}"$''']

@@ -20,37 +20,36 @@ The status applies to the specific capability, not to every use of the same doma
 | **Implemented in threadloop-contracts**          | YAML compiler, candidate validators, executor mapping helpers, and internal conformance-corpus checks.                                                             | Development tooling in [threadloop-contracts](https://github.com/nnennandukwe/threadloop-contracts), tagged `v0.1.0`.                                                                                                                                                                                                                           |
 | **Accepted in Controller Contract v0.1**         | Profile/graph identities, deterministic decisions and action requests, claim/attempt recovery semantics, executor process seam, and external conformance protocol. | Five versioned contract families in the [contract index](#contract-index).                                                                                                                                                                                                                                                                      |
 | **Deferred to the controller-runtime milestone** | Configurable graph selection/execution, durable graph-bound runs and Execution Claims, and conformance by a real controller through the external harness.          | [Contract tracker #110](https://github.com/nnennandukwe/threadloop/issues/110), [conformance handoff](https://github.com/nnennandukwe/threadloop-contracts/blob/v0.1.0/docs/contracts/controller-conformance-v0.1/run-invariant-follow-up.md), and [generated state-machine tests #112](https://github.com/nnennandukwe/threadloop/issues/112). |
-| **Deferred to the controller-runtime milestone** | GAAP process invocation, independently authenticated receipt admission, and persistence before controller reevaluation.                                            | [Runtime integration #111](https://github.com/nnennandukwe/threadloop/issues/111).                                                                                                                                                                                                                                                              |
+| **Implemented in the optional executor bridge**  | Host-adopted claims, GAAP process invocation, independently authenticated receipt admission, and persistence before controller reevaluation.                       | [Executor guide](gaap-executor.md) and [runtime integration #111](https://github.com/nnennandukwe/threadloop/issues/111).                                                                                                                                                                                                                       |
 | **Deferred to the Rust migration**               | A Rust replacement of ThreadLoop after the contract freeze and the separate runtime milestone prove the required behavior.                                         | [Tracker #110](https://github.com/nnennandukwe/threadloop/issues/110); [storage evolution #85](https://github.com/nnennandukwe/threadloop/issues/85) remains a migration prerequisite.                                                                                                                                                          |
 
-An accepted schema is not a running service. A valid fixture is not an admitted receipt, an acquired claim, or a runtime
-conformance result. Existing CLI `task` and `session` names remain compatibility terms; these contracts do not rename
+An accepted schema isn't a running service. A valid fixture isn't an admitted receipt, an acquired claim, or a runtime
+conformance result. Existing CLI `task` and `session` names remain compatibility terms; these contracts don't rename
 commands, change SQLite records, or retroactively bind sessions to configurable graphs.
 
 ## Four roles and their authority
 
-| Role                                     | Responsibility                                                                                                                        | Authority boundary                                                                                                         |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| **ThreadLoop**                           | Own the Workflow Run, outer SDLC feedback loop, guarded transitions, evidence freshness, repair rules, and human completion boundary. | Only ThreadLoop applies its lifecycle decisions. Claims and configurable graph evaluation remain deferred as listed above. |
-| **GAAP**                                 | Govern one bounded Agent Run, including its model/tool work and protected effects.                                                    | Completion of an Agent Run supplies evidence; it cannot complete a ThreadLoop Workflow Run.                                |
-| **RunInvariant**                         | Evaluate implementation-independent decision conformance through fixtures and a process interface.                                    | Conformance output cannot dispatch work or advance lifecycle state.                                                        |
-| **Adapters and delivery infrastructure** | Execute bounded requests, translate provider observations, or deliver scheduler wakes.                                                | Delivery, process success, and adapter output cannot invent authorization, recover blocked runs, or approve completion.    |
+| Role                                     | Responsibility                                                                                                                        | Authority boundary                                                                                                                                 |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **ThreadLoop**                           | Own the Workflow Run, outer SDLC feedback loop, guarded transitions, evidence freshness, repair rules, and human completion boundary. | Only ThreadLoop applies its lifecycle decisions. Host-adopted claims ship in the optional bridge; configurable runtime execution remains deferred. |
+| **GAAP**                                 | Govern one bounded Agent Run, including its model/tool work and protected effects.                                                    | Completion of an Agent Run supplies evidence; it can't complete a ThreadLoop Workflow Run.                                                         |
+| **RunInvariant**                         | Evaluate implementation-independent decision conformance through fixtures and a process interface.                                    | Conformance output can't dispatch work or advance lifecycle state.                                                                                 |
+| **Adapters and delivery infrastructure** | Execute bounded requests, translate provider observations, or deliver scheduler wakes.                                                | Delivery, process success, and adapter output can't invent authorization, recover blocked runs, or approve completion.                             |
 
 [Governed Agent Autonomy Patterns (GAAP)](https://github.com/nnennandukwe/governed-agent-autonomy-patterns) is an inner
-execution system. ThreadLoop is the outer lifecycle authority; it is neither an agent harness nor a general-purpose DAG
+execution system. ThreadLoop is the outer lifecycle authority; it's neither an agent harness nor a general-purpose DAG
 engine. Its graph language has registered SDLC actions, guards, authority requirements, and cycle controls, rather than
 arbitrary executable nodes or expressions.
 
 [RunInvariant](https://github.com/nnennandukwe/run-invariant) currently provides GAAP decision-conformance
 infrastructure. [RunInvariant PR #4](https://github.com/nnennandukwe/run-invariant/pull/4) merged a separate ThreadLoop
 controller harness that consumes the pinned conformance corpus, launches one external process per case, and validates
-responses. Synthetic subjects exercise the harness; a real ThreadLoop controller has not demonstrated conformance. After
+responses. Synthetic subjects exercise the harness; a real ThreadLoop controller hasn't demonstrated conformance. After
 the v0.1 freeze the corpus moved, with the rest of the contracts, to
 [threadloop-contracts](https://github.com/nnennandukwe/threadloop-contracts); RunInvariant's existing pin to a
 ThreadLoop commit stays valid. The
 [integration handoff](https://github.com/nnennandukwe/threadloop-contracts/blob/v0.1.0/docs/contracts/controller-conformance-v0.1/run-invariant-follow-up.md)
-records the requirements and remaining proof. Merged harness support does not establish a release or runtime
-integration.
+records the requirements and remaining proof. Merged harness support doesn't establish a release or runtime integration.
 
 ## Implemented now: the fixed governed PR lifecycle
 
@@ -76,22 +75,24 @@ flowchart TD
   B -- "human-approved recovery" --> A
 ```
 
-The `Any active state` box summarizes block/recovery edges; it is not a twelfth lifecycle state. Recovery returns only
-to the recorded prior state, and `completed` is terminal.
+The `Any active state` box summarizes block/recovery edges; it's not a twelfth lifecycle state. Recovery returns only to
+the recorded prior state, and `completed` is terminal.
 
 Pre-PR implementation, verification, and review can repeat without consuming the post-PR repair budget. Entering
 `reviewing` permanently closes that phase. Post-PR repair permits at most three entries; the third repair may finish its
 verification, but a fourth entry is denied. A provisioning failure produces `setup_failed` and requires setup
-correction, not a code-repair entry. Blocking still requires explicit evidence; budget exhaustion cannot invent it.
+correction, not a code-repair entry. Blocking still requires explicit evidence; budget exhaustion can't invent it.
 
 A new commit makes earlier proof and review stale unless their evidence contract binds the new HEAD. Signed CI and
-review imports are implemented current-runtime capabilities; they are separate from the deferred GAAP receipt importer.
-See the [lifecycle reference](lifecycle.md) for exact guards, rejection behavior, and transactional replay rules.
+review imports belong to the fixed lifecycle. The optional [GAAP executor bridge](gaap-executor.md) independently admits
+execution evidence in separate host-owned state; it never supplies those lifecycle proof or review receipts. See the
+[lifecycle reference](lifecycle.md) for exact guards, rejection behavior, and transactional replay rules.
 
 ## Accepted in Controller Contract v0.1: the execution relationship
 
-The following diagram describes accepted responsibilities. Configurable runtime execution of this flow is **deferred to
-the controller-runtime milestone**. It is not a diagram of an existing ThreadLoop-to-GAAP integration.
+The following diagram describes accepted responsibilities. The optional [executor bridge](gaap-executor.md) implements
+the Action Request through evidence admission and guard reevaluation. Configurable runtime selection and application of
+lifecycle transitions remain **deferred to the controller-runtime milestone**.
 
 ```mermaid
 flowchart TD
@@ -119,16 +120,16 @@ The conceptual walkthrough is:
 | **Workflow Profile**    | Author the typed SDLC states, transitions, guards, and Required Actions for a class of work.                     |
 | **Compiled Graph**      | Validate and normalize that profile into a deterministic, content-addressed graph.                               |
 | **Workflow Run**        | Retain one durable change's state and evidence context, bound to the exact graph identity.                       |
-| **Required Action**     | Identify external work needed before a guard can pass. Declaring it does not satisfy the guard.                  |
+| **Required Action**     | Identify external work needed before a guard can pass. Declaring it doesn't satisfy the guard.                   |
 | **Action Request**      | Bind exactly one bounded action to a run, state, subject, inputs, constraints, and required authority.           |
 | **Execution Claim**     | Exclusively authorize one executor incarnation for an exact request within a time bound and fencing generation.  |
 | **Attempt**             | Record one admitted execution under that claim generation, with outcome distinct from workflow completion.       |
 | **Evidence Receipt**    | Retain observed work or verification for independent admission and guard evaluation.                             |
 | **Controller Decision** | Evaluate explicit inputs and determine the permitted outcome, further work, waiting, blocking, or human handoff. |
 
-This ordering explains the terms; it is not an unconditional pipeline. Controller Decisions also select work before an
-Attempt and reevaluate after evidence arrives. Candidate validators check consistency; they do not implement the
-complete selector or grant live authorization.
+This ordering explains the terms; it's not an unconditional pipeline. Controller Decisions also select work before an
+Attempt and reevaluate after evidence arrives. Candidate validators check consistency; they don't implement the complete
+selector or grant live authorization.
 
 ### Workflow Run versus Agent Run
 
@@ -138,19 +139,21 @@ ThreadLoop bindings while mapping the inner request to GAAP's vocabulary through
 is no shared Rust-type dependency.
 
 The accepted executor protocol is one-shot: one request, one terminal result. An authority-required outcome ends that
-Attempt as blocked; it cannot silently resume the old terminal Agent Run. GAAP success, a zero process exit, and a
-well-formed receipt are each insufficient for lifecycle advancement. The future host must independently authenticate and
-validate exact request, claim, Attempt, graph, state, subject, and trust bindings, persist admitted evidence, then let
-ThreadLoop reevaluate its guards. Unknown effects require reconciliation before a new Attempt; the contract does not
+Attempt as blocked; it can't silently resume the old terminal Agent Run. GAAP success, a zero process exit, and a
+well-formed receipt are each insufficient for lifecycle advancement. The executor bridge must independently authenticate
+and validate exact request, claim, Attempt, graph, state, subject, and trust bindings, persist admitted evidence, then
+let ThreadLoop reevaluate its guards. Unknown effects require reconciliation before a new Attempt; the contract doesn't
 promise exactly-once execution.
 
-The current local GAAP coding demo does not supply the authenticated ThreadLoop process integration. See
-[#111](https://github.com/nnennandukwe/threadloop/issues/111) for the receipt and end-to-end evidence requirements.
+The [executor guide](gaap-executor.md) documents the authenticated process integration and two public native Goose
+fixtures: completed execution and verification failure after real effects. Both retain unchanged lifecycle state and
+blocked guards. These examples prove the bounded bridge, without claiming general controller conformance or operating
+system confinement.
 
 ## Implemented now: inspect the YAML-to-canonical-JSON tooling
 
 Developers author one YAML 1.2 document with a quoted `schema_version: "0.1"`. The profile declares registered SDLC
-capabilities; it cannot embed shell commands, executable code, provider payloads, or dynamic capability loading.
+capabilities; it can't embed shell commands, executable code, provider payloads, or dynamic capability loading.
 Duplicate keys, anchors/aliases, custom tags, unknown fields or capabilities, and unsafe numbers are rejected. Shape
 validation alone is insufficient: compilation also checks references, reachability, authority requirements, and cycle
 controls.
@@ -173,7 +176,7 @@ envelope or structured diagnostics. Normalization establishes declaration order 
 root author description. The graph's canonical UTF-8 JSON is hashed with SHA-256; `graph_digest` is outside the hashed
 graph payload. For exact byte, ordering, and number rules, use the
 [normative graph contract](https://github.com/nnennandukwe/threadloop-contracts/blob/v0.1.0/docs/contracts/workflow-graph-v0.1/README.md#compilation-and-graph-identity).
-Do not apply those rules indiscriminately to executor, GAAP, or RunInvariant protocols; each specifies its own byte and
+Don't apply those rules indiscriminately to executor, GAAP, or RunInvariant protocols; each specifies its own byte and
 digest conventions.
 
 To inspect and check the published examples, clone the tagged release of
@@ -190,14 +193,15 @@ npm run spec:conformance:check
 ```
 
 The tests check compiler behavior, accepted candidates, rejection cases, and pinned artifacts. The conformance command
-validates the internal corpus; it does not launch a runtime subject or establish external conformance. There is no
-packaged `threadloop compile` or configurable graph-run command. These development tools do not launch GAAP or advance
+validates the internal corpus; it doesn't launch a runtime subject or establish external conformance. There's no
+packaged `threadloop compile` or configurable graph-run command. These development tools don't launch GAAP or advance
 sessions.
 
 **Accepted in Controller Contract v0.1:** a future Workflow Run retains its original graph schema version and digest.
-Editing the YAML can create a new graph artifact, but cannot replace an active run's binding. An unavailable bound graph
-requires restoration or explicit blocking, not substitution. Persisting and enforcing that binding remains **deferred to
-the controller-runtime milestone**.
+Editing the YAML can create a new graph artifact, but can't replace an active run's binding. An unavailable bound graph
+requires restoration or explicit blocking, not substitution. The optional bridge retains its explicitly adopted graph
+and rejects changed bindings. General configurable run management remains **deferred to the controller-runtime
+milestone**.
 
 ## Implemented now: use the current CLI
 
@@ -208,21 +212,21 @@ supplies transition inputs and ThreadLoop checks policy and current evidence bef
 For a full governed PR, [consumer onboarding](consumer-onboarding.md) covers the commit-pinned sensor workflow and setup
 prerequisites. The [agent-mode flow](agent-mode.md#recommended-orchestrator-flow) connects framing, proof-plan binding,
 implementation, declared gates, signed CI import, pre-PR review, signed PR review, and human approval/merge. Generate a
-change brief, PR summary, or handoff for review; artifacts and captured notes do not replace guard evidence.
+change brief, PR summary, or handoff for review; artifacts and captured notes don't replace guard evidence.
 
 The caller owns task selection, branch preparation, agent launch, and external PR operations. Mechanical refresh and
-scheduler delivery do not choose lifecycle state. Failed or stale proof requires the work returned by ThreadLoop;
+scheduler delivery don't choose lifecycle state. Failed or stale proof requires the work returned by ThreadLoop;
 `blocked` recovery requires explicit human approval to the recorded prior state.
 
 ## Audit export and observability
 
 **Implemented now:** the append-only audit ledger records decisions and transitions alongside durable lifecycle state.
-Verified exports are read-only projections. A dashboard's success, trace identity, deletion, sampling, or restart cannot
+Verified exports are read-only projections. A dashboard's success, trace identity, deletion, sampling, or restart can't
 authorize a transition or change the ledger, evidence freshness, or lifecycle state.
 
 [Export alignment #88](https://github.com/nnennandukwe/threadloop/issues/88) remains separate planned work. The current
-[Collector recipe](observability.md#collector-recipe) consumes completed exports; it does not implement a standardized
-semantic envelope or a sanitized viewer. Retaining canonical hash-covered records for controlled verification is not
+[Collector recipe](observability.md#collector-recipe) consumes completed exports; it doesn't implement a standardized
+semantic envelope or a sanitized viewer. Retaining canonical hash-covered records for controlled verification isn't
 permission to copy raw payloads into a generic telemetry backend. A future viewer projection should expose selected
 identities, governance outcomes, and safe evidence references with raw content absent by default, and disclose its
 provenance and completeness limits.
@@ -245,5 +249,5 @@ lifecycle and that profile drift apart.
 
 The [contract-freeze tracker #110](https://github.com/nnennandukwe/threadloop/issues/110) closed after verification at
 `fa616c6650c59b80ce2ce33b4847b7bd2f48a334`. The separate runtime milestone must still prove the required behavior before
-Rust work begins. Contract acceptance is not a release, production-readiness claim, demonstrated runtime
+Rust work begins. Contract acceptance isn't a release, production-readiness claim, demonstrated runtime
 interoperability, or foundation acceptance.

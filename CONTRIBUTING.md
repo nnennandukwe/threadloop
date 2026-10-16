@@ -109,9 +109,17 @@ Do not add blanket vulnerability or secret-scanning baselines. An unavoidable de
 advisory in `osv-scanner.toml`, explain why the vulnerable behavior is unreachable, link a remediation issue, and expire
 within 30 days. High or critical advisories must be fixed rather than ignored.
 
-The `markdownlint-cli2` override pins `smol-toml` to the patched `1.7.1` release for
-[GHSA-7w5x-hrqm-74c2](https://github.com/advisories/GHSA-7w5x-hrqm-74c2). Version `0.23.2` of the CLI pins the
-vulnerable `1.7.0` release; remove this override when an upstream CLI release depends on a patched version.
+The Markdown lint command uses `markdownlint-cli` `0.49.1` with the same `markdownlint` `0.41.1` rule engine. It
+replaces `markdownlint-cli2`, whose glob dependency chain includes an unpatched high-severity `braces` advisory. The
+CLI's parser overrides select `smol-toml` `1.9.1` and `js-yaml` `5.5.0`; remove each override when the upstream CLI
+selects the corresponding patched dependency. The TOML override includes the fix for
+[GHSA-7w5x-hrqm-74c2](https://github.com/advisories/GHSA-7w5x-hrqm-74c2).
+
+The Markdown math parser's KaTeX dependency is pinned to patched `0.18.11`. Its upstream range still selects the
+vulnerable `0.16` line. The override retains the renderer's `renderToString` interface; inline, display and malformed
+math must pass the parser compatibility check before review. Remove the override when the parser accepts a patched
+version directly. Artifact frontmatter uses the existing `yaml` library directly, so the legacy `gray-matter` YAML
+parser chain isn't installed. `tsup` `9.0.0` supports patched esbuild; the expired exception from #113 is removed.
 
 ## Pull request quality
 

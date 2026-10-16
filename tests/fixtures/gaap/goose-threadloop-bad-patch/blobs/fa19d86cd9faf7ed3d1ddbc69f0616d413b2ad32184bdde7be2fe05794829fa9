@@ -1,0 +1,1 @@
+{"arguments":{"content":"def shipping_quote(quantity, unit_price):\n    return 1\n","operation":"file_write"},"server":"sha256:cf78b415408a320dc2a54da3e95dc36f806be7584999098a7bfdadb4b2646cfc","tool":"governed_operation"}
