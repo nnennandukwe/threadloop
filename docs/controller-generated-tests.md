@@ -67,11 +67,12 @@ next Required Action. Execution evidence never changes a Workflow Run's state or
 `process-model.ts` independently predicts the implemented one-Attempt bridge. Its adapter invokes the real synthetic
 producer as a child process, exercises signed evidence verification and the real SQLite store, and reopens readers
 between operations. Generated operations include execution, pre-aborted cancellation, retained-output admission,
-inspection, evaluation, repository mutation and restart. Named cases retain real file changes when a response or receipt
-publication's lost. Faults cover dispatch before/after commit, response retention before commit, admission preparation,
-blob writes, accepted-result insertion and evaluation after committed admission. The suite checks evidence/journal
-agreement and refusal to blindly rerun a started Attempt. It doesn't assume blocked or failed GAAP work left the
-workspace unchanged.
+inspection, evaluation, repository mutation and restart. Test-only fault rearming exercises a second admission failure
+before successful retained-output recovery; it doesn't change runtime authority. Named cases retain real file changes
+when a response or receipt publication's lost. Faults cover dispatch before/after commit, response retention before
+commit, admission preparation, blob writes, accepted-result insertion and evaluation after committed admission. The
+suite checks evidence/journal agreement and refusal to blindly rerun a started Attempt. It doesn't assume blocked or
+failed GAAP work left the workspace unchanged.
 
 ## Four required unsafe mutants
 

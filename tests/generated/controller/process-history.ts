@@ -28,6 +28,7 @@ const step = fc.constantFrom<ProcessHistory['steps'][number]>(
   'mutate',
   'inspect',
   'cancel',
+  'rearm_fault',
 );
 export async function checkProcessHistories(seed: number, deep = false) {
   const histories = fc.record({

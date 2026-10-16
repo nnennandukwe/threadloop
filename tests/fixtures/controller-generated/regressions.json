@@ -1096,5 +1096,254 @@
         }
       ]
     }
+  },
+  {
+    "name": "renewal preserves one generation beyond its original deadline",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "clock",
+          "by": 2
+        },
+        {
+          "kind": "renew",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "clock",
+          "by": 4
+        },
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 0,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "none"
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
+  },
+  {
+    "name": "release before start permits a new Attempt without inventing an effect",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "release",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "replace",
+          "slot": 1,
+          "actor": "b",
+          "lease": 5
+        },
+        {
+          "kind": "start",
+          "slot": 1,
+          "actor": "b"
+        },
+        {
+          "kind": "receipt",
+          "slot": 1,
+          "identity": 1,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "none"
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
+  },
+  {
+    "name": "release during execution retains unknown effects and refuses nonrepeatable retry",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "release",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "replace",
+          "slot": 1,
+          "actor": "b",
+          "lease": 5
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
+  },
+  {
+    "name": "duplicate and competing claims keep one current claim",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "acquire",
+          "slot": 1,
+          "actor": "b",
+          "lease": 5
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "b"
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 0,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "none"
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
+  },
+  {
+    "name": "duplicate request registration retains one logical request",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "register_duplicate"
+        },
+        {
+          "kind": "register_duplicate"
+        },
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "register_duplicate"
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
+  },
+  {
+    "name": "cancellation before acquisition prevents every later claim",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "cancel",
+          "actor": "human"
+        },
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
+  },
+  {
+    "name": "cancellation of pending work never starts its Attempt",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "cancel",
+          "actor": "controller"
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
   }
 ]

@@ -13,7 +13,7 @@ export const processHistorySchema = z.strictObject({
     'admission.result',
     'admission.after_commit',
   ]),
-  steps: z.array(z.enum(['run', 'admit', 'restart', 'evaluate', 'mutate', 'inspect', 'cancel'])).max(32),
+  steps: z.array(z.enum(['run', 'admit', 'restart', 'evaluate', 'mutate', 'inspect', 'cancel', 'rearm_fault'])).max(32),
 });
 export type ProcessHistory = z.infer<typeof processHistorySchema>;
 export class ProcessModel {
@@ -33,6 +33,10 @@ export class ProcessModel {
     return true;
   }
   apply(step: ProcessHistory['steps'][number]): string {
+    if (step === 'rearm_fault') {
+      this.hit = false;
+      return 'fault_armed';
+    }
     if (step === 'mutate') {
       this.changed = true;
       this.snapshotMatches = false;
@@ -55,7 +59,7 @@ export class ProcessModel {
       if (this.fault('observation.before_commit')) return 'thrown';
       this.observations = 1;
       if (lost || this.cancelled) return 'uncertain';
-      return this.admit();
+      return this.admit('run');
     }
     if (step === 'cancel') {
       // A pre-aborted real dispatch still commits its start and launch intent, then records cancellation.
@@ -72,12 +76,12 @@ export class ProcessModel {
     if (!this.observations || this.history.mode.startsWith('effect_') || this.cancelled || !this.snapshotMatches)
       return 'thrown';
     if (this.admitted) return 'already_admitted';
-    const outcome = this.admit();
-    return outcome === 'rejected' ? 'thrown' : outcome;
+    return this.admit('admit');
   }
-  private admit() {
+  private admit(caller: 'run' | 'admit') {
     if (this.fault('admission.prepared') || this.fault('admission.blobs') || this.fault('admission.result'))
-      return 'rejected';
+      // The run boundary returns a rejection result; direct retained-output admission throws.
+      return caller === 'run' ? 'rejected' : 'thrown';
     this.admitted = 1;
     const success = this.history.mode === 'success';
     this.request = success ? 'satisfied' : 'open';

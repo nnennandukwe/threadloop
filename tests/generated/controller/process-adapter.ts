@@ -39,6 +39,9 @@ export async function runProcessHistory(history: ProcessHistory) {
           outcome = result.status;
         } else if (step === 'admit') {
           outcome = (await admitGaapOutput(store(), 1)).status;
+        } else if (step === 'rearm_fault') {
+          faultHit = false;
+          outcome = 'fault_armed';
         } else if (step === 'mutate') {
           await writeFile(path.join(fixture.workspace, 'source.txt'), 'generated repository mutation\n');
           outcome = 'mutated';

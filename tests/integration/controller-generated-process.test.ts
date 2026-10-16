@@ -44,3 +44,13 @@ it('named regression: pre-aborted dispatch rollback leaves a fresh run eligible'
     steps: ['cancel', 'restart', 'run', 'inspect'],
   });
 });
+
+for (const fault of ['admission.prepared', 'admission.blobs', 'admission.result'] as const)
+  it(`named regression: ${fault} returns rejection from run and throws from direct admission`, async () => {
+    await runProcessHistory({
+      schema: 'threadloop.generated-process-history/1',
+      mode: 'success',
+      fault,
+      steps: ['run', 'restart', 'rearm_fault', 'admit', 'restart', 'admit', 'inspect'],
+    });
+  });
