@@ -16,6 +16,18 @@ const chunks: Buffer[] = [];
 for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk as Uint8Array));
 const request = parseGaapJson(Buffer.concat(chunks)) as ExecutorRequest;
 const mode = process.env.TEST_GAAP_MODE;
+if (mode === 'effect_response_lost' || mode === 'effect_publication_lost') {
+  // Real filesystem mutation by a synthetic process; no signed/native execution claim.
+  writeFileSync(path.join(process.cwd(), 'source.txt'), 'effect occurred before response loss\n');
+  const output = process.env.THREADLOOP_GAAP_EVIDENCE_DIRECTORY!;
+  writeFileSync(path.join(output, 'effect-observation.txt'), 'synthetic producer reached its effect');
+  if (mode === 'effect_publication_lost') {
+    mkdirSync(path.join(output, 'envelope.json'));
+    writeFileSync(path.join(output, 'envelope.json'), 'publication must fail after the effect');
+  }
+  process.stderr.write('synthetic effect finished; response was lost\n');
+  process.exit(9);
+}
 if (mode === 'timeout') await new Promise(() => setInterval(() => {}, 1000));
 if (mode === 'nonzero') process.exit(9);
 if (mode === 'malformed') {

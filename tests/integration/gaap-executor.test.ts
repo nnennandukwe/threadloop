@@ -12,6 +12,7 @@ import { signGaapTestStatement } from '../fixtures/gaap.js';
 import { gaapVerificationPolicy } from '../../src/domain/gaap-binding.js';
 import {
   admitGaapOutput,
+  evaluateGaapController,
   inspectGaapExecutor,
   registerGaapExecutor,
   runGaapExecutor,
@@ -43,6 +44,38 @@ describe('durable GAAP executor admission', () => {
     expect(inspection.admitted).toHaveLength(0);
     await expect(runGaapExecutor(reopened)).rejects.toThrow('already started');
   });
+  it.each(['effect_response_lost', 'effect_publication_lost'])(
+    'retains changed subject and refuses retry after %s',
+    async (mode) => {
+      const fixture = await setup(mode);
+      const store = new GaapState(fixture.state);
+      registerGaapExecutor(store, fixture.binding, fixture.host);
+      expect(await runGaapExecutor(store)).toMatchObject({ status: 'uncertain', observation_id: 1 });
+      const reopened = new GaapState(fixture.state);
+      const retained = reopened.inspect();
+      expect(retained.launches).toHaveLength(1);
+      expect(retained.observations).toHaveLength(1);
+      expect(retained.accepted).toHaveLength(0);
+      expect(await readFile(path.join(fixture.workspace, 'source.txt'), 'utf8')).toContain('effect occurred');
+      expect(
+        await readFile(path.join(String(retained.launches[0]!.output_directory), 'effect-observation.txt'), 'utf8'),
+      ).toContain('reached its effect');
+      const evaluation = evaluateGaapController(reopened);
+      expect(evaluation).toMatchObject({
+        workflow_state: 'implementing',
+        state_version: 2,
+        lifecycle_mutated: false,
+        execution_status: 'reconciliation_required',
+        repository: { clean: false },
+      });
+      expect(evaluation.observed_subject.content_digest).not.toBe(
+        fixture.binding.action_request.request.binding.subject.content_digest,
+      );
+      expect(evaluation.candidates.every((candidate) => !candidate.available)).toBe(true);
+      await expect(runGaapExecutor(reopened)).rejects.toThrow('already started');
+      expect(reopened.inspect().launches).toHaveLength(1);
+    },
+  );
   it('rolls back the whole evidence generation when its final COMMIT preparation fails', async () => {
     const fixture = await setup();
     let prepared = false;
@@ -330,6 +363,28 @@ describe('durable GAAP executor admission', () => {
     expect(response.status).toBe('rejected');
     expect('reason' in response && response.reason).toContain('authority changed');
     expect(store.inspect().accepted).toHaveLength(0);
+  });
+  it('rejects an invalidated claim during verification and retained-output recovery', async () => {
+    const fixture = await setup();
+    let invalidated = false;
+    const store = new GaapState(fixture.state, (point) => {
+      if (point === 'admission.prepared' && !invalidated) {
+        invalidated = true;
+        const current = store.read();
+        store.mutate(current.revision, (root) => {
+          root.binding.snapshot.invalidated_claims.push(structuredClone(root.request.request.claim));
+        });
+      }
+    });
+    registerGaapExecutor(store, fixture.binding, fixture.host);
+    expect(await runGaapExecutor(store)).toMatchObject({ status: 'rejected' });
+    const reopened = new GaapState(fixture.state);
+    await expect(admitGaapOutput(reopened, 1)).rejects.toThrow('current started Attempt');
+    expect(reopened.inspect().accepted).toHaveLength(0);
+    expect(reopened.inspect().observations).toHaveLength(1);
+    expect((await inspectGaapExecutor(reopened)).projection.attempts[0]?.status).toBe('running');
+    await expect(runGaapExecutor(reopened)).rejects.toThrow('already started');
+    expect(reopened.inspect().launches).toHaveLength(1);
   });
   it('persists a launch intent before a simulated crash and refuses a blind retry', async () => {
     const fixture = await setup();

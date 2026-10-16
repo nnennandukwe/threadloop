@@ -495,18 +495,21 @@ export function evaluateGaapController(store: GaapState) {
   const projected = project(root, snapshot);
   Object.assign(snapshot, projected.controller);
   const observed = physicalSubject(root);
+  snapshot.observation.subject = observed.subject;
+  if (snapshot.observation.repository) {
+    snapshot.observation.repository.branch = observed.branch;
+    snapshot.observation.repository.clean = observed.clean;
+    snapshot.observation.repository.relationship = same(snapshot.observation.repository.basis, observed.subject)
+      ? 'equal'
+      : 'unknown';
+  }
   if (projected.projection.request_status === 'satisfied') {
     snapshot.binding.subject = observed.subject;
-    snapshot.observation.subject = observed.subject;
-    if (snapshot.observation.repository) {
-      snapshot.observation.repository.branch = observed.branch;
-      snapshot.observation.repository.clean = observed.clean;
-      snapshot.observation.repository.relationship = same(snapshot.observation.repository.basis, observed.subject)
-        ? 'equal'
-        : 'unknown';
-    }
     // Successful execution history remains in the journal; it doesn't stay an active obligation on the new subject.
     snapshot.existing_requests = [];
+  } else {
+    // Retain the original request binding while fresh observations fence unresolved effects.
+    Object.assign(snapshot, project(root, snapshot).controller);
   }
   checked(validateControllerInput(snapshot));
   const candidates = snapshot.compiled_graph.graph.transitions
@@ -541,6 +544,8 @@ export function evaluateGaapController(store: GaapState) {
     state_version: snapshot.binding.state_version,
     execution_status: snapshot.execution.status,
     subject: snapshot.binding.subject,
+    observed_subject: observed.subject,
+    repository: snapshot.observation.repository,
     candidates,
     lifecycle_mutated: false,
   };

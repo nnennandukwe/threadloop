@@ -98,3 +98,8 @@ execution.
 Pass `--case bad_patch` to retain the three executed effects when independent verification blocks completion. ThreadLoop
 must admit that terminal evidence as an unknown execution outcome requiring reconciliation, while leaving its own
 lifecycle state unchanged.
+
+Evaluation retains the original request `subject` for an unresolved Attempt, while `observed_subject` and `repository`
+report the current physical workspace. A failed or uncertain run that changed files therefore requires reconciliation;
+it can't evaluate guards using the original clean observation. Success may adopt the resulting subject for evaluation,
+but it still can't supply ThreadLoop's own proof or apply a lifecycle transition.
