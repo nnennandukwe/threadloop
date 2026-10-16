@@ -1,0 +1,138 @@
+{
+  "request": {
+    "schema_version": "threadloop.executor/0.1",
+    "kind": "execute",
+    "action_request": {
+      "request": {
+        "schema_version": "0.1",
+        "binding": {
+          "workflow_run_id": "workflow_1",
+          "graph_schema_version": "0.1",
+          "graph_digest": "7df5f3b655e61bc872f83de08c6ce7b0c0c714de15256ada7b13127264bcd2dc",
+          "source_state": "implementing",
+          "state_version": 2,
+          "subject": {
+            "kind": "repository",
+            "repository_id": "owned-test-repository",
+            "revision": "8f118ce33d19f0ba73ef173091599617f4a80de6",
+            "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb"
+          }
+        },
+        "capability_catalog": "threadloop.sdlc/0.1",
+        "action_id": "implement",
+        "transition_id": "verify_implementation",
+        "guard_ids": [
+          "work_committed"
+        ],
+        "inputs": [],
+        "evidence_ids": [],
+        "constraints": {
+          "require_current_subject": true,
+          "lifecycle_mutation": false,
+          "valid_until": null
+        },
+        "policy": {
+          "id": "workflow_policy",
+          "digest": "8c25327ec173f66bd8e8006d6ee625dc124f9fa90b2e0c46a4ad0802d988a83c"
+        },
+        "authorities": [
+          {
+            "type": "threadloop",
+            "identity": {
+              "id": "controller",
+              "digest": "c1472135b14c77c8bef98e73f70208325fa0dcf1e6bd668ae9b31a9cea295fe7"
+            }
+          },
+          {
+            "type": "human",
+            "identity": {
+              "id": "maintainer",
+              "digest": "9c5646b582f10531c791dd2372854409c96e8276f979c0aa4a505ec760e06100"
+            }
+          }
+        ],
+        "evidence_requirements": [
+          {
+            "family": "repository_observation",
+            "guard_id": "work_committed",
+            "subject": {
+              "kind": "repository",
+              "repository_id": "owned-test-repository",
+              "revision": "8f118ce33d19f0ba73ef173091599617f4a80de6",
+              "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb"
+            }
+          }
+        ],
+        "idempotency_key": "aefcf045da2b2ee0e445ac360b368cbc640151963a5229ef6cfe964780be886c",
+        "actor": "executor",
+        "capability": "implement_change"
+      },
+      "request_digest": "b4fd89a9a7e85fee800f79e7501a6b9e89f47b8c230a65079983c9f93b6b61fd"
+    },
+    "execution_policy": {
+      "id": "owned-test-execution",
+      "digest": "71518d32099f5976dd60436d28723c413b2534439f1c46366f40c90d556fc72b"
+    },
+    "claim": {
+      "id": "eb493eb8-c8ca-4028-bd8c-6a8490787ccd",
+      "version": 1
+    },
+    "attempt_id": "5260694b-ca5f-4447-aacc-ae0c13600d7f",
+    "executor": {
+      "id": "test-executor",
+      "incarnation": "one"
+    },
+    "mapping_policy": {
+      "id": "owned-test-mapping",
+      "digest": "31c546dc8f9bd1ae3b7ec73cd36de836af26f099d33cec1fa596d00ca9e7109f"
+    },
+    "parameters": {
+      "subject_locator": "/private/tmp/threadloop-111-native-clean/repository",
+      "capability": {
+        "name": "mcp.governed_operation",
+        "version": "2025-11-25",
+        "digest": "6df0850acf31ac7a18e7e0372bdb164e0a9d4a485259bc9cec7d9e1346e4c3d8"
+      },
+      "task": {
+        "instructions": "Apply the three bounded reference operations through governed_operation.",
+        "constraints": [
+          "No ambient tools, external services or credentials."
+        ]
+      },
+      "policies": [
+        {
+          "name": "gaap.run-coordinator",
+          "version": "0.1.0",
+          "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      ],
+      "resource_budget": {
+        "max_cost_micros": 1000000,
+        "max_elapsed_ms": 40000,
+        "max_model_tokens": 100000,
+        "max_tool_calls": 3
+      },
+      "approval_context": [
+        {
+          "approval_id": "fixture-subject-approval",
+          "actor_id": "reference-fixture-host",
+          "scope": "subject",
+          "subject_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
+          "evidence": {
+            "evidence_type": "approval",
+            "digest": "db5dd4a3548d75aae13602c7001cc1a3c64383cb673a63d48a97c8e1181a4f20",
+            "locator": null
+          }
+        }
+      ],
+      "required_verification": {
+        "independence": "different_actor",
+        "evidence_types": [
+          "command_output",
+          "artifact"
+        ]
+      }
+    }
+  },
+  "request_digest": "8a4ae92d378c99dde920fdc7edd47bd127e6245769be24495a339d2e35f3a3df"
+}

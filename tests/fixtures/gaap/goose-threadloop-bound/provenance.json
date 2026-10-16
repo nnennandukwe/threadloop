@@ -1,0 +1,17 @@
+{
+  "schema_version": "threadloop.gaap-native-proof/1",
+  "consumer_commit": "a0dca15d479a09c6210d55852e7f20e8dc36da3f",
+  "consumer_tree_dirty": false,
+  "gaap_commit": "0a82687d6070081e0a5cb613698f0724dc6f00cb",
+  "gaap_tree_dirty": false,
+  "implementation_digest": "sha256:42305ab1ebed503c68ce6796fe1a9f6a727ca4442809b76c7daa261f124054db",
+  "attestor_digest": "sha256:d1ee3ef7e8e40d147d7aec1ff34c1a0af3b11b0618a39a2517f35fd5af10f257",
+  "request_digest": "8a4ae92d378c99dde920fdc7edd47bd127e6245769be24495a339d2e35f3a3df",
+  "claim": {
+    "id": "eb493eb8-c8ca-4028-bd8c-6a8490787ccd",
+    "version": 1
+  },
+  "attempt_id": "5260694b-ca5f-4447-aacc-ae0c13600d7f",
+  "provider": "Local deterministic fixture; no inference or external billing.",
+  "signer": "Deliberately public fixture seed; explicit host trust only."
+}
