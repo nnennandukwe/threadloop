@@ -1,10 +1,11 @@
-import { createHash, createPublicKey, verify } from 'node:crypto';
+import { createHash } from 'node:crypto';
+import { ed25519 } from '@noble/curves/ed25519.js';
+import { bytesToNumberLE } from '@noble/curves/utils.js';
 import { GaapEvidenceError, parseGaapJson } from '../../domain/gaap-json.js';
 
 const PAYLOAD_TYPE = 'application/vnd.in-toto+json';
 const MAX_PAYLOAD_BYTES = 4 * 1024 * 1024;
 const MAX_ENVELOPE_BYTES = 6 * 1024 * 1024;
-const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 
 export interface GaapTrustedKey {
   keyId: string;
@@ -52,16 +53,34 @@ export class VerifiedGaapEnvelope {
         reject('dsse.duplicate_key', 'Each signature must use a different trusted key.');
       const encoded = base64(signature.sig, 64);
       if (encoded.length !== 64) reject('dsse.signature', 'An Ed25519 signature must contain exactly 64 bytes.');
-      const publicKey = createPublicKey({
-        key: Buffer.concat([ED25519_SPKI_PREFIX, raw]),
-        format: 'der',
-        type: 'spki',
-      });
-      if (!verify(null, message, publicKey, encoded)) reject('dsse.signature', 'DSSE signature verification failed.');
+      let authenticated = false;
+      try {
+        authenticated = verifyStrict(encoded, message, raw);
+      } catch {
+        // Invalid curve encodings are authentication failures, never trusted payloads.
+      }
+      if (!authenticated) reject('dsse.signature', 'DSSE signature verification failed.');
       fingerprints.add(fingerprint);
     }
     return new VerifiedGaapEnvelope(payload, Object.freeze([...fingerprints]));
   }
+}
+
+/** Matches GAAP's ed25519-dalek verify_strict using Noble's point operations. */
+function verifyStrict(signature: Buffer, message: Buffer, publicKey: Buffer): boolean {
+  const { Point } = ed25519;
+  const encodedR = signature.subarray(0, 32);
+  const publicPoint = Point.fromBytes(publicKey, true);
+  const signaturePoint = Point.fromBytes(encodedR, true);
+  const scalar = bytesToNumberLE(signature.subarray(32));
+  if (scalar >= Point.Fn.ORDER || publicPoint.isSmallOrder() || signaturePoint.isSmallOrder()) return false;
+  const challenge = Point.Fn.create(
+    bytesToNumberLE(createHash('sha512').update(encodedR).update(publicKey).update(message).digest()),
+  );
+  // Dalek checks the uncofactored equation and compares canonical R bytes. Noble's
+  // verify() clears the cofactor even with zip215:false, accepting extra signatures.
+  const expected = Point.BASE.multiplyUnsafe(scalar).subtract(publicPoint.multiplyUnsafe(challenge));
+  return encodedR.equals(Buffer.from(expected.toBytes()));
 }
 
 function object(value: unknown): value is Record<string, unknown> {

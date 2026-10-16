@@ -47,6 +47,7 @@
     "url": "git+https://github.com/nnennandukwe/threadloop.git"
   },
   "dependencies": {
+    "@noble/curves": "2.4.0",
     "@sigstore/bundle": "5.0.0",
     "@sigstore/sign": "5.0.0",
     "ajv": "8.20.0",
@@ -54,8 +55,8 @@
     "prompts": "^2.4.2",
     "sigstore": "5.0.0",
     "threadloop-contracts": "git+https://github.com/nnennandukwe/threadloop-contracts.git#4ed9a94a2a089b9ae950d93297f7a6b9b939d3a6",
-    "zod": "4.6.5",
-    "yaml": "2.9.1"
+    "yaml": "2.9.1",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
@@ -67,13 +68,13 @@
     "husky": "9.1.7",
     "knip": "6.37.0",
     "lint-staged": "16.4.0",
+    "markdownlint-cli": "0.49.1",
     "prettier": "3.9.8",
     "tsup": "9.0.0",
     "tsx": "4.23.13",
     "typescript": "6.0.3",
     "typescript-eslint": "8.70.0",
-    "vitest": "4.1.11",
-    "markdownlint-cli": "0.49.1"
+    "vitest": "4.1.11"
   },
   "overrides": {
     "markdownlint-cli": {

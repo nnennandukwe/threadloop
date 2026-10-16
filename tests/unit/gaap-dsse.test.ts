@@ -26,6 +26,36 @@ function encode(value: unknown) {
 }
 
 describe('independent GAAP DSSE authentication', () => {
+  it('matches GAAP Rust strict verification for fixed scalar, encoding and torsion vectors', async () => {
+    // Expected outcomes were checked through GAAP's public Ed25519Verifier, including
+    // accepted mixed-order points. The raw message is DSSE PAE for the payload {}.
+    const vectors = JSON.parse(
+      await readFile(new URL('../fixtures/gaap/ed25519-strict-vectors.json', import.meta.url), 'utf8'),
+    ) as Array<{
+      name: string;
+      public_key_hex: string;
+      message_hex: string;
+      signature_hex: string;
+      expected: boolean;
+    }>;
+    for (const vector of vectors) {
+      expect(Buffer.from(vector.message_hex, 'hex').toString(), vector.name).toBe(
+        'DSSEv1 28 application/vnd.in-toto+json 2 {}',
+      );
+      const envelope = encode({
+        payloadType: type,
+        payload: Buffer.from('{}').toString('base64'),
+        signatures: [{ keyid: 'host', sig: Buffer.from(vector.signature_hex, 'hex').toString('base64') }],
+      });
+      const trust = [{ keyId: 'host', publicKey: Buffer.from(vector.public_key_hex, 'hex') }];
+      if (vector.expected) {
+        expect(VerifiedGaapEnvelope.verify(envelope, trust).payload.toString(), vector.name).toBe('{}');
+      } else {
+        expect(() => VerifiedGaapEnvelope.verify(envelope, trust), vector.name).toThrow('verification failed');
+      }
+    }
+  });
+
   it('authenticates the published Rust/Goose bytes with an explicitly selected fixture key', async () => {
     const root = new URL('../fixtures/gaap/goose-allow/', import.meta.url);
     const bytes = await readFile(new URL('envelope.json', root));
