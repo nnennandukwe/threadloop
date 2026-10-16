@@ -22,7 +22,7 @@ it.each([
   },
   {
     name: 'threadloop-bad-patch',
-    commit: 'c6f6bb0ec9f3cb532777f6e736f5e66d96764078',
+    commit: 'd2e2620f450ebc0c8c4374facaeb98b463095e21',
     terminal: 'blocked',
     attempt: 'unknown_outcome',
   },
@@ -82,7 +82,12 @@ it.each([
     state_version: number;
     launch_count: number;
     admitted: unknown[];
-    evaluations: Array<{ lifecycle_mutated: boolean; candidates: Array<{ available: boolean }> }>;
+    evaluations: Array<{
+      lifecycle_mutated: boolean;
+      observed_subject?: { content_digest: string };
+      repository?: { clean: boolean };
+      candidates: Array<{ available: boolean }>;
+    }>;
   };
   expect(inspection).toMatchObject({ workflow_state: 'implementing', state_version: 2, launch_count: 1 });
   expect(inspection.admitted).toHaveLength(1);
@@ -90,6 +95,10 @@ it.each([
   expect(receipt.resulting_subject?.content_digest).not.toBe(
     request.value.request.action_request.request.binding.subject.content_digest,
   );
+  if (terminal === 'blocked') {
+    expect(inspection.evaluations[0]?.observed_subject?.content_digest).toBe(receipt.resulting_subject?.content_digest);
+    expect(inspection.evaluations[0]?.repository?.clean).toBe(false);
+  }
   expect(inspection.evaluations[0]?.lifecycle_mutated).toBe(false);
   expect(inspection.evaluations[0]?.candidates.every((candidate) => !candidate.available)).toBe(true);
 });

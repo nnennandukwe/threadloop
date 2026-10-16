@@ -3,19 +3,19 @@
   "revision": 4,
   "workflow_state": "implementing",
   "state_version": 2,
-  "request_digest": "ededc097ca9f111bdd6b06aa1a70cef97436b5efa1a7f0a3649df2bf9f7c17bf",
+  "request_digest": "befa708c2c88ac98643118b65de3fe87a480a5403bf55b34fff77fad212300aa",
   "projection": {
     "revision": 3,
-    "evaluated_at": "2026-10-16T01:49:10.317Z",
+    "evaluated_at": "2026-10-16T02:06:34.624Z",
     "request_status": "open",
     "claims": [
       {
         "schema_version": "0.1",
-        "id": "467f690b-460a-4cdf-938c-1e9cca101b25",
+        "id": "036d2b26-b0b4-45df-8bd0-35f52c19565a",
         "version": 1,
         "request": {
-          "idempotency_key": "413c552872fe623578dde284c686dccc50b728e4da835e6c6b27f95fbee2718e",
-          "request_digest": "5467552118d10ac2b1985eccb0bbd7b236f4d07ade21b22b5750d5c487a39058"
+          "idempotency_key": "467410a478b20c9b5011de9ea7b2e3048007b2c8672d5220a17be28c537af791",
+          "request_digest": "686e15ff3801b41baa4d4f12cae4c539f4c243480aedbbb59d94d62412ba414e"
         },
         "binding": {
           "workflow_run_id": "workflow_1",
@@ -26,33 +26,33 @@
           "subject": {
             "kind": "repository",
             "repository_id": "owned-test-repository",
-            "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83",
+            "revision": "a97e8bb200efa03ec3db91389af1f2a120644230",
             "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb"
           }
         },
         "execution_policy": {
           "id": "owned-test-execution",
-          "digest": "a0ca36db2730efde7f7439a0af3f9cd6c9a9136c31d5985d4c208e69b24ef408"
+          "digest": "f03bfc3e9f9fed6bb873764816513011831726e2d96a67c6fadb2f28b0944f94"
         },
         "executor": {
           "id": "test-executor",
           "incarnation": "one"
         },
-        "attempt_id": "9b3bb655-eed6-4b46-9594-7149965b61e2",
+        "attempt_id": "a73907bd-b456-485f-9e5c-f61c4b3e752c",
         "status": "completed",
-        "acquired_at": "2026-10-16T01:48:47.672Z",
+        "acquired_at": "2026-10-16T02:06:09.081Z",
         "renewed_at": null,
-        "valid_until": "2026-10-16T01:50:47.672Z",
-        "closed_at": "2026-10-16T01:49:10.317Z"
+        "valid_until": "2026-10-16T02:08:09.081Z",
+        "closed_at": "2026-10-16T02:06:34.624Z"
       }
     ],
     "attempts": [
       {
         "schema_version": "0.1",
-        "id": "9b3bb655-eed6-4b46-9594-7149965b61e2",
+        "id": "a73907bd-b456-485f-9e5c-f61c4b3e752c",
         "request": {
-          "idempotency_key": "413c552872fe623578dde284c686dccc50b728e4da835e6c6b27f95fbee2718e",
-          "request_digest": "5467552118d10ac2b1985eccb0bbd7b236f4d07ade21b22b5750d5c487a39058"
+          "idempotency_key": "467410a478b20c9b5011de9ea7b2e3048007b2c8672d5220a17be28c537af791",
+          "request_digest": "686e15ff3801b41baa4d4f12cae4c539f4c243480aedbbb59d94d62412ba414e"
         },
         "binding": {
           "workflow_run_id": "workflow_1",
@@ -63,16 +63,16 @@
           "subject": {
             "kind": "repository",
             "repository_id": "owned-test-repository",
-            "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83",
+            "revision": "a97e8bb200efa03ec3db91389af1f2a120644230",
             "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb"
           }
         },
         "execution_policy": {
           "id": "owned-test-execution",
-          "digest": "a0ca36db2730efde7f7439a0af3f9cd6c9a9136c31d5985d4c208e69b24ef408"
+          "digest": "f03bfc3e9f9fed6bb873764816513011831726e2d96a67c6fadb2f28b0944f94"
         },
         "claim": {
-          "id": "467f690b-460a-4cdf-938c-1e9cca101b25",
+          "id": "036d2b26-b0b4-45df-8bd0-35f52c19565a",
           "version": 1
         },
         "executor": {
@@ -81,14 +81,14 @@
         },
         "status": "unknown_outcome",
         "effect": "unknown",
-        "created_at": "2026-10-16T01:48:47.672Z",
-        "started_at": "2026-10-16T01:48:47.956Z",
-        "ended_at": "2026-10-16T01:49:10.036Z",
-        "receipt_id": "gaap_ff125612c2a8276a4ab0a323d824652fa3b1869b9bcf9855ac8d8607a803a2e7",
+        "created_at": "2026-10-16T02:06:09.081Z",
+        "started_at": "2026-10-16T02:06:09.695Z",
+        "ended_at": "2026-10-16T02:06:34.132Z",
+        "receipt_id": "gaap_a7b14dfd76390eb4562eda7836f58f0534991fd94cff2f5b39cb20029213b1f9",
         "resulting_subject": {
           "kind": "repository",
           "repository_id": "owned-test-repository",
-          "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83",
+          "revision": "a97e8bb200efa03ec3db91389af1f2a120644230",
           "content_digest": "66ec62551a1a7650005bce2bebeed110a05f4335a59afcd45a41ab1d8c0f7010"
         },
         "resolution": null
@@ -99,10 +99,10 @@
         "envelope": {
           "receipt": {
             "schema_version": "0.1",
-            "id": "gaap_ff125612c2a8276a4ab0a323d824652fa3b1869b9bcf9855ac8d8607a803a2e7",
+            "id": "gaap_a7b14dfd76390eb4562eda7836f58f0534991fd94cff2f5b39cb20029213b1f9",
             "request": {
-              "idempotency_key": "413c552872fe623578dde284c686dccc50b728e4da835e6c6b27f95fbee2718e",
-              "request_digest": "5467552118d10ac2b1985eccb0bbd7b236f4d07ade21b22b5750d5c487a39058"
+              "idempotency_key": "467410a478b20c9b5011de9ea7b2e3048007b2c8672d5220a17be28c537af791",
+              "request_digest": "686e15ff3801b41baa4d4f12cae4c539f4c243480aedbbb59d94d62412ba414e"
             },
             "binding": {
               "workflow_run_id": "workflow_1",
@@ -113,19 +113,19 @@
               "subject": {
                 "kind": "repository",
                 "repository_id": "owned-test-repository",
-                "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83",
+                "revision": "a97e8bb200efa03ec3db91389af1f2a120644230",
                 "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb"
               }
             },
             "execution_policy": {
               "id": "owned-test-execution",
-              "digest": "a0ca36db2730efde7f7439a0af3f9cd6c9a9136c31d5985d4c208e69b24ef408"
+              "digest": "f03bfc3e9f9fed6bb873764816513011831726e2d96a67c6fadb2f28b0944f94"
             },
             "claim": {
-              "id": "467f690b-460a-4cdf-938c-1e9cca101b25",
+              "id": "036d2b26-b0b4-45df-8bd0-35f52c19565a",
               "version": 1
             },
-            "attempt_id": "9b3bb655-eed6-4b46-9594-7149965b61e2",
+            "attempt_id": "a73907bd-b456-485f-9e5c-f61c4b3e752c",
             "executor": {
               "id": "test-executor",
               "incarnation": "one"
@@ -135,22 +135,22 @@
             "resulting_subject": {
               "kind": "repository",
               "repository_id": "owned-test-repository",
-              "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83",
+              "revision": "a97e8bb200efa03ec3db91389af1f2a120644230",
               "content_digest": "66ec62551a1a7650005bce2bebeed110a05f4335a59afcd45a41ab1d8c0f7010"
             },
-            "finished_at": "2026-10-16T01:49:10.036Z",
+            "finished_at": "2026-10-16T02:06:34.132Z",
             "evidence": [
               {
-                "id": "threadloop_attempt_bcb1c3e82275104375ab80519fcbb1de210758e026dc9af831d33fab94403be4",
-                "digest": "ff125612c2a8276a4ab0a323d824652fa3b1869b9bcf9855ac8d8607a803a2e7"
+                "id": "threadloop_attempt_c2f37a033a3d63291713ecf947152f6790ae31118a47ffb4409364c5be7a8a7b",
+                "digest": "a7b14dfd76390eb4562eda7836f58f0534991fd94cff2f5b39cb20029213b1f9"
               },
               {
                 "id": "evidence_0",
-                "digest": "2dad04f03be09498f095b3bb165441ecec6f13845db7743c6bceefd2dfe35bf7"
+                "digest": "61af72c9e659b0007fd52664c5726801ec79647c4067fdb9a416301dc57c8295"
               },
               {
                 "id": "evidence_1",
-                "digest": "09beae9d091513348462d9a9dba083580b2cf2efac15fe962c4f54181d7cf405"
+                "digest": "0f33c83280ce60e3eaf37de4a0b553229d2a9c703d3c51404230733d32aaefc0"
               },
               {
                 "id": "evidence_2",
@@ -158,7 +158,7 @@
               },
               {
                 "id": "evidence_3",
-                "digest": "866b0e2599ad9f89e25e5a7fce1fd12592d6b07bfe275482c4fdc174512b89b4"
+                "digest": "2f9492490d8f49dd63d603a7bbc12468dc1289786da176a2645dd7c06c1c0687"
               },
               {
                 "id": "evidence_4",
@@ -166,7 +166,7 @@
               },
               {
                 "id": "evidence_5",
-                "digest": "c2fe5f09f8d7ba08b7a8b8c28256639ac6a7b68eb27989d29537b25cd0c4ce69"
+                "digest": "ef5d7a221e7a7c746b6fcbc607304a2a8b2e38d6e07fa0f59d8d4a89b3cd36f7"
               },
               {
                 "id": "evidence_6",
@@ -182,17 +182,17 @@
               }
             ]
           },
-          "receipt_digest": "20fb747336e7f93b4fe1649ce8c577536c38a8fd127c7c102d3c3fe1024dc91c"
+          "receipt_digest": "a7907de9d98ef5dd20033a6b2156503f893a6fb6b8a13a8172fd2d8e34e068f0"
         },
         "result": {
           "disposition": "applied",
           "code": "RECEIPT_ACCEPTED",
           "revision": 3,
           "claim": {
-            "id": "467f690b-460a-4cdf-938c-1e9cca101b25",
+            "id": "036d2b26-b0b4-45df-8bd0-35f52c19565a",
             "version": 1
           },
-          "attempt_id": "9b3bb655-eed6-4b46-9594-7149965b61e2",
+          "attempt_id": "a73907bd-b456-485f-9e5c-f61c4b3e752c",
           "recovery": "Commit the complete proposal against its expected journal digest before acknowledging; recheck current authority before work."
         }
       }
@@ -201,47 +201,47 @@
     "invalidated_claims": [],
     "operations": [
       {
-        "id": "12072223-fc10-4cf2-a92a-c7fa6475dce4",
-        "digest": "124a5dbf7c5c5737a509b4ce9fb00bed58545d5ca09027f80b104f7e5f86349c",
+        "id": "dbbeb00d-edde-4fd5-b3c0-5ea41a1bd790",
+        "digest": "bd71261c6c890ab68f03d7165fc0a46eb69c19c7a9d1dcbe40cf2b1d4b249481",
         "result": {
           "disposition": "applied",
           "code": "CLAIM_ACQUIRED",
           "revision": 1,
           "claim": {
-            "id": "467f690b-460a-4cdf-938c-1e9cca101b25",
+            "id": "036d2b26-b0b4-45df-8bd0-35f52c19565a",
             "version": 1
           },
-          "attempt_id": "9b3bb655-eed6-4b46-9594-7149965b61e2",
+          "attempt_id": "a73907bd-b456-485f-9e5c-f61c4b3e752c",
           "recovery": "Commit the complete proposal against its expected journal digest before acknowledging; recheck current authority before work."
         }
       },
       {
-        "id": "d68e1ba3-462c-48bb-8508-8a0375781552",
-        "digest": "27c83d90f1a829a7efabfb7b15b3cd678b849cb7121ea2cf6b0446aa92672db5",
+        "id": "fc15b4ee-9d12-4f10-b469-5b01d8b4bb36",
+        "digest": "b50f4547fc25806f5a4e8236f3c260b83b00806727799d263c6dc87f702c23c9",
         "result": {
           "disposition": "applied",
           "code": "ATTEMPT_STARTED",
           "revision": 2,
           "claim": {
-            "id": "467f690b-460a-4cdf-938c-1e9cca101b25",
+            "id": "036d2b26-b0b4-45df-8bd0-35f52c19565a",
             "version": 1
           },
-          "attempt_id": "9b3bb655-eed6-4b46-9594-7149965b61e2",
+          "attempt_id": "a73907bd-b456-485f-9e5c-f61c4b3e752c",
           "recovery": "Commit the complete proposal against its expected journal digest before acknowledging; recheck current authority before work."
         }
       },
       {
-        "id": "a9f7ace2-5f2e-4236-9108-73c665658b23",
-        "digest": "a7728be1ff0aadb9962821fc061317bb2e42e1c5b55dc04f99382896cbb3e996",
+        "id": "409e7264-a063-49ac-96dd-8416827682c9",
+        "digest": "46c41f071c27f6a934545a62c390e689dce0e181d65be152a4537ab41df2af7a",
         "result": {
           "disposition": "applied",
           "code": "RECEIPT_ACCEPTED",
           "revision": 3,
           "claim": {
-            "id": "467f690b-460a-4cdf-938c-1e9cca101b25",
+            "id": "036d2b26-b0b4-45df-8bd0-35f52c19565a",
             "version": 1
           },
-          "attempt_id": "9b3bb655-eed6-4b46-9594-7149965b61e2",
+          "attempt_id": "a73907bd-b456-485f-9e5c-f61c4b3e752c",
           "recovery": "Commit the complete proposal against its expected journal digest before acknowledging; recheck current authority before work."
         }
       }
@@ -256,8 +256,8 @@
   ],
   "admitted": [
     {
-      "source_id": "threadloop_attempt_bcb1c3e82275104375ab80519fcbb1de210758e026dc9af831d33fab94403be4",
-      "source_digest": "ff125612c2a8276a4ab0a323d824652fa3b1869b9bcf9855ac8d8607a803a2e7"
+      "source_id": "threadloop_attempt_c2f37a033a3d63291713ecf947152f6790ae31118a47ffb4409364c5be7a8a7b",
+      "source_digest": "a7b14dfd76390eb4562eda7836f58f0534991fd94cff2f5b39cb20029213b1f9"
     }
   ],
   "evaluations": [
@@ -266,6 +266,13 @@
         {
           "available": false,
           "diagnostics": [
+            {
+              "code": "STALE_OBSERVATION",
+              "identifier": null,
+              "message": "Refresh the observation before using an actionable decision.",
+              "path": "$.observation",
+              "recovery": "Restore the matching snapshot, evidence, or contract document and validate again; do not execute this candidate."
+            },
             {
               "code": "EXECUTION_NOT_IDLE",
               "identifier": null,
@@ -288,6 +295,13 @@
           "available": false,
           "diagnostics": [
             {
+              "code": "STALE_OBSERVATION",
+              "identifier": null,
+              "message": "Refresh the observation before using an actionable decision.",
+              "path": "$.observation",
+              "recovery": "Restore the matching snapshot, evidence, or contract document and validate again; do not execute this candidate."
+            },
+            {
               "code": "EXECUTION_NOT_IDLE",
               "identifier": null,
               "message": "Execution must be reconciled before lifecycle advancement.",
@@ -306,15 +320,33 @@
           "transition_id": "verify_implementation"
         }
       ],
-      "evaluated_at": "2026-10-16T01:49:10.338Z",
+      "evaluated_at": "2026-10-16T02:06:34.649Z",
       "execution_status": "reconciliation_required",
       "lifecycle_mutated": false,
+      "observed_subject": {
+        "content_digest": "66ec62551a1a7650005bce2bebeed110a05f4335a59afcd45a41ab1d8c0f7010",
+        "kind": "repository",
+        "repository_id": "owned-test-repository",
+        "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
+      },
+      "repository": {
+        "basis": {
+          "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
+          "kind": "repository",
+          "repository_id": "owned-test-repository",
+          "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
+        },
+        "branch": "feature",
+        "change_scope": "within_plan",
+        "clean": false,
+        "relationship": "unknown"
+      },
       "state_version": 2,
       "subject": {
         "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
         "kind": "repository",
         "repository_id": "owned-test-repository",
-        "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+        "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
       },
       "workflow_state": "implementing"
     }

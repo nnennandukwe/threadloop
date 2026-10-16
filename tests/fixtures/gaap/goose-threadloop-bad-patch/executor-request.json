@@ -14,7 +14,7 @@
           "subject": {
             "kind": "repository",
             "repository_id": "owned-test-repository",
-            "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83",
+            "revision": "a97e8bb200efa03ec3db91389af1f2a120644230",
             "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb"
           }
         },
@@ -33,7 +33,7 @@
         },
         "policy": {
           "id": "workflow_policy",
-          "digest": "508149a7b9b8b5faafbadd84c46f833d0e07f21d04fa3f0646695819701a9f17"
+          "digest": "3aa513acfe7cc9b97d82cfa24c7e90b26ecf9b4273119b59edf80c62d2156b15"
         },
         "authorities": [
           {
@@ -58,40 +58,40 @@
             "subject": {
               "kind": "repository",
               "repository_id": "owned-test-repository",
-              "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83",
+              "revision": "a97e8bb200efa03ec3db91389af1f2a120644230",
               "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb"
             }
           }
         ],
-        "idempotency_key": "413c552872fe623578dde284c686dccc50b728e4da835e6c6b27f95fbee2718e",
+        "idempotency_key": "467410a478b20c9b5011de9ea7b2e3048007b2c8672d5220a17be28c537af791",
         "actor": "executor",
         "capability": "implement_change"
       },
-      "request_digest": "5467552118d10ac2b1985eccb0bbd7b236f4d07ade21b22b5750d5c487a39058"
+      "request_digest": "686e15ff3801b41baa4d4f12cae4c539f4c243480aedbbb59d94d62412ba414e"
     },
     "execution_policy": {
       "id": "owned-test-execution",
-      "digest": "a0ca36db2730efde7f7439a0af3f9cd6c9a9136c31d5985d4c208e69b24ef408"
+      "digest": "f03bfc3e9f9fed6bb873764816513011831726e2d96a67c6fadb2f28b0944f94"
     },
     "claim": {
-      "id": "467f690b-460a-4cdf-938c-1e9cca101b25",
+      "id": "036d2b26-b0b4-45df-8bd0-35f52c19565a",
       "version": 1
     },
-    "attempt_id": "9b3bb655-eed6-4b46-9594-7149965b61e2",
+    "attempt_id": "a73907bd-b456-485f-9e5c-f61c4b3e752c",
     "executor": {
       "id": "test-executor",
       "incarnation": "one"
     },
     "mapping_policy": {
       "id": "owned-test-mapping",
-      "digest": "2f8f996cf57ceeb9f322cad596dd353e20966084e7905c699ef385723b184a9e"
+      "digest": "0c5c1bc502edda68df72a1a39717839244ec17c1823fb8072cf1d688978edae0"
     },
     "parameters": {
-      "subject_locator": "/private/tmp/threadloop-111-native-bad-patch/repository",
+      "subject_locator": "/private/tmp/threadloop-111-native-fresh-observation/repository",
       "capability": {
         "name": "mcp.governed_operation",
         "version": "2025-11-25",
-        "digest": "a1c6b9f24e09cd65b64e89bacd4d6f02b602aa5a0079eeaccb9f2b12de2a1822"
+        "digest": "8373b713cfa42439b0370d886ac48c106a750ac70a1e1b4d22a5a0ac24b5be73"
       },
       "task": {
         "instructions": "Apply the three bounded reference operations through governed_operation.",
@@ -120,7 +120,7 @@
           "subject_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
           "evidence": {
             "evidence_type": "approval",
-            "digest": "2dad04f03be09498f095b3bb165441ecec6f13845db7743c6bceefd2dfe35bf7",
+            "digest": "61af72c9e659b0007fd52664c5726801ec79647c4067fdb9a416301dc57c8295",
             "locator": null
           }
         }
@@ -134,5 +134,5 @@
       }
     }
   },
-  "request_digest": "ededc097ca9f111bdd6b06aa1a70cef97436b5efa1a7f0a3649df2bf9f7c17bf"
+  "request_digest": "befa708c2c88ac98643118b65de3fe87a480a5403bf55b34fff77fad212300aa"
 }

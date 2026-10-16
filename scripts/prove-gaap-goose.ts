@@ -99,4 +99,11 @@ if (
   result.evaluation.candidates.some((candidate) => candidate.available)
 )
   throw new Error('The native edit bypassed ThreadLoop commit/proof guards.');
+if (
+  config.case === 'bad_patch' &&
+  (result.evaluation.execution_status !== 'reconciliation_required' ||
+    result.evaluation.repository?.clean !== false ||
+    result.evaluation.observed_subject.content_digest === result.evaluation.subject.content_digest)
+)
+  throw new Error('Failed native execution lost its current physical workspace observation.');
 process.stdout.write(JSON.stringify({ output, result, inspection }, null, 2) + '\n');

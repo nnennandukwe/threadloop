@@ -1,18 +1,18 @@
 {
   "schema_version": "threadloop.gaap-native-proof/1",
   "case": "bad_patch",
-  "consumer_commit": "c6f6bb0ec9f3cb532777f6e736f5e66d96764078",
+  "consumer_commit": "d2e2620f450ebc0c8c4374facaeb98b463095e21",
   "consumer_tree_dirty": false,
   "gaap_commit": "0a82687d6070081e0a5cb613698f0724dc6f00cb",
   "gaap_tree_dirty": false,
   "implementation_digest": "sha256:42305ab1ebed503c68ce6796fe1a9f6a727ca4442809b76c7daa261f124054db",
   "attestor_digest": "sha256:d1ee3ef7e8e40d147d7aec1ff34c1a0af3b11b0618a39a2517f35fd5af10f257",
-  "request_digest": "ededc097ca9f111bdd6b06aa1a70cef97436b5efa1a7f0a3649df2bf9f7c17bf",
+  "request_digest": "befa708c2c88ac98643118b65de3fe87a480a5403bf55b34fff77fad212300aa",
   "claim": {
-    "id": "467f690b-460a-4cdf-938c-1e9cca101b25",
+    "id": "036d2b26-b0b4-45df-8bd0-35f52c19565a",
     "version": 1
   },
-  "attempt_id": "9b3bb655-eed6-4b46-9594-7149965b61e2",
+  "attempt_id": "a73907bd-b456-485f-9e5c-f61c4b3e752c",
   "provider": "Local deterministic fixture; no inference or external billing.",
   "signer": "Deliberately public fixture seed; explicit host trust only."
 }

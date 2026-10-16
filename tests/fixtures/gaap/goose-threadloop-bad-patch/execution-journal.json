@@ -29,7 +29,7 @@
             "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
             "kind": "repository",
             "repository_id": "owned-test-repository",
-            "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+            "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
           },
           "workflow_run_id": "workflow_1"
         },
@@ -49,23 +49,23 @@
               "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
               "kind": "repository",
               "repository_id": "owned-test-repository",
-              "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+              "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
             }
           }
         ],
         "guard_ids": [
           "work_committed"
         ],
-        "idempotency_key": "413c552872fe623578dde284c686dccc50b728e4da835e6c6b27f95fbee2718e",
+        "idempotency_key": "467410a478b20c9b5011de9ea7b2e3048007b2c8672d5220a17be28c537af791",
         "inputs": [],
         "policy": {
-          "digest": "508149a7b9b8b5faafbadd84c46f833d0e07f21d04fa3f0646695819701a9f17",
+          "digest": "3aa513acfe7cc9b97d82cfa24c7e90b26ecf9b4273119b59edf80c62d2156b15",
           "id": "workflow_policy"
         },
         "schema_version": "0.1",
         "transition_id": "verify_implementation"
       },
-      "request_digest": "5467552118d10ac2b1985eccb0bbd7b236f4d07ade21b22b5750d5c487a39058"
+      "request_digest": "686e15ff3801b41baa4d4f12cae4c539f4c243480aedbbb59d94d62412ba414e"
     },
     "entries": [
       {
@@ -159,7 +159,7 @@
                 "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
                 "kind": "repository",
                 "repository_id": "owned-test-repository",
-                "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+                "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
               },
               "workflow_run_id": "workflow_1"
             },
@@ -1146,7 +1146,7 @@
               },
               "graph_digest": "7df5f3b655e61bc872f83de08c6ce7b0c0c714de15256ada7b13127264bcd2dc"
             },
-            "evaluation_time": "2026-10-16T01:48:47.672Z",
+            "evaluation_time": "2026-10-16T02:06:09.081Z",
             "execution": {
               "status": "idle"
             },
@@ -1163,7 +1163,7 @@
                 "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
                 "kind": "repository",
                 "repository_id": "owned-test-repository",
-                "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+                "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
               },
               "phase": "pre_pr",
               "prior_state": null,
@@ -1179,7 +1179,7 @@
                   "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
                   "kind": "repository",
                   "repository_id": "owned-test-repository",
-                  "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+                  "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
                 },
                 "branch": "feature",
                 "change_scope": "within_plan",
@@ -1192,12 +1192,12 @@
                 "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
                 "kind": "repository",
                 "repository_id": "owned-test-repository",
-                "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+                "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
               },
               "valid_until": null
             },
             "policy": {
-              "digest": "508149a7b9b8b5faafbadd84c46f833d0e07f21d04fa3f0646695819701a9f17",
+              "digest": "3aa513acfe7cc9b97d82cfa24c7e90b26ecf9b4273119b59edf80c62d2156b15",
               "id": "workflow_policy",
               "rules": {
                 "authorities": [
@@ -1239,7 +1239,7 @@
                     "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
                     "kind": "repository",
                     "repository_id": "owned-test-repository",
-                    "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+                    "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
                   },
                   "branch": "feature"
                 },
@@ -1267,30 +1267,30 @@
               "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
               "kind": "repository",
               "repository_id": "owned-test-repository",
-              "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+              "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
             },
             "workflow_run_id": "workflow_1"
           },
           "command": {
-            "attempt_id": "9b3bb655-eed6-4b46-9594-7149965b61e2",
-            "claim_id": "467f690b-460a-4cdf-938c-1e9cca101b25",
+            "attempt_id": "a73907bd-b456-485f-9e5c-f61c4b3e752c",
+            "claim_id": "036d2b26-b0b4-45df-8bd0-35f52c19565a",
             "executor": {
               "id": "test-executor",
               "incarnation": "one"
             },
             "kind": "acquire",
-            "valid_until": "2026-10-16T01:50:47.672Z"
+            "valid_until": "2026-10-16T02:08:09.081Z"
           },
           "execution_policy": {
-            "digest": "a0ca36db2730efde7f7439a0af3f9cd6c9a9136c31d5985d4c208e69b24ef408",
+            "digest": "f03bfc3e9f9fed6bb873764816513011831726e2d96a67c6fadb2f28b0944f94",
             "id": "owned-test-execution"
           },
-          "expected_execution_digest": "eacbf247153d5371da97d42eabea6c036dfe159d866592452bb49da2986cf665",
+          "expected_execution_digest": "a9d13b0628b704f7757d072282494212a6376bef7ab7efff202bba4394d6f312",
           "expected_revision": 0,
-          "id": "12072223-fc10-4cf2-a92a-c7fa6475dce4",
+          "id": "dbbeb00d-edde-4fd5-b3c0-5ea41a1bd790",
           "request": {
-            "idempotency_key": "413c552872fe623578dde284c686dccc50b728e4da835e6c6b27f95fbee2718e",
-            "request_digest": "5467552118d10ac2b1985eccb0bbd7b236f4d07ade21b22b5750d5c487a39058"
+            "idempotency_key": "467410a478b20c9b5011de9ea7b2e3048007b2c8672d5220a17be28c537af791",
+            "request_digest": "686e15ff3801b41baa4d4f12cae4c539f4c243480aedbbb59d94d62412ba414e"
           },
           "schema_version": "0.1"
         }
@@ -1386,7 +1386,7 @@
                 "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
                 "kind": "repository",
                 "repository_id": "owned-test-repository",
-                "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+                "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
               },
               "workflow_run_id": "workflow_1"
             },
@@ -2373,7 +2373,7 @@
               },
               "graph_digest": "7df5f3b655e61bc872f83de08c6ce7b0c0c714de15256ada7b13127264bcd2dc"
             },
-            "evaluation_time": "2026-10-16T01:48:47.956Z",
+            "evaluation_time": "2026-10-16T02:06:09.695Z",
             "execution": {
               "status": "idle"
             },
@@ -2390,7 +2390,7 @@
                 "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
                 "kind": "repository",
                 "repository_id": "owned-test-repository",
-                "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+                "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
               },
               "phase": "pre_pr",
               "prior_state": null,
@@ -2406,7 +2406,7 @@
                   "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
                   "kind": "repository",
                   "repository_id": "owned-test-repository",
-                  "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+                  "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
                 },
                 "branch": "feature",
                 "change_scope": "within_plan",
@@ -2419,12 +2419,12 @@
                 "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
                 "kind": "repository",
                 "repository_id": "owned-test-repository",
-                "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+                "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
               },
               "valid_until": null
             },
             "policy": {
-              "digest": "508149a7b9b8b5faafbadd84c46f833d0e07f21d04fa3f0646695819701a9f17",
+              "digest": "3aa513acfe7cc9b97d82cfa24c7e90b26ecf9b4273119b59edf80c62d2156b15",
               "id": "workflow_policy",
               "rules": {
                 "authorities": [
@@ -2466,7 +2466,7 @@
                     "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
                     "kind": "repository",
                     "repository_id": "owned-test-repository",
-                    "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+                    "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
                   },
                   "branch": "feature"
                 },
@@ -2494,28 +2494,28 @@
               "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
               "kind": "repository",
               "repository_id": "owned-test-repository",
-              "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+              "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
             },
             "workflow_run_id": "workflow_1"
           },
           "command": {
-            "attempt_id": "9b3bb655-eed6-4b46-9594-7149965b61e2",
+            "attempt_id": "a73907bd-b456-485f-9e5c-f61c4b3e752c",
             "claim": {
-              "id": "467f690b-460a-4cdf-938c-1e9cca101b25",
+              "id": "036d2b26-b0b4-45df-8bd0-35f52c19565a",
               "version": 1
             },
             "kind": "start"
           },
           "execution_policy": {
-            "digest": "a0ca36db2730efde7f7439a0af3f9cd6c9a9136c31d5985d4c208e69b24ef408",
+            "digest": "f03bfc3e9f9fed6bb873764816513011831726e2d96a67c6fadb2f28b0944f94",
             "id": "owned-test-execution"
           },
-          "expected_execution_digest": "eaaf36d01e9268526aa856d027d77ef037cdc0484550c8837042f5ed65bbe637",
+          "expected_execution_digest": "f2e6bfa7e49e286613000103223f98d30c6dc01aabdb263b337b09176b14a81a",
           "expected_revision": 1,
-          "id": "d68e1ba3-462c-48bb-8508-8a0375781552",
+          "id": "fc15b4ee-9d12-4f10-b469-5b01d8b4bb36",
           "request": {
-            "idempotency_key": "413c552872fe623578dde284c686dccc50b728e4da835e6c6b27f95fbee2718e",
-            "request_digest": "5467552118d10ac2b1985eccb0bbd7b236f4d07ade21b22b5750d5c487a39058"
+            "idempotency_key": "467410a478b20c9b5011de9ea7b2e3048007b2c8672d5220a17be28c537af791",
+            "request_digest": "686e15ff3801b41baa4d4f12cae4c539f4c243480aedbbb59d94d62412ba414e"
           },
           "schema_version": "0.1"
         }
@@ -2533,11 +2533,11 @@
             {
               "admission": {
                 "acceptance": {
-                  "digest": "d444c9e4fd45643006ed112baca46581d1709036936e22b60100866ef9b0c4aa",
-                  "id": "gaap_threadloop_attempt_bcb1c3e82275104375ab80519fcbb1de210758e026dc9af831d33fab94403be4"
+                  "digest": "2456474d88264512131605da649a25e0533980862f6fdcb29495b365fcca0e1c",
+                  "id": "gaap_threadloop_attempt_c2f37a033a3d63291713ecf947152f6790ae31118a47ffb4409364c5be7a8a7b"
                 },
-                "admitted_at": "2026-10-16T01:49:10.317Z",
-                "attempt_id": "9b3bb655-eed6-4b46-9594-7149965b61e2",
+                "admitted_at": "2026-10-16T02:06:34.624Z",
+                "attempt_id": "a73907bd-b456-485f-9e5c-f61c4b3e752c",
                 "binding": {
                   "graph_digest": "7df5f3b655e61bc872f83de08c6ce7b0c0c714de15256ada7b13127264bcd2dc",
                   "graph_schema_version": "0.1",
@@ -2547,30 +2547,30 @@
                     "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
                     "kind": "repository",
                     "repository_id": "owned-test-repository",
-                    "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+                    "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
                   },
                   "workflow_run_id": "workflow_1"
                 },
                 "claim": {
-                  "id": "467f690b-460a-4cdf-938c-1e9cca101b25",
+                  "id": "036d2b26-b0b4-45df-8bd0-35f52c19565a",
                   "version": 1
                 },
                 "execution_policy": {
-                  "digest": "a0ca36db2730efde7f7439a0af3f9cd6c9a9136c31d5985d4c208e69b24ef408",
+                  "digest": "f03bfc3e9f9fed6bb873764816513011831726e2d96a67c6fadb2f28b0944f94",
                   "id": "owned-test-execution"
                 },
                 "executor": {
                   "id": "test-executor",
                   "incarnation": "one"
                 },
-                "id": "baf176ad-ee11-4725-99dd-779aefd2e485",
+                "id": "f8d0bbb3-cc74-46d9-9102-7081aeb6f35a",
                 "receipt": {
-                  "digest": "20fb747336e7f93b4fe1649ce8c577536c38a8fd127c7c102d3c3fe1024dc91c",
-                  "id": "gaap_ff125612c2a8276a4ab0a323d824652fa3b1869b9bcf9855ac8d8607a803a2e7"
+                  "digest": "a7907de9d98ef5dd20033a6b2156503f893a6fb6b8a13a8172fd2d8e34e068f0",
+                  "id": "gaap_a7b14dfd76390eb4562eda7836f58f0534991fd94cff2f5b39cb20029213b1f9"
                 },
                 "request": {
-                  "idempotency_key": "413c552872fe623578dde284c686dccc50b728e4da835e6c6b27f95fbee2718e",
-                  "request_digest": "5467552118d10ac2b1985eccb0bbd7b236f4d07ade21b22b5750d5c487a39058"
+                  "idempotency_key": "467410a478b20c9b5011de9ea7b2e3048007b2c8672d5220a17be28c537af791",
+                  "request_digest": "686e15ff3801b41baa4d4f12cae4c539f4c243480aedbbb59d94d62412ba414e"
                 },
                 "schema_version": "0.1",
                 "valid_until": null,
@@ -2579,7 +2579,7 @@
                   "id": "explicit-native-public-fixture-only"
                 }
               },
-              "admission_digest": "48af412051822b2f775555acc60ffae90a76c9cc844040e57037797e585834ed"
+              "admission_digest": "c0017ea7144ef2e3b1111e3f0c95c17e419391eb791cf5025c5f6b6904d8eb38"
             }
           ],
           "recovery_evidence": [],
@@ -2663,7 +2663,7 @@
                 "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
                 "kind": "repository",
                 "repository_id": "owned-test-repository",
-                "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+                "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
               },
               "workflow_run_id": "workflow_1"
             },
@@ -3650,7 +3650,7 @@
               },
               "graph_digest": "7df5f3b655e61bc872f83de08c6ce7b0c0c714de15256ada7b13127264bcd2dc"
             },
-            "evaluation_time": "2026-10-16T01:49:10.317Z",
+            "evaluation_time": "2026-10-16T02:06:34.624Z",
             "execution": {
               "status": "idle"
             },
@@ -3667,7 +3667,7 @@
                 "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
                 "kind": "repository",
                 "repository_id": "owned-test-repository",
-                "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+                "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
               },
               "phase": "pre_pr",
               "prior_state": null,
@@ -3683,7 +3683,7 @@
                   "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
                   "kind": "repository",
                   "repository_id": "owned-test-repository",
-                  "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+                  "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
                 },
                 "branch": "feature",
                 "change_scope": "within_plan",
@@ -3696,12 +3696,12 @@
                 "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
                 "kind": "repository",
                 "repository_id": "owned-test-repository",
-                "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+                "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
               },
               "valid_until": null
             },
             "policy": {
-              "digest": "508149a7b9b8b5faafbadd84c46f833d0e07f21d04fa3f0646695819701a9f17",
+              "digest": "3aa513acfe7cc9b97d82cfa24c7e90b26ecf9b4273119b59edf80c62d2156b15",
               "id": "workflow_policy",
               "rules": {
                 "authorities": [
@@ -3743,7 +3743,7 @@
                     "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
                     "kind": "repository",
                     "repository_id": "owned-test-repository",
-                    "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+                    "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
                   },
                   "branch": "feature"
                 },
@@ -3771,7 +3771,7 @@
               "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
               "kind": "repository",
               "repository_id": "owned-test-repository",
-              "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+              "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
             },
             "workflow_run_id": "workflow_1"
           },
@@ -3779,7 +3779,7 @@
             "kind": "submit_receipt",
             "receipt": {
               "receipt": {
-                "attempt_id": "9b3bb655-eed6-4b46-9594-7149965b61e2",
+                "attempt_id": "a73907bd-b456-485f-9e5c-f61c4b3e752c",
                 "binding": {
                   "graph_digest": "7df5f3b655e61bc872f83de08c6ce7b0c0c714de15256ada7b13127264bcd2dc",
                   "graph_schema_version": "0.1",
@@ -3789,26 +3789,26 @@
                     "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
                     "kind": "repository",
                     "repository_id": "owned-test-repository",
-                    "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+                    "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
                   },
                   "workflow_run_id": "workflow_1"
                 },
                 "claim": {
-                  "id": "467f690b-460a-4cdf-938c-1e9cca101b25",
+                  "id": "036d2b26-b0b4-45df-8bd0-35f52c19565a",
                   "version": 1
                 },
                 "effect": "unknown",
                 "evidence": [
                   {
-                    "digest": "ff125612c2a8276a4ab0a323d824652fa3b1869b9bcf9855ac8d8607a803a2e7",
-                    "id": "threadloop_attempt_bcb1c3e82275104375ab80519fcbb1de210758e026dc9af831d33fab94403be4"
+                    "digest": "a7b14dfd76390eb4562eda7836f58f0534991fd94cff2f5b39cb20029213b1f9",
+                    "id": "threadloop_attempt_c2f37a033a3d63291713ecf947152f6790ae31118a47ffb4409364c5be7a8a7b"
                   },
                   {
-                    "digest": "2dad04f03be09498f095b3bb165441ecec6f13845db7743c6bceefd2dfe35bf7",
+                    "digest": "61af72c9e659b0007fd52664c5726801ec79647c4067fdb9a416301dc57c8295",
                     "id": "evidence_0"
                   },
                   {
-                    "digest": "09beae9d091513348462d9a9dba083580b2cf2efac15fe962c4f54181d7cf405",
+                    "digest": "0f33c83280ce60e3eaf37de4a0b553229d2a9c703d3c51404230733d32aaefc0",
                     "id": "evidence_1"
                   },
                   {
@@ -3816,7 +3816,7 @@
                     "id": "evidence_2"
                   },
                   {
-                    "digest": "866b0e2599ad9f89e25e5a7fce1fd12592d6b07bfe275482c4fdc174512b89b4",
+                    "digest": "2f9492490d8f49dd63d603a7bbc12468dc1289786da176a2645dd7c06c1c0687",
                     "id": "evidence_3"
                   },
                   {
@@ -3824,7 +3824,7 @@
                     "id": "evidence_4"
                   },
                   {
-                    "digest": "c2fe5f09f8d7ba08b7a8b8c28256639ac6a7b68eb27989d29537b25cd0c4ce69",
+                    "digest": "ef5d7a221e7a7c746b6fcbc607304a2a8b2e38d6e07fa0f59d8d4a89b3cd36f7",
                     "id": "evidence_5"
                   },
                   {
@@ -3841,58 +3841,58 @@
                   }
                 ],
                 "execution_policy": {
-                  "digest": "a0ca36db2730efde7f7439a0af3f9cd6c9a9136c31d5985d4c208e69b24ef408",
+                  "digest": "f03bfc3e9f9fed6bb873764816513011831726e2d96a67c6fadb2f28b0944f94",
                   "id": "owned-test-execution"
                 },
                 "executor": {
                   "id": "test-executor",
                   "incarnation": "one"
                 },
-                "finished_at": "2026-10-16T01:49:10.036Z",
-                "id": "gaap_ff125612c2a8276a4ab0a323d824652fa3b1869b9bcf9855ac8d8607a803a2e7",
+                "finished_at": "2026-10-16T02:06:34.132Z",
+                "id": "gaap_a7b14dfd76390eb4562eda7836f58f0534991fd94cff2f5b39cb20029213b1f9",
                 "request": {
-                  "idempotency_key": "413c552872fe623578dde284c686dccc50b728e4da835e6c6b27f95fbee2718e",
-                  "request_digest": "5467552118d10ac2b1985eccb0bbd7b236f4d07ade21b22b5750d5c487a39058"
+                  "idempotency_key": "467410a478b20c9b5011de9ea7b2e3048007b2c8672d5220a17be28c537af791",
+                  "request_digest": "686e15ff3801b41baa4d4f12cae4c539f4c243480aedbbb59d94d62412ba414e"
                 },
                 "resulting_subject": {
                   "content_digest": "66ec62551a1a7650005bce2bebeed110a05f4335a59afcd45a41ab1d8c0f7010",
                   "kind": "repository",
                   "repository_id": "owned-test-repository",
-                  "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+                  "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
                 },
                 "schema_version": "0.1",
                 "status": "blocked"
               },
-              "receipt_digest": "20fb747336e7f93b4fe1649ce8c577536c38a8fd127c7c102d3c3fe1024dc91c"
+              "receipt_digest": "a7907de9d98ef5dd20033a6b2156503f893a6fb6b8a13a8172fd2d8e34e068f0"
             }
           },
           "execution_policy": {
-            "digest": "a0ca36db2730efde7f7439a0af3f9cd6c9a9136c31d5985d4c208e69b24ef408",
+            "digest": "f03bfc3e9f9fed6bb873764816513011831726e2d96a67c6fadb2f28b0944f94",
             "id": "owned-test-execution"
           },
-          "expected_execution_digest": "fc979b41407b19cc847bcb323833869fb0c0b9c78c4fae8e34cb77273219380a",
+          "expected_execution_digest": "d22647d9c949d48d3c994f4c9451c9fd3f702e0c9858f0a35dfc36a7772e6995",
           "expected_revision": 2,
-          "id": "a9f7ace2-5f2e-4236-9108-73c665658b23",
+          "id": "409e7264-a063-49ac-96dd-8416827682c9",
           "request": {
-            "idempotency_key": "413c552872fe623578dde284c686dccc50b728e4da835e6c6b27f95fbee2718e",
-            "request_digest": "5467552118d10ac2b1985eccb0bbd7b236f4d07ade21b22b5750d5c487a39058"
+            "idempotency_key": "467410a478b20c9b5011de9ea7b2e3048007b2c8672d5220a17be28c537af791",
+            "request_digest": "686e15ff3801b41baa4d4f12cae4c539f4c243480aedbbb59d94d62412ba414e"
           },
           "schema_version": "0.1"
         }
       }
     ],
     "execution_policy": {
-      "digest": "a0ca36db2730efde7f7439a0af3f9cd6c9a9136c31d5985d4c208e69b24ef408",
+      "digest": "f03bfc3e9f9fed6bb873764816513011831726e2d96a67c6fadb2f28b0944f94",
       "id": "owned-test-execution",
       "rules": {
         "max_attempts": 1,
         "request": {
-          "idempotency_key": "413c552872fe623578dde284c686dccc50b728e4da835e6c6b27f95fbee2718e",
-          "request_digest": "5467552118d10ac2b1985eccb0bbd7b236f4d07ade21b22b5750d5c487a39058"
+          "idempotency_key": "467410a478b20c9b5011de9ea7b2e3048007b2c8672d5220a17be28c537af791",
+          "request_digest": "686e15ff3801b41baa4d4f12cae4c539f4c243480aedbbb59d94d62412ba414e"
         },
         "retry_safety": "reconciliation_required",
         "workflow_policy": {
-          "digest": "508149a7b9b8b5faafbadd84c46f833d0e07f21d04fa3f0646695819701a9f17",
+          "digest": "3aa513acfe7cc9b97d82cfa24c7e90b26ecf9b4273119b59edf80c62d2156b15",
           "id": "workflow_policy"
         }
       }
@@ -3987,7 +3987,7 @@
             "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
             "kind": "repository",
             "repository_id": "owned-test-repository",
-            "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+            "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
           },
           "workflow_run_id": "workflow_1"
         },
@@ -4974,7 +4974,7 @@
           },
           "graph_digest": "7df5f3b655e61bc872f83de08c6ce7b0c0c714de15256ada7b13127264bcd2dc"
         },
-        "evaluation_time": "2026-10-16T01:48:47.672Z",
+        "evaluation_time": "2026-10-16T02:06:09.081Z",
         "execution": {
           "status": "idle"
         },
@@ -4991,7 +4991,7 @@
             "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
             "kind": "repository",
             "repository_id": "owned-test-repository",
-            "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+            "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
           },
           "phase": "pre_pr",
           "prior_state": null,
@@ -5007,7 +5007,7 @@
               "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
               "kind": "repository",
               "repository_id": "owned-test-repository",
-              "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+              "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
             },
             "branch": "feature",
             "change_scope": "within_plan",
@@ -5020,12 +5020,12 @@
             "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
             "kind": "repository",
             "repository_id": "owned-test-repository",
-            "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+            "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
           },
           "valid_until": null
         },
         "policy": {
-          "digest": "508149a7b9b8b5faafbadd84c46f833d0e07f21d04fa3f0646695819701a9f17",
+          "digest": "3aa513acfe7cc9b97d82cfa24c7e90b26ecf9b4273119b59edf80c62d2156b15",
           "id": "workflow_policy",
           "rules": {
             "authorities": [
@@ -5067,7 +5067,7 @@
                 "content_digest": "3244f8e5e6513e6817538124a7cc3aab8bf82fc71ed333e2fe33ca39280108eb",
                 "kind": "repository",
                 "repository_id": "owned-test-repository",
-                "revision": "6b3bbeff8dc3edd17dfaf317f8df7fe73253fe83"
+                "revision": "a97e8bb200efa03ec3db91389af1f2a120644230"
               },
               "branch": "feature"
             },
@@ -5080,5 +5080,5 @@
     },
     "schema_version": "0.1"
   },
-  "execution_digest": "decec0dc35c2cb8f4cc62c4d3c152a20c084f35d9915eb6899c4a8d9c0be0747"
+  "execution_digest": "dd3a5f3ac739176557d01e9a7365b0d7f85254f72a57b16da6c45bb2980cde0e"
 }
