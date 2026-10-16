@@ -32,7 +32,8 @@
     "sensor:ci-gate:run": "tsx scripts/run-ci-gate-sensor.ts",
     "sensor:ci-gate:sign": "tsx scripts/sign-ci-gate-receipt.ts",
     "sensor:github-review:collect": "tsx scripts/collect-github-review-snapshot.ts",
-    "sensor:github-review:sign": "tsx scripts/sign-github-review-receipt.ts"
+    "sensor:github-review:sign": "tsx scripts/sign-github-review-receipt.ts",
+    "prove:gaap:goose": "python3 scripts/prove-gaap-goose.py"
   },
   "keywords": [
     "cli",

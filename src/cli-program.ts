@@ -80,6 +80,66 @@ export function createThreadloopProgram() {
 
   const session = program.command('session').description('Manage explicit ThreadLoop sessions');
 
+  const executor = program.command('executor').description('Run the frozen GAAP reference process bridge');
+  withJsonOption(
+    executor
+      .command('register')
+      .description('Adopt a fresh host-controlled action and signer policy')
+      .requiredOption('--state <directory>', 'new state directory outside the subject')
+      .requiredOption('--binding <file>', 'host-adopted frozen controller binding JSON')
+      .requiredOption('--config <file>', 'explicit process and verification configuration JSON'),
+  ).action(
+    action(async (context, options: { state: string; binding: string; config: string }) => {
+      const { executorRegisterCommand } = await import('./commands/executor.js');
+      await executorRegisterCommand(context, options);
+    }),
+  );
+  withJsonOption(
+    executor
+      .command('run')
+      .description('Launch the registered Attempt once and admit verified evidence')
+      .requiredOption('--state <directory>', 'registered executor state directory'),
+  ).action(
+    action(async (context, options: { state: string }) => {
+      const { executorRunCommand } = await import('./commands/executor.js');
+      await executorRunCommand(context, options);
+    }),
+  );
+  withJsonOption(
+    executor
+      .command('inspect')
+      .description('Independently verify retained executor state without launching')
+      .requiredOption('--state <directory>', 'executor state directory'),
+  ).action(
+    action(async (context, options: { state: string }) => {
+      const { executorInspectCommand } = await import('./commands/executor.js');
+      await executorInspectCommand(context, options);
+    }),
+  );
+  withJsonOption(
+    executor
+      .command('admit')
+      .description('Recheck retained output after an admission failure without launching')
+      .argument('<observation-id>', 'retained successful transport observation')
+      .requiredOption('--state <directory>', 'executor state directory'),
+  ).action(
+    action(async (context, observation: string, options: { state: string }) => {
+      const { executorAdmitCommand } = await import('./commands/executor.js');
+      await executorAdmitCommand(context, observation, options);
+    }),
+  );
+  withJsonOption(
+    executor
+      .command('evaluate')
+      .description('Re-evaluate lifecycle guards after evidence admission')
+      .requiredOption('--state <directory>', 'executor state directory'),
+  ).action(
+    action(async (context, options: { state: string }) => {
+      const { executorEvaluateCommand } = await import('./commands/executor.js');
+      await executorEvaluateCommand(context, options);
+    }),
+  );
+
   withJsonOption(
     session
       .command('start')
