@@ -1,0 +1,1100 @@
+[
+  {
+    "name": "current completion remains evidence",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 0,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "none"
+        },
+        {
+          "kind": "evaluate"
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
+  },
+  {
+    "name": "expired claim cannot admit a late success",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "clock",
+          "by": 5
+        },
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 0,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "none"
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
+  },
+  {
+    "name": "replaced claim cannot close its successor",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "repeatable_with_overlap",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "clock",
+          "by": 5
+        },
+        {
+          "kind": "expire",
+          "slot": 0
+        },
+        {
+          "kind": "replace",
+          "slot": 1,
+          "actor": "b",
+          "lease": 5
+        },
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 0,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "none"
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
+  },
+  {
+    "name": "exact delivery cannot advance twice",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 0,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "none"
+        },
+        {
+          "kind": "redeliver",
+          "index": 2,
+          "changed": false
+        },
+        {
+          "kind": "receipt_replay",
+          "identity": 0,
+          "changed": false
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
+  },
+  {
+    "name": "changed receipt identity is a durable conflict",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 0,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "none"
+        },
+        {
+          "kind": "receipt_replay",
+          "identity": 0,
+          "changed": true
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
+  },
+  {
+    "name": "changed operation identity is a durable conflict",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "redeliver",
+          "index": 0,
+          "changed": true
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
+  },
+  {
+    "name": "changed request identity is a durable conflict",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "register_conflict"
+        },
+        {
+          "kind": "restart"
+        },
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        }
+      ]
+    }
+  },
+  {
+    "name": "cancellation retains unknown effects",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "cancel",
+          "actor": "controller"
+        },
+        {
+          "kind": "restart"
+        },
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 0,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "none"
+        }
+      ]
+    }
+  },
+  {
+    "name": "unknown effects refuse nonrepeatable retry",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "clock",
+          "by": 5
+        },
+        {
+          "kind": "expire",
+          "slot": 0
+        },
+        {
+          "kind": "replace",
+          "slot": 1,
+          "actor": "b",
+          "lease": 5
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
+  },
+  {
+    "name": "human and terminal authority stays outside delivery",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "human_request"
+        },
+        {
+          "kind": "terminal"
+        },
+        {
+          "kind": "executor_transition"
+        }
+      ]
+    }
+  },
+  {
+    "name": "raw and malformed receipts confer no authority",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 0,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "admission"
+        },
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 1,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "malformed"
+        },
+        {
+          "kind": "untrusted"
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
+  },
+  {
+    "name": "stale admission cannot satisfy execution",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 0,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "expired_admission"
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
+  },
+  {
+    "name": "subject drift fences execution",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "drift",
+          "field": "subject"
+        },
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 0,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "none"
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
+  },
+  {
+    "name": "state drift fences execution",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "drift",
+          "field": "state"
+        },
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 0,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "none"
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
+  },
+  {
+    "name": "graph drift fences execution",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "drift",
+          "field": "graph"
+        },
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 0,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "none"
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
+  },
+  {
+    "name": "policy drift fences execution",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "drift",
+          "field": "policy"
+        },
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 0,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "none"
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
+  },
+  {
+    "name": "authority drift fences execution",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "drift",
+          "field": "authority"
+        },
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 0,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "none"
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
+  },
+  {
+    "name": "capability drift fences execution",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "drift",
+          "field": "capability"
+        },
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 0,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "none"
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rejected receipt replay preserves original admission time",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 2,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "none"
+        },
+        {
+          "kind": "clock",
+          "by": 1
+        },
+        {
+          "kind": "receipt_replay",
+          "identity": 2,
+          "changed": false
+        }
+      ]
+    }
+  },
+  {
+    "name": "different conflicting receipt contents remain separate",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 2,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "none"
+        },
+        {
+          "kind": "receipt_replay",
+          "identity": 2,
+          "changed": true
+        },
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 2,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "binding"
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
+  },
+  {
+    "name": "human recovery no_effect_confirmed preserves historical uncertainty",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "clock",
+          "by": 5
+        },
+        {
+          "kind": "expire",
+          "slot": 0
+        },
+        {
+          "kind": "reconcile",
+          "slot": 0,
+          "actor": "human",
+          "disposition": "no_effect_confirmed",
+          "proof": "complete"
+        },
+        {
+          "kind": "restart"
+        },
+        {
+          "kind": "replace",
+          "slot": 1,
+          "actor": "b",
+          "lease": 5
+        }
+      ]
+    }
+  },
+  {
+    "name": "human recovery effect_confirmed preserves historical uncertainty",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "clock",
+          "by": 5
+        },
+        {
+          "kind": "expire",
+          "slot": 0
+        },
+        {
+          "kind": "reconcile",
+          "slot": 0,
+          "actor": "human",
+          "disposition": "effect_confirmed",
+          "proof": "complete"
+        },
+        {
+          "kind": "restart"
+        },
+        {
+          "kind": "replace",
+          "slot": 1,
+          "actor": "b",
+          "lease": 5
+        }
+      ]
+    }
+  },
+  {
+    "name": "human recovery abandon preserves historical uncertainty",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "clock",
+          "by": 5
+        },
+        {
+          "kind": "expire",
+          "slot": 0
+        },
+        {
+          "kind": "reconcile",
+          "slot": 0,
+          "actor": "human",
+          "disposition": "abandon",
+          "proof": "complete"
+        },
+        {
+          "kind": "restart"
+        },
+        {
+          "kind": "replace",
+          "slot": 1,
+          "actor": "b",
+          "lease": 5
+        }
+      ]
+    }
+  },
+  {
+    "name": "contradictory recovery evidence cannot be omitted later",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "clock",
+          "by": 5
+        },
+        {
+          "kind": "expire",
+          "slot": 0
+        },
+        {
+          "kind": "reconcile",
+          "slot": 0,
+          "actor": "human",
+          "disposition": "no_effect_confirmed",
+          "proof": "contradictory"
+        },
+        {
+          "kind": "reconcile",
+          "slot": 0,
+          "actor": "human",
+          "disposition": "no_effect_confirmed",
+          "proof": "complete"
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
+  },
+  {
+    "name": "new admission facts cannot rewrite a rejected receipt",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 0,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "admission"
+        },
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 0,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "none"
+        },
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 1,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "none"
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
+  },
+  {
+    "name": "equivalent absolute claim deadlines are exact grant redelivery",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "clock",
+          "by": 1
+        },
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 4
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
+  },
+  {
+    "name": "future report rejection survives its finish time",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 0,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "future"
+        },
+        {
+          "kind": "clock",
+          "by": 1
+        },
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 0,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "none"
+        },
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 1,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "none"
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
+  },
+  {
+    "name": "invalid graph delivery cannot reserve a receipt identity",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "drift",
+          "field": "graph"
+        },
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 0,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "none"
+        },
+        {
+          "kind": "drift",
+          "field": "none"
+        },
+        {
+          "kind": "receipt_replay",
+          "identity": 0,
+          "changed": false
+        },
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 1,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "none"
+        }
+      ]
+    }
+  },
+  {
+    "name": "changed report redelivery retains one conflict across time",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "a",
+          "lease": 5
+        },
+        {
+          "kind": "start",
+          "slot": 0,
+          "actor": "a"
+        },
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 0,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "none"
+        },
+        {
+          "kind": "receipt_replay",
+          "identity": 0,
+          "changed": true
+        },
+        {
+          "kind": "clock",
+          "by": 1
+        },
+        {
+          "kind": "receipt_replay",
+          "identity": 0,
+          "changed": true
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
+  },
+  {
+    "name": "receipt executor identity remains canonical content",
+    "history": {
+      "schema": "threadloop.generated-history/1",
+      "retry": "reconciliation_required",
+      "steps": [
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 0,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "none"
+        },
+        {
+          "kind": "acquire",
+          "slot": 0,
+          "actor": "b",
+          "lease": 5
+        },
+        {
+          "kind": "receipt",
+          "slot": 0,
+          "identity": 0,
+          "status": "succeeded",
+          "effect": "none",
+          "fault": "none"
+        },
+        {
+          "kind": "restart"
+        }
+      ]
+    }
+  }
+]

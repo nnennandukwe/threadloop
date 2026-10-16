@@ -109,3 +109,7 @@ Evaluation retains the original request `subject` for an unresolved Attempt, whi
 report the current physical workspace. A failed or uncertain run that changed files therefore requires reconciliation;
 it can't evaluate guards using the original clean observation. Success may adopt the resulting subject for evaluation,
 but it still can't supply ThreadLoop's own proof or apply a lifecycle transition.
+
+The [generated controller history suite](controller-generated-tests.md) compares independent models with the frozen
+contracts and this persisted bridge. Its bounded CI, deeper profile, replay and mutation checks supplement the native
+Goose and deterministic process fixtures above.
