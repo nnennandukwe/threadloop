@@ -32,7 +32,12 @@ import {
 import { VerifiedGaapEnvelope } from '../adapters/crypto/gaap-dsse.js';
 import { sha256 } from '../adapters/crypto/sha256.js';
 import { observeGaapWorkspace, readGaapFile, requireGaapDirectory } from '../adapters/fs/gaap-files.js';
-import { GaapState, GaapStateCommittedError, type GaapRoot } from '../adapters/fs/gaap-state.js';
+import {
+  GaapState,
+  GaapStateCommittedError,
+  GaapStateCommitUncertainError,
+  type GaapRoot,
+} from '../adapters/fs/gaap-state.js';
 import { runGaapProcess } from '../adapters/process/gaap-runner.js';
 import { canonicalJson } from '../domain/canonical-json.js';
 import { gaapVerificationPolicy, parseGaapBinding, parseGaapHost } from '../domain/gaap-binding.js';
@@ -262,7 +267,7 @@ export async function runGaapExecutor(store: GaapState, abortSignal?: AbortSigna
     });
   } catch (error) {
     // A committed launch owns this path even if reporting its commit failed.
-    if (!(error instanceof GaapStateCommittedError)) {
+    if (!(error instanceof GaapStateCommittedError) && !(error instanceof GaapStateCommitUncertainError)) {
       try {
         rmdirSync(outputDirectory);
       } catch (cleanupError) {
@@ -323,7 +328,7 @@ export async function runGaapExecutor(store: GaapState, abortSignal?: AbortSigna
     return await admitGaapOutput(store, observationId);
   } catch (error) {
     return {
-      status: 'rejected' as const,
+      status: error instanceof GaapStateCommitUncertainError ? ('uncertain' as const) : ('rejected' as const),
       observation_id: observationId,
       reason: error instanceof Error ? error.message : String(error),
     };

@@ -40,39 +40,46 @@ it("doesn't report a clean repository when the index differs from both HEAD and 
   await writeFile(filename, original);
   expect(observeGaapWorkspace(fixture.workspace).clean).toBe(false);
 });
-it('observes a bounded physical workspace when deleted tracked entries exceed 64 KiB', async () => {
-  const fixture = await controllerFixture();
-  roots.push(fixture.root);
-  const git = (...args: string[]) => ['-C', fixture.workspace, ...args];
-  const blob = execFileSync('git', git('hash-object', '-w', '--stdin'), {
-    input: 'historical tracked content',
-    encoding: 'utf8',
-  }).trim();
-  const entries = Array.from(
-    { length: 1200 },
-    (_, index) => `100644 ${blob}\tdeleted-${index.toString().padStart(8, '0')}.txt\n`,
-  ).join('');
-  execFileSync('git', git('update-index', '--index-info'), { input: entries });
-  execFileSync(
-    'git',
-    git(
-      '-c',
-      'user.name=ThreadLoop Test',
-      '-c',
-      'user.email=test@example.invalid',
-      '-c',
-      'commit.gpgsign=false',
-      'commit',
-      '-m',
-      'tracked entries absent from the current workspace',
-    ),
-  );
-  const listing = execFileSync('git', git('ls-tree', '-rz', '--full-tree', 'HEAD'));
-  expect(listing.length).toBeGreaterThan(64 * 1024);
-  const observed = observeGaapWorkspace(fixture.workspace);
-  expect(observed.clean).toBe(false);
-  expect(Object.keys(observed.manifest)).toEqual(['.', 'source.txt']);
-});
+it.each(['HEAD', 'index'] as const)(
+  'retains the physical observation when %s inventory exceeds the bounded buffer',
+  async (inventory) => {
+    const fixture = await controllerFixture();
+    roots.push(fixture.root);
+    const git = (...args: string[]) => ['-C', fixture.workspace, ...args];
+    const blob = execFileSync('git', git('hash-object', '-w', '--stdin'), {
+      input: 'historical tracked content',
+      encoding: 'utf8',
+    }).trim();
+    const entries = Array.from(
+      { length: 4000 },
+      (_, index) => `100644 ${blob}\tdeleted-${index.toString().padStart(8, '0')}.txt\n`,
+    ).join('');
+    execFileSync('git', git('update-index', '--index-info'), { input: entries });
+    if (inventory === 'HEAD')
+      execFileSync(
+        'git',
+        git(
+          '-c',
+          'user.name=ThreadLoop Test',
+          '-c',
+          'user.email=test@example.invalid',
+          '-c',
+          'commit.gpgsign=false',
+          'commit',
+          '-m',
+          'tracked entries absent from the current workspace',
+        ),
+      );
+    const listing = execFileSync(
+      'git',
+      git(...(inventory === 'HEAD' ? ['ls-tree', '-rz', '--full-tree', 'HEAD'] : ['ls-files', '--stage', '-z'])),
+    );
+    expect(listing.length).toBeGreaterThan(3 * 64 * (1024 + 128));
+    const observed = observeGaapWorkspace(fixture.workspace);
+    expect(observed.clean).toBe(false);
+    expect(Object.keys(observed.manifest)).toEqual(['.', 'source.txt']);
+  },
+);
 it('observes committed bytes without executing repository-configured fsmonitor or filters', async () => {
   const fixture = await controllerFixture();
   roots.push(fixture.root);
@@ -84,6 +91,12 @@ it('observes committed bytes without executing repository-configured fsmonitor o
   const observed = observeGaapWorkspace(fixture.workspace);
   expect(observed.clean).toBe(false);
   await expect(lstat(marker)).rejects.toThrow();
+});
+it("doesn't turn a corrupt Git index into a usable dirty observation", async () => {
+  const fixture = await controllerFixture();
+  roots.push(fixture.root);
+  await writeFile(path.join(fixture.workspace, '.git', 'index'), 'corrupt index');
+  expect(() => observeGaapWorkspace(fixture.workspace)).toThrow(/index/);
 });
 it('rejects symlink evidence, symlink directory components and oversized workspace files', async () => {
   const fixture = await controllerFixture();

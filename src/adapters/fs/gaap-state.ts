@@ -1,5 +1,6 @@
 import { closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from './sqlite-driver.js';
 import { requireGaapDirectory } from './gaap-files.js';
 import { canonicalJson } from '../../domain/canonical-json.js';
@@ -24,6 +25,15 @@ export class GaapStateCommittedError extends GaapEvidenceError {
     super(
       'state.committed_with_warning',
       'State committed, but post-commit reporting or cleanup failed. Inspect before recovery. ' +
+        (cause instanceof Error ? cause.message : String(cause)),
+    );
+  }
+}
+export class GaapStateCommitUncertainError extends GaapEvidenceError {
+  constructor(cause: unknown) {
+    super(
+      'state.commit_uncertain',
+      'The commit outcome is unknown. Retain the state and output files, then inspect before recovery. ' +
         (cause instanceof Error ? cause.message : String(cause)),
     );
   }
@@ -64,12 +74,14 @@ export class GaapState {
         'state.exists',
         "Executor state already exists. Inspect it before recovery; don't register another Attempt here.",
       );
+    const generation = randomUUID();
     // Exclusive creation prevents a concurrent registrar or a symlink from claiming this filename.
     const descriptor = openSync(this.filename, 'wx', 0o600);
     const created = fstatSync(descriptor);
     closeSync(descriptor);
     let database: DatabaseSync | undefined;
     let committed = false;
+    let commitAttempted = false;
     let retain = false;
     try {
       database = new DatabaseSync(this.filename);
@@ -84,25 +96,33 @@ export class GaapState {
         CREATE TABLE evaluation (id INTEGER PRIMARY KEY, body TEXT NOT NULL);
       `);
       this.writeRoot(database, root);
+      this.writeGeneration(database, generation);
       this.fault('register.before_commit');
+      commitAttempted = true;
       database.exec('COMMIT');
       committed = true;
     } catch (error) {
+      let rolledBack = false;
       try {
         database?.exec('ROLLBACK');
+        rolledBack = database !== undefined;
       } catch {
         /* No transaction if BEGIN failed. */
       }
-      // An ambiguous commit must keep a complete registered root for inspection.
-      try {
-        if (database) retain = canonicalJson(this.readRoot(database)) === canonicalJson(root);
-      } catch {
-        /* No committed root. */
+      if (commitAttempted && !rolledBack) {
+        // Losing both the commit response and readback can't authorize file removal.
+        retain = true;
+        try {
+          committed = this.persistedGeneration(generation, canonicalJson(root));
+        } catch {
+          /* Inspection through a fresh connection must resolve the outcome. */
+        }
+        throw committed ? new GaapStateCommittedError(error) : new GaapStateCommitUncertainError(error);
       }
       throw error;
     } finally {
       try {
-        database?.close();
+        if (database?.isOpen) database.close();
       } finally {
         if (!committed && !retain) {
           const current = lstatSync(this.filename, { throwIfNoEntry: false });
@@ -139,6 +159,24 @@ export class GaapState {
     const bytes = canonicalJson(root);
     database.prepare('INSERT OR REPLACE INTO root VALUES (1,?,?)').run(bytes, sha256(bytes));
   }
+  private writeGeneration(database: DatabaseSync, generation: string): void {
+    // Additive metadata also supports state-1 databases created before this marker existed.
+    database.exec(
+      'CREATE TABLE IF NOT EXISTS commit_generation (id INTEGER PRIMARY KEY CHECK(id=1), token TEXT NOT NULL)',
+    );
+    database.prepare('INSERT OR REPLACE INTO commit_generation VALUES (1,?)').run(generation);
+  }
+  private persistedGeneration(generation: string, expectedRoot: string): boolean {
+    // A writer can see its own uncommitted rows, and a competing transaction can
+    // produce the same root. Only an independent read of our token proves this COMMIT.
+    const database = this.open();
+    try {
+      const marker = database.prepare('SELECT token FROM commit_generation WHERE id=1').get();
+      return marker?.token === generation && canonicalJson(this.readRoot(database)) === expectedRoot;
+    } finally {
+      database.close();
+    }
+  }
   read(): GaapRoot {
     const database = this.open();
     try {
@@ -148,8 +186,11 @@ export class GaapState {
     }
   }
   mutate<T>(expectedRevision: number, operation: (root: GaapRoot, database: DatabaseSync) => T): T {
+    const generation = randomUUID();
     const database = this.open(true);
     let committed = false;
+    let commitAttempted = false;
+    let proposedRoot: string | undefined;
     let outcome: { ok: true; value: T } | { ok: false; error: unknown };
     try {
       database.exec('PRAGMA synchronous=FULL; BEGIN IMMEDIATE');
@@ -162,20 +203,34 @@ export class GaapState {
       const value = operation(root, database);
       root.revision += 1;
       this.writeRoot(database, root);
+      this.writeGeneration(database, generation);
+      proposedRoot = canonicalJson(root);
       this.fault('state.before_commit');
+      commitAttempted = true;
       database.exec('COMMIT');
       committed = true;
       this.fault('state.after_commit');
       outcome = { ok: true, value };
     } catch (error) {
+      let failure: unknown = error;
       if (!committed) {
+        let rolledBack = false;
         try {
           database.exec('ROLLBACK');
+          rolledBack = true;
         } catch {
           /* BEGIN or COMMIT may have ended the transaction. */
         }
+        if (commitAttempted && !rolledBack) {
+          try {
+            committed = proposedRoot !== undefined && this.persistedGeneration(generation, proposedRoot);
+          } catch {
+            /* A closed or unreadable connection leaves the commit uncertain. */
+          }
+          if (!committed) failure = new GaapStateCommitUncertainError(error);
+        }
       }
-      outcome = { ok: false, error: committed ? new GaapStateCommittedError(error) : error };
+      outcome = { ok: false, error: committed ? new GaapStateCommittedError(error) : failure };
     }
     try {
       database.close();

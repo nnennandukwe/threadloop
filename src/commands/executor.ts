@@ -53,7 +53,7 @@ export async function executorRunCommand(context: CommandContext, options: Optio
       if (result.status === 'rejected' || result.status === 'uncertain') {
         throw new ThreadloopError(
           'EXECUTOR_REJECTED',
-          'Execution produced no admitted evidence. Inspect the retained observation before recovery.',
+          "Execution didn't confirm evidence admission. Inspect the retained observation before recovery.",
           {
             details: {
               ...result,

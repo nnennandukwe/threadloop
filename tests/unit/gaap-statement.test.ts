@@ -26,6 +26,29 @@ async function verify(fixture: Awaited<ReturnType<typeof gaapFixture>>, resign =
 }
 
 describe('independent GAAP predicate and retained content', () => {
+  it('rejects a referenced permission granted after execution even if another allow precedes it', async () => {
+    const fixture = await gaapFixture();
+    const receipt = fixture.statement.predicate.receipt;
+    const first = fixture.statement.predicate.effects[0]!;
+    const selected = receipt.body.events.find(
+      (event) =>
+        event.event_type === 'protected_effect_decision' &&
+        event.decision_id === first.result.body.decision.decision_id,
+    );
+    if (selected?.event_type !== 'protected_effect_decision') throw new Error('Missing fixture permission');
+    const earlier = { ...structuredClone(selected), decision_id: selected.decision_id + '_earlier' };
+    receipt.body.events = receipt.body.events.map((event) => (event === selected ? earlier : event));
+    const execution = receipt.body.events.findIndex(
+      (event) => event.event_type === 'tool_execution' && event.decision_id === selected.decision_id,
+    );
+    receipt.body.events.splice(execution + 1, 0, selected);
+    receipt.body.events.forEach((event, index) => {
+      event.sequence = index + 1;
+    });
+    receipt.receipt_digest = gaapObjectDigest(receipt.body);
+    await expect(verify(fixture, true)).rejects.toThrow('earlier matching allow decision');
+  });
+
   it('rejects a re-signed completed ledger without its final workflow authorization', async () => {
     const fixture = await gaapFixture();
     const receipt = fixture.statement.predicate.receipt;

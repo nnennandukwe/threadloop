@@ -64,6 +64,12 @@ guards and returns candidates/diagnostics. GAAP completion doesn't change the Wo
 post-commit evaluation failure returns `committed_with_warning`; it doesn't roll back accepted evidence or justify
 another execution. The inspector rechecks persisted signatures, content identities and journal receipts.
 
+If SQLite loses a commit response, the bridge checks the exact proposed generation and a private transaction marker
+through a separate read-only connection. A writer's uncommitted rows or another writer's matching root can't prove
+persistence. A confirmed generation reports a committed warning. Unavailable or inconclusive readback reports
+`state.commit_uncertain` and retains the database and owned output directory. Reopen the inspector before recovery; an
+error response doesn't establish rollback or authorize another launch.
+
 ```bash
 threadloop executor admit 1 --state /absolute/state --json
 threadloop executor evaluate --state /absolute/state --json

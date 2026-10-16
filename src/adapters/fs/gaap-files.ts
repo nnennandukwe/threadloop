@@ -101,10 +101,35 @@ export function observeGaapWorkspace(workspace: string) {
   if (!/^[a-f0-9]{40,64}$/.test(revision))
     throw new GaapEvidenceError('snapshot.revision', 'The subject requires an existing Git commit.');
   // Read committed objects directly. `git status` can invoke repository-configured clean filters or fsmonitor.
-  const tracked = git('ls-tree', '-rz', '--full-tree', 'HEAD').split('\0').filter(Boolean);
-  const index = git('ls-files', '--stage', '-z').split('\0').filter(Boolean);
-  const staged = new Set(index.map((entry) => entry.replace(/^([0-7]{6}) ([a-f0-9]{40,64}) 0\t/, '$1 blob $2\t')));
+  const inventory = (...args: string[]): string[] | undefined => {
+    try {
+      return git(...args)
+        .split('\0')
+        .filter(Boolean);
+    } catch (error) {
+      // A listing this large can't match the bounded physical tree. Retain its
+      // current subject as dirty instead of losing the observation to overflow.
+      if (
+        error !== null &&
+        typeof error === 'object' &&
+        'code' in error &&
+        error.code === 'ENOBUFS' &&
+        'stdout' in error &&
+        typeof error.stdout === 'string' &&
+        Buffer.byteLength(error.stdout) >= MAX_GIT_OUTPUT_BYTES
+      )
+        return undefined;
+      throw error;
+    }
+  };
+  const tracked = inventory('ls-tree', '-rz', '--full-tree', 'HEAD');
+  const index = tracked?.length === files.size ? inventory('ls-files', '--stage', '-z') : undefined;
+  const staged = new Set(
+    (index ?? []).map((entry) => entry.replace(/^([0-7]{6}) ([a-f0-9]{40,64}) 0\t/, '$1 blob $2\t')),
+  );
   const clean =
+    tracked !== undefined &&
+    index !== undefined &&
     index.length === tracked.length &&
     staged.size === tracked.length &&
     tracked.every((entry) => staged.has(entry)) &&
