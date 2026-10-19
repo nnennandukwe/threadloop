@@ -59,7 +59,7 @@
     "sigstore": "5.0.0",
     "threadloop-contracts": "git+https://github.com/nnennandukwe/threadloop-contracts.git#4ed9a94a2a089b9ae950d93297f7a6b9b939d3a6",
     "yaml": "2.9.1",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
