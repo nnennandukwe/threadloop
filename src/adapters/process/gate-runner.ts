@@ -216,7 +216,7 @@ function diagnosticPathSummary(paths: readonly string[]): { text: string; shorte
     const characters = Array.from(file);
     const shortened = characters.length > 80;
     return {
-      value: quoteDiagnosticValue(shortened ? `${characters.slice(0, 80).join('')}…` : file),
+      value: quoteDiagnosticValue(shortened ? `${characters.slice(0, 80).join('')}...` : file),
       shortened,
     };
   });
