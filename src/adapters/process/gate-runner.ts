@@ -151,38 +151,44 @@ function repositoryMutationDiagnostic(
   before: GateRepositoryObservation,
   after: GateRepositoryObservation | null,
 ): RepositoryMutationDiagnostic | null {
-  if (!after || repositoryObservationIsUnchanged(before, after)) {
+  if (!after) {
     return null;
   }
 
-  const changedFiles = [...after.changedFiles].sort();
+  // A dirty CI baseline can contain unrelated paths. Only newly dirty paths can be attributed from status alone.
+  const previouslyDirty = new Set(before.changedFiles);
+  const changedFiles = after.changedFiles.filter((file) => !previouslyDirty.has(file)).sort();
+  const headChanged = before.headSha !== after.headSha;
+  if (!headChanged && changedFiles.length === 0) {
+    return null;
+  }
   const subject = actor === 'setup' ? `Setup step ${stepId}` : 'Gate command';
   const timing = actor === 'setup' ? 'before the gate ran' : 'while it ran';
-  const detail = changedFiles.length > 0 ? `: ${changedFiles.join(', ')}` : ' (HEAD changed)';
+  const paths = changedFiles.length > 0 ? `: ${changedFiles.map(formatDiagnosticPath).join(', ')}` : '';
+  const detail = `${paths}${headChanged ? ' (HEAD changed)' : ''}`;
+  const restoration = headChanged
+    ? `${changedFiles.length > 0 ? 'Restore or commit the listed paths and restore' : 'Restore'} the intended verification HEAD ${before.headSha}`
+    : 'Restore or commit the listed paths';
+  const prevention = headChanged
+    ? `change the ${actor === 'setup' ? 'setup declaration' : 'gate'} so it preserves HEAD and writes only to gitignored paths or outside the repository`
+    : actor === 'setup'
+      ? 'change the setup declaration to use a frozen installer and gitignored output'
+      : 'change the gate to write generated output outside the repository or to gitignored paths';
 
   return {
     code: actor === 'setup' ? 'SETUP_MUTATED_REPOSITORY' : 'GATE_MUTATED_REPOSITORY',
     message: `${subject} changed the repository ${timing}${detail}.`,
     step_id: stepId,
     changed_files: changedFiles,
-    hint:
-      actor === 'setup'
-        ? 'Restore or commit the listed paths, change the setup declaration to use a frozen installer and gitignored output, then start a new session.'
-        : 'Restore or commit the listed paths, change the gate to write generated output outside the repository or to gitignored paths, then start a new session.',
+    hint: `${restoration}, ${prevention}, then start a new session.`,
   };
 }
 
-function repositoryObservationIsUnchanged(
-  before: GateRepositoryObservation,
-  after: GateRepositoryObservation,
-): boolean {
-  const beforeChangedFiles = [...before.changedFiles].sort();
-  const afterChangedFiles = [...after.changedFiles].sort();
-  return (
-    before.headSha === after.headSha &&
-    before.clean === after.clean &&
-    beforeChangedFiles.length === afterChangedFiles.length &&
-    beforeChangedFiles.every((file, index) => file === afterChangedFiles[index])
+function formatDiagnosticPath(file: string): string {
+  // Keep raw paths in changed_files, but prevent terminal and workflow commands from entering human-readable logs.
+  return JSON.stringify(file).replace(
+    /\p{Cc}|[\u2028\u2029]/gu,
+    (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`,
   );
 }
 

@@ -118,7 +118,7 @@ ThreadLoop distinguishes these two causes without changing the receipt contract.
 {
   "diagnostic": {
     "code": "SETUP_MUTATED_REPOSITORY",
-    "message": "Setup step sync changed the repository before the gate ran: package-lock.json.",
+    "message": "Setup step sync changed the repository before the gate ran: \"package-lock.json\".",
     "step_id": "sync",
     "changed_files": ["package-lock.json"],
     "hint": "Restore or commit the listed paths, change the setup declaration to use a frozen installer and gitignored output, then start a new session."
@@ -128,8 +128,10 @@ ThreadLoop distinguishes these two causes without changing the receipt contract.
 
 The receipt still records `invalidated`. If the gate command creates the file instead, the diagnostic code is
 `GATE_MUTATED_REPOSITORY`, `step_id` is null, and the hint directs generated gate output outside the repository or to
-gitignored paths. The CI sensor writes the same message and hint to stderr. This preserves machine compatibility while
-closing the operator-diagnosis gap tracked in [issue #84](https://github.com/nnennandukwe/threadloop/issues/84).
+gitignored paths. The CI sensor writes the same message and hint to stderr. Human-readable messages quote and escape
+paths; `changed_files` keeps their raw names. If HEAD changes without dirty paths, recovery names the original commit.
+This preserves machine compatibility while closing the operator-diagnosis gap tracked in
+[issue #84](https://github.com/nnennandukwe/threadloop/issues/84).
 
 ### Getting it wrong mid-session
 

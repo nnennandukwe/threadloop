@@ -828,7 +828,7 @@ describe('declared gate setup', () => {
     });
     expect(gate.data.diagnostic).toEqual({
       code: 'SETUP_MUTATED_REPOSITORY',
-      message: 'Setup step sync changed the repository before the gate ran: package-lock.json.',
+      message: 'Setup step sync changed the repository before the gate ran: "package-lock.json".',
       step_id: 'sync',
       changed_files: ['package-lock.json'],
       hint: 'Restore or commit the listed paths, change the setup declaration to use a frozen installer and gitignored output, then start a new session.',
@@ -872,7 +872,7 @@ describe('declared gate setup', () => {
     expect(gate.data.receipt).toMatchObject({ result: 'invalidated', setup: [] });
     expect(gate.data.diagnostic).toEqual({
       code: 'GATE_MUTATED_REPOSITORY',
-      message: 'Gate command changed the repository while it ran: generated-report.json.',
+      message: 'Gate command changed the repository while it ran: "generated-report.json".',
       step_id: null,
       changed_files: ['generated-report.json'],
       hint: 'Restore or commit the listed paths, change the gate to write generated output outside the repository or to gitignored paths, then start a new session.',
@@ -889,9 +889,55 @@ describe('declared gate setup', () => {
     const result = await runCli(repoDir, ['session', 'gate', 'run', 'check', '--session', sessionId]);
 
     expect(result.stdout).toContain(
-      'Setup step sync changed the repository before the gate ran: package-lock.json.\n' +
+      'Setup step sync changed the repository before the gate ran: "package-lock.json".\n' +
         'Recovery: Restore or commit the listed paths, change the setup declaration to use a frozen installer and gitignored output, then start a new session.\n',
     );
+  });
+
+  it.each(['setup', 'gate'] as const)(
+    'names the original HEAD when %s changes it without dirty paths',
+    async (actor) => {
+      const changeHead = ['git', 'commit', '--allow-empty', '-m', 'change fixture HEAD'];
+      const { repoDir, sessionId, head } = await makeVerifyingSession({
+        plan: proofPlan(actor === 'setup' ? { setup: [step('commit', changeHead)] } : { command: changeHead }),
+      });
+      const result = parseJson<{
+        data: { receipt: { result: string }; diagnostic: { changed_files: string[]; hint: string } };
+      }>((await runCli(repoDir, gateRunArgs(sessionId))).stdout);
+
+      expect(result.data.receipt.result).toBe('invalidated');
+      expect(result.data.diagnostic.changed_files).toEqual([]);
+      expect(result.data.diagnostic.hint).toContain(head);
+      expect(result.data.diagnostic.hint).not.toContain('listed paths');
+    },
+  );
+
+  it.each([true, false])('escapes control characters in human diagnostics with JSON mode %s', async (json) => {
+    const fileName = 'report\n::add-mask::forged\u001b[31m\u0085\u2028.txt';
+    const { repoDir, sessionId } = await makeVerifyingSession({
+      plan: proofPlan({ command: writeMarker(fileName) }),
+    });
+    const result = await runCli(repoDir, [
+      'session',
+      'gate',
+      'run',
+      'check',
+      '--session',
+      sessionId,
+      ...(json ? ['--json'] : []),
+    ]);
+
+    if (json) {
+      const output = parseJson<{ data: { diagnostic: { message: string; changed_files: string[] } } }>(result.stdout);
+      expect(output.data.diagnostic.changed_files).toEqual([fileName]);
+      expect(output.data.diagnostic.message).not.toMatch(/\p{Cc}|[\u2028\u2029]/u);
+    } else {
+      expect(result.stdout.trimEnd().split('\n')).toHaveLength(4);
+      expect(result.stdout).not.toContain('\n::add-mask::');
+      expect(result.stdout).not.toContain('\u001b');
+      expect(result.stdout).not.toContain('\u0085');
+      expect(result.stdout).not.toContain('\u2028');
+    }
   });
 
   it('projects setup failure as an operator handoff that consumes no repair budget', async () => {
@@ -1075,56 +1121,77 @@ describe('local and CI receipts describe setup identically', { timeout: 60_000 }
     expect(report.setup[0]?.output).toEqual(local.setup[0]?.output);
   });
 
-  it.each(['setup', 'gate'] as const)('emits the same %s-mutation diagnostic from the CI sensor', async (actor) => {
-    const repoDir = await makeCommittedRepo();
-    const sessionId = await startFramedSession(repoDir);
-    const setupStep = {
-      id: 'sync',
-      command: ['node', '-e', 'require("node:fs").writeFileSync("package-lock.json", "changed\\n")'],
-      working_directory: '.',
-      timeout_ms: 5_000,
-    };
-    const plan = proofPlan(actor === 'setup' ? { setup: [setupStep] } : { command: setupStep.command });
-    const recorded = await recordProofPlan(repoDir, sessionId, plan);
-    const head = (await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: repoDir })).stdout.trim();
-    const reportPath = path.join(await makeTempDir(), 'gate-report.json');
+  it.each([
+    { actor: 'setup', dirty: false, malicious: false, mutates: true },
+    { actor: 'gate', dirty: false, malicious: false, mutates: true },
+    { actor: 'gate', dirty: true, malicious: false, mutates: true },
+    { actor: 'gate', dirty: true, malicious: false, mutates: false },
+    { actor: 'gate', dirty: false, malicious: true, mutates: true },
+  ] as const)(
+    'keeps CI diagnostics accurate for $actor, dirty $dirty, malicious $malicious, mutates $mutates',
+    async ({ actor, dirty, malicious, mutates }) => {
+      const repoDir = await makeCommittedRepo();
+      const sessionId = await startFramedSession(repoDir);
+      const fileName = malicious ? 'report\n::add-mask::forged\u001b[31m\u0085\u2028.txt' : 'package-lock.json';
+      const setupStep = {
+        id: 'sync',
+        command: mutates ? writeMarker(fileName) : ['node', '-e', 'process.exit(0)'],
+        working_directory: '.',
+        timeout_ms: 5_000,
+      };
+      const plan = proofPlan(actor === 'setup' ? { setup: [setupStep] } : { command: setupStep.command });
+      const recorded = await recordProofPlan(repoDir, sessionId, plan);
+      const head = (await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: repoDir })).stdout.trim();
+      const reportPath = path.join(await makeTempDir(), 'gate-report.json');
+      if (dirty) {
+        await writeFile(path.join(repoDir, 'pre-existing.txt'), 'dirty before the gate\n');
+      }
 
-    const failure = await execFileAsync('npx', ['tsx', 'scripts/run-ci-gate-sensor.ts'], {
-      cwd: process.cwd(),
-      env: {
-        ...process.env,
-        THREADLOOP_SESSION_ID: sessionId,
-        THREADLOOP_PLAN_SHA256: recorded.data.proof_plan.sha256,
-        THREADLOOP_GATE_ID: 'check',
-        THREADLOOP_GATE_JSON: canonicalJson(plan.gates[0]),
-        THREADLOOP_SOURCE_ROOT: repoDir,
-        THREADLOOP_REPORT_PATH: reportPath,
-        GITHUB_SERVER_URL: 'https://github.com',
-        GITHUB_REPOSITORY: 'example/threadloop-fixture',
-        GITHUB_REF: `refs/heads/${fixtureBranch}`,
-        GITHUB_SHA: head,
-        GITHUB_RUN_ID: '123',
-        GITHUB_RUN_ATTEMPT: '1',
-        RUNNER_OS: 'Linux',
-        RUNNER_ARCH: 'X64',
-      },
-    }).then(
-      () => null,
-      (error: Error & { stderr?: string }) => error,
-    );
+      const failure = await execFileAsync('npx', ['tsx', 'scripts/run-ci-gate-sensor.ts'], {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          THREADLOOP_SESSION_ID: sessionId,
+          THREADLOOP_PLAN_SHA256: recorded.data.proof_plan.sha256,
+          THREADLOOP_GATE_ID: 'check',
+          THREADLOOP_GATE_JSON: canonicalJson(plan.gates[0]),
+          THREADLOOP_SOURCE_ROOT: repoDir,
+          THREADLOOP_REPORT_PATH: reportPath,
+          GITHUB_SERVER_URL: 'https://github.com',
+          GITHUB_REPOSITORY: 'example/threadloop-fixture',
+          GITHUB_REF: `refs/heads/${fixtureBranch}`,
+          GITHUB_SHA: head,
+          GITHUB_RUN_ID: '123',
+          GITHUB_RUN_ATTEMPT: '1',
+          RUNNER_OS: 'Linux',
+          RUNNER_ARCH: 'X64',
+        },
+      }).then(
+        () => null,
+        (error: Error & { stderr?: string }) => error,
+      );
 
-    expect(failure).not.toBeNull();
-    const message =
-      actor === 'setup'
-        ? 'Setup step sync changed the repository before the gate ran: package-lock.json.'
-        : 'Gate command changed the repository while it ran: package-lock.json.';
-    const hint =
-      actor === 'setup'
-        ? 'Restore or commit the listed paths, change the setup declaration to use a frozen installer and gitignored output, then start a new session.'
-        : 'Restore or commit the listed paths, change the gate to write generated output outside the repository or to gitignored paths, then start a new session.';
-    expect(failure?.stderr).toContain(`${message}\nRecovery: ${hint}\n`);
-    const report = JSON.parse(await readFile(reportPath, 'utf8')) as { result: string };
-    expect(report.result).toBe('invalidated');
-    expect(report).not.toHaveProperty('diagnostic');
-  });
+      expect(failure).not.toBeNull();
+      const message =
+        actor === 'setup'
+          ? 'Setup step sync changed the repository before the gate ran: "package-lock.json".'
+          : 'Gate command changed the repository while it ran: "package-lock.json".';
+      const hint =
+        actor === 'setup'
+          ? 'Restore or commit the listed paths, change the setup declaration to use a frozen installer and gitignored output, then start a new session.'
+          : 'Restore or commit the listed paths, change the gate to write generated output outside the repository or to gitignored paths, then start a new session.';
+      if (!mutates) {
+        expect(failure?.stderr).toBe('');
+      } else if (malicious) {
+        expect(failure?.stderr?.trimEnd().split('\n')).toHaveLength(2);
+        expect(failure?.stderr?.replaceAll('\n', '')).not.toMatch(/\p{Cc}|[\u2028\u2029]/u);
+        expect(failure?.stderr).toContain('report\\n::add-mask::forged\\u001b[31m\\u0085\\u2028.txt');
+      } else {
+        expect(failure?.stderr).toContain(`${message}\nRecovery: ${hint}\n`);
+      }
+      const report = JSON.parse(await readFile(reportPath, 'utf8')) as { result: string };
+      expect(report.result).toBe('invalidated');
+      expect(report).not.toHaveProperty('diagnostic');
+    },
+  );
 });
