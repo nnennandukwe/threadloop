@@ -46,6 +46,25 @@ describe('gate process runner', () => {
     expect(Date.parse(result.endedAt)).toBeGreaterThanOrEqual(Date.parse(result.startedAt));
   });
 
+  it.skipIf(process.platform === 'win32')(
+    'terminates grandchildren on timeout instead of waiting for them to release the output pipes',
+    async () => {
+      const directory = await makeDirectory();
+      const started = Date.now();
+
+      const result = await runGateProcess({
+        command: ['sh', '-c', 'sleep 30 & sleep 30'],
+        cwd: directory,
+        timeoutMs: 200,
+        stdoutPath: path.join(directory, 'stdout.log'),
+        stderrPath: path.join(directory, 'stderr.log'),
+      });
+
+      expect(result.result).toBe('timed_out');
+      expect(Date.now() - started).toBeLessThan(10_000);
+    },
+  );
+
   it('records cleanup_failed when an output artifact cannot be exclusively created', async () => {
     const directory = await makeDirectory();
     const stdoutPath = path.join(directory, 'stdout.log');

@@ -1,7 +1,9 @@
 import { bundleToJSON } from '@sigstore/bundle';
 import { CIContextProvider, DSSEBundleBuilder, FulcioSigner, RekorWitness } from '@sigstore/sign';
 import { verify as sigstoreVerify, type Bundle, type SignOptions, type VerifyOptions } from 'sigstore';
+import { z } from 'zod';
 import type { GitHubActionsTrustPolicy } from '../../domain/proof.js';
+import { escapeRegExp } from '../../domain/validation.js';
 
 export interface SigstoreVerifiableReceipt {
   bundle: Record<string, unknown>;
@@ -136,24 +138,25 @@ export async function verifySigstoreReceipt(
   };
 }
 
+/** A tlog entry whose inclusion proof carries every field Sigstore needs to check it offline. */
+const tlogEntryWithInclusionProof = z.looseObject({
+  inclusionProof: z.looseObject({
+    logIndex: z.string(),
+    rootHash: z.string(),
+    treeSize: z.string(),
+    hashes: z.array(z.unknown()),
+    checkpoint: z.looseObject({ envelope: z.string().min(1) }),
+  }),
+});
+
 function hasTransparencyInclusionProof(bundle: Record<string, unknown>) {
-  const verificationMaterial = toObject(bundle.verificationMaterial);
-  const entries = verificationMaterial?.tlogEntries;
-  if (!Array.isArray(entries) || entries.length === 0) {
-    return false;
-  }
-  return entries.some((entry) => {
-    const inclusionProof = toObject(toObject(entry)?.inclusionProof);
-    const checkpoint = toObject(inclusionProof?.checkpoint);
-    return (
-      typeof inclusionProof?.logIndex === 'string' &&
-      typeof inclusionProof.rootHash === 'string' &&
-      typeof inclusionProof.treeSize === 'string' &&
-      Array.isArray(inclusionProof.hashes) &&
-      typeof checkpoint?.envelope === 'string' &&
-      checkpoint.envelope.length > 0
-    );
-  });
+  const entries = z
+    .looseObject({ verificationMaterial: z.looseObject({ tlogEntries: z.array(z.unknown()) }) })
+    .safeParse(bundle);
+  return (
+    entries.success &&
+    entries.data.verificationMaterial.tlogEntries.some((entry) => tlogEntryWithInclusionProof.safeParse(entry).success)
+  );
 }
 
 function classifySigstoreError(error: unknown) {
@@ -235,14 +238,4 @@ function decodeDerUtf8String(value: Uint8Array) {
   const bytes = encoded.subarray(offset);
   const decoded = bytes.toString('utf8');
   return Buffer.from(decoded, 'utf8').equals(bytes) ? decoded : null;
-}
-
-function toObject(value: unknown) {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function escapeRegExp(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

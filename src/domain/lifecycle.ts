@@ -24,6 +24,9 @@ export interface LifecycleTransitionDecision {
   recovery: string | null;
 }
 
+/** Post-PR repair cycles a session may enter; a fourth is refused and the session must be blocked. */
+export const REPAIR_BUDGET = 3;
+
 export const REPAIR_ENTRY_STATES = [
   TASK_STATUS.VERIFYING,
   TASK_STATUS.REVIEWING,

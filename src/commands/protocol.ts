@@ -1,11 +1,9 @@
-import type { CommandContext } from './runtime.js';
+import type { Command } from 'commander';
 import { buildProtocolContract } from '../contracts/protocol.js';
-import { writeCommandSuccess } from './runtime.js';
+import { type CommandContext, writeCommandSuccess } from './runtime.js';
 
-export type ProtocolPrintOptions = { json?: boolean };
-
-export function protocolPrintCommand(context: CommandContext, options: ProtocolPrintOptions) {
-  const protocol = buildProtocolContract();
+export function protocolPrintCommand(context: CommandContext, options: { json?: boolean }, program: Command) {
+  const protocol = buildProtocolContract(program);
 
   if (options.json) {
     writeCommandSuccess(context, { text: ['Protocol data'], data: protocol });

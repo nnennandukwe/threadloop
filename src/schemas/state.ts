@@ -1,27 +1,16 @@
 import { z } from 'zod';
-import {
-  ARTIFACT_KINDS,
-  ENTRY_KINDS,
-  ENTRY_SOURCES,
-  HEARTBEAT_SOURCES,
-  TASK_STATUS,
-  TASK_STATUS_VALUES,
-} from '../domain/types.js';
-
-const persistedTaskStatusSchema = z
-  .union([z.enum(TASK_STATUS_VALUES), z.literal('active')])
-  .transform((status) => (status === 'active' ? TASK_STATUS.QUEUED : status));
+import { ARTIFACT_KINDS, ENTRY_KINDS, ENTRY_SOURCES, HEARTBEAT_SOURCES, TASK_STATUS_VALUES } from '../domain/types.js';
 
 export const taskSchema = z.object({
   id: z.string(),
   title: z.string(),
   goal: z.string(),
   constraints: z.array(z.string()),
-  issueRef: z.string().nullable().optional().default(null),
+  issueRef: z.string().nullable(),
   repoRoot: z.string(),
-  status: persistedTaskStatusSchema,
-  stateVersion: z.number().int().nonnegative().optional().default(0),
-  blockedFromState: z.enum(TASK_STATUS_VALUES).nullable().optional().default(null),
+  status: z.enum(TASK_STATUS_VALUES),
+  stateVersion: z.number().int().nonnegative(),
+  blockedFromState: z.enum(TASK_STATUS_VALUES).nullable(),
   createdAt: z.string(),
 });
 
@@ -33,8 +22,8 @@ export const sessionSchema = z.object({
   baseRef: z.string().nullable(),
   branch: z.string(),
   headSha: z.string(),
-  lastHeartbeatAt: z.string().nullable().optional().default(null),
-  lastHeartbeatSource: z.enum(HEARTBEAT_SOURCES).nullable().optional().default(null),
+  lastHeartbeatAt: z.string().nullable(),
+  lastHeartbeatSource: z.enum(HEARTBEAT_SOURCES).nullable(),
 });
 
 export const entrySchema = z.object({
@@ -61,25 +50,13 @@ export const activeStateSchema = z.object({
   sessionId: z.string(),
 });
 
-export const stateDataSchema = z
-  .object({
-    tasks: z.array(taskSchema),
-    sessions: z.array(sessionSchema),
-    entries: z.array(entrySchema),
-    artifacts: z.array(artifactSchema),
-    active: activeStateSchema.nullable(),
-    activeSessions: z.array(activeStateSchema).optional(),
-  })
-  .transform((state) => ({
-    ...state,
-    tasks: state.tasks.map((task) => ({
-      ...task,
-      issueRef: task.issueRef ?? null,
-      stateVersion: task.stateVersion ?? 0,
-      blockedFromState: task.blockedFromState ?? null,
-    })),
-    activeSessions: state.activeSessions ?? (state.active ? [state.active] : []),
-  }));
+export const stateDataSchema = z.object({
+  tasks: z.array(taskSchema),
+  sessions: z.array(sessionSchema),
+  entries: z.array(entrySchema),
+  artifacts: z.array(artifactSchema),
+  activeSessions: z.array(activeStateSchema),
+});
 
 export const threadloopConfigSchema = z.object({
   version: z.literal(1),

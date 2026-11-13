@@ -3,22 +3,19 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { collectGitHubReviewSnapshot } from '../src/adapters/github/review-sensor.js';
 import { canonicalJson } from '../src/domain/canonical-json.js';
-import { positiveIntegerEnvironment, requiredEnvironment } from './sensor-environment.js';
+import { positiveIntegerEnvironment, requiredEnvironment, sensorRunContext } from './sensor-environment.js';
 
-const sourceRepository = `${requiredEnvironment('GITHUB_SERVER_URL')}/${requiredEnvironment('GITHUB_REPOSITORY')}`;
+const run = sensorRunContext();
 const outputPath = path.resolve(requiredEnvironment('THREADLOOP_REPORT_PATH'));
-const pullRequestNumber = positiveIntegerEnvironment('THREADLOOP_PULL_REQUEST_NUMBER');
 
 const snapshot = await collectGitHubReviewSnapshot({
-  sessionId: requiredEnvironment('THREADLOOP_SESSION_ID'),
-  planSha256: requiredEnvironment('THREADLOOP_PLAN_SHA256'),
-  pullRequestNumber,
-  sourceRepository,
-  sourceRef: requiredEnvironment('GITHUB_REF'),
-  sourceHeadSha: requiredEnvironment('GITHUB_SHA'),
-  runInvocationUri:
-    `${sourceRepository}/actions/runs/${requiredEnvironment('GITHUB_RUN_ID')}` +
-    `/attempts/${requiredEnvironment('GITHUB_RUN_ATTEMPT')}`,
+  sessionId: run.sessionId,
+  planSha256: run.planSha256,
+  pullRequestNumber: positiveIntegerEnvironment('THREADLOOP_PULL_REQUEST_NUMBER'),
+  sourceRepository: run.sourceRepository,
+  sourceRef: run.sourceRef,
+  sourceHeadSha: run.sourceHead,
+  runInvocationUri: run.runInvocationUri,
   token: requiredEnvironment('GITHUB_TOKEN'),
   observedAt: new Date().toISOString(),
   receiptId: `report_${randomUUID()}`,

@@ -1,0 +1,33 @@
+name: Controller deep histories
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 7 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: controller-deep-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  generated:
+    name: Deeper deterministic controller and process histories
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.22.2
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Run deeper bounded histories
+        run: npm run test:controller:deep

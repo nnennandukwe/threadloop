@@ -77,6 +77,25 @@ function currentReviewContext(overrides: Partial<ReviewEvidence> = {}): ReviewEv
   };
 }
 
+/** A current review at the passing HEAD with one unresolved blocking thread. */
+function blockingReviewContext(): ReviewEvidence {
+  return currentReviewContext({
+    reviewDecision: 'CHANGES_REQUESTED',
+    blockingFindings: [
+      {
+        id: 'thread-1',
+        url: 'https://github.com/example/project/pull/42#discussion_r1',
+        author: 'reviewer',
+        body: 'Repair this finding',
+        path: 'src/index.ts',
+        line: 1,
+        resolved: false,
+        outdated: false,
+      },
+    ],
+  });
+}
+
 describe('session transition domain', () => {
   it('derives guard ownership from the canonical structural workflow', () => {
     expect(getTransitionGuardRequirement('queued', 'framed')).toBe('none');
@@ -312,21 +331,7 @@ describe('session transition domain', () => {
     const clean = { ...passedProofContext(), reviewEvidence: currentReviewContext() };
     const blocked = {
       ...passedProofContext(),
-      reviewEvidence: currentReviewContext({
-        reviewDecision: 'CHANGES_REQUESTED',
-        blockingFindings: [
-          {
-            id: 'thread_1',
-            url: 'https://github.com/example/project/pull/42#discussion_r1',
-            author: 'reviewer',
-            body: 'Repair this finding',
-            path: 'src/index.ts',
-            line: 1,
-            resolved: false,
-            outdated: false,
-          },
-        ],
-      }),
+      reviewEvidence: blockingReviewContext(),
     };
 
     expect(evaluateTransitionGuards('reviewing', 'ready_for_human', {}, null, clean)).toMatchObject({
@@ -393,21 +398,7 @@ describe('session transition domain', () => {
     const blockingReviewAfterThreeMixedRepairs = {
       ...passedProofContext(),
       attemptsUsed: 3,
-      reviewEvidence: currentReviewContext({
-        reviewDecision: 'CHANGES_REQUESTED',
-        blockingFindings: [
-          {
-            id: 'thread-budget',
-            url: 'https://github.com/example/project/pull/42#discussion_budget',
-            author: 'reviewer',
-            body: 'A fourth repair is not authorized',
-            path: 'src/index.ts',
-            line: 42,
-            resolved: false,
-            outdated: false,
-          },
-        ],
-      }),
+      reviewEvidence: blockingReviewContext(),
     };
 
     expect(
@@ -416,6 +407,30 @@ describe('session transition domain', () => {
       allowed: false,
       guardFailures: [{ code: 'REPAIR_BUDGET_EXHAUSTED' }],
       requiredWork: [{ code: 'TRANSITION_TO_BLOCKED' }],
+    });
+  });
+
+  it('offers a post-PR repair only when the guard that applies it would pass', () => {
+    const failing = {
+      ...passedProofContext(),
+      phase: LIFECYCLE_PHASE.POST_PR,
+      attemptsUsed: 0,
+      evidence: { ...passedProofContext().evidence!, status: 'failed' as const },
+    };
+    const plan = (proofGuardContext: ProofGuardContext) =>
+      planNextTransition({
+        state: 'verifying',
+        stateVersion: 7,
+        blockedFromState: null,
+        phase: LIFECYCLE_PHASE.POST_PR,
+        proof: { status: 'failed', attemptsUsed: 0 },
+        proofGuardContext,
+      });
+
+    expect(plan(failing)).toMatchObject({ candidate: { target_state: 'repairing', executable: true } });
+    expect(plan({ ...failing, plan: null })).toMatchObject({
+      candidate: { target_state: 'repairing', executable: false },
+      guardFailures: [{ code: 'PROOF_PLAN_REQUIRED' }],
     });
   });
 
@@ -708,21 +723,7 @@ describe('session transition domain', () => {
   it('plans review repair for blockers and completion only after approval plus merge', () => {
     const blocking = {
       ...passedProofContext(),
-      reviewEvidence: currentReviewContext({
-        reviewDecision: 'CHANGES_REQUESTED',
-        blockingFindings: [
-          {
-            id: 'thread-1',
-            url: 'https://github.com/example/project/pull/42#discussion_r1',
-            author: 'reviewer',
-            body: 'Fix this',
-            path: 'src/index.ts',
-            line: 12,
-            resolved: false,
-            outdated: false,
-          },
-        ],
-      }),
+      reviewEvidence: blockingReviewContext(),
     };
     expect(
       planNextTransition({

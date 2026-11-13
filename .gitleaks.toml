@@ -1,0 +1,46 @@
+title = "ThreadLoop secret scanning"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "generic-api-key"
+
+# The docs/contracts/ paths below moved to nnennandukwe/threadloop-contracts. The allowlists stay because the history
+# scan (--log-opts=--all) still reads those fixtures in earlier commits.
+
+[[rules.allowlists]]
+description = "Controller fixture idempotency keys are public SHA-256 request identities"
+condition = "AND"
+regexTarget = "match"
+# requestIdentity() hashes the canonical schema version, binding, and action ID.
+# Restrict this exception to that field in the published v0.1 positive fixtures.
+paths = ['''^docs/contracts/controller-v0\.1/fixtures/valid/[a-z_]+\.(json|request\.canonical|decision\.canonical)$''']
+regexes = ['''^idempotency_key":\s*"[a-f0-9]{64}"$''']
+
+[[rules.allowlists]]
+description = "Executor fixture idempotency keys are public SHA-256 Action Request identities"
+condition = "AND"
+regexTarget = "match"
+# These two fixtures retain the same requestIdentity() field as the controller corpus.
+# Allow only that digest field; credential fields in these files remain scanned.
+paths = ['''^docs/contracts/executor-v0\.1/fixtures/(executor-request\.canonical|local-gates\.json)$''']
+regexes = ['''^idempotency_key":\s*"[a-f0-9]{64}"$''']
+
+[[rules.allowlists]]
+description = "Conformance fixture idempotency keys are public SHA-256 Action Request identities"
+condition = "AND"
+regexTarget = "match"
+# Include historical materialized cases as well as the compact shared literals.
+# Keep credential fields and all paths outside this versioned corpus scanned.
+paths = ['''^docs/contracts/controller-conformance-v0\.1/(fixtures/case_[0-9]{3}\.json|shared\.json)$''']
+regexes = ['''^idempotency_key":\s*"[a-f0-9]{64}"$''']
+
+[[rules.allowlists]]
+description = "Native ThreadLoop-Goose exports retain public SHA-256 Action Request identities"
+condition = "AND"
+regexTarget = "match"
+# These are unchanged requestIdentity() fields in exported native evidence, including earlier committed captures.
+# Keep every other field and every path outside these six exported record types scanned.
+paths = ['''^tests/fixtures/gaap/goose-threadloop-(bound|bad-patch)/(binding\.json|admission\.json|execution-journal\.json|executor-request\.json|executor-result\.canonical|inspection\.json)$''']
+regexes = ['''^idempotency_key":\s*"[a-f0-9]{64}"$''']

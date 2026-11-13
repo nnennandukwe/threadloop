@@ -1,9 +1,34 @@
 # ThreadLoop CLI
 
-ThreadLoop is a repo-local CLI for preserving task intent, decisions, risks, validation notes, and reviewer guidance
-while you work. The canonical operator surface is session-first; root commands remain only for compatibility.
+**Implemented now:** ThreadLoop's repo-local CLI stores task context and lifecycle state, reports required work, checks
+explicit transitions against current evidence, and generates review artifacts. The canonical operator surface is
+session-first; root commands remain only for compatibility.
+
+These commands operate the fixed governed PR lifecycle. The [architecture guide](architecture.md) distinguishes them
+from the accepted Controller Contract v0.1 specifications and their tooling in
+[threadloop-contracts](https://github.com/nnennandukwe/threadloop-contracts). The optional `executor` commands implement
+the [GAAP process bridge](gaap-executor.md) with separate host-owned state. There's no packaged profile compiler or
+configurable graph executor.
 
 ## Commands
+
+### `threadloop executor <command> --state <directory> [--json]`
+
+Operates one host-adopted Action Request and Attempt in a separate state directory outside the subject repository. Every
+command supports `--json`. The [executor guide](gaap-executor.md) defines binding/configuration formats, trust, process
+limits, evidence admission, recovery and the reproducible native Goose examples.
+
+| Command                                     | Behavior                                                                                                                               |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `register --binding <file> --config <file>` | Validate explicit host adoption, acquire a fresh claim and persist its pending Attempt.                                                |
+| `run`                                       | Commit launch intent, invoke one bounded process, retain output, independently verify evidence, persist admission and evaluate guards. |
+| `inspect`                                   | Reverify retained evidence and show journal, observations, admissions and evaluations.                                                 |
+| `admit <observation-id>`                    | Reimport a retained successful transport observation without invoking the executor.                                                    |
+| `evaluate`                                  | Reevaluate guards against retained admitted evidence without invoking the executor.                                                    |
+
+A rejected or uncertain run exits with failure and retains its observation when possible. Inspect before recovery; `run`
+won't repeat a started Attempt. Admission doesn't advance the lifecycle or supply ThreadLoop's own proof. Existing
+fixed-lifecycle sessions aren't changed or migrated by these commands.
 
 ### `threadloop init`
 
@@ -87,13 +112,13 @@ Use `--session <id>` for one explicit session or `--all` for all active sessions
 ### `threadloop session next --session <id> [--json]`
 
 Reads one deterministic transition candidate, current lifecycle state/version, guard failures, required work, and live
-sanitized repository identity, branch, HEAD, and worktree cleanliness. This command does not heartbeat, reconcile,
+sanitized repository identity, branch, HEAD, and worktree cleanliness. This command doesn't heartbeat, reconcile,
 refresh snapshots, migrate the database, repair projections, or mutate lifecycle state.
 
 JSON contract v4 reports the history-derived lifecycle phase and schema status, candidate, repository, local `proof`,
 `ci_proof`, provider-neutral `pre_pr_review`, exact `implementation_basis`, signed review, staleness, post-PR repair
 usage, audit validity/root/coverage, and one `next_human_action`. Completed and blocked sessions return terminal
-reasons. Schema v6 reports `migration_required` without mutating the database.
+reasons. Schema v7 reports `migration_required` without mutating the database.
 
 ### `threadloop session transition <target-state> [options]`
 
@@ -115,7 +140,7 @@ combined repair budget.
 
 Pre-PR review input has `outcome: "clean"` with an empty `findings` array, or `outcome: "changes_required"` with one or
 more uniquely identified findings. It must include the exact live `head_sha`, a non-empty `evidence_ref`, and a
-lower-case SHA-256 digest. It authorizes only the matching pre-PR transition; it is not a signed-review receipt.
+lower-case SHA-256 digest. It authorizes only the matching pre-PR transition; it's not a signed-review receipt.
 
 Proof-plan input:
 
@@ -156,32 +181,32 @@ All gates are required. Gate ids must be unique, commands are exact argv arrays,
 resolve inside the repository, and timeouts must be positive integers no greater than one day. New proof plans require
 contract v4 with independent immutable CI and review policies. Both policies must match the checkout's GitHub origin and
 named branch. A v4 gate may declare ordered `setup` steps that provision the toolchain before the gate command; each
-step is validated exactly as the gate command is. Stored v1/v2/v3 plans remain readable, and v1/v2 cannot authorize
+step is validated exactly as the gate command is. Stored v1/v2/v3 plans remain readable, and v1/v2 can't authorize
 review transitions.
 
 ### `threadloop session gate run <gate-id> --session <id> [--json]`
 
 Runs one gate declared by the session's immutable proof plan. The command accepts no executable, argument, directory,
-timeout, or shell override. It is available only in `verifying` on a clean committed worktree.
+timeout, or shell override. It's available only in `verifying` on a clean committed worktree.
 
 The runner executes each declared `setup` step in order and then the gate command, capturing stdout and stderr
 separately for every one of them, waiting for process and stream closure, and recording non-zero, timeout, abort, spawn,
-cleanup, and repository-drift outcomes before appending an immutable receipt. A setup step that does not pass stops the
-run: no later step executes, the gate command does not run, and the receipt records `setup_failed`, which is an operator
+cleanup, and repository-drift outcomes before appending an immutable receipt. A setup step that doesn't pass stops the
+run: no later step executes, the gate command doesn't run, and the receipt records `setup_failed`, which is an operator
 handoff rather than code repair and consumes no repair budget. Gate execution never changes lifecycle state. A later
 receipt for the same gate supersedes an earlier receipt by database sequence.
 
-When a successful setup step changes the repository, the JSON response includes a transient `diagnostic` sibling to the
-receipt with `code: "SETUP_MUTATED_REPOSITORY"`, the setup `step_id`, sorted `changed_files`, and a recovery hint. When
-the gate command changes it, the code is `GATE_MUTATED_REPOSITORY` and `step_id` is null. Text output and the CI sensor
-print the same message and recovery hint. The immutable local and signed receipt schemas do not change: their result
-remains `invalidated`, so existing consumers keep their current contract while operators get the missing cause.
+When a setup step changes the repository, the JSON response includes a transient `diagnostic` sibling to the receipt
+with `code: "SETUP_MUTATED_REPOSITORY"`, the setup `step_id`, sorted `changed_files`, and a recovery hint. When the gate
+command changes it, the code is `GATE_MUTATED_REPOSITORY` and `step_id` is null. Text output and the CI sensor print the
+same message and recovery hint. The immutable local and signed receipt schemas don't change: their result remains
+`invalidated`, so existing consumers keep their current contract while operators get the missing cause.
 
 ### `threadloop session gate import <package-path> --session <id> [--json]`
 
 Verifies and appends one signed GitHub Actions gate receipt. The input is limited to 10 MiB and the command accepts no
 trust-policy override. Identical reimports are no-ops; conflicting receipt ids fail closed. Successful import appends
-proof only and does not change lifecycle state or `state_version`.
+proof only and doesn't change lifecycle state or `state_version`.
 
 See [Signed gate receipt v2](attestations/receipt-v2.md) for the package, Sigstore verification, reusable workflow, and
 failure contracts.
@@ -192,9 +217,11 @@ Verifies and appends one signed, provider-neutral GitHub review snapshot. The in
 trust-policy override. ThreadLoop verifies the session, plan, repository, current PR HEAD, canonical artifact, in-toto
 subject, package hashes, Sigstore identity, workflow invocation, and transparency evidence before promotion.
 
-The latest valid imported snapshot is authoritative for blockers, same-HEAD human approval, and observed merge state.
-Import never changes lifecycle state. Identical packages are idempotent; a receipt id reused for different content is a
-conflict. See [Signed review receipt v1](attestations/review-v1.md).
+The latest valid imported snapshot is authoritative for blockers, same-HEAD human approval, and observed merge state. A
+snapshot observed before one already imported for the session, or describing a different pull request, is rejected as
+`SIGNED_RECEIPT_CONFLICT`, so an older approval can't be re-imported over a newer blocker. Import never changes
+lifecycle state. Identical packages are idempotent; a receipt id reused for different content is a conflict. See
+[Signed review receipt v1](attestations/review-v1.md).
 
 ### Audit commands
 
@@ -208,54 +235,20 @@ threadloop audit export --session <id> --output <path> [--json]
 canonical JSON, event hashes, and an optional retained root. `export` verifies first and atomically publishes canonical
 JSONL without overwriting an existing path. The export records are shaped as `{"event":{...},"event_sha256":"..."}`.
 
-On schema v6 or newer, `show` and `verify` do not apply lifecycle transitions. Run `threadloop init` explicitly to
-migrate to the current schema; migrated sessions retain their existing forward-only audit coverage and repair counts.
-The migration is one-way: older binaries reject a newer schema, and ThreadLoop has no downgrade command. Before
-migration, stop other ThreadLoop processes and retain a backup of `.threadloop/state/` if binary rollback may be
-required.
+`show` and `verify` never apply lifecycle transitions. Run `threadloop init` explicitly to migrate to the current
+schema; migrated sessions retain their existing forward-only audit coverage and repair counts. The migration is one-way:
+older binaries reject a newer schema, and ThreadLoop has no downgrade command. Before migration, stop other ThreadLoop
+processes and retain a backup of `.threadloop/state/` if binary rollback may be required.
 
 Local verification detects mutation; an externally retained `--root`, prior handoff, or prior export root is required to
 detect tail truncation. See [Audit export and OpenTelemetry](observability.md) for the supported JSONL `filelog` recipe
 and its non-authoritative telemetry boundary.
 
-### `threadloop daemon run [--json]`
-
-Runs the optional mechanical refresh loop for active sessions in the current workspace.
-
-Options:
-
-- `-i, --interval <seconds>`: reconcile interval in seconds, default `60`
-- `--json`: render machine-readable command output
-
-Behavior:
-
-- periodically calls reconcile for all active sessions
-- records no semantic notes
-- writes running/stopped status in the normal command envelope
-
-### Legacy compatibility commands
-
-ThreadLoop still accepts the root commands below for compatibility. Prefer the session-first commands above for explicit
-session work:
-
-- `threadloop start <title> [--json]`
-- `threadloop capture <kind> [text] [--session <id>] [--json]`
-- `threadloop status [--session <id>] [--json]`
-- `threadloop artifact generate [kind] [--session <id>] [--json]`
-
-Compatibility rules:
-
-- `start` preserves the legacy single-active-session behavior and refuses to open a second legacy root session in the
-  same repo
-- `capture` and `artifact generate` auto-resolve only when exactly one active session exists
-- `status` fails with `SESSION_REQUIRED` when zero sessions match
-- when zero sessions match for `capture` and `artifact generate`, they fail with `SESSION_REQUIRED`
-- when multiple sessions match for any legacy command, they fail with `SESSION_AMBIGUOUS`
-- pass `--session <id>` or use the `threadloop session ...` forms for deterministic targeting
-
 ### `threadloop artifact generate [kind]`
 
-Renders a Markdown artifact from the active session. Use `--session <id>` for deterministic targeting.
+Renders a Markdown artifact for a session. Without `--session`, it targets the only active session and fails with
+`SESSION_REQUIRED` when none is active or `SESSION_AMBIGUOUS` when several are. Pass `--session <id>` for deterministic
+targeting.
 
 Kinds:
 
@@ -293,8 +286,8 @@ ThreadLoop stores state locally in the repo:
 - `.threadloop/state/state.db`
 - `.threadloop/artifacts/*.md`
 
-If an older repo still has `.threadloop/state/state.json`, ThreadLoop migrates that data into SQLite on first access and
-intentionally leaves the JSON file in place as a safety backup. After migration, ThreadLoop reads from SQLite.
+ThreadLoop opens schema v7 and v8 databases. Schema v7 is upgraded in place by `threadloop init`; older schemas existed
+only in development builds and are rejected rather than upgraded.
 
 SQLite schema v8 stores transition/idempotency records, one immutable proof plan per session, append-only local gate,
 signed gate, and signed review receipts, plus a hash-linked append-only audit ledger. New sessions begin with
@@ -308,22 +301,18 @@ Recommended default:
 
 - keep `.threadloop/state/` uncommitted
 - keep `.threadloop/artifacts/receipts/` local and uncommitted
-- commit artifacts only when they are useful for review or handoff
+- commit artifacts only when they're useful for review or handoff
 
 ## Agent-mode guidance
 
 For automation, prefer:
 
-- `threadloop session ...` commands over legacy root commands
 - explicit `--session <id>` on every session-scoped call
 - `--actor agent` on agent-authored `session start` and `session capture` commands
 - one autonomous task per checkout or Git worktree
 - syncing `main`, creating a fresh task branch, and rebasing onto `origin/main` before PR open
 
-Legacy root commands are still available for human compatibility, but they can fail with `SESSION_REQUIRED` or
-`SESSION_AMBIGUOUS` in multi-session repos and should not be treated as the default workflow.
-
-`session heartbeat`, `session reconcile`, and `daemon run` are mechanical operations. They refresh state but do not
-create semantic entries. Use `session capture` for decisions, risks, validation, and reviewer guidance.
+`session heartbeat` and `session reconcile` are mechanical operations. They refresh state but don't create semantic
+entries. Use `session capture` for decisions, risks, validation, and reviewer guidance.
 
 For the full orchestrator/operator workflow, see [agent-mode.md](agent-mode.md).

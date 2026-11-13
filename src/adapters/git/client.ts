@@ -144,27 +144,23 @@ export async function observeRepository(repoRoot: string): Promise<LiveRepositor
   };
 }
 
+/** `baseRef` must already be known to exist; null reports uncommitted work instead. */
 export async function getChangedFiles(repoRoot: string, baseRef: string | null) {
-  if (baseRef && (await refExists(repoRoot, baseRef))) {
-    const output = await git(repoRoot, ['diff', '--name-only', `${baseRef}...HEAD`]);
-    return output ? filterThreadloopPaths(output.split('\n').filter(Boolean)) : [];
+  // NUL-delimited output is parsed raw: trimming or line-splitting corrupts status columns, quoted names, and
+  // renames.
+  if (baseRef) {
+    const output = await gitRaw(repoRoot, ['diff', '--name-only', '-z', `${baseRef}...HEAD`]);
+    return filterThreadloopPaths(output.split('\0').filter(Boolean));
   }
 
-  const output = await git(repoRoot, ['status', '--short']);
-  const files = output
-    ? output
-        .split('\n')
-        .map((line) => line.trim().slice(3))
-        .filter(Boolean)
-    : [];
-  return filterThreadloopPaths(files);
+  return filterThreadloopPaths(parsePorcelainPaths(await gitRaw(repoRoot, ['status', '--porcelain', '-z'])));
 }
 
-export async function getDiffStats(repoRoot: string, baseRef: string | null) {
+async function getDiffStats(repoRoot: string, baseRef: string | null) {
   const fallback = { files: 0, insertions: 0, deletions: 0 };
 
   try {
-    if (baseRef && (await refExists(repoRoot, baseRef))) {
+    if (baseRef) {
       const output = await git(repoRoot, ['diff', '--numstat', `${baseRef}...HEAD`]);
       return parseNumstat(output);
     }
@@ -191,9 +187,9 @@ export async function getDiffStats(repoRoot: string, baseRef: string | null) {
   }
 }
 
-export async function getCommitRange(repoRoot: string, baseRef: string | null) {
+async function getCommitRange(repoRoot: string, baseRef: string | null) {
   try {
-    if (baseRef && (await refExists(repoRoot, baseRef))) {
+    if (baseRef) {
       const output = await git(repoRoot, ['log', '--oneline', `${baseRef}..HEAD`]);
       return output ? output.split('\n').filter(Boolean) : [];
     }
@@ -326,12 +322,14 @@ function isExitCode(error: unknown, code: number) {
 }
 
 export async function snapshotRepo(repoRoot: string, sessionId: string, baseRef: string | null): Promise<RepoSnapshot> {
+  // A base that no longer resolves falls back to uncommitted work, decided once for every part of the snapshot.
+  const resolvedBase = baseRef && (await refExists(repoRoot, baseRef)) ? baseRef : null;
   const [branch, headSha, changedFiles, diffStats, commitRange] = await Promise.all([
     getBranch(repoRoot),
     getHeadSha(repoRoot),
-    getChangedFiles(repoRoot, baseRef),
-    getDiffStats(repoRoot, baseRef),
-    getCommitRange(repoRoot, baseRef),
+    getChangedFiles(repoRoot, resolvedBase),
+    getDiffStats(repoRoot, resolvedBase),
+    getCommitRange(repoRoot, resolvedBase),
   ]);
 
   return {

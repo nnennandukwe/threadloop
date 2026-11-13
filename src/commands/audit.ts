@@ -1,16 +1,8 @@
 import { exportSessionAudit, showSessionAudit, verifySessionAudit } from '../services/session-service.js';
-import { type CommandContext, type JsonOption, writeCommandSuccess } from './runtime.js';
+import { type CommandContext, writeCommandSuccess } from './runtime.js';
 
-export interface AuditSessionOptions extends JsonOption {
+interface AuditSessionOptions {
   session: string;
-}
-
-export interface AuditVerifyOptions extends AuditSessionOptions {
-  root?: string;
-}
-
-export interface AuditExportOptions extends AuditSessionOptions {
-  output: string;
 }
 
 export async function auditShowCommand(context: CommandContext, options: AuditSessionOptions) {
@@ -30,7 +22,7 @@ export async function auditShowCommand(context: CommandContext, options: AuditSe
   });
 }
 
-export async function auditVerifyCommand(context: CommandContext, options: AuditVerifyOptions) {
+export async function auditVerifyCommand(context: CommandContext, options: AuditSessionOptions & { root?: string }) {
   const result = await verifySessionAudit({
     cwd: context.cwd,
     sessionId: options.session,
@@ -42,7 +34,7 @@ export async function auditVerifyCommand(context: CommandContext, options: Audit
   });
 }
 
-export async function auditExportCommand(context: CommandContext, options: AuditExportOptions) {
+export async function auditExportCommand(context: CommandContext, options: AuditSessionOptions & { output: string }) {
   const result = await exportSessionAudit({
     cwd: context.cwd,
     sessionId: options.session,

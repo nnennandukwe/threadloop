@@ -21,7 +21,7 @@ content, and other sensitive data from commands, logs, fixtures, and screenshots
 
 ThreadLoop requires:
 
-- Node.js 22.13.0 or newer
+- Node.js 22.22.2+ within Node 22, 24.15.0+ within Node 24, or Node 26+
 - npm
 - a Git repository
 
@@ -108,6 +108,18 @@ being bootstrapped, record the reason in the pull request, and run the equivalen
 Do not add blanket vulnerability or secret-scanning baselines. An unavoidable dependency exception must name one
 advisory in `osv-scanner.toml`, explain why the vulnerable behavior is unreachable, link a remediation issue, and expire
 within 30 days. High or critical advisories must be fixed rather than ignored.
+
+The Markdown lint command uses `markdownlint-cli` `0.49.1` with the same `markdownlint` `0.41.1` rule engine. It
+replaces `markdownlint-cli2`, whose glob dependency chain includes an unpatched high-severity `braces` advisory. The
+CLI's parser overrides select `smol-toml` `1.9.1` and `js-yaml` `5.5.0`; remove each override when the upstream CLI
+selects the corresponding patched dependency. The TOML override includes the fix for
+[GHSA-7w5x-hrqm-74c2](https://github.com/advisories/GHSA-7w5x-hrqm-74c2).
+
+The Markdown math parser's KaTeX dependency is pinned to patched `0.18.11`. Its upstream range still selects the
+vulnerable `0.16` line. The override retains the renderer's `renderToString` interface; inline, display and malformed
+math must pass the parser compatibility check before review. Remove the override when the parser accepts a patched
+version directly. Artifact frontmatter uses the existing `yaml` library directly, so the legacy `gray-matter` YAML
+parser chain isn't installed. `tsup` `9.0.0` supports patched esbuild; the expired exception from #113 is removed.
 
 ## Pull request quality
 

@@ -66,19 +66,8 @@ function reviewArtifact(): SignedReviewReceiptArtifact {
 
 describe('signed review evidence', () => {
   it('canonicalizes a provider-neutral review snapshot and binds it to an in-toto statement', () => {
-    const canonicalize = Reflect.get(reviewDomain, 'canonicalizeSignedReviewReceiptArtifact') as (
-      value: unknown,
-      digest: typeof sha256,
-    ) => { artifact: ReturnType<typeof reviewArtifact>; json: string; sha256: string };
-    const buildStatement = Reflect.get(reviewDomain, 'buildInTotoReviewStatement') as (
-      artifact: ReturnType<typeof reviewArtifact>,
-      artifactSha256: string,
-    ) => unknown;
-
-    expect(typeof canonicalize).toBe('function');
-    expect(typeof buildStatement).toBe('function');
-    const canonical = canonicalize(reviewArtifact(), sha256);
-    const statement = buildStatement(canonical.artifact, canonical.sha256);
+    const canonical = reviewDomain.canonicalizeSignedReviewReceiptArtifact(reviewArtifact(), sha256);
+    const statement = reviewDomain.buildInTotoReviewStatement(canonical.artifact, canonical.sha256);
 
     expect(canonical.json).toBe(canonicalJson(reviewArtifact()));
     expect(statement).toMatchObject({
@@ -98,6 +87,27 @@ describe('signed review evidence', () => {
         subject_head_sha: headSha,
       },
     });
+  });
+
+  it('rejects a signed payload that is not UTF-8, so the stored statement is always the signed bytes', () => {
+    const canonical = reviewDomain.canonicalizeSignedReviewReceiptArtifact(reviewArtifact(), sha256);
+    const statement = Buffer.from(
+      canonicalJson(reviewDomain.buildInTotoReviewStatement(canonical.artifact, canonical.sha256)),
+    );
+    const payload = Buffer.concat([statement.subarray(0, 10), Buffer.from([0xff]), statement.subarray(10)]);
+
+    expect(() =>
+      reviewDomain.parseSignedReviewReceiptEnvelope(
+        {
+          media_type: reviewDomain.SIGNED_REVIEW_RECEIPT_MEDIA_TYPE,
+          artifact: reviewArtifact(),
+          bundle: {
+            dsseEnvelope: { payload: payload.toString('base64'), payloadType: 'application/vnd.in-toto+json' },
+          },
+        },
+        sha256,
+      ),
+    ).toThrow('package.bundle.dsseEnvelope.payload must encode UTF-8 text.');
   });
 
   it('revalidates an observed report against the trusted signing context', () => {
@@ -131,10 +141,6 @@ describe('signed review evidence', () => {
   });
 
   it('reports only unresolved current threads as blocking findings', () => {
-    const evaluate = Reflect.get(reviewDomain, 'reviewEvidenceFromArtifact') as (
-      artifact: ReturnType<typeof reviewArtifact>,
-      currentHead: string,
-    ) => reviewDomain.ReviewEvidence;
     const artifact = reviewArtifact();
     artifact.review.threads.push(
       {
@@ -152,8 +158,7 @@ describe('signed review evidence', () => {
       },
     );
 
-    expect(typeof evaluate).toBe('function');
-    expect(evaluate(artifact, headSha)).toMatchObject({
+    expect(reviewDomain.reviewEvidenceFromArtifact(artifact, headSha)).toMatchObject({
       status: 'current',
       snapshotId: 'review_123',
       blockingFindings: [{ id: 'PRRT_2', body: 'Current blocker' }],

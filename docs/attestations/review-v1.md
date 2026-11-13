@@ -92,7 +92,8 @@ The canonical artifact records:
 
 The signed package media type is `application/vnd.threadloop.signed-review-receipt.v1+json`. Its DSSE payload is an
 in-toto Statement v1 whose first subject binds the reviewed pull-request HEAD and whose second subject binds the
-canonical review artifact digest.
+canonical review artifact digest. The payload must decode to UTF-8 canonical JSON equal to exactly the statement the
+canonical artifact implies.
 
 ## Verification and import
 
@@ -128,6 +129,10 @@ Only after verification does ThreadLoop promote the canonical package to
 `.threadloop/artifacts/receipts/<session-id>/<receipt-id>/signed-review-receipt.json` and append its immutable database
 projection and audit event transactionally. Identical imports are idempotent. Reusing a receipt id for different bytes
 is a conflict. Concurrent identical imports produce one row and one event.
+
+Imports are ordered by observation, not arrival. A snapshot whose `observed_at` is earlier than any snapshot already
+imported for the session, or whose pull request number differs from theirs, is a conflict. This keeps "latest" equal to
+"most recently observed": a previously signed approval cannot be imported after a newer blocking review to hide it.
 
 ## Lifecycle policy
 

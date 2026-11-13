@@ -1,7 +1,10 @@
 # Consumer onboarding
 
-How to enable ThreadLoop in a repository you want it to govern. The steps are ordered because several of them cannot be
-done later without discarding work.
+**Implemented now:** these steps enable ThreadLoop's fixed governed PR lifecycle in a consumer repository. The steps are
+ordered because several of them cannot be done later without discarding work.
+
+This path uses the current session CLI and signed CI/review sensors. It does not install configurable Workflow Profiles,
+Execution Claims, or a GAAP runtime adapter; see the [architecture guide](architecture.md) for their contract status.
 
 Everything here was derived from running a supervised pilot against a real consumer repository. Each prerequisite exists
 because skipping it produced a failure that was hard to diagnose from the outside.

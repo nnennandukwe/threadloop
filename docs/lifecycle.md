@@ -1,6 +1,14 @@
 # Governed lifecycle
 
-ThreadLoop stores lifecycle state on the task. A session remains the execution record attached to that task.
+**Implemented now:** ThreadLoop stores the fixed governed PR lifecycle state on the task. A session remains the
+execution record attached to that task. These compatibility terms do not mean the accepted Execution Claim and Attempt
+contracts are implemented in current sessions.
+
+The [architecture guide](architecture.md) separates current runtime behavior from accepted Controller Contract v0.1
+specifications and deferred runtime/Rust work.
+
+For the current-state compatibility map from this fixed lifecycle to the planned Workflow Profile and Compiled Graph
+language, see [Current lifecycle graph mapping](current-lifecycle-graph-mapping.md).
 
 The ordered states are:
 
@@ -43,26 +51,27 @@ Lifecycle phase is derived from append-only transition history plus the immutabl
 migrated history. A session is `pre_pr` until its first applied transition into `reviewing`; a migrated session whose
 audit coverage begins in `reviewing`, `ready_for_human`, or `completed` is already `post_pr`. A legacy `repairing` state
 or repair transition without evidence of entry into `reviewing` remains `pre_pr`, because older lifecycles allowed
-pre-PR repair. The phase is permanently `post_pr` afterward. SQLite schema version 7 retains all prior lifecycle, proof,
-signed receipt, audit, and repair records and adds this semantic interpretation without a second mutable phase flag.
-Persistent triggers reject update, delete, and replacement. Repair usage remains derived from applied transitions into
-`repairing`; historical entries remain counted, while new entries are allowed only for post-PR gate and signed-review
-repairs.
+pre-PR repair. The phase is permanently `post_pr` afterward. SQLite schema v8 retains all prior lifecycle, proof, signed
+receipt, audit, and repair records and adds this semantic interpretation without a second mutable phase flag. Persistent
+triggers reject update, delete, and replacement. Repair usage remains derived from applied transitions into `repairing`;
+historical entries remain counted, while new entries are allowed only for post-PR gate and signed-review repairs.
 
 `threadloop session next --session <id> --json` is read-only and returns one deterministic candidate or `null`. It
 reports live Git facts without refreshing persisted snapshots. It rehashes the latest receipt manifest and output
 artifacts, classifies local proof as missing/current/stale/failed/corrupt, and reports independent CI proof as
-policy-missing/missing/passed/stale/corrupt. It also reports the three-cycle repair budget. Reading schema v2 or v3
-reports proof migration without writing newer objects. Contract v4 also reports lifecycle phase and schema status,
-pre-PR review evidence, the exact implementation basis, lifecycle history, current signed-review findings and
-approval/merge state, audit validity/root/coverage, and one next human action. Reading schema v6 returns
-`migration_required` without mutation; run `threadloop init` outside the runner to perform the transactional v7
-migration.
+policy-missing/missing/passed/stale/corrupt. It also reports the three-cycle repair budget. Contract v4 also reports
+lifecycle phase and schema status, pre-PR review evidence, the exact implementation basis, lifecycle history, current
+signed-review findings and approval/merge state, audit validity/root/coverage, and one next human action. Reading schema
+v7 returns `migration_required` without mutation; run `threadloop init` outside the runner to perform the transactional
+v8 migration.
 
 `threadloop session transition` requires the caller's expected state version and an idempotency key. State mutation,
 transition history, idempotency outcome, audit guard decision, active projection, and session completion are one
 transaction. Accepted transitions append `transition_applied` in that same transaction. Exact replays add no duplicate
-events, while rejected guards retain the unchanged lifecycle and one idempotent `guard_decision`.
+events, while rejected guards retain the unchanged lifecycle and one idempotent `guard_decision`. Receipt imports and
+gate runs do not change the state version, so a transition whose guards read receipt evidence also records which
+receipts existed when it read them. If a receipt arrives before the write, the transition fails with `STATE_BUSY`
+without persisting anything, and retrying the identical request evaluates it against the current evidence.
 
 | Transition                             | Required authority                                                                                  |
 | -------------------------------------- | --------------------------------------------------------------------------------------------------- |
@@ -137,7 +146,7 @@ evidence-bearing transition to `blocked`.
 
 ## Audit coverage
 
-New sessions begin with `session_started`. Sessions created before schema v6 receive exactly one `audit_activated`
-genesis event with `coverage: schema_v6_forward`; ThreadLoop does not invent earlier decisions. Audit corruption blocks
-controller writes and export but leaves semantic note reads available for diagnosis. `session next` is a read-only
-projection and creates no audit event.
+New sessions begin with `session_started`. Sessions created before schema v6 carry exactly one `audit_activated` genesis
+event with `coverage: schema_v6_forward`, recorded when they were upgraded; ThreadLoop does not invent earlier
+decisions. Audit corruption blocks controller writes and export but leaves semantic note reads available for diagnosis.
+`session next` is a read-only projection and creates no audit event.

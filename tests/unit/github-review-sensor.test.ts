@@ -177,6 +177,54 @@ describe('GitHub review sensor adapter', () => {
     ).rejects.toThrow('GitHub reviews pagination repeated cursor same-cursor');
   });
 
+  it('reports the HTTP status when an error response is not JSON', async () => {
+    await expect(
+      collectGitHubReviewSnapshot(input(), () =>
+        Promise.resolve(new Response('<html>Bad gateway</html>', { status: 502 })),
+      ),
+    ).rejects.toThrow('GitHub GraphQL review query failed: HTTP 502');
+  });
+
+  it('leaves out approvals from deleted accounts or on commits GitHub no longer has', async () => {
+    const pullRequest = (connection: 'reviews' | 'reviewThreads', nodes: unknown[]) => ({
+      data: {
+        repository: {
+          pullRequest: {
+            number: 42,
+            url: 'https://github.com/example/project/pull/42',
+            headRefOid: reviewedHead,
+            baseRefName: 'main',
+            merged: false,
+            mergedAt: null,
+            reviewDecision: 'APPROVED',
+            [connection]: { nodes, pageInfo: { hasNextPage: false, endCursor: null } },
+          },
+        },
+      },
+    });
+    const approval = (author: unknown, commit: unknown) => ({
+      author,
+      state: 'APPROVED',
+      commit,
+      submittedAt: '2026-07-26T11:00:00.000Z',
+    });
+    const snapshot = await collectGitHubReviewSnapshot(input(), (_url, init) =>
+      Promise.resolve(
+        response(
+          (JSON.parse(requestBody(init)) as { query: string }).query.includes('ReviewSnapshotReviews')
+            ? pullRequest('reviews', [
+                approval(null, { oid: reviewedHead }),
+                approval({ id: 'user-1', login: 'alice', __typename: 'User' }, null),
+                approval({ id: 'user-2', login: 'bob', __typename: 'User' }, { oid: reviewedHead }),
+              ])
+            : pullRequest('reviewThreads', []),
+        ),
+      ),
+    );
+
+    expect(snapshot.review.approvals.map((entry) => entry.actor_login)).toEqual(['bob']);
+  });
+
   it('describes the canonical GitHub URL requirement without excluding private repositories', async () => {
     await expect(
       collectGitHubReviewSnapshot(

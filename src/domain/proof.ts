@@ -1,5 +1,22 @@
 import path from 'node:path';
-import { canonicalJson } from './canonical-json.js';
+import { z } from 'zod';
+import { canonicalJson, isPlainObject } from './canonical-json.js';
+import {
+  boolean,
+  commitSha,
+  escapeRegExp,
+  exactObject,
+  githubRepository,
+  identifier,
+  integer,
+  literal,
+  parseFields,
+  reject,
+  rule,
+  sha256Digest,
+  text,
+  canonicalTimestamp,
+} from './validation.js';
 
 export const GATE_RECEIPT_RESULTS = [
   'passed',
@@ -17,16 +34,45 @@ export type GateReceiptResult = (typeof GATE_RECEIPT_RESULTS)[number];
 /** Bounds the declared provisioning sequence so a plan cannot describe unbounded pre-gate work. */
 const MAXIMUM_SETUP_STEPS = 32;
 
+export const gateReceiptResult = z.enum(GATE_RECEIPT_RESULTS, {
+  error: `must be one of: ${GATE_RECEIPT_RESULTS.join(', ')}`,
+});
+
+/**
+ * The execution shape shared by a gate command and every declared setup step, so a setup step can never be
+ * validated more loosely than the gate command it provisions for.
+ */
+const execution = {
+  command: rule(
+    z.array(text(32_768), { error: 'must contain 1-128 exact argv strings' }),
+    (command) => command.length >= 1 && command.length <= 128,
+    'must contain 1-128 exact argv strings',
+  ),
+  working_directory: rule(
+    rule(text(4_096), (directory) => !path.isAbsolute(directory), 'must be a repository-relative path'),
+    (directory) => {
+      const normalized = path.normalize(directory);
+      return normalized !== '..' && !normalized.startsWith(`..${path.sep}`) && !path.isAbsolute(normalized);
+    },
+    'must not escape the repository',
+  ),
+  timeout_ms: integer(1, 86_400_000),
+};
+
 /**
  * A declared provisioning step. Shares the gate's own execution shape so validation and execution reuse one
  * code path, and so a receipt describes a setup step exactly as it describes the gate command.
  */
-export interface ProofSetupStep {
-  id: string;
-  command: string[];
-  working_directory: string;
-  timeout_ms: number;
-}
+const setupStepSchema = exactObject({ id: identifier(128), ...execution });
+export type ProofSetupStep = z.infer<typeof setupStepSchema>;
+
+const setupStepsSchema = z
+  .array(setupStepSchema, { error: 'must be an array of declared setup steps' })
+  .refine((steps) => steps.length <= MAXIMUM_SETUP_STEPS, {
+    message: `must declare no more than ${MAXIMUM_SETUP_STEPS} setup steps`,
+    abort: true,
+  })
+  .superRefine((steps, context) => reportDuplicateIds(steps, context, 'duplicates declared setup step'));
 
 export interface ProofGate {
   id: string;
@@ -41,69 +87,126 @@ export interface ProofGate {
   timeout_ms: number;
 }
 
+/** Every gate a v1-v3 plan can declare. A gate carrying `setup` fails the exact-key check here. */
+const setupFreeGateSchema: z.ZodType<ProofGate> = exactObject({ id: identifier(128), ...execution });
+
+/**
+ * A v4 gate, and the gate a signed artifact embeds. An empty `setup` array normalizes away, so only one canonical
+ * form means "no provisioning".
+ */
+export const declaredGateSchema: z.ZodType<ProofGate> = exactObject(
+  { id: identifier(128), setup: setupStepsSchema.exactOptional(), ...execution },
+  { key: 'setup', expected: (gate) => 'setup' in gate },
+).transform(({ id, setup, ...execution }) =>
+  setup && setup.length > 0 ? { id, setup, ...execution } : { id, ...execution },
+);
+
 /**
  * One declared setup step as it actually ran. Recorded identically by the local and CI execution paths, so a
  * local receipt and a signed receipt for the same HEAD describe provisioning the same way.
  */
-export interface RecordedSetupStep {
-  id: string;
-  command: string[];
-  working_directory: string;
-  timeout_ms: number;
-  result: GateReceiptResult;
-  started_at: string;
-  ended_at: string;
-  duration_ms: number;
-  exit_status: number | null;
-  signal: string | null;
-  head_before: string;
-  head_after: string;
-  clean_before: boolean;
-  clean_after: boolean;
-  output: {
-    stdout_sha256: string;
-    stderr_sha256: string;
-  };
+export const recordedSetupStepSchema = exactObject({
+  id: identifier(128),
+  ...execution,
+  result: gateReceiptResult,
+  started_at: canonicalTimestamp,
+  ended_at: canonicalTimestamp,
+  duration_ms: integer(0, 86_400_000),
+  exit_status: integer(-2_147_483_648, 2_147_483_647).nullable(),
+  signal: text(128).nullable(),
+  head_before: commitSha,
+  head_after: commitSha,
+  clean_before: boolean,
+  clean_after: boolean,
+  output: exactObject({ stdout_sha256: sha256Digest, stderr_sha256: sha256Digest }),
+});
+export type RecordedSetupStep = z.infer<typeof recordedSetupStepSchema>;
+
+const GITHUB_ACTIONS_ISSUER = 'https://token.actions.githubusercontent.com';
+
+function trustPolicySchema(sensorWorkflow: string) {
+  return exactObject({
+    provider: literal('github-actions'),
+    issuer: literal(GITHUB_ACTIONS_ISSUER),
+    certificate_identity: text(1_024),
+    source_repository: githubRepository,
+    build_signer_uri: text(1_024),
+    build_signer_sha: commitSha,
+  }).superRefine((policy, context) => {
+    const workflowIdentity = new RegExp(
+      `^${escapeRegExp(policy.source_repository)}/\\.github/workflows/[A-Za-z0-9._-]+\\.ya?ml@refs/heads/[A-Za-z0-9._/-]+$`,
+    );
+    if (!workflowIdentity.test(policy.certificate_identity)) {
+      reject(context, ['certificate_identity'], 'must identify an exact workflow and branch in the source repository');
+    }
+    const expectedSignerUri = `https://github.com/nnennandukwe/threadloop/.github/workflows/${sensorWorkflow}@${policy.build_signer_sha}`;
+    if (policy.build_signer_uri !== expectedSignerUri) {
+      reject(context, ['build_signer_uri'], `must equal ${expectedSignerUri}`);
+    }
+  });
 }
+
+const ciPolicySchema = trustPolicySchema('threadloop-gate-sensor.yml');
+const reviewPolicySchema = trustPolicySchema('threadloop-review-sensor.yml');
+export type GitHubActionsTrustPolicy = z.infer<typeof ciPolicySchema>;
+
+const acceptanceCriteriaSchema = rule(
+  z.array(text(4_096), { error: 'must be a non-empty array of strings' }),
+  (criteria) => criteria.length > 0,
+  'must be a non-empty array of strings',
+);
+
+function gatesSchema(gate: z.ZodType<ProofGate>) {
+  return rule(
+    z.array(gate, { error: 'must be a non-empty array' }),
+    (gates) => gates.length > 0,
+    'must be a non-empty array',
+  ).superRefine((gates, context) => reportDuplicateIds(gates, context, 'duplicates declared gate'));
+}
+
+/** Plans keyed by contract_version. Anything else is read as a legacy plan, whose key set has no version. */
+const proofPlanSchemas = {
+  legacy: exactObject({ acceptance_criteria: acceptanceCriteriaSchema, gates: gatesSchema(setupFreeGateSchema) }),
+  2: exactObject({
+    contract_version: z.literal(2),
+    acceptance_criteria: acceptanceCriteriaSchema,
+    ci: ciPolicySchema,
+    gates: gatesSchema(setupFreeGateSchema),
+  }),
+  3: exactObject({
+    contract_version: z.literal(3),
+    acceptance_criteria: acceptanceCriteriaSchema,
+    ci: ciPolicySchema,
+    review: reviewPolicySchema,
+    gates: gatesSchema(setupFreeGateSchema),
+  }),
+  4: exactObject({
+    contract_version: z.literal(4),
+    acceptance_criteria: acceptanceCriteriaSchema,
+    ci: ciPolicySchema,
+    review: reviewPolicySchema,
+    gates: gatesSchema(declaredGateSchema),
+  }),
+};
 
 export interface LegacyProofPlan {
   acceptance_criteria: string[];
   gates: ProofGate[];
 }
 
-export interface GitHubActionsTrustPolicy {
-  provider: 'github-actions';
-  issuer: 'https://token.actions.githubusercontent.com';
-  certificate_identity: string;
-  source_repository: string;
-  build_signer_uri: string;
-  build_signer_sha: string;
-}
-
-export interface CiProofPlan {
+export interface CiProofPlan extends LegacyProofPlan {
   contract_version: 2;
-  acceptance_criteria: string[];
   ci: GitHubActionsTrustPolicy;
-  gates: ProofGate[];
 }
 
-export interface ReviewProofPlan {
-  contract_version: 3;
-  acceptance_criteria: string[];
+/** contract_version 4 differs from 3 only in admitting declared `setup` on its gates. */
+export interface ReviewProofPlan extends LegacyProofPlan {
+  contract_version: 3 | 4;
   ci: GitHubActionsTrustPolicy;
   review: GitHubActionsTrustPolicy;
-  gates: ProofGate[];
 }
 
-export interface SetupProofPlan {
-  contract_version: 4;
-  acceptance_criteria: string[];
-  ci: GitHubActionsTrustPolicy;
-  review: GitHubActionsTrustPolicy;
-  gates: ProofGate[];
-}
-
-export type ProofPlan = LegacyProofPlan | CiProofPlan | ReviewProofPlan | SetupProofPlan;
+export type ProofPlan = LegacyProofPlan | CiProofPlan | ReviewProofPlan;
 
 export interface CanonicalProofPlan {
   plan: ProofPlan;
@@ -117,35 +220,56 @@ export interface BoundProofPlan extends CanonicalProofPlan {
   createdAt: string;
 }
 
-export interface GateReceiptPayload {
-  id: string;
-  session_id: string;
-  gate_id: string;
-  plan_sha256: string;
-  result: GateReceiptResult;
-  /** Present on sensor contract_version 2 receipts; absent on stored v1 receipts, which predate setup. */
-  setup?: RecordedSetupStep[];
-  command: string[];
-  working_directory: string;
-  timeout_ms: number;
-  started_at: string;
-  ended_at: string;
-  duration_ms: number;
-  exit_status: number | null;
-  signal: string | null;
-  head_before: string;
-  head_after: string;
-  clean_before: boolean;
-  clean_after: boolean;
-  artifact: {
-    path: string;
-    sha256: string;
-  };
-  sensor: {
-    name: 'threadloop-local-gate';
-    contract_version: 1 | 2;
-  };
-}
+/**
+ * Stored local receipts are only type-checked, as they always have been, rather than held to the signed-artifact
+ * field rules: they are re-read on every evaluation, so a stricter field rule would retroactively corrupt them.
+ */
+const storedSetupStepSchema = z.object({
+  id: z.string(),
+  command: z.array(z.string()),
+  working_directory: z.string(),
+  timeout_ms: z.number(),
+  result: z.enum(GATE_RECEIPT_RESULTS),
+  started_at: z.string(),
+  ended_at: z.string(),
+  duration_ms: z.number(),
+  exit_status: z.number().nullable(),
+  signal: z.string().nullable(),
+  head_before: z.string(),
+  head_after: z.string(),
+  clean_before: z.boolean(),
+  clean_after: z.boolean(),
+  output: z.object({ stdout_sha256: z.string(), stderr_sha256: z.string() }),
+});
+
+const gateReceiptPayloadSchema = z
+  .object({
+    id: z.string(),
+    session_id: z.string(),
+    gate_id: z.string(),
+    plan_sha256: z.string(),
+    result: z.enum(GATE_RECEIPT_RESULTS),
+    /** Present on sensor contract_version 2 receipts; absent on stored v1 receipts, which predate setup. */
+    setup: z.array(storedSetupStepSchema).optional(),
+    command: z.array(z.string()),
+    working_directory: z.string(),
+    timeout_ms: z.number(),
+    started_at: z.string(),
+    ended_at: z.string(),
+    duration_ms: z.number(),
+    exit_status: z.number().nullable(),
+    signal: z.string().nullable(),
+    head_before: z.string(),
+    head_after: z.string(),
+    clean_before: z.boolean(),
+    clean_after: z.boolean(),
+    artifact: z.object({ path: z.string(), sha256: z.string() }),
+    sensor: z.object({ name: z.literal('threadloop-local-gate'), contract_version: z.literal([1, 2]) }),
+  })
+  // v1 receipts predate setup and carry no `setup` key; v2 always carries one, possibly empty.
+  .refine((payload) => (payload.sensor.contract_version === 2) === (payload.setup !== undefined));
+
+export type GateReceiptPayload = z.infer<typeof gateReceiptPayloadSchema>;
 
 export interface StoredGateReceipt {
   sequence: number;
@@ -200,6 +324,10 @@ export class ProofValidationError extends Error {
   }
 }
 
+function proofValidationError(field: string, detail: string) {
+  return new ProofValidationError(field, `${field} ${detail}.`);
+}
+
 export function canonicalizeProofPlan(
   value: unknown,
   digest: ProofDigest,
@@ -210,82 +338,49 @@ export function canonicalizeProofPlan(
   return { plan, json, sha256: digest(json) };
 }
 
-export function validateProofPlan(
+function validateProofPlan(
   value: unknown,
-  options: { requireCiPolicy?: boolean; requireReviewPolicy?: boolean } = {},
+  options: { requireCiPolicy?: boolean; requireReviewPolicy?: boolean },
 ): ProofPlan {
-  const candidate = requireObject(value, 'proof_plan');
-  const isVersionTwo = candidate.contract_version === 2;
-  const isVersionThree = candidate.contract_version === 3;
-  const isVersionFour = candidate.contract_version === 4;
-  if (!isVersionTwo && !isVersionThree && !isVersionFour && options.requireCiPolicy) {
-    throw invalid('proof_plan.contract_version', 'must be 2, 3, or 4 for newly recorded proof plans');
+  if (!isPlainObject(value)) {
+    throw proofValidationError('proof_plan', 'must be an object');
   }
-  if (!isVersionFour && options.requireReviewPolicy) {
-    throw invalid('proof_plan.contract_version', 'must be 4 for newly recorded proof plans');
+  const version = value.contract_version;
+  const signed = version === 2 || version === 3 || version === 4;
+  if (!signed && options.requireCiPolicy) {
+    throw proofValidationError('proof_plan.contract_version', 'must be 2, 3, or 4 for newly recorded proof plans');
   }
-  const plan = requireExactObject(
-    candidate,
-    'proof_plan',
-    isVersionThree || isVersionFour
-      ? ['contract_version', 'acceptance_criteria', 'ci', 'review', 'gates']
-      : isVersionTwo
-        ? ['contract_version', 'acceptance_criteria', 'ci', 'gates']
-        : ['acceptance_criteria', 'gates'],
-  );
-  const acceptanceCriteria = plan.acceptance_criteria;
-  if (!Array.isArray(acceptanceCriteria) || acceptanceCriteria.length === 0) {
-    throw invalid('proof_plan.acceptance_criteria', 'must be a non-empty array of strings');
+  if (version !== 4 && options.requireReviewPolicy) {
+    throw proofValidationError('proof_plan.contract_version', 'must be 4 for newly recorded proof plans');
   }
-  const normalizedCriteria = acceptanceCriteria.map((criterion, index) =>
-    requireNonEmptyText(criterion, `proof_plan.acceptance_criteria[${index}]`, 4_096),
-  );
-
-  if (!Array.isArray(plan.gates) || plan.gates.length === 0) {
-    throw invalid('proof_plan.gates', 'must be a non-empty array');
-  }
-
-  const gateIds = new Set<string>();
-  const gates = plan.gates.map((value, index) => {
-    const field = `proof_plan.gates[${index}]`;
-    const gate = validateDeclaredGate(value, { field, allowSetup: isVersionFour });
-    if (gateIds.has(gate.id)) {
-      throw invalid(`${field}.id`, `duplicates declared gate ${gate.id}`);
-    }
-    gateIds.add(gate.id);
-    return gate;
-  });
-
-  if (!isVersionTwo && !isVersionThree && !isVersionFour) {
-    return { acceptance_criteria: normalizedCriteria, gates };
-  }
-
-  if (isVersionThree || isVersionFour) {
-    return {
-      contract_version: isVersionFour ? 4 : 3,
-      acceptance_criteria: normalizedCriteria,
-      ci: validateTrustPolicy(plan.ci, 'proof_plan.ci', 'threadloop-gate-sensor.yml'),
-      review: validateTrustPolicy(plan.review, 'proof_plan.review', 'threadloop-review-sensor.yml'),
-      gates,
-    };
-  }
-
-  return {
-    contract_version: 2,
-    acceptance_criteria: normalizedCriteria,
-    ci: validateTrustPolicy(plan.ci, 'proof_plan.ci', 'threadloop-gate-sensor.yml'),
-    gates,
-  };
+  const schema = version === 2 || version === 3 || version === 4 ? proofPlanSchemas[version] : proofPlanSchemas.legacy;
+  return parseFields(schema, value, 'proof_plan', proofValidationError);
 }
 
-export function hasCiTrustPolicy(plan: ProofPlan): plan is CiProofPlan | ReviewProofPlan | SetupProofPlan {
+/**
+ * Validates one declared gate. Exported because the CI sensor receives a single gate rather than a whole plan
+ * and must apply exactly these rules: wrapping the gate in a synthetic legacy plan would silently reject
+ * declared `setup`, since only contract_version 4 admits it.
+ *
+ * `allowSetup` is the version gate. When false, a gate carrying `setup` fails the exact-field check rather
+ * than having the field ignored.
+ */
+export function validateDeclaredGate(
+  value: unknown,
+  options: { field?: string; allowSetup?: boolean } = {},
+): ProofGate {
+  const schema = (options.allowSetup ?? true) ? declaredGateSchema : setupFreeGateSchema;
+  return parseFields(schema, value, options.field ?? 'gate', proofValidationError);
+}
+
+export function hasCiTrustPolicy(plan: ProofPlan): plan is CiProofPlan | ReviewProofPlan {
   return (
     'contract_version' in plan &&
     (plan.contract_version === 2 || plan.contract_version === 3 || plan.contract_version === 4)
   );
 }
 
-export function hasReviewTrustPolicy(plan: ProofPlan): plan is ReviewProofPlan | SetupProofPlan {
+export function hasReviewTrustPolicy(plan: ProofPlan): plan is ReviewProofPlan {
   return 'contract_version' in plan && (plan.contract_version === 3 || plan.contract_version === 4);
 }
 
@@ -297,11 +392,7 @@ export function evaluateProofEvidence(input: {
   artifactDigests: ReadonlyMap<string, string | null>;
   digest: ProofDigest;
 }): ProofEvidence {
-  const latestByGate = new Map<string, StoredGateReceipt>();
-  for (const receipt of [...input.receipts].sort((left, right) => left.sequence - right.sequence)) {
-    latestByGate.set(receipt.gateId, receipt);
-  }
-
+  const latestByGate = latestBy(input.receipts, (receipt) => receipt.gateId);
   const gates = input.plan.plan.gates.map((gate): ProofGateEvidence => {
     const receipt = latestByGate.get(gate.id);
     if (!receipt) {
@@ -341,23 +432,40 @@ export function evaluateProofEvidence(input: {
     return { ...common, status: 'failed' };
   });
 
-  const status = aggregateProofStatus(gates);
+  const receiptIds = (status: ProofGateEvidenceStatus) =>
+    gates.flatMap((gate) => (gate.status === status && gate.receipt_id ? [gate.receipt_id] : []));
   return {
-    status,
+    status: aggregateGateStatus(gates.map((gate) => gate.status)),
     gates,
-    staleReceiptIds: gates
-      .filter((gate) => gate.status === 'stale' && gate.receipt_id)
-      .map((gate) => gate.receipt_id as string),
-    failedReceiptIds: gates
-      .filter((gate) => gate.status === 'failed' && gate.receipt_id)
-      .map((gate) => gate.receipt_id as string),
-    setupFailedReceiptIds: gates
-      .filter((gate) => gate.status === 'setup_failed' && gate.receipt_id)
-      .map((gate) => gate.receipt_id as string),
-    corruptReceiptIds: gates
-      .filter((gate) => gate.status === 'corrupt' && gate.receipt_id)
-      .map((gate) => gate.receipt_id as string),
+    staleReceiptIds: receiptIds('stale'),
+    failedReceiptIds: receiptIds('failed'),
+    setupFailedReceiptIds: receiptIds('setup_failed'),
+    corruptReceiptIds: receiptIds('corrupt'),
   };
+}
+
+/** The receipt with the highest sequence for each key. */
+export function latestBy<TReceipt extends { sequence: number }>(
+  receipts: readonly TReceipt[],
+  key: (receipt: TReceipt) => string,
+) {
+  const latest = new Map<string, TReceipt>();
+  for (const receipt of [...receipts].sort((left, right) => left.sequence - right.sequence)) {
+    latest.set(key(receipt), receipt);
+  }
+  return latest;
+}
+
+/**
+ * One aggregate for local and signed CI evidence. `setup_failed` outranks `failed` because a broken environment
+ * is the actionable root cause: a gate that never ran its command tells you nothing about the code.
+ */
+export function aggregateGateStatus<TStatus extends ProofGateEvidenceStatus>(statuses: readonly TStatus[]): TStatus {
+  if (statuses.every((status) => status === 'passed')) {
+    return 'passed' as TStatus;
+  }
+  const precedence = ['corrupt', 'setup_failed', 'failed', 'stale', 'missing'] as const;
+  return (precedence.find((status) => (statuses as readonly string[]).includes(status)) ?? 'missing') as TStatus;
 }
 
 function parseAndValidateReceipt(
@@ -380,331 +488,124 @@ function parseAndValidateReceipt(
   } catch {
     return null;
   }
-  if (canonicalJson(parsed) !== receipt.receiptJson || !isGateReceiptPayload(parsed)) {
+  if (canonicalJson(parsed) !== receipt.receiptJson || !gateReceiptPayloadSchema.safeParse(parsed).success) {
     return null;
   }
+  const payload = parsed as GateReceiptPayload;
   if (
-    parsed.id !== receipt.id ||
-    parsed.session_id !== sessionId ||
-    parsed.gate_id !== receipt.gateId ||
-    parsed.plan_sha256 !== receipt.planSha256 ||
-    parsed.result !== receipt.result ||
-    parsed.head_before !== receipt.headBefore ||
-    parsed.head_after !== receipt.headAfter ||
-    parsed.artifact.path !== receipt.artifactPath ||
-    parsed.artifact.sha256 !== receipt.artifactSha256 ||
+    payload.id !== receipt.id ||
+    payload.session_id !== sessionId ||
+    payload.gate_id !== receipt.gateId ||
+    payload.plan_sha256 !== receipt.planSha256 ||
+    payload.result !== receipt.result ||
+    payload.head_before !== receipt.headBefore ||
+    payload.head_after !== receipt.headAfter ||
+    payload.artifact.path !== receipt.artifactPath ||
+    payload.artifact.sha256 !== receipt.artifactSha256 ||
     artifactDigest !== receipt.artifactSha256 ||
-    parsed.working_directory !== gate.working_directory ||
-    parsed.timeout_ms !== gate.timeout_ms ||
-    JSON.stringify(parsed.command) !== JSON.stringify(gate.command) ||
-    !recordedSetupMatchesDeclared(parsed.setup, gate.setup, parsed.result)
+    payload.working_directory !== gate.working_directory ||
+    payload.timeout_ms !== gate.timeout_ms ||
+    JSON.stringify(payload.command) !== JSON.stringify(gate.command) ||
+    recordedSetupViolation(payload.setup, gate.setup, payload.result)
   ) {
     return null;
   }
-  return parsed;
+  return payload;
 }
 
 /**
- * A receipt describes everything that ran, so recorded setup must correspond to declared setup step for step.
- * A short recorded sequence is legitimate: a failing step stops the run, so later steps never execute. What is
- * never legitimate is a recorded step the plan did not declare, or one whose argv, directory, or timeout
- * differs from the declaration.
- */
-export function recordedSetupMatchesDeclared(
-  recorded: readonly RecordedSetupStep[] | undefined,
-  declared: readonly ProofSetupStep[] | undefined,
-  result: GateReceiptResult,
-): boolean {
-  const recordedSteps = recorded ?? [];
-  const declaredSteps = declared ?? [];
-  const requiresCompleteSetup = result !== 'setup_failed' && result !== 'invalidated';
-  if (
-    recordedSteps.length > declaredSteps.length ||
-    (requiresCompleteSetup && recordedSteps.length !== declaredSteps.length)
-  ) {
-    return false;
-  }
-  return recordedSteps.every((step, index) => {
-    const expected = declaredSteps[index];
-    return (
-      expected !== undefined &&
-      (!requiresCompleteSetup || step.result === 'passed') &&
-      step.id === expected.id &&
-      step.working_directory === expected.working_directory &&
-      step.timeout_ms === expected.timeout_ms &&
-      JSON.stringify(step.command) === JSON.stringify(expected.command)
-    );
-  });
-}
-
-function isGateReceiptPayload(value: unknown): value is GateReceiptPayload {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const payload = value as Partial<GateReceiptPayload>;
-  return (
-    typeof payload.id === 'string' &&
-    typeof payload.session_id === 'string' &&
-    typeof payload.gate_id === 'string' &&
-    typeof payload.plan_sha256 === 'string' &&
-    GATE_RECEIPT_RESULTS.includes(payload.result as GateReceiptResult) &&
-    Array.isArray(payload.command) &&
-    payload.command.every((argument) => typeof argument === 'string') &&
-    typeof payload.working_directory === 'string' &&
-    typeof payload.timeout_ms === 'number' &&
-    typeof payload.started_at === 'string' &&
-    typeof payload.ended_at === 'string' &&
-    typeof payload.duration_ms === 'number' &&
-    (typeof payload.exit_status === 'number' || payload.exit_status === null) &&
-    (typeof payload.signal === 'string' || payload.signal === null) &&
-    typeof payload.head_before === 'string' &&
-    typeof payload.head_after === 'string' &&
-    typeof payload.clean_before === 'boolean' &&
-    typeof payload.clean_after === 'boolean' &&
-    typeof payload.artifact === 'object' &&
-    payload.artifact !== null &&
-    typeof payload.artifact.path === 'string' &&
-    typeof payload.artifact.sha256 === 'string' &&
-    payload.sensor?.name === 'threadloop-local-gate' &&
-    // v1 receipts predate setup and carry no `setup` key; v2 always carries one, possibly empty.
-    ((payload.sensor.contract_version === 1 && payload.setup === undefined) ||
-      (payload.sensor.contract_version === 2 && isRecordedSetupStepArray(payload.setup)))
-  );
-}
-
-function isRecordedSetupStepArray(value: unknown): value is RecordedSetupStep[] {
-  return (
-    Array.isArray(value) &&
-    value.every((step: unknown) => {
-      if (typeof step !== 'object' || step === null || Array.isArray(step)) {
-        return false;
-      }
-      const candidate = step as Partial<RecordedSetupStep>;
-      return (
-        typeof candidate.id === 'string' &&
-        Array.isArray(candidate.command) &&
-        candidate.command.every((argument) => typeof argument === 'string') &&
-        typeof candidate.working_directory === 'string' &&
-        typeof candidate.timeout_ms === 'number' &&
-        GATE_RECEIPT_RESULTS.includes(candidate.result as GateReceiptResult) &&
-        typeof candidate.started_at === 'string' &&
-        typeof candidate.ended_at === 'string' &&
-        typeof candidate.duration_ms === 'number' &&
-        (typeof candidate.exit_status === 'number' || candidate.exit_status === null) &&
-        (typeof candidate.signal === 'string' || candidate.signal === null) &&
-        typeof candidate.head_before === 'string' &&
-        typeof candidate.head_after === 'string' &&
-        typeof candidate.clean_before === 'boolean' &&
-        typeof candidate.clean_after === 'boolean' &&
-        typeof candidate.output === 'object' &&
-        candidate.output !== null &&
-        typeof candidate.output.stdout_sha256 === 'string' &&
-        typeof candidate.output.stderr_sha256 === 'string'
-      );
-    })
-  );
-}
-
-function aggregateProofStatus(gates: ProofGateEvidence[]): ProofEvidenceStatus {
-  if (gates.every((gate) => gate.status === 'passed')) {
-    return 'passed';
-  }
-  // `setup_failed` outranks `failed` because a broken environment is the actionable root cause: a gate that
-  // never ran its command tells you nothing about the code.
-  for (const status of ['corrupt', 'setup_failed', 'failed', 'stale', 'missing'] as const) {
-    if (gates.some((gate) => gate.status === status)) {
-      return status;
-    }
-  }
-  return 'missing';
-}
-
-/**
- * Validates one declared gate. Exported because the CI sensor receives a single gate rather than a whole plan
- * and must apply exactly these rules: wrapping the gate in a synthetic legacy plan would silently reject
- * declared `setup`, since only contract_version 4 admits it.
+ * Why recorded setup does not correspond to the gate's declaration, or null when it does. One rule for local
+ * receipts and signed artifacts, so the two cannot disagree about the same execution. The path is relative to
+ * the recorded setup array.
  *
- * `allowSetup` is the version gate. When false, a gate carrying `setup` fails the exact-field check rather
- * than having the field ignored.
+ * Setup is recorded positionally and stops at the first step that does not pass, so a non-passing step is
+ * always the last one recorded. Only a result reachable before the gate command ran may record a short
+ * sequence: `setup_failed`, `invalidated` (a setup step changed the repository), and `aborted`, because the CI
+ * signer reports a cancelled job as `aborted` whenever GitHub cancelled it, including mid-setup. Every other
+ * result means the gate command ran, which requires every declared step to have passed.
  */
-export function validateDeclaredGate(
-  value: unknown,
-  options: { field?: string; allowSetup?: boolean } = {},
-): ProofGate {
-  const field = options.field ?? 'gate';
-  const record = requireObject(value, field);
-  const declaresSetup = (options.allowSetup ?? true) && 'setup' in record;
-  const gate = requireExactObject(
-    record,
-    field,
-    declaresSetup
-      ? ['id', 'setup', 'command', 'working_directory', 'timeout_ms']
-      : ['id', 'command', 'working_directory', 'timeout_ms'],
-  );
-  const id = requireGateIdentifier(gate.id, `${field}.id`);
-  const execution = validateExecutionSpec(gate, field);
-  const setup = declaresSetup ? validateSetupSteps(gate.setup, `${field}.setup`) : [];
+export function recordedSetupViolation(
+  recordedSteps:
+    readonly Pick<RecordedSetupStep, 'id' | 'command' | 'working_directory' | 'timeout_ms' | 'result'>[] | undefined,
+  declaredSteps: readonly ProofSetupStep[] | undefined,
+  result: GateReceiptResult,
+): { path: Array<string | number>; message: string } | null {
+  const recorded = recordedSteps ?? [];
+  const declared = declaredSteps ?? [];
+  const commandRan = result !== 'setup_failed' && result !== 'invalidated' && result !== 'aborted';
+  const violation = (message: string, ...path: Array<string | number>) => ({ path, message });
+  if (result === 'setup_failed' && declared.length === 0) {
+    return violation('cannot be setup_failed when the gate declares no setup');
+  }
+  if (recorded.length > declared.length) {
+    return violation('must not record more steps than the gate declares');
+  }
+  if (result === 'setup_failed' && recorded.length === 0) {
+    return violation('must record the setup step that failed');
+  }
+  if (commandRan && recorded.length !== declared.length) {
+    return violation('must record every declared setup step for this receipt result');
+  }
+  const mismatch = recorded.findIndex((step, index) => {
+    const expected = declared[index];
+    return (
+      !expected ||
+      step.id !== expected.id ||
+      step.working_directory !== expected.working_directory ||
+      step.timeout_ms !== expected.timeout_ms ||
+      canonicalJson(step.command) !== canonicalJson(expected.command)
+    );
+  });
+  if (mismatch !== -1) {
+    return violation('must match the setup step the gate declares at the same position', mismatch);
+  }
+  const firstNonPassing = recorded.findIndex((step) => step.result !== 'passed');
+  if (firstNonPassing === -1) {
+    return result === 'setup_failed' ? violation('must include a non-passing setup step') : null;
+  }
+  if (commandRan) {
+    return violation('must be passed when the gate command ran', firstNonPassing, 'result');
+  }
+  if (firstNonPassing !== recorded.length - 1) {
+    return violation('the first non-passing setup step must be the last recorded step', firstNonPassing, 'result');
+  }
+  return null;
+}
 
-  return {
-    id,
-    ...(setup.length > 0 ? { setup } : {}),
-    ...execution,
-  };
+function reportDuplicateIds(entries: readonly { id: string }[], context: z.RefinementCtx, message: string) {
+  const seen = new Set<string>();
+  for (const [index, { id }] of entries.entries()) {
+    if (seen.has(id)) {
+      reject(context, [index, 'id'], `${message} ${id}`);
+      return;
+    }
+    seen.add(id);
+  }
 }
 
 /**
- * The execution shape shared by a gate command and every declared setup step. Extracted so a setup step can
- * never be validated more loosely than the gate command it provisions for.
+ * Rebinds a plan read back from storage. The stored JSON must re-canonicalize to exactly the bytes and digest that
+ * were recorded, or the plan is reported as corrupt rather than trusted.
  */
-function validateExecutionSpec(record: Record<string, unknown>, field: string) {
-  if (!Array.isArray(record.command) || record.command.length === 0 || record.command.length > 128) {
-    throw invalid(`${field}.command`, 'must contain 1-128 exact argv strings');
+export function bindStoredProofPlan(
+  stored: { json: string; sha256: string; baselineBranch: string; baselineHeadSha: string; createdAt: string },
+  digest: ProofDigest,
+): { plan: BoundProofPlan } | { problem: string } {
+  let canonical: CanonicalProofPlan;
+  try {
+    canonical = canonicalizeProofPlan(JSON.parse(stored.json) as unknown, digest);
+  } catch {
+    return { problem: 'The stored proof plan is invalid.' };
   }
-  const command = record.command.map((argument, argumentIndex) =>
-    requireNonEmptyText(argument, `${field}.command[${argumentIndex}]`, 32_768),
-  );
-
-  const workingDirectory = requireNonEmptyText(record.working_directory, `${field}.working_directory`, 4_096);
-  if (path.isAbsolute(workingDirectory)) {
-    throw invalid(`${field}.working_directory`, 'must be a repository-relative path');
+  if (canonical.json !== stored.json || canonical.sha256 !== stored.sha256) {
+    return { problem: 'The stored proof plan digest does not match its contents.' };
   }
-  const normalizedDirectory = path.normalize(workingDirectory);
-  if (
-    normalizedDirectory === '..' ||
-    normalizedDirectory.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(normalizedDirectory)
-  ) {
-    throw invalid(`${field}.working_directory`, 'must not escape the repository');
-  }
-
-  if (
-    typeof record.timeout_ms !== 'number' ||
-    !Number.isSafeInteger(record.timeout_ms) ||
-    record.timeout_ms < 1 ||
-    record.timeout_ms > 86_400_000
-  ) {
-    throw invalid(`${field}.timeout_ms`, 'must be an integer from 1 through 86400000');
-  }
-
   return {
-    command,
-    working_directory: workingDirectory,
-    timeout_ms: record.timeout_ms,
+    plan: {
+      ...canonical,
+      baselineBranch: stored.baselineBranch,
+      baselineHeadSha: stored.baselineHeadSha,
+      createdAt: stored.createdAt,
+    },
   };
-}
-
-function validateSetupSteps(value: unknown, field: string): ProofSetupStep[] {
-  if (!Array.isArray(value)) {
-    throw invalid(field, 'must be an array of declared setup steps');
-  }
-  if (value.length > MAXIMUM_SETUP_STEPS) {
-    throw invalid(field, `must declare no more than ${MAXIMUM_SETUP_STEPS} setup steps`);
-  }
-
-  const stepIds = new Set<string>();
-  return value.map((step, index) => {
-    const stepField = `${field}[${index}]`;
-    const record = requireExactObject(step, stepField, ['id', 'command', 'working_directory', 'timeout_ms']);
-    const id = requireGateIdentifier(record.id, `${stepField}.id`);
-    if (stepIds.has(id)) {
-      throw invalid(`${stepField}.id`, `duplicates declared setup step ${id}`);
-    }
-    stepIds.add(id);
-
-    return { id, ...validateExecutionSpec(record, stepField) };
-  });
-}
-
-function requireGateIdentifier(value: unknown, field: string) {
-  const id = requireNonEmptyText(value, field, 128);
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)) {
-    throw invalid(field, 'must match [A-Za-z0-9][A-Za-z0-9._-]*');
-  }
-  return id;
-}
-
-function requireExactObject(value: unknown, field: string, expectedKeys: string[]) {
-  const record = requireObject(value, field);
-  const keys = Object.keys(record).sort();
-  const expected = [...expectedKeys].sort();
-  if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) {
-    throw invalid(field, `must contain exactly: ${expectedKeys.join(', ')}`);
-  }
-  return record;
-}
-
-function requireObject(value: unknown, field: string) {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw invalid(field, 'must be an object');
-  }
-  return value as Record<string, unknown>;
-}
-
-function requireNonEmptyText(value: unknown, field: string, maximumLength: number) {
-  if (typeof value !== 'string' || value.trim().length === 0 || value.length > maximumLength || value.includes('\0')) {
-    throw invalid(field, `must be a non-empty string no longer than ${maximumLength} characters`);
-  }
-  return value;
-}
-
-function validateTrustPolicy(value: unknown, field: string, sensorWorkflow: string): GitHubActionsTrustPolicy {
-  const policy = requireExactObject(value, field, [
-    'provider',
-    'issuer',
-    'certificate_identity',
-    'source_repository',
-    'build_signer_uri',
-    'build_signer_sha',
-  ]);
-  if (policy.provider !== 'github-actions') {
-    throw invalid(`${field}.provider`, 'must be github-actions');
-  }
-  if (policy.issuer !== 'https://token.actions.githubusercontent.com') {
-    throw invalid(`${field}.issuer`, 'must be https://token.actions.githubusercontent.com');
-  }
-
-  const sourceRepository = requireNonEmptyText(policy.source_repository, `${field}.source_repository`, 512);
-  if (!/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(sourceRepository)) {
-    throw invalid(`${field}.source_repository`, 'must be an exact GitHub repository URI without a .git suffix');
-  }
-
-  const certificateIdentity = requireNonEmptyText(policy.certificate_identity, `${field}.certificate_identity`, 1_024);
-  const escapedSource = escapeRegExp(sourceRepository);
-  if (
-    !new RegExp(`^${escapedSource}/\\.github/workflows/[A-Za-z0-9._-]+\\.ya?ml@refs/heads/[A-Za-z0-9._/-]+$`).test(
-      certificateIdentity,
-    )
-  ) {
-    throw invalid(
-      `${field}.certificate_identity`,
-      'must identify an exact workflow and branch in the source repository',
-    );
-  }
-
-  const buildSignerSha = requireNonEmptyText(policy.build_signer_sha, `${field}.build_signer_sha`, 40);
-  if (!/^[0-9a-f]{40}$/.test(buildSignerSha)) {
-    throw invalid(`${field}.build_signer_sha`, 'must be a full lowercase Git commit SHA');
-  }
-  const buildSignerUri = requireNonEmptyText(policy.build_signer_uri, `${field}.build_signer_uri`, 1_024);
-  const expectedSignerUri = `https://github.com/nnennandukwe/threadloop/.github/workflows/${sensorWorkflow}@${buildSignerSha}`;
-  if (buildSignerUri !== expectedSignerUri) {
-    throw invalid(`${field}.build_signer_uri`, `must equal ${expectedSignerUri}`);
-  }
-
-  return {
-    provider: 'github-actions',
-    issuer: 'https://token.actions.githubusercontent.com',
-    certificate_identity: certificateIdentity,
-    source_repository: sourceRepository,
-    build_signer_uri: buildSignerUri,
-    build_signer_sha: buildSignerSha,
-  };
-}
-
-function escapeRegExp(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function invalid(field: string, message: string) {
-  return new ProofValidationError(field, `${field} ${message}.`);
 }
