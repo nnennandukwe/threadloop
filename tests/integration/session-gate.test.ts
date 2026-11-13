@@ -68,6 +68,16 @@ function unignoredInstall() {
   return { files, command };
 }
 
+/** Applies inherited ignores only to one child invocation, without changing user settings. */
+async function makeGlobalIgnoreConfig(repoDir: string) {
+  const directory = await makeTempDir('threadloop-global-ignore-');
+  const excludesPath = path.join(directory, 'ignore');
+  const configPath = path.join(directory, 'gitconfig');
+  await writeFile(excludesPath, 'node_modules/\n', 'utf8');
+  await git(repoDir, 'config', '--file', configPath, 'core.excludesFile', excludesPath);
+  return configPath;
+}
+
 async function readExecution(repoDir: string, artifactPath: string) {
   return JSON.parse(await readFile(path.join(repoDir, artifactPath), 'utf8')) as {
     stdout: { path: string; sha256: string; bytes: number };
@@ -920,15 +930,12 @@ describe('declared gate setup', () => {
     const { repoDir, sessionId } = await makeVerifyingSession({
       plan: proofPlan(actor === 'setup' ? { setup: [step('install', command)] } : { command }),
     });
-    const result = await runCli(repoDir, [
-      'session',
-      'gate',
-      'run',
-      'check',
-      '--session',
-      sessionId,
-      ...(json ? ['--json'] : []),
-    ]);
+    const configPath = await makeGlobalIgnoreConfig(repoDir);
+    const result = await runCli(
+      repoDir,
+      ['session', 'gate', 'run', 'check', '--session', sessionId, ...(json ? ['--json'] : [])],
+      { GIT_CONFIG_GLOBAL: configPath },
+    );
 
     if (json) {
       const output = parseJson<{
@@ -1176,10 +1183,12 @@ describe('local and CI receipts describe setup identically', { timeout: 60_000 }
     );
     const recorded = await recordProofPlan(repoDir, sessionId, plan);
     const reportPath = path.join(await makeTempDir(), 'gate-report.json');
+    const configPath = await makeGlobalIgnoreConfig(repoDir);
     const failure = await execFileAsync('npm', ['run', '--silent', 'sensor:ci-gate:run'], {
       cwd: process.cwd(),
       env: {
         ...process.env,
+        GIT_CONFIG_GLOBAL: configPath,
         THREADLOOP_SESSION_ID: sessionId,
         THREADLOOP_PLAN_SHA256: recorded.data.proof_plan.sha256,
         THREADLOOP_GATE_ID: 'check',
