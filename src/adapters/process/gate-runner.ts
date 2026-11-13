@@ -173,7 +173,8 @@ function repositoryMutationDiagnostic(
   }
   const subject = actor === 'setup' ? `Setup step ${stepId}` : 'Gate command';
   const timing = actor === 'setup' ? 'before the gate ran' : 'while it ran';
-  const paths = changedFiles.length > 0 ? `: ${changedFiles.map(quoteDiagnosticValue).join(', ')}` : '';
+  const pathSummary = diagnosticPathSummary(changedFiles);
+  const paths = changedFiles.length > 0 ? `: ${pathSummary.text}` : '';
   const branchDetail = branchChanged
     ? ` (branch changed from ${quoteDiagnosticValue(before.branch ?? '(detached HEAD)')} to ${quoteDiagnosticValue(after.branch ?? '(detached HEAD)')})`
     : '';
@@ -188,9 +189,12 @@ function repositoryMutationDiagnostic(
   ]
     .filter(Boolean)
     .join(' and ');
+  const affectedPaths = pathSummary.shortened
+    ? 'all affected paths (use git status --short --untracked-files=all for the full list)'
+    : 'the listed paths';
   const restoration = verificationTarget
-    ? `${changedFiles.length > 0 ? 'Restore or commit the listed paths and restore' : 'Restore'} ${verificationTarget}`
-    : 'Restore or commit the listed paths';
+    ? `${changedFiles.length > 0 ? `Restore or commit ${affectedPaths} and restore` : 'Restore'} ${verificationTarget}`
+    : `Restore or commit ${affectedPaths}`;
   const prevention =
     headChanged || branchChanged
       ? `change the ${actor === 'setup' ? 'setup declaration' : 'gate'} so it preserves ${branchChanged ? 'HEAD and the bound branch' : 'HEAD'} and writes only to gitignored paths or outside the repository`
@@ -205,6 +209,23 @@ function repositoryMutationDiagnostic(
     changed_files: changedFiles,
     hint: `${restoration}, ${prevention}, then start a new session.`,
   };
+}
+
+function diagnosticPathSummary(paths: readonly string[]): { text: string; shortened: boolean } {
+  const displayed = paths.slice(0, 5).map((file) => {
+    const characters = Array.from(file);
+    const shortened = characters.length > 80;
+    return {
+      value: quoteDiagnosticValue(shortened ? `${characters.slice(0, 80).join('')}…` : file),
+      shortened,
+    };
+  });
+  const shortenedNames = displayed.some((file) => file.shortened);
+  const shortened = displayed.length < paths.length || shortenedNames;
+  const count = shortened
+    ? ` (${displayed.length} of ${paths.length} paths shown${shortenedNames ? '; long paths shortened' : ''})`
+    : '';
+  return { text: `${displayed.map((file) => file.value).join(', ')}${count}`, shortened };
 }
 
 function quoteDiagnosticValue(value: string): string {

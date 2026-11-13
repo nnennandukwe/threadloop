@@ -135,6 +135,15 @@ commit stays the same. Setup stops before later steps or the gate can run on tha
 caller-SHA binding. This preserves machine compatibility while closing the operator-diagnosis gap tracked in
 [issue #84](https://github.com/nnennandukwe/threadloop/issues/84).
 
+For large installs, the displayed message shows at most five paths and shortens each after 80 characters. It reports the
+shown and total counts and directs operators to `git status` for the full list. JSON's `changed_files` still contains
+every raw path.
+
+Before updating the CLI in a consumer repository, refresh any copied
+[runner skill](../.agents/skills/threadloop-runner/SKILL.md) so it handles the additive `data.diagnostic` field. An
+older copy can stop after an invalidated gate without passing its cause and recovery guidance to the operator. Consumer
+owners must update and verify their own copies.
+
 ### Getting it wrong mid-session
 
 The proof plan is immutable once bound, so a declaration cannot be corrected in place. A `setup_failed` receipt tells

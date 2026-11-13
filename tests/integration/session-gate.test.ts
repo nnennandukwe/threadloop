@@ -50,6 +50,24 @@ const writeMarker = (markerPath: string) => [
   `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "started")`,
 ];
 
+function unignoredInstall() {
+  const files = Array.from(
+    { length: 300 },
+    (_, index) => `node_modules/${String(index).padStart(3, '0')}/${'x'.repeat(160)}.txt`,
+  );
+  const command = [
+    'node',
+    '-e',
+    `const fs = require("node:fs");
+     for (let index = 0; index < 300; index++) {
+       const directory = "node_modules/" + String(index).padStart(3, "0");
+       fs.mkdirSync(directory, { recursive: true });
+       fs.writeFileSync(directory + "/" + "x".repeat(160) + ".txt", "installed");
+     }`,
+  ];
+  return { files, command };
+}
+
 async function readExecution(repoDir: string, artifactPath: string) {
   return JSON.parse(await readFile(path.join(repoDir, artifactPath), 'utf8')) as {
     stdout: { path: string; sha256: string; bytes: number };
@@ -894,6 +912,43 @@ describe('declared gate setup', () => {
     );
   });
 
+  it.each([
+    { actor: 'setup', json: true },
+    { actor: 'gate', json: false },
+  ] as const)('bounds large-install diagnostics for local $actor, JSON $json', async ({ actor, json }) => {
+    const { files, command } = unignoredInstall();
+    const { repoDir, sessionId } = await makeVerifyingSession({
+      plan: proofPlan(actor === 'setup' ? { setup: [step('install', command)] } : { command }),
+    });
+    const result = await runCli(repoDir, [
+      'session',
+      'gate',
+      'run',
+      'check',
+      '--session',
+      sessionId,
+      ...(json ? ['--json'] : []),
+    ]);
+
+    if (json) {
+      const output = parseJson<{
+        data: { receipt: { result: string }; diagnostic: { message: string; changed_files: string[]; hint: string } };
+      }>(result.stdout);
+      expect(output.data.receipt.result).toBe('invalidated');
+      expect(output.data.diagnostic.changed_files).toEqual(files);
+      expect(output.data.diagnostic.message.length).toBeLessThan(4_096);
+      expect(output.data.diagnostic.message).toContain('5 of 300 paths shown');
+      expect(output.data.diagnostic.message).toContain('long paths shortened');
+      expect(output.data.diagnostic.hint).toContain('git status --short --untracked-files=all');
+    } else {
+      expect(result.stdout.length).toBeLessThan(4_096);
+      expect(result.stdout).toContain('5 of 300 paths shown');
+      expect(result.stdout).toContain('long paths shortened');
+      expect(result.stdout).toContain('Recovery:');
+      expect(result.stdout).toContain('git status --short --untracked-files=all');
+    }
+  });
+
   it.each(['setup', 'gate'] as const)(
     'names the original HEAD when %s changes it without dirty paths',
     async (actor) => {
@@ -1103,6 +1158,52 @@ describe('gate receipt result domain migration', () => {
 });
 
 describe('local and CI receipts describe setup identically', { timeout: 60_000 }, () => {
+  it.each(['setup', 'gate'] as const)('bounds large-install diagnostics for CI %s', async (actor) => {
+    const { command } = unignoredInstall();
+    const repoDir = await makeCommittedRepo();
+    const sessionId = await startFramedSession(repoDir);
+    const plan = proofPlan(
+      actor === 'setup'
+        ? { setup: [{ id: 'install', command, working_directory: '.', timeout_ms: 5_000 }] }
+        : { command },
+    );
+    const recorded = await recordProofPlan(repoDir, sessionId, plan);
+    const reportPath = path.join(await makeTempDir(), 'gate-report.json');
+    const failure = await execFileAsync('npm', ['run', '--silent', 'sensor:ci-gate:run'], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        THREADLOOP_SESSION_ID: sessionId,
+        THREADLOOP_PLAN_SHA256: recorded.data.proof_plan.sha256,
+        THREADLOOP_GATE_ID: 'check',
+        THREADLOOP_GATE_JSON: canonicalJson(plan.gates[0]),
+        THREADLOOP_SOURCE_ROOT: repoDir,
+        THREADLOOP_REPORT_PATH: reportPath,
+        GITHUB_SERVER_URL: 'https://github.com',
+        GITHUB_REPOSITORY: 'example/threadloop-fixture',
+        GITHUB_REF: `refs/heads/${fixtureBranch}`,
+        GITHUB_SHA: await git(repoDir, 'rev-parse', 'HEAD'),
+        GITHUB_RUN_ID: '123',
+        GITHUB_RUN_ATTEMPT: '1',
+        RUNNER_OS: 'Linux',
+        RUNNER_ARCH: 'X64',
+      },
+    }).then(
+      () => null,
+      (error: Error & { stderr?: string }) => error,
+    );
+
+    expect(failure).not.toBeNull();
+    expect(failure?.stderr?.length).toBeLessThan(4_096);
+    expect(failure?.stderr).toContain('5 of 300 paths shown');
+    expect(failure?.stderr).toContain('long paths shortened');
+    expect(failure?.stderr).toContain('Recovery:');
+    expect(failure?.stderr).toContain('git status --short --untracked-files=all');
+    const report = JSON.parse(await readFile(reportPath, 'utf8')) as { result: string };
+    expect(report.result).toBe('invalidated');
+    expect(report).not.toHaveProperty('diagnostic');
+  });
+
   it('records the same setup for the same HEAD through both execution paths', async () => {
     const plan = proofPlan({
       setup: [
