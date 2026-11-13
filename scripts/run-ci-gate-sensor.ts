@@ -77,8 +77,12 @@ const execution = await runGateWithSetup({
     stderrPath,
     env: gateEnvironment(),
   },
-  observedBefore: before,
-  observe: () => observeProofRepository(sourceRoot).catch(() => null),
+  // CI binds the caller SHA, so branch changes at that same commit retain their existing meaning.
+  observedBefore: { headSha: before.headSha, clean: before.clean, changedFiles: before.changedFiles },
+  observe: () =>
+    observeProofRepository(sourceRoot)
+      .then(({ headSha, clean, changedFiles }) => ({ headSha, clean, changedFiles }))
+      .catch(() => null),
 });
 
 let after: Awaited<ReturnType<typeof observeProofRepository>>;

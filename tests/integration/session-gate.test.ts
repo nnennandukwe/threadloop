@@ -912,6 +912,52 @@ describe('declared gate setup', () => {
     },
   );
 
+  it.each([
+    { actor: 'setup', detached: false },
+    { actor: 'gate', detached: false },
+    { actor: 'setup', detached: true },
+    { actor: 'gate', detached: true },
+  ] as const)(
+    'names the bound branch when $actor switches branches at the same HEAD, detached $detached',
+    async ({ actor, detached }) => {
+      const scratch = await makeTempDir();
+      const laterMarker = path.join(scratch, 'later-setup.txt');
+      const gateMarker = path.join(scratch, 'gate.txt');
+      const switchBranch = detached
+        ? ['git', 'checkout', '--detach', 'HEAD']
+        : ['git', 'checkout', '-b', 'other-verification-branch'];
+      const { repoDir, sessionId, head } = await makeVerifyingSession({
+        plan: proofPlan(
+          actor === 'setup'
+            ? {
+                setup: [step('switch', switchBranch), step('later', writeMarker(laterMarker))],
+                command: writeMarker(gateMarker),
+              }
+            : { command: switchBranch },
+        ),
+      });
+      const result = parseJson<{
+        data: {
+          receipt: { result: string; head_after: string };
+          diagnostic: { code: string; step_id: string | null; changed_files: string[]; hint: string };
+        };
+      }>((await runCli(repoDir, gateRunArgs(sessionId))).stdout);
+
+      expect(result.data.receipt).toMatchObject({ result: 'invalidated', head_after: head });
+      expect(result.data.diagnostic).toMatchObject({
+        code: actor === 'setup' ? 'SETUP_MUTATED_REPOSITORY' : 'GATE_MUTATED_REPOSITORY',
+        step_id: actor === 'setup' ? 'switch' : null,
+        changed_files: [],
+      });
+      expect(result.data.diagnostic.hint).toContain(fixtureBranch);
+      if (actor === 'setup') {
+        expect(existsSync(laterMarker)).toBe(false);
+        expect(existsSync(gateMarker)).toBe(false);
+      }
+      expect(readLifecycle(repoDir)).toEqual({ status: 'verifying', state_version: 4 });
+    },
+  );
+
   it.each([true, false])('escapes control characters in human diagnostics with JSON mode %s', async (json) => {
     const fileName = 'report\n::add-mask::forged\u001b[31m\u0085\u2028.txt';
     const { repoDir, sessionId } = await makeVerifyingSession({
@@ -1194,4 +1240,47 @@ describe('local and CI receipts describe setup identically', { timeout: 60_000 }
       expect(report).not.toHaveProperty('diagnostic');
     },
   );
+  it.each(['setup', 'gate'] as const)('preserves SHA-only CI binding when %s switches branches', async (actor) => {
+    const repoDir = await makeCommittedRepo();
+    const sessionId = await startFramedSession(repoDir);
+    const switchBranch = ['git', 'checkout', '-b', 'other-ci-branch'];
+    const marker = path.join(await makeTempDir(), 'ci-gate.txt');
+    const plan = proofPlan(
+      actor === 'setup'
+        ? {
+            setup: [{ id: 'switch', command: switchBranch, working_directory: '.', timeout_ms: 5_000 }],
+            command: writeMarker(marker),
+          }
+        : { command: switchBranch },
+    );
+    const recorded = await recordProofPlan(repoDir, sessionId, plan);
+    const head = await git(repoDir, 'rev-parse', 'HEAD');
+    const reportPath = path.join(await makeTempDir(), 'gate-report.json');
+
+    const output = await execFileAsync('npm', ['run', '--silent', 'sensor:ci-gate:run'], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        THREADLOOP_SESSION_ID: sessionId,
+        THREADLOOP_PLAN_SHA256: recorded.data.proof_plan.sha256,
+        THREADLOOP_GATE_ID: 'check',
+        THREADLOOP_GATE_JSON: canonicalJson(plan.gates[0]),
+        THREADLOOP_SOURCE_ROOT: repoDir,
+        THREADLOOP_REPORT_PATH: reportPath,
+        GITHUB_SERVER_URL: 'https://github.com',
+        GITHUB_REPOSITORY: 'example/project',
+        GITHUB_REF: `refs/heads/${fixtureBranch}`,
+        GITHUB_SHA: head,
+        GITHUB_RUN_ID: '123',
+        GITHUB_RUN_ATTEMPT: '1',
+        RUNNER_OS: 'Linux',
+        RUNNER_ARCH: 'X64',
+      },
+    });
+    const report = JSON.parse(await readFile(reportPath, 'utf8')) as { result: string; head_after: string };
+    expect(report).toMatchObject({ result: 'passed', head_after: head });
+    expect(output.stderr).toBe('');
+    expect(await git(repoDir, 'branch', '--show-current')).toBe('other-ci-branch');
+    if (actor === 'setup') expect(existsSync(marker)).toBe(true);
+  });
 });

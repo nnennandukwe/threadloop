@@ -37,6 +37,8 @@ export interface GateRepositoryObservation {
   headSha: string;
   clean: boolean;
   changedFiles: string[];
+  /** Present when the caller also binds execution to a branch; CI binds only the caller SHA. */
+  branch?: string | null;
 }
 
 export interface RepositoryMutationDiagnostic {
@@ -93,9 +95,9 @@ export interface GateWithSetupResult {
 }
 
 /**
- * Runs every declared setup step in order and then the gate command. The single execution path shared by
- * `session gate run` and the CI sensor, so a local receipt and a signed receipt for the same HEAD cannot
- * describe setup differently.
+ * Runs every declared setup step in order and then the gate command. Local and CI execution share the same
+ * runner and receipt serialization while applying their existing repository bindings: local observations
+ * include the bound branch, while CI observations bind only the caller SHA.
  *
  * A setup step that does not pass stops the sequence: remaining steps and the gate command do not run. A
  * compromised repository observation stops it too, because continuing would attribute later work to a HEAD
@@ -126,7 +128,13 @@ export async function runGateWithSetup(input: GateWithSetupInput): Promise<GateW
     observed = stepAfter;
     const diagnostic = repositoryMutationDiagnostic('setup', step.id, stepBefore, stepAfter);
 
-    if (process.result !== 'passed' || !stepAfter || !stepAfter.clean || stepAfter.headSha !== stepBefore.headSha) {
+    if (
+      process.result !== 'passed' ||
+      !stepAfter ||
+      !stepAfter.clean ||
+      stepAfter.headSha !== stepBefore.headSha ||
+      repositoryBranchChanged(stepBefore, stepAfter)
+    ) {
       return { setup, gate: null, observedAfter: stepAfter, diagnostic, window: executionWindow(setup, null) };
     }
   }
@@ -159,21 +167,36 @@ function repositoryMutationDiagnostic(
   const previouslyDirty = new Set(before.changedFiles);
   const changedFiles = after.changedFiles.filter((file) => !previouslyDirty.has(file)).sort();
   const headChanged = before.headSha !== after.headSha;
-  if (!headChanged && changedFiles.length === 0) {
+  const branchChanged = repositoryBranchChanged(before, after);
+  if (!headChanged && !branchChanged && changedFiles.length === 0) {
     return null;
   }
   const subject = actor === 'setup' ? `Setup step ${stepId}` : 'Gate command';
   const timing = actor === 'setup' ? 'before the gate ran' : 'while it ran';
-  const paths = changedFiles.length > 0 ? `: ${changedFiles.map(formatDiagnosticPath).join(', ')}` : '';
-  const detail = `${paths}${headChanged ? ' (HEAD changed)' : ''}`;
-  const restoration = headChanged
-    ? `${changedFiles.length > 0 ? 'Restore or commit the listed paths and restore' : 'Restore'} the intended verification HEAD ${before.headSha}`
+  const paths = changedFiles.length > 0 ? `: ${changedFiles.map(quoteDiagnosticValue).join(', ')}` : '';
+  const branchDetail = branchChanged
+    ? ` (branch changed from ${quoteDiagnosticValue(before.branch ?? '(detached HEAD)')} to ${quoteDiagnosticValue(after.branch ?? '(detached HEAD)')})`
+    : '';
+  const detail = `${paths}${headChanged ? ' (HEAD changed)' : ''}${branchDetail}`;
+  const verificationTarget = [
+    headChanged ? `the intended verification HEAD ${before.headSha}` : null,
+    branchChanged
+      ? before.branch === null
+        ? 'detached HEAD'
+        : `branch ${quoteDiagnosticValue(before.branch ?? '(detached HEAD)')}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(' and ');
+  const restoration = verificationTarget
+    ? `${changedFiles.length > 0 ? 'Restore or commit the listed paths and restore' : 'Restore'} ${verificationTarget}`
     : 'Restore or commit the listed paths';
-  const prevention = headChanged
-    ? `change the ${actor === 'setup' ? 'setup declaration' : 'gate'} so it preserves HEAD and writes only to gitignored paths or outside the repository`
-    : actor === 'setup'
-      ? 'change the setup declaration to use a frozen installer and gitignored output'
-      : 'change the gate to write generated output outside the repository or to gitignored paths';
+  const prevention =
+    headChanged || branchChanged
+      ? `change the ${actor === 'setup' ? 'setup declaration' : 'gate'} so it preserves ${branchChanged ? 'HEAD and the bound branch' : 'HEAD'} and writes only to gitignored paths or outside the repository`
+      : actor === 'setup'
+        ? 'change the setup declaration to use a frozen installer and gitignored output'
+        : 'change the gate to write generated output outside the repository or to gitignored paths';
 
   return {
     code: actor === 'setup' ? 'SETUP_MUTATED_REPOSITORY' : 'GATE_MUTATED_REPOSITORY',
@@ -184,12 +207,16 @@ function repositoryMutationDiagnostic(
   };
 }
 
-function formatDiagnosticPath(file: string): string {
+function quoteDiagnosticValue(value: string): string {
   // Keep raw paths in changed_files, but prevent terminal and workflow commands from entering human-readable logs.
-  return JSON.stringify(file).replace(
+  return JSON.stringify(value).replace(
     /\p{Cc}|[\u2028\u2029]/gu,
     (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`,
   );
+}
+
+function repositoryBranchChanged(before: GateRepositoryObservation, after: GateRepositoryObservation): boolean {
+  return before.branch !== undefined && after.branch !== undefined && before.branch !== after.branch;
 }
 
 /**
@@ -205,6 +232,7 @@ export function gateExecutionWasInvalidated(
     !observedAfter ||
     !observedAfter.clean ||
     observedAfter.headSha !== observedBefore.headSha ||
+    repositoryBranchChanged(observedBefore, observedAfter) ||
     execution.setup.some(
       (step) =>
         !step.cleanBefore ||

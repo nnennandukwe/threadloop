@@ -202,6 +202,10 @@ command changes it, the code is `GATE_MUTATED_REPOSITORY` and `step_id` is null.
 same message and recovery hint. The immutable local and signed receipt schemas don't change: their result remains
 `invalidated`, so existing consumers keep their current contract while operators get the missing cause.
 
+The local CLI also names branch changes, including a switch at the same HEAD or a detached checkout. A setup branch
+change stops later setup and the gate. Recovery names the original branch. CI retains its caller-SHA binding, so a
+branch change at the same commit preserves its existing outcome.
+
 ### `threadloop session gate import <package-path> --session <id> [--json]`
 
 Verifies and appends one signed GitHub Actions gate receipt. The input is limited to 10 MiB and the command accepts no

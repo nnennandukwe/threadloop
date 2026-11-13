@@ -267,6 +267,29 @@ describe('gate runner with declared setup', () => {
     expect(classifyGateOutcome({ setup: result.setup, gate: result.gate, invalidated })).toBe('invalidated');
   });
 
+  it('retains a branch mismatch when a later observation restores the bound branch', async () => {
+    const directory = await makeDirectory();
+    const observedBefore = { headSha: head, clean: true, changedFiles: [], branch: 'verification' };
+    const result = await runGateWithSetup({
+      setup: [stepInput(directory, 'switch', ['node', '-e', 'process.exit(0)'])],
+      gate: {
+        command: ['node', '-e', 'process.exit(0)'],
+        cwd: directory,
+        timeoutMs: 5_000,
+        stdoutPath: path.join(directory, 'gate.stdout.log'),
+        stderrPath: path.join(directory, 'gate.stderr.log'),
+      },
+      observedBefore,
+      observe: () => Promise.resolve({ ...observedBefore, branch: 'other' }),
+    });
+
+    expect(result.gate).toBeNull();
+    const finalObservation = { ...observedBefore };
+    const invalidated =
+      gateExecutionWasInvalidated(result, observedBefore) || finalObservation.branch !== observedBefore.branch;
+    expect(classifyGateOutcome({ setup: result.setup, gate: result.gate, invalidated })).toBe('invalidated');
+  });
+
   it('runs the gate directly when no setup is declared', async () => {
     const directory = await makeDirectory();
     const observer = stableObserver();
