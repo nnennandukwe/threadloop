@@ -109,11 +109,9 @@ Do not add blanket vulnerability or secret-scanning baselines. An unavoidable de
 advisory in `osv-scanner.toml`, explain why the vulnerable behavior is unreachable, link a remediation issue, and expire
 within 30 days. High or critical advisories must be fixed rather than ignored.
 
-The Markdown lint command uses `markdownlint-cli` `0.49.1` with the same `markdownlint` `0.41.1` rule engine. It
-replaces `markdownlint-cli2`, whose glob dependency chain includes an unpatched high-severity `braces` advisory. The
-CLI's parser overrides select `smol-toml` `1.9.1` and `js-yaml` `5.5.0`; remove each override when the upstream CLI
-selects the corresponding patched dependency. The TOML override includes the fix for
-[GHSA-7w5x-hrqm-74c2](https://github.com/advisories/GHSA-7w5x-hrqm-74c2).
+The Markdown lint command uses `markdownlint-cli` `0.50.0` with the `markdownlint` `0.42.1` rule engine. It replaces
+`markdownlint-cli2`, whose glob dependency chain includes an unpatched high-severity `braces` advisory. The CLI now
+selects patched `smol-toml` `~1.9.1` and `js-yaml` `~5.5.0` directly, so their overrides are removed.
 
 The Markdown math parser's KaTeX dependency is pinned to patched `0.18.11`. Its upstream range still selects the
 vulnerable `0.16` line. The override retains the renderer's `renderToString` interface; inline, display and malformed
