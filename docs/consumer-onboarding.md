@@ -129,11 +129,11 @@ ThreadLoop distinguishes these two causes without changing the receipt contract.
 The receipt still records `invalidated`. If the gate command creates the file instead, the diagnostic code is
 `GATE_MUTATED_REPOSITORY`, `step_id` is null, and the hint directs generated gate output outside the repository or to
 gitignored paths. The CI sensor writes the same message and hint to stderr. Human-readable messages quote and escape
-paths; `changed_files` keeps their raw names. If HEAD changes without dirty paths, recovery names the original commit.
-For local execution, a branch switch also invalidates the receipt and recovery names the bound branch, even when the
-commit stays the same. Setup stops before later steps or the gate can run on that other branch. CI retains its
-caller-SHA binding. This preserves machine compatibility while closing the operator-diagnosis gap tracked in
-[issue #84](https://github.com/nnennandukwe/threadloop/issues/84).
+paths, including directional and invisible formatting characters; `changed_files` keeps their raw names. If HEAD changes
+without dirty paths, recovery names the original commit. For local execution, a branch switch also invalidates the
+receipt and recovery names the bound branch, even when the commit stays the same. Setup stops before later steps or the
+gate can run on that other branch. CI retains its caller-SHA binding. This preserves machine compatibility while closing
+the operator-diagnosis gap tracked in [issue #84](https://github.com/nnennandukwe/threadloop/issues/84).
 
 For large installs, the displayed message shows at most five paths and shortens each after 80 characters. It reports the
 shown and total counts and directs operators to `git status` for the full list. JSON's `changed_files` still contains

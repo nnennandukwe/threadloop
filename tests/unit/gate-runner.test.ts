@@ -267,9 +267,9 @@ describe('gate runner with declared setup', () => {
     expect(classifyGateOutcome({ setup: result.setup, gate: result.gate, invalidated })).toBe('invalidated');
   });
 
-  it('retains a branch mismatch when a later observation restores the bound branch', async () => {
+  it('retains a branch mismatch and safely quotes its recovery target', async () => {
     const directory = await makeDirectory();
-    const observedBefore = { headSha: head, clean: true, changedFiles: [], branch: 'verification' };
+    const observedBefore = { headSha: head, clean: true, changedFiles: [], branch: 'verification\u202e\u{e0061}' };
     const result = await runGateWithSetup({
       setup: [stepInput(directory, 'switch', ['node', '-e', 'process.exit(0)'])],
       gate: {
@@ -280,10 +280,13 @@ describe('gate runner with declared setup', () => {
         stderrPath: path.join(directory, 'gate.stderr.log'),
       },
       observedBefore,
-      observe: () => Promise.resolve({ ...observedBefore, branch: 'other' }),
+      observe: () => Promise.resolve({ ...observedBefore, branch: 'other\u2066' }),
     });
 
     expect(result.gate).toBeNull();
+    expect(result.diagnostic?.message).not.toMatch(/\p{Cf}/u);
+    expect(result.diagnostic?.hint).not.toMatch(/\p{Cf}/u);
+    expect(result.diagnostic?.hint).toContain('branch "verification\\u202e\\udb40\\udc61"');
     const finalObservation = { ...observedBefore };
     const invalidated =
       gateExecutionWasInvalidated(result, observedBefore) || finalObservation.branch !== observedBefore.branch;

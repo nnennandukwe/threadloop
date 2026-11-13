@@ -980,7 +980,7 @@ describe('declared gate setup', () => {
       const gateMarker = path.join(scratch, 'gate.txt');
       const switchBranch = detached
         ? ['git', 'checkout', '--detach', 'HEAD']
-        : ['git', 'checkout', '-b', 'other-verification-branch'];
+        : ['git', 'checkout', '-b', 'other-verification-\u202e-branch'];
       const { repoDir, sessionId, head } = await makeVerifyingSession({
         plan: proofPlan(
           actor === 'setup'
@@ -994,7 +994,7 @@ describe('declared gate setup', () => {
       const result = parseJson<{
         data: {
           receipt: { result: string; head_after: string };
-          diagnostic: { code: string; step_id: string | null; changed_files: string[]; hint: string };
+          diagnostic: { code: string; message: string; step_id: string | null; changed_files: string[]; hint: string };
         };
       }>((await runCli(repoDir, gateRunArgs(sessionId))).stdout);
 
@@ -1005,6 +1005,10 @@ describe('declared gate setup', () => {
         changed_files: [],
       });
       expect(result.data.diagnostic.hint).toContain(fixtureBranch);
+      expect(result.data.diagnostic.message).not.toMatch(/\p{Cf}/u);
+      if (!detached) {
+        expect(result.data.diagnostic.message).toContain('other-verification-\\u202e-branch');
+      }
       if (actor === 'setup') {
         expect(existsSync(laterMarker)).toBe(false);
         expect(existsSync(gateMarker)).toBe(false);
@@ -1014,7 +1018,8 @@ describe('declared gate setup', () => {
   );
 
   it.each([true, false])('escapes control characters in human diagnostics with JSON mode %s', async (json) => {
-    const fileName = 'report\n::add-mask::forged\u001b[31m\u0085\u2028.txt';
+    const fileName =
+      'report\n::add-mask::forged\u001b[31m\u0085\u2028\u202e\u202c\u2066\u2069\u200e\u200f\u061c\u{e0061}.txt';
     const { repoDir, sessionId } = await makeVerifyingSession({
       plan: proofPlan({ command: writeMarker(fileName) }),
     });
@@ -1031,13 +1036,15 @@ describe('declared gate setup', () => {
     if (json) {
       const output = parseJson<{ data: { diagnostic: { message: string; changed_files: string[] } } }>(result.stdout);
       expect(output.data.diagnostic.changed_files).toEqual([fileName]);
-      expect(output.data.diagnostic.message).not.toMatch(/\p{Cc}|[\u2028\u2029]/u);
+      expect(output.data.diagnostic.message).not.toMatch(/\p{Cc}|\p{Cf}|[\u2028\u2029]/u);
+      expect(output.data.diagnostic.message).toContain('\\udb40\\udc61');
     } else {
       expect(result.stdout.trimEnd().split('\n')).toHaveLength(4);
       expect(result.stdout).not.toContain('\n::add-mask::');
       expect(result.stdout).not.toContain('\u001b');
       expect(result.stdout).not.toContain('\u0085');
       expect(result.stdout).not.toContain('\u2028');
+      expect(result.stdout).not.toMatch(/\p{Cf}/u);
     }
   });
 
@@ -1279,7 +1286,9 @@ describe('local and CI receipts describe setup identically', { timeout: 60_000 }
     async ({ actor, dirty, malicious, mutates }) => {
       const repoDir = await makeCommittedRepo();
       const sessionId = await startFramedSession(repoDir);
-      const fileName = malicious ? 'report\n::add-mask::forged\u001b[31m\u0085\u2028.txt' : 'package-lock.json';
+      const fileName = malicious
+        ? 'report\n::add-mask::forged\u001b[31m\u0085\u2028\u202e\u202c\u2066\u2069\u200e\u200f\u061c\u{e0061}.txt'
+        : 'package-lock.json';
       const setupStep = {
         id: 'sync',
         command: mutates ? writeMarker(fileName) : ['node', '-e', 'process.exit(0)'],
@@ -1331,8 +1340,10 @@ describe('local and CI receipts describe setup identically', { timeout: 60_000 }
         expect(failure?.stderr).toBe('');
       } else if (malicious) {
         expect(failure?.stderr?.trimEnd().split('\n')).toHaveLength(2);
-        expect(failure?.stderr?.replaceAll('\n', '')).not.toMatch(/\p{Cc}|[\u2028\u2029]/u);
-        expect(failure?.stderr).toContain('report\\n::add-mask::forged\\u001b[31m\\u0085\\u2028.txt');
+        expect(failure?.stderr?.replaceAll('\n', '')).not.toMatch(/\p{Cc}|\p{Cf}|[\u2028\u2029]/u);
+        expect(failure?.stderr).toContain(
+          'report\\n::add-mask::forged\\u001b[31m\\u0085\\u2028\\u202e\\u202c\\u2066\\u2069\\u200e\\u200f\\u061c\\udb40\\udc61.txt',
+        );
       } else {
         expect(failure?.stderr).toContain(`${message}\nRecovery: ${hint}\n`);
       }

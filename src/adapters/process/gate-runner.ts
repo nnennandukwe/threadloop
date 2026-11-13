@@ -229,10 +229,13 @@ function diagnosticPathSummary(paths: readonly string[]): { text: string; shorte
 }
 
 function quoteDiagnosticValue(value: string): string {
-  // Keep raw paths in changed_files, but prevent terminal and workflow commands from entering human-readable logs.
-  return JSON.stringify(value).replace(
-    /\p{Cc}|[\u2028\u2029]/gu,
-    (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  // Keep raw paths in changed_files, but prevent terminal controls and visual reordering in human-readable logs.
+  // Escape UTF-16 units so astral format characters retain both halves of their surrogate pair.
+  return JSON.stringify(value).replace(/\p{Cc}|\p{Cf}|[\u2028\u2029]/gu, (character) =>
+    character
+      .split('')
+      .map((unit) => `\\u${unit.charCodeAt(0).toString(16).padStart(4, '0')}`)
+      .join(''),
   );
 }
 

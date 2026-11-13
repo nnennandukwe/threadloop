@@ -206,6 +206,8 @@ Human-readable messages show at most five paths, shortening each after 80 charac
 total counts when paths are omitted or shortened; its recovery hint directs operators to `git status` for the full list.
 JSON's `changed_files` retains every raw path.
 
+Displayed paths and branch names escape control and formatting characters, including characters that reorder text.
+
 The local CLI also names branch changes, including a switch at the same HEAD or a detached checkout. A setup branch
 change stops later setup and the gate. Recovery names the original branch. CI retains its caller-SHA binding, so a
 branch change at the same commit preserves its existing outcome.
