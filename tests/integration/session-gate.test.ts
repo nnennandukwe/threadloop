@@ -1219,7 +1219,7 @@ describe('local and CI receipts describe setup identically', { timeout: 60_000 }
 
     // Drive the real CI sensor against the same HEAD and the same declared gate.
     const reportPath = path.join(await makeTempDir(), 'gate-report.json');
-    await execFileAsync('npx', ['tsx', 'scripts/run-ci-gate-sensor.ts'], {
+    await execFileAsync('npm', ['run', '--silent', 'sensor:ci-gate:run'], {
       cwd: process.cwd(),
       env: {
         ...process.env,
@@ -1294,7 +1294,7 @@ describe('local and CI receipts describe setup identically', { timeout: 60_000 }
         await writeFile(path.join(repoDir, 'pre-existing.txt'), 'dirty before the gate\n');
       }
 
-      const failure = await execFileAsync('npx', ['tsx', 'scripts/run-ci-gate-sensor.ts'], {
+      const failure = await execFileAsync('npm', ['run', '--silent', 'sensor:ci-gate:run'], {
         cwd: process.cwd(),
         env: {
           ...process.env,
