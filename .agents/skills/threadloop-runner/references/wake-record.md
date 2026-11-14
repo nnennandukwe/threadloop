@@ -9,7 +9,7 @@ record_version: 1
 repo_root:
 session_id:
 wake_id:
-mode:
+mode: normal | duplicate_delivery | replay (deprecated alias; retain original bytes on retry)
 preflight_validated: true | false
 snapshot_branch:
 snapshot_head_sha:
