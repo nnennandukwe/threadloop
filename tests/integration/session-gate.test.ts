@@ -1290,6 +1290,8 @@ describe('local and CI receipts describe setup identically', { timeout: 60_000 }
     { actor: 'gate', dirty: true, malicious: false, mutates: true },
     { actor: 'gate', dirty: true, malicious: false, mutates: false },
     { actor: 'setup', dirty: true, malicious: false, mutates: false },
+    { actor: 'setup', dirty: true, malicious: false, mutates: false, cleansBaseline: true },
+    { actor: 'gate', dirty: true, malicious: false, mutates: false, cleansBaseline: true },
     { actor: 'setup', dirty: true, malicious: false, mutates: true },
     { actor: 'setup', dirty: true, malicious: false, mutates: true, mutatesExisting: true },
     { actor: 'setup', dirty: true, malicious: true, mutates: true, mutatesExisting: true },
@@ -1299,6 +1301,7 @@ describe('local and CI receipts describe setup identically', { timeout: 60_000 }
     async (scenario) => {
       const { actor, dirty, malicious, mutates } = scenario;
       const mutatesExisting = 'mutatesExisting' in scenario && scenario.mutatesExisting;
+      const cleansBaseline = 'cleansBaseline' in scenario && scenario.cleansBaseline;
       const repoDir = await makeCommittedRepo();
       const sessionId = await startFramedSession(repoDir);
       const fileName = malicious
@@ -1306,11 +1309,20 @@ describe('local and CI receipts describe setup identically', { timeout: 60_000 }
         : 'package-lock.json';
       const setupStep = {
         id: 'sync',
-        command: mutates ? writeMarker(fileName) : ['node', '-e', 'process.exit(0)'],
+        command: cleansBaseline
+          ? ['node', '-e', 'require("node:fs").rmSync("pre-existing.txt")']
+          : mutates
+            ? writeMarker(fileName)
+            : ['node', '-e', 'process.exit(0)'],
         working_directory: '.',
         timeout_ms: 5_000,
       };
-      const plan = proofPlan(actor === 'setup' ? { setup: [setupStep] } : { command: setupStep.command });
+      const laterStep = { ...setupStep, id: 'later', command: ['node', '-e', 'process.exit(0)'] };
+      const plan = proofPlan(
+        actor === 'setup'
+          ? { setup: cleansBaseline ? [setupStep, laterStep] : [setupStep] }
+          : { command: setupStep.command },
+      );
       const recorded = await recordProofPlan(repoDir, sessionId, plan);
       const head = (await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: repoDir })).stdout.trim();
       const reportPath = path.join(await makeTempDir(), 'gate-report.json');
@@ -1361,8 +1373,17 @@ describe('local and CI receipts describe setup identically', { timeout: 60_000 }
         const subject = actor === 'setup' ? 'Setup step sync' : 'Gate command';
         expect(failure?.stderr).toContain(`${subject} ran with an already-dirty repository:`);
         expect(failure?.stderr).toContain('pre-existing.txt');
-        expect(failure?.stderr).toContain("Git status can't attribute edits to those existing dirty paths.");
-        expect(failure?.stderr).toContain('Restore or commit the pre-existing dirty paths');
+        if (cleansBaseline) {
+          expect(failure?.stderr).toContain(
+            'The repository was clean after this command, but the run started from a dirty baseline.',
+          );
+          expect(failure?.stderr).toContain(
+            'Inspect the run output, then start a new session from a clean repository.',
+          );
+        } else {
+          expect(failure?.stderr).toContain("Git status can't attribute edits to those existing dirty paths.");
+          expect(failure?.stderr).toContain('Restore or commit the pre-existing dirty paths');
+        }
         expect(failure?.stderr).not.toContain('changed the repository');
         expect(failure?.stderr?.trimEnd().split('\n')).toHaveLength(2);
         expect(failure?.stderr?.replaceAll('\n', '')).not.toMatch(/\p{Cc}|\p{Cf}|[\u2028\u2029]/u);

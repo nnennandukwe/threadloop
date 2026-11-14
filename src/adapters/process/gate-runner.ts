@@ -106,6 +106,7 @@ export interface GateWithSetupResult {
 export async function runGateWithSetup(input: GateWithSetupInput): Promise<GateWithSetupResult> {
   const setup: SetupStepExecution[] = [];
   let observed: GateRepositoryObservation | null = input.observedBefore;
+  let baselineDiagnostic: RepositoryMutationDiagnostic | null = null;
 
   for (const step of input.setup) {
     const stepBefore = observed;
@@ -127,6 +128,9 @@ export async function runGateWithSetup(input: GateWithSetupInput): Promise<GateW
     });
     observed = stepAfter;
     const diagnostic = repositoryMutationDiagnostic('setup', step.id, stepBefore, stepAfter);
+    if (diagnostic?.code === 'REPOSITORY_ALREADY_DIRTY') {
+      baselineDiagnostic ??= diagnostic;
+    }
 
     if (
       process.result !== 'passed' ||
@@ -135,7 +139,13 @@ export async function runGateWithSetup(input: GateWithSetupInput): Promise<GateW
       stepAfter.headSha !== stepBefore.headSha ||
       repositoryBranchChanged(stepBefore, stepAfter)
     ) {
-      return { setup, gate: null, observedAfter: stepAfter, diagnostic, window: executionWindow(setup, null) };
+      return {
+        setup,
+        gate: null,
+        observedAfter: stepAfter,
+        diagnostic: diagnostic ?? (stepAfter ? baselineDiagnostic : null),
+        window: executionWindow(setup, null),
+      };
     }
   }
 
@@ -148,7 +158,9 @@ export async function runGateWithSetup(input: GateWithSetupInput): Promise<GateW
     setup,
     gate,
     observedAfter,
-    diagnostic: repositoryMutationDiagnostic('gate', null, observed, observedAfter),
+    diagnostic:
+      repositoryMutationDiagnostic('gate', null, observed, observedAfter) ??
+      (observedAfter ? baselineDiagnostic : null),
     window: executionWindow(setup, gate),
   };
 }
@@ -170,14 +182,19 @@ function repositoryMutationDiagnostic(
   const branchChanged = repositoryBranchChanged(before, after);
   const subject = actor === 'setup' ? `Setup step ${stepId}` : 'Gate command';
   if (!headChanged && !branchChanged && changedFiles.length === 0) {
-    if (!before.clean && !after.clean) {
+    if (!before.clean) {
       const baselinePaths = diagnosticPathSummary([...before.changedFiles].sort());
+      const detail = after.clean
+        ? 'The repository was clean after this command, but the run started from a dirty baseline.'
+        : "Git status can't attribute edits to those existing dirty paths.";
       return {
         code: 'REPOSITORY_ALREADY_DIRTY',
-        message: `${subject} ran with an already-dirty repository${before.changedFiles.length > 0 ? `: ${baselinePaths.text}` : ''}. Git status can't attribute edits to those existing dirty paths.`,
+        message: `${subject} ran with an already-dirty repository${before.changedFiles.length > 0 ? `: ${baselinePaths.text}` : ''}. ${detail}`,
         step_id: stepId,
         changed_files: [],
-        hint: 'Restore or commit the pre-existing dirty paths (use git status --short --untracked-files=all for the current list), then start a new session from a clean repository.',
+        hint: after.clean
+          ? 'Inspect the run output, then start a new session from a clean repository.'
+          : 'Restore or commit the pre-existing dirty paths (use git status --short --untracked-files=all for the current list), then start a new session from a clean repository.',
       };
     }
     return null;

@@ -267,7 +267,7 @@ describe('gate runner with declared setup', () => {
     expect(classifyGateOutcome({ setup: result.setup, gate: result.gate, invalidated })).toBe('invalidated');
   });
 
-  it.each(['unchanged', 'head', 'branch'] as const)(
+  it.each(['unchanged', 'head', 'branch', 'cleaned'] as const)(
     'reports a dirty baseline and complete recovery for the %s observation',
     async (change) => {
       const directory = await makeDirectory();
@@ -291,16 +291,18 @@ describe('gate runner with declared setup', () => {
           Promise.resolve({
             ...observedBefore,
             headSha: change === 'head' ? 'e'.repeat(40) : head,
+            clean: change === 'cleaned',
+            changedFiles: change === 'cleaned' ? [] : observedBefore.changedFiles,
             branch: change === 'branch' ? 'other' : observedBefore.branch,
           }),
       });
 
       expect(result.diagnostic).toMatchObject({
-        code: change === 'unchanged' ? 'REPOSITORY_ALREADY_DIRTY' : 'SETUP_MUTATED_REPOSITORY',
+        code: change === 'unchanged' || change === 'cleaned' ? 'REPOSITORY_ALREADY_DIRTY' : 'SETUP_MUTATED_REPOSITORY',
         step_id: 'sync',
         changed_files: [],
       });
-      if (change === 'unchanged') {
+      if (change === 'unchanged' || change === 'cleaned') {
         expect(result.diagnostic?.message).toContain('"pre-existing.txt"');
         expect(result.diagnostic?.message).not.toContain('changed the repository');
       } else {
@@ -309,10 +311,41 @@ describe('gate runner with declared setup', () => {
         );
         expect(result.diagnostic?.hint).toContain(change === 'head' ? head : 'branch "verification"');
       }
-      expect(result.gate).toBeNull();
+      if (change === 'cleaned') {
+        expect(result.gate?.result).toBe('passed');
+        expect(result.diagnostic?.hint).toContain('start a new session from a clean repository');
+      } else {
+        expect(result.gate).toBeNull();
+      }
       expect(gateExecutionWasInvalidated(result, observedBefore)).toBe(true);
     },
   );
+
+  it('leaves failed observations unattributed after dirty baseline cleanup', async () => {
+    const directory = await makeDirectory();
+    const observedBefore = { headSha: head, clean: false, changedFiles: ['pre-existing.txt'] };
+    let observations = 0;
+    const result = await runGateWithSetup({
+      setup: [stepInput(directory, 'sync', ['node', '-e', 'process.exit(0)'])],
+      gate: {
+        command: ['node', '-e', 'process.exit(0)'],
+        cwd: directory,
+        timeoutMs: 5_000,
+        stdoutPath: path.join(directory, 'gate.stdout.log'),
+        stderrPath: path.join(directory, 'gate.stderr.log'),
+      },
+      observedBefore,
+      observe: () => {
+        observations += 1;
+        return Promise.resolve(observations === 1 ? { headSha: head, clean: true, changedFiles: [] } : null);
+      },
+    });
+
+    expect(result.gate?.result).toBe('passed');
+    expect(result.observedAfter).toBeNull();
+    expect(result.diagnostic).toBeNull();
+    expect(gateExecutionWasInvalidated(result, observedBefore)).toBe(true);
+  });
 
   it('retains a branch mismatch and safely quotes its recovery target', async () => {
     const directory = await makeDirectory();

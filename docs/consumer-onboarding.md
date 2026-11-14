@@ -143,7 +143,9 @@ If CI starts with dirty paths and observes no newly dirty paths, `REPOSITORY_ALR
 step or gate and the pre-existing paths. Its `changed_files` is empty because Git status can't attribute edits to those
 paths. Restore or commit them and start a new session from a clean repository. The receipt stays `invalidated`. When the
 run creates additional dirty paths, its mutation message lists those new paths; recovery still requires cleaning all
-dirty paths. Use `git status --short --untracked-files=all` to include the pre-existing baseline.
+dirty paths. Use `git status --short --untracked-files=all` to include the pre-existing baseline. Cleaning an initially
+dirty workspace during the run still leaves the receipt `invalidated`. The diagnostic retains the baseline cause through
+later clean observations and directs the operator to start a new session from a clean repository.
 
 Before updating the CLI in a consumer repository, refresh any copied
 [runner skill](../.agents/skills/threadloop-runner/SKILL.md) so it handles the additive `data.diagnostic` field. An

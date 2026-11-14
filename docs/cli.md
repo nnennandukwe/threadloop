@@ -206,7 +206,9 @@ When CI starts with dirty paths and observes no newly dirty paths, `REPOSITORY_A
 and pre-existing paths. Its `changed_files` is empty because status alone can't attribute edits to those paths. Recovery
 requires a clean baseline, including when setup rewrites an already-dirty file. The receipt still records `invalidated`.
 If the run also creates newly dirty paths, the message attributes those paths while recovery requires cleaning all dirty
-paths, including the baseline. `git status --short --untracked-files=all` provides the current list.
+paths, including the baseline. `git status --short --untracked-files=all` provides the current list. If setup or the
+gate cleans the initial dirty paths, the baseline warning still explains why the run is invalidated. Later clean
+observations don't remove it; recovery requires a new session from a clean repository.
 
 Human-readable messages show at most five paths, shortening each after 80 characters. A summary gives the shown and
 total counts when paths are omitted or shortened; its recovery hint directs operators to `git status` for the full list.
