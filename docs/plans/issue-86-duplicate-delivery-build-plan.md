@@ -36,19 +36,25 @@ Out of scope: scheduler implementation, trace execution, lifecycle changes, #85 
 
 ## Dependencies And Settings
 
-No dependency, environment, storage, protocol, or frozen contract version changes. Use the host-native workflow in
-`AGENTS.md` and `package.json`.
+No dependency, environment, storage, CLI protocol, or frozen contract version changes. New wake records will use v2 only
+after scheduler opt-in; existing v1 records will remain supported. Use the host-native workflow in `AGENTS.md` and
+`package.json`.
 
 ## Canonical Contracts
 
-`mode` accepts `normal`, `duplicate_delivery`, and the deprecated `replay` alias. Both duplicate-delivery spellings
-record scheduler intent. All modes select at most one fresh action after validation. Retries retain the original mode;
-renaming a stored record during retry would break its exact identity. Existing four-input records remain valid.
+Runner inputs accept `normal`, `duplicate_delivery`, and the deprecated `replay` alias. The versioned retained record
+accepts `normal | replay` in v1 and `normal | duplicate_delivery` in v2. Updated schedulers explicitly opt into v2; old
+v1-only consumers continue using v1. All modes select at most one fresh action after validation. Incoming mode bytes
+must equal an existing record's mode; changing the spelling for the same wake stops without action. Existing records
+retain their version, mode, and four-input interface.
 
 ## TDD And BDD Implementation Strategy
 
 This instruction change uses verification-first review of all three affected surfaces, followed by existing integration
-cases for exact duplicate results, conflicting request bytes, and concurrent deliveries. Avoid tests that repeat docs.
+cases for exact duplicate results, conflicting request bytes, and concurrent deliveries. Those cases test underlying CLI
+idempotency; the repository has no executable scheduler or mode parser. Alias and record-version acceptance will be
+reviewed as an instruction contract, with external scheduler execution explicitly unverified. Avoid tests that repeat
+docs.
 
 ## Component Design
 
