@@ -1,6 +1,12 @@
 import { Command, CommanderError, InvalidArgumentError, Option } from 'commander';
 import { artifactGenerateCommand } from './commands/artifact.js';
-import { auditExportCommand, auditShowCommand, auditVerifyCommand } from './commands/audit.js';
+import {
+  auditCorpusCommand,
+  auditExportCommand,
+  auditShowCommand,
+  auditVerifyCommand,
+  auditVerifyExportCommand,
+} from './commands/audit.js';
 import { initCommand } from './commands/init.js';
 import { protocolPrintCommand } from './commands/protocol.js';
 import { createCommandContext, type CommandContext } from './commands/runtime.js';
@@ -41,6 +47,7 @@ const HANDLER_REQUIRED_OPTIONS: Record<string, string[]> = {
 /** Commands whose usage cannot be derived from their options. */
 const USAGE_OVERRIDES: Record<string, string> = {
   'session reconcile': '(--session <id> | --all) [--json]',
+  'audit corpus': '(--session <ids...> | --all) --output <path> [--json]',
 };
 
 export function getProtocolCommandRules(commandPath: string) {
@@ -150,7 +157,12 @@ export function createThreadloopProgram() {
       .option('--base <ref>', 'base Git ref used for comparisons; defaults to main when available')
       .option('--issue <ref>', 'issue reference for branch and PR traceability')
       .option('--actor <actor>', 'entry actor for the initial intent record', parseEntrySource, 'cli')
-      .option('--goal-edit', 'open $EDITOR for the goal text'),
+      .option('--goal-edit', 'open $EDITOR for the goal text')
+      .option(
+        '--run-config <file>',
+        'caller configuration and snapshot file paths for immutable audit attribution',
+        parseInputPath,
+      ),
   ).action(action(sessionStartCommand));
 
   withJsonOption(session.command('list').description('List sessions in the current workspace')).action(
@@ -265,6 +277,22 @@ export function createThreadloopProgram() {
       .requiredOption('--session <id>', 'session id to export', parseRequiredText)
       .requiredOption('--output <path>', 'new output path; existing files are never overwritten', parseOutputPath),
   ).action(action(auditExportCommand));
+
+  withJsonOption(
+    audit
+      .command('corpus')
+      .description('Export a verified corpus with one outcome per session')
+      .option('--session <ids...>', 'explicit session ids to include')
+      .option('--all', 'include every session in the current repository')
+      .requiredOption('--output <path>', 'new output path; existing files are never overwritten', parseOutputPath),
+  ).action(action(auditCorpusCommand));
+  withJsonOption(
+    audit
+      .command('verify-export')
+      .description('Verify retained corpus bytes without a repository or database')
+      .requiredOption('--input <path>', 'retained corpus file', parseInputPath)
+      .option('--root <sha256>', 'previously retained whole-file corpus root', parseSha256),
+  ).action(action(auditVerifyExportCommand));
 
   withJsonOption(program.command('protocol').description('Print the agent integration protocol')).action(
     action((context, options: { json?: boolean }) => protocolPrintCommand(context, options, program)),
@@ -400,6 +428,12 @@ function parseOutputPath(value: string) {
   if (!normalized) {
     throw new InvalidArgumentError('Output path must be non-empty.');
   }
+  return normalized;
+}
+
+function parseInputPath(value: string) {
+  const normalized = value.trim();
+  if (!normalized) throw new InvalidArgumentError('Input path must be non-empty.');
   return normalized;
 }
 

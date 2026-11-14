@@ -30,6 +30,105 @@ reported audit root outside the local database if you need to detect later tail 
 `audit show` and `audit verify` never apply lifecycle transitions. Use `threadloop init` for the explicit semantic
 migration to the current schema; prior audit events and honest forward-only coverage remain unchanged.
 
+## Attribute a new session
+
+ThreadLoop records a `threadloop.run-configuration/1` descriptor in the immutable `session_started` payload. It derives
+its package version, implementation fingerprint, protocol component versions, and storage schema version. The
+fingerprint covers JavaScript bundle files and the build's dependency lock, or source files and the lockfile for the
+development command. Source and bundle fingerprints have different scopes, recorded as `implementation_scope`. Retain
+the matching distribution or source separately when reproducibility requires it.
+
+For caller attribution, provide a JSON file when starting the session:
+
+```json
+{
+  "harness": "my-harness/revision-123",
+  "model": "caller-selected-model/revision-456",
+  "proof_plan_path": "./proof-plan.json",
+  "runner_skill_path": "./runner/SKILL.md"
+}
+```
+
+```bash
+threadloop session start "Evaluate a guard change" --goal "Exercise the declared task" \
+  --run-config ./run-config.json --json
+```
+
+Artifact paths resolve from the configuration file's directory. ThreadLoop validates the supplied proof plan, hashes its
+canonical JSON, and hashes the exact runner file bytes before creating a session. The descriptor contains digests and
+opaque harness/model labels, with no artifact paths or raw plan/runner contents. Use `model: null` when the caller can't
+declare a model. Keep secrets, prompts, and personal information out of these labels.
+
+The supplied plan is a caller declaration. The normal `proof_ready` transition independently validates and binds the
+authoritative proof plan. Its audit event records the bound digest. Corpus output reports whether that digest matches
+the startup declaration (`matched`, `mismatched`, or `unbound`); unknown declarations report `unknown`. None of this
+metadata enters a lifecycle guard. Editing configuration or snapshot files later can't replace a retained descriptor.
+
+Startup without `--run-config` retains runtime identity with `caller` and both snapshot digests set to null. Corpus
+attribution is `runtime_only`. A supplied configuration reports `declared`, which identifies its source without
+certifying the caller's harness/model claim or adoption of its runner. Earlier sessions retain their original bytes and
+report `legacy_unattributable`, with no invented descriptor or retroactive backfill.
+
+## Export and independently verify a corpus
+
+```bash
+threadloop audit corpus --session "$BASELINE_SESSION" "$CANDIDATE_SESSION" \
+  --output ./comparison.jsonl --json
+threadloop audit corpus --all --output ./all-sessions.jsonl --json
+threadloop audit verify-export --input ./comparison.jsonl --root "$RETAINED_CORPUS_ROOT" --json
+```
+
+Choose unique explicit session ids or `--all`. Membership and all selected event prefixes come from one SQLite read
+transaction. Active sessions are included as observed snapshots; completion isn't implied. Verification runs outside the
+source repository and doesn't need its database. The existing single-session export remains available.
+
+The `threadloop.audit-corpus/1` format is canonical UTF-8 JSONL, including a final newline:
+
+1. A `manifest` declares `comparison_unit: "session"` and sorted, unique session summaries with event count, root,
+   coverage, run descriptor, attribution, proof-plan binding status, and outcome.
+2. Grouped `event` records contain `session_id`, the exact stored canonical event JSON as a string in `canonical_event`,
+   and its original `event_sha256`. The digest covers the UTF-8 bytes of that string's value, before JSON string
+   escaping.
+3. A final `seal` contains session/event counts and `prefix_sha256`, covering every preceding byte including newlines.
+
+`verify-export` checks versions, framing, canonical bytes, each original hash chain, membership, recomputed outcomes,
+and the seal. Unknown versions, missing events, changed summaries, reordered records, appended records, and incomplete
+files fail verification. The reported `root` hashes the entire file, including the seal. Retain it outside the export to
+detect a fully rewritten corpus or a deliberately removed and resealed session. Hashes establish integrity against a
+retained root; they aren't signatures or independent proof that the recorded actions occurred.
+
+The comparison unit is one session, identified by its session id. Task ids or caller labels can support an external
+consumer's pairing policy, but ThreadLoop doesn't assume that two sessions performed equivalent tasks. Metric
+computation, grouping, baselines, denominators, and outcome comparisons belong to that consumer.
+
+| Outcome field                               | Meaning                                                                                                                                               |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `state`, `state_version`, `terminal`        | Last covered lifecycle state/version; only `completed` is terminal.                                                                                   |
+| `started_at`, `observed_at`, `completed_at` | Session genesis, last covered event, and recorded completion; unavailable times are null.                                                             |
+| `wall_clock_to_completed_ms`                | Nonnegative difference between full session genesis and completion; otherwise null, including a backward clock.                                       |
+| `pre_pr_implementation_entries`             | Entries into `implementing` before the first post-PR state, including the first entry; null for forward-only coverage whose earlier phase is unknown. |
+| `repair_entries_consumed`                   | Covered transitions into `repairing` from a repair-eligible state, matching the lifecycle budget rule.                                                |
+| `setup_failed_count`                        | Covered local receipts whose result is `setup_failed`.                                                                                                |
+| `gate_failures_by_id`                       | Covered local receipts with other non-`passed` results, counted by gate id.                                                                           |
+| `wake_count`, `stop_only_handoff_count`     | Null: scheduler wake and stop-only handoff records aren't in the native ledger.                                                                       |
+| `counts_scope`                              | `session` for full coverage; `covered_events` for `schema_v6_forward` coverage.                                                                       |
+
+These observations include failed attempts. Forward-only coverage never supplies an unobserved session start or implies
+complete totals. Corpus files can contain repository paths, evidence references, caller labels, and sensitive native
+payloads. Retain them only in a destination authorized for those contents.
+
+## Publication and recovery
+
+Exports use an exclusively created sibling staging file. Successful filesystem `link` publishes the complete target
+without overwriting an existing path. Concurrent cooperative publishers produce one winner. A write or close failure
+before publication leaves the target absent; retries use a new writable path. A cleanup failure after publication is
+committed success with a warning naming the retained stage. Inspect the target before removing that stage.
+
+An interrupted process can leave an unpublished staging file or a published target whose response was lost. Use
+`verify-export` to inspect a corpus target after restart. Keep an existing target and choose a new filename for another
+export. ThreadLoop doesn't scan for orphan stages or promise power-loss durability. The output directory must be trusted
+against actors replacing staging paths during publication. Export cleanup removes only its own created stage.
+
 ## Collector recipe
 
 The OpenTelemetry Collector `filelog` receiver can consume completed exports. This recipe forwards full canonical

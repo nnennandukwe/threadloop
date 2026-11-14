@@ -47,6 +47,7 @@ import { TASK_STATUS, isTaskStatus } from '../../domain/types.js';
 import { StateCorruptedError, type ThreadloopErrorCode } from '../../contracts/errors.js';
 import { threadloopPaths } from './repo.js';
 import { DatabaseSync } from './sqlite-driver.js';
+import type { RunConfiguration } from '../../domain/run-configuration.js';
 
 export const CURRENT_SCHEMA_VERSION = 8;
 /**
@@ -462,6 +463,29 @@ export function readSessionAuditReadOnly(repoRoot: string, sessionId: string): S
   });
 }
 
+/** One read transaction fixes corpus membership and every selected session's event prefix together. */
+export function readAuditCorpusReadOnly(repoRoot: string, sessionIds?: string[]) {
+  return withReadSnapshot(repoRoot, (db) => {
+    const schemaVersion = assertSupportedSchemaVersion(db);
+    if (schemaVersion !== CURRENT_SCHEMA_VERSION || !tableExists(db, 'audit_events')) {
+      throw new AuditLedgerUnavailableError(schemaVersion);
+    }
+    assertCanonicalSchemaShape(db);
+    const available = (db.prepare('SELECT id FROM sessions ORDER BY id').all() as Array<{ id: string }>).map(
+      (row) => row.id,
+    );
+    const selected = sessionIds ?? available;
+    for (const id of selected)
+      if (!available.includes(id)) {
+        throw new Error(`Could not find selected session: ${id}`);
+      }
+    return selected.map((sessionId) => ({
+      session_id: sessionId,
+      events: assertSessionTransitionHistoryAuthority(db, sessionId).auditEvents,
+    }));
+  });
+}
+
 export function inspectAuditLedgerReadOnly(repoRoot: string) {
   if (!existsSync(threadloopPaths(repoRoot).stateDbPath)) {
     return { available: false, schemaVersion: null };
@@ -710,7 +734,13 @@ export function readSessionLifecycleReadOnly(repoRoot: string, sessionId: string
 
 export async function insertTaskSession(
   repoRoot: string,
-  payload: { task: Task; session: Session; intentEntry: Entry; initialSnapshot?: StoredRepoSnapshot },
+  payload: {
+    task: Task;
+    session: Session;
+    intentEntry: Entry;
+    initialSnapshot?: StoredRepoSnapshot;
+    runConfiguration?: RunConfiguration;
+  },
 ) {
   await withWriteTransaction(repoRoot, (db) => {
     const { task, session, intentEntry } = payload;
@@ -730,6 +760,7 @@ export async function insertTaskSession(
         lifecycle_state: task.status,
         branch: session.branch,
         head_sha: session.headSha,
+        ...(payload.runConfiguration ? { run_configuration: payload.runConfiguration } : {}),
       },
     });
     writeActiveProjection(db);
@@ -987,6 +1018,7 @@ export async function applySessionTransition(
         to_state: input.targetState,
         from_state_version: current.state_version,
         to_state_version: nextVersion,
+        ...(input.boundProofPlan ? { proof_plan_sha256: input.boundProofPlan.sha256 } : {}),
         ...(readPrePrReviewEvidence(input.canonicalInput)
           ? {
               pre_pr_review: summarizePrePrReview(input.canonicalInput),

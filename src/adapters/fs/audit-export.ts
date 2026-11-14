@@ -1,26 +1,67 @@
 import { randomUUID } from 'node:crypto';
-import { link, mkdir, rm, writeFile } from 'node:fs/promises';
+import { link, mkdir, open, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 export class AuditExportConflictError extends Error {}
 
-export async function writeAuditExportExclusive(outputPath: string, content: string) {
+interface ExportFileSystem {
+  mkdir: (directory: string, options: { recursive: true }) => Promise<unknown>;
+  open: (
+    file: string,
+    flags: 'wx',
+  ) => Promise<{ writeFile: (content: string) => Promise<unknown>; close: () => Promise<void> }>;
+  link: (source: string, target: string) => Promise<void>;
+  rm: (file: string, options: { force: true }) => Promise<void>;
+}
+
+export async function writeAuditExportExclusive(
+  outputPath: string,
+  content: string,
+  files: ExportFileSystem = { link, mkdir, open, rm },
+) {
   const directory = path.dirname(outputPath);
-  await mkdir(directory, { recursive: true });
+  await files.mkdir(directory, { recursive: true });
   const stagedPath = path.join(directory, `.${path.basename(outputPath)}.${randomUUID()}.tmp`);
+  let owned = false;
+  let committed = false;
+  let failure: unknown;
+  const warnings: string[] = [];
   try {
-    await writeFile(stagedPath, content, { encoding: 'utf8', flag: 'wx' });
+    const handle = await files.open(stagedPath, 'wx');
+    owned = true;
     try {
-      await link(stagedPath, outputPath);
+      await handle.writeFile(content);
+    } finally {
+      await handle.close();
+    }
+    try {
+      await files.link(stagedPath, outputPath);
+      committed = true;
     } catch (error) {
       if (isErrorCode(error, 'EEXIST')) {
         throw new AuditExportConflictError(`Audit export already exists: ${outputPath}`);
       }
       throw error;
     }
+  } catch (error) {
+    failure = error;
   } finally {
-    await rm(stagedPath, { force: true });
+    if (owned) {
+      try {
+        await files.rm(stagedPath, { force: true });
+      } catch (cause) {
+        if (committed)
+          warnings.push(`Export committed; remove the retained staging file after inspection: ${stagedPath}`);
+        else
+          failure = new Error(
+            `Export was not published; owned staging file needs removal before retry: ${stagedPath}`,
+            { cause: failure ?? cause },
+          );
+      }
+    }
   }
+  if (!committed) throw failure;
+  return { warnings };
 }
 
 function isErrorCode(error: unknown, code: string) {

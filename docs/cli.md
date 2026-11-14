@@ -48,7 +48,20 @@ Options:
 - `--base <ref>`: Git base ref for comparisons; when omitted, ThreadLoop uses `main` if that ref exists
 - `--issue <ref>`: issue reference for branch and PR traceability
 - `--actor <cli|agent>`: source for the initial intent entry, default `cli`
+- `--run-config <file>`: optional immutable caller attribution; see the
+  [run configuration format](observability.md#attribute-a-new-session)
 - `--json`: render machine-readable session output
+
+### `threadloop audit corpus (--session <ids...> | --all) --output <path> [--json]`
+
+Creates a new verified multi-session corpus with one comparison outcome per session. Explicit ids must be unique.
+`--all` selects every session, including active and legacy sessions. Existing output paths are preserved. See
+[corpus bytes and outcomes](observability.md#export-and-independently-verify-a-corpus).
+
+### `threadloop audit verify-export --input <path> [--root <sha256>] [--json]`
+
+Verifies a retained corpus without its source repository or database. `--root` compares the whole-file SHA-256 with a
+previously retained value. Missing, altered, unsupported, or incomplete records fail with `AUDIT_CORPUS_INVALID`.
 
 ### `threadloop session list [--json]`
 
