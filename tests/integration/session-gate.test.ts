@@ -50,6 +50,34 @@ const writeMarker = (markerPath: string) => [
   `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "started")`,
 ];
 
+function unignoredInstall() {
+  const files = Array.from(
+    { length: 300 },
+    (_, index) => `node_modules/${String(index).padStart(3, '0')}/${'x'.repeat(160)}.txt`,
+  );
+  const command = [
+    'node',
+    '-e',
+    `const fs = require("node:fs");
+     for (let index = 0; index < 300; index++) {
+       const directory = "node_modules/" + String(index).padStart(3, "0");
+       fs.mkdirSync(directory, { recursive: true });
+       fs.writeFileSync(directory + "/" + "x".repeat(160) + ".txt", "installed");
+     }`,
+  ];
+  return { files, command };
+}
+
+/** Applies inherited ignores only to one child invocation, without changing user settings. */
+async function makeGlobalIgnoreConfig(repoDir: string) {
+  const directory = await makeTempDir('threadloop-global-ignore-');
+  const excludesPath = path.join(directory, 'ignore');
+  const configPath = path.join(directory, 'gitconfig');
+  await writeFile(excludesPath, 'node_modules/\n', 'utf8');
+  await git(repoDir, 'config', '--file', configPath, 'core.excludesFile', excludesPath);
+  return configPath;
+}
+
 async function readExecution(repoDir: string, artifactPath: string) {
   return JSON.parse(await readFile(path.join(repoDir, artifactPath), 'utf8')) as {
     stdout: { path: string; sha256: string; bytes: number };
@@ -797,6 +825,236 @@ describe('declared gate setup', () => {
     expect(existsSync(gateMarker)).toBe(false);
   });
 
+  it.each([0, 7])('names a mutating setup step with exit status %i and blocks later execution', async (exitStatus) => {
+    const repoDir = await makeCommittedRepo();
+    await commitFiles(repoDir, 'add locked dependency fixture', { 'package-lock.json': 'locked\n' });
+    const scratchDirectory = await makeTempDir();
+    const laterSetupMarker = path.join(scratchDirectory, 'later-setup-ran.txt');
+    const gateMarker = path.join(scratchDirectory, 'gate-ran.txt');
+    const { sessionId } = await makeVerifyingSession({
+      repoDir,
+      plan: proofPlan({
+        setup: [
+          step('sync', [
+            'node',
+            '-e',
+            `require("node:fs").writeFileSync("package-lock.json", "changed\\n"); process.exit(${exitStatus})`,
+          ]),
+          step('unreached', writeMarker(laterSetupMarker)),
+        ],
+        command: writeMarker(gateMarker),
+      }),
+    });
+
+    const gate = parseJson<{
+      data: { receipt: { result: string; setup: unknown[]; artifact: { path: string } }; diagnostic: unknown };
+    }>((await runCli(repoDir, gateRunArgs(sessionId))).stdout);
+
+    expect(gate.data.receipt).toMatchObject({
+      result: 'invalidated',
+      setup: [{ id: 'sync', clean_after: false }],
+    });
+    expect(gate.data.diagnostic).toEqual({
+      code: 'SETUP_MUTATED_REPOSITORY',
+      message: 'Setup step sync changed the repository before the gate ran: "package-lock.json".',
+      step_id: 'sync',
+      changed_files: ['package-lock.json'],
+      hint: 'Restore or commit the listed paths, change the setup declaration to use a frozen installer and gitignored output, then start a new session.',
+    });
+    expect(existsSync(laterSetupMarker)).toBe(false);
+    expect(existsSync(gateMarker)).toBe(false);
+    expect(gate.data.receipt).not.toHaveProperty('diagnostic');
+    const artifact: unknown = JSON.parse(await readFile(path.join(repoDir, gate.data.receipt.artifact.path), 'utf8'));
+    expect(artifact).not.toHaveProperty('diagnostic');
+    expect(readLifecycle(repoDir)).toEqual({ status: 'verifying', state_version: 4 });
+  });
+
+  it('allows gitignored setup output without a mutation diagnostic', async () => {
+    const repoDir = await makeCommittedRepo();
+    await commitFiles(repoDir, 'ignore provisioning output', { '.gitignore': 'provisioned.txt\n' });
+    const { sessionId } = await makeVerifyingSession({
+      repoDir,
+      plan: proofPlan({ setup: [step('provision', writeMarker(path.join(repoDir, 'provisioned.txt')))] }),
+    });
+
+    const gate = parseJson<{ data: { receipt: { result: string }; diagnostic: unknown } }>(
+      (await runCli(repoDir, gateRunArgs(sessionId))).stdout,
+    );
+
+    expect(gate.data.receipt.result).toBe('passed');
+    expect(gate.data.diagnostic).toBeNull();
+    expect(await readFile(path.join(repoDir, 'provisioned.txt'), 'utf8')).toBe('started');
+  });
+
+  it('distinguishes a gate mutation from setup mutation and names the recovery path', async () => {
+    const { repoDir, sessionId } = await makeVerifyingSession({
+      plan: proofPlan({
+        command: ['node', '-e', 'require("node:fs").writeFileSync("generated-report.json", "{}\\n")'],
+      }),
+    });
+
+    const gate = parseJson<{
+      data: { receipt: { result: string; setup: unknown[] }; diagnostic: unknown };
+    }>((await runCli(repoDir, gateRunArgs(sessionId))).stdout);
+
+    expect(gate.data.receipt).toMatchObject({ result: 'invalidated', setup: [] });
+    expect(gate.data.diagnostic).toEqual({
+      code: 'GATE_MUTATED_REPOSITORY',
+      message: 'Gate command changed the repository while it ran: "generated-report.json".',
+      step_id: null,
+      changed_files: ['generated-report.json'],
+      hint: 'Restore or commit the listed paths, change the gate to write generated output outside the repository or to gitignored paths, then start a new session.',
+    });
+  });
+
+  it('prints the mutation cause and recovery action in text mode', async () => {
+    const { repoDir, sessionId } = await makeVerifyingSession({
+      plan: proofPlan({
+        setup: [step('sync', ['node', '-e', 'require("node:fs").writeFileSync("package-lock.json", "changed\\n")'])],
+      }),
+    });
+
+    const result = await runCli(repoDir, ['session', 'gate', 'run', 'check', '--session', sessionId]);
+
+    expect(result.stdout).toContain(
+      'Setup step sync changed the repository before the gate ran: "package-lock.json".\n' +
+        'Recovery: Restore or commit the listed paths, change the setup declaration to use a frozen installer and gitignored output, then start a new session.\n',
+    );
+  });
+
+  it.each([
+    { actor: 'setup', json: true },
+    { actor: 'gate', json: false },
+  ] as const)('bounds large-install diagnostics for local $actor, JSON $json', async ({ actor, json }) => {
+    const { files, command } = unignoredInstall();
+    const { repoDir, sessionId } = await makeVerifyingSession({
+      plan: proofPlan(actor === 'setup' ? { setup: [step('install', command)] } : { command }),
+    });
+    const configPath = await makeGlobalIgnoreConfig(repoDir);
+    const result = await runCli(
+      repoDir,
+      ['session', 'gate', 'run', 'check', '--session', sessionId, ...(json ? ['--json'] : [])],
+      { GIT_CONFIG_GLOBAL: configPath },
+    );
+
+    if (json) {
+      const output = parseJson<{
+        data: { receipt: { result: string }; diagnostic: { message: string; changed_files: string[]; hint: string } };
+      }>(result.stdout);
+      expect(output.data.receipt.result).toBe('invalidated');
+      expect(output.data.diagnostic.changed_files).toEqual(files);
+      expect(output.data.diagnostic.message.length).toBeLessThan(4_096);
+      expect(output.data.diagnostic.message).toContain('5 of 300 paths shown');
+      expect(output.data.diagnostic.message).toContain('long paths shortened');
+      expect(output.data.diagnostic.hint).toContain('git status --short --untracked-files=all');
+    } else {
+      expect(result.stdout.length).toBeLessThan(4_096);
+      expect(result.stdout).toContain('5 of 300 paths shown');
+      expect(result.stdout).toContain('long paths shortened');
+      expect(result.stdout).toContain('Recovery:');
+      expect(result.stdout).toContain('git status --short --untracked-files=all');
+    }
+  });
+
+  it.each(['setup', 'gate'] as const)(
+    'names the original HEAD when %s changes it without dirty paths',
+    async (actor) => {
+      const changeHead = ['git', 'commit', '--allow-empty', '-m', 'change fixture HEAD'];
+      const { repoDir, sessionId, head } = await makeVerifyingSession({
+        plan: proofPlan(actor === 'setup' ? { setup: [step('commit', changeHead)] } : { command: changeHead }),
+      });
+      const result = parseJson<{
+        data: { receipt: { result: string }; diagnostic: { changed_files: string[]; hint: string } };
+      }>((await runCli(repoDir, gateRunArgs(sessionId))).stdout);
+
+      expect(result.data.receipt.result).toBe('invalidated');
+      expect(result.data.diagnostic.changed_files).toEqual([]);
+      expect(result.data.diagnostic.hint).toContain(head);
+      expect(result.data.diagnostic.hint).not.toContain('listed paths');
+    },
+  );
+
+  it.each([
+    { actor: 'setup', detached: false },
+    { actor: 'gate', detached: false },
+    { actor: 'setup', detached: true },
+    { actor: 'gate', detached: true },
+  ] as const)(
+    'names the bound branch when $actor switches branches at the same HEAD, detached $detached',
+    async ({ actor, detached }) => {
+      const scratch = await makeTempDir();
+      const laterMarker = path.join(scratch, 'later-setup.txt');
+      const gateMarker = path.join(scratch, 'gate.txt');
+      const switchBranch = detached
+        ? ['git', 'checkout', '--detach', 'HEAD']
+        : ['git', 'checkout', '-b', 'other-verification-\u202e-branch'];
+      const { repoDir, sessionId, head } = await makeVerifyingSession({
+        plan: proofPlan(
+          actor === 'setup'
+            ? {
+                setup: [step('switch', switchBranch), step('later', writeMarker(laterMarker))],
+                command: writeMarker(gateMarker),
+              }
+            : { command: switchBranch },
+        ),
+      });
+      const result = parseJson<{
+        data: {
+          receipt: { result: string; head_after: string };
+          diagnostic: { code: string; message: string; step_id: string | null; changed_files: string[]; hint: string };
+        };
+      }>((await runCli(repoDir, gateRunArgs(sessionId))).stdout);
+
+      expect(result.data.receipt).toMatchObject({ result: 'invalidated', head_after: head });
+      expect(result.data.diagnostic).toMatchObject({
+        code: actor === 'setup' ? 'SETUP_MUTATED_REPOSITORY' : 'GATE_MUTATED_REPOSITORY',
+        step_id: actor === 'setup' ? 'switch' : null,
+        changed_files: [],
+      });
+      expect(result.data.diagnostic.hint).toContain(fixtureBranch);
+      expect(result.data.diagnostic.message).not.toMatch(/\p{Cf}/u);
+      if (!detached) {
+        expect(result.data.diagnostic.message).toContain('other-verification-\\u202e-branch');
+      }
+      if (actor === 'setup') {
+        expect(existsSync(laterMarker)).toBe(false);
+        expect(existsSync(gateMarker)).toBe(false);
+      }
+      expect(readLifecycle(repoDir)).toEqual({ status: 'verifying', state_version: 4 });
+    },
+  );
+
+  it.each([true, false])('escapes control characters in human diagnostics with JSON mode %s', async (json) => {
+    const fileName =
+      'report\n::add-mask::forged\u001b[31m\u0085\u2028\u202e\u202c\u2066\u2069\u200e\u200f\u061c\u{e0061}.txt';
+    const { repoDir, sessionId } = await makeVerifyingSession({
+      plan: proofPlan({ command: writeMarker(fileName) }),
+    });
+    const result = await runCli(repoDir, [
+      'session',
+      'gate',
+      'run',
+      'check',
+      '--session',
+      sessionId,
+      ...(json ? ['--json'] : []),
+    ]);
+
+    if (json) {
+      const output = parseJson<{ data: { diagnostic: { message: string; changed_files: string[] } } }>(result.stdout);
+      expect(output.data.diagnostic.changed_files).toEqual([fileName]);
+      expect(output.data.diagnostic.message).not.toMatch(/\p{Cc}|\p{Cf}|[\u2028\u2029]/u);
+      expect(output.data.diagnostic.message).toContain('\\udb40\\udc61');
+    } else {
+      expect(result.stdout.trimEnd().split('\n')).toHaveLength(4);
+      expect(result.stdout).not.toContain('\n::add-mask::');
+      expect(result.stdout).not.toContain('\u001b');
+      expect(result.stdout).not.toContain('\u0085');
+      expect(result.stdout).not.toContain('\u2028');
+      expect(result.stdout).not.toMatch(/\p{Cf}/u);
+    }
+  });
+
   it('projects setup failure as an operator handoff that consumes no repair budget', async () => {
     const { repoDir, sessionId } = await verifyingSessionWithReceipt(proofPlan({ setup: failingSetup }));
 
@@ -914,6 +1172,54 @@ describe('gate receipt result domain migration', () => {
 });
 
 describe('local and CI receipts describe setup identically', { timeout: 60_000 }, () => {
+  it.each(['setup', 'gate'] as const)('bounds large-install diagnostics for CI %s', async (actor) => {
+    const { command } = unignoredInstall();
+    const repoDir = await makeCommittedRepo();
+    const sessionId = await startFramedSession(repoDir);
+    const plan = proofPlan(
+      actor === 'setup'
+        ? { setup: [{ id: 'install', command, working_directory: '.', timeout_ms: 5_000 }] }
+        : { command },
+    );
+    const recorded = await recordProofPlan(repoDir, sessionId, plan);
+    const reportPath = path.join(await makeTempDir(), 'gate-report.json');
+    const configPath = await makeGlobalIgnoreConfig(repoDir);
+    const failure = await execFileAsync('npm', ['run', '--silent', 'sensor:ci-gate:run'], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        GIT_CONFIG_GLOBAL: configPath,
+        THREADLOOP_SESSION_ID: sessionId,
+        THREADLOOP_PLAN_SHA256: recorded.data.proof_plan.sha256,
+        THREADLOOP_GATE_ID: 'check',
+        THREADLOOP_GATE_JSON: canonicalJson(plan.gates[0]),
+        THREADLOOP_SOURCE_ROOT: repoDir,
+        THREADLOOP_REPORT_PATH: reportPath,
+        GITHUB_SERVER_URL: 'https://github.com',
+        GITHUB_REPOSITORY: 'example/threadloop-fixture',
+        GITHUB_REF: `refs/heads/${fixtureBranch}`,
+        GITHUB_SHA: await git(repoDir, 'rev-parse', 'HEAD'),
+        GITHUB_RUN_ID: '123',
+        GITHUB_RUN_ATTEMPT: '1',
+        RUNNER_OS: 'Linux',
+        RUNNER_ARCH: 'X64',
+      },
+    }).then(
+      () => null,
+      (error: Error & { stderr?: string }) => error,
+    );
+
+    expect(failure).not.toBeNull();
+    expect(failure?.stderr?.length).toBeLessThan(4_096);
+    expect(failure?.stderr).toContain('5 of 300 paths shown');
+    expect(failure?.stderr).toContain('long paths shortened');
+    expect(failure?.stderr).toContain('Recovery:');
+    expect(failure?.stderr).toContain('git status --short --untracked-files=all');
+    const report = JSON.parse(await readFile(reportPath, 'utf8')) as { result: string };
+    expect(report.result).toBe('invalidated');
+    expect(report).not.toHaveProperty('diagnostic');
+  });
+
   it('records the same setup for the same HEAD through both execution paths', async () => {
     const plan = proofPlan({
       setup: [
@@ -929,7 +1235,7 @@ describe('local and CI receipts describe setup identically', { timeout: 60_000 }
 
     // Drive the real CI sensor against the same HEAD and the same declared gate.
     const reportPath = path.join(await makeTempDir(), 'gate-report.json');
-    await execFileAsync('npx', ['tsx', 'scripts/run-ci-gate-sensor.ts'], {
+    await execFileAsync('npm', ['run', '--silent', 'sensor:ci-gate:run'], {
       cwd: process.cwd(),
       env: {
         ...process.env,
@@ -976,5 +1282,166 @@ describe('local and CI receipts describe setup identically', { timeout: 60_000 }
     expect(report.result).toBe('passed');
     // The digests are of the same command's output, so they must agree byte for byte.
     expect(report.setup[0]?.output).toEqual(local.setup[0]?.output);
+  });
+
+  it.each([
+    { actor: 'setup', dirty: false, malicious: false, mutates: true },
+    { actor: 'gate', dirty: false, malicious: false, mutates: true },
+    { actor: 'gate', dirty: true, malicious: false, mutates: true },
+    { actor: 'gate', dirty: true, malicious: false, mutates: false },
+    { actor: 'setup', dirty: true, malicious: false, mutates: false },
+    { actor: 'setup', dirty: true, malicious: false, mutates: false, cleansBaseline: true },
+    { actor: 'gate', dirty: true, malicious: false, mutates: false, cleansBaseline: true },
+    { actor: 'setup', dirty: true, malicious: false, mutates: true },
+    { actor: 'setup', dirty: true, malicious: false, mutates: true, mutatesExisting: true },
+    { actor: 'setup', dirty: true, malicious: true, mutates: true, mutatesExisting: true },
+    { actor: 'gate', dirty: false, malicious: true, mutates: true },
+  ] as const)(
+    'keeps CI diagnostics accurate for $actor, dirty $dirty, malicious $malicious, mutates $mutates',
+    async (scenario) => {
+      const { actor, dirty, malicious, mutates } = scenario;
+      const mutatesExisting = 'mutatesExisting' in scenario && scenario.mutatesExisting;
+      const cleansBaseline = 'cleansBaseline' in scenario && scenario.cleansBaseline;
+      const repoDir = await makeCommittedRepo();
+      const sessionId = await startFramedSession(repoDir);
+      const fileName = malicious
+        ? 'report\n::add-mask::forged\u001b[31m\u0085\u2028\u202e\u202c\u2066\u2069\u200e\u200f\u061c\u{e0061}.txt'
+        : 'package-lock.json';
+      const setupStep = {
+        id: 'sync',
+        command: cleansBaseline
+          ? ['node', '-e', 'require("node:fs").rmSync("pre-existing.txt")']
+          : mutates
+            ? writeMarker(fileName)
+            : ['node', '-e', 'process.exit(0)'],
+        working_directory: '.',
+        timeout_ms: 5_000,
+      };
+      const laterStep = { ...setupStep, id: 'later', command: ['node', '-e', 'process.exit(0)'] };
+      const plan = proofPlan(
+        actor === 'setup'
+          ? { setup: cleansBaseline ? [setupStep, laterStep] : [setupStep] }
+          : { command: setupStep.command },
+      );
+      const recorded = await recordProofPlan(repoDir, sessionId, plan);
+      const head = (await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: repoDir })).stdout.trim();
+      const reportPath = path.join(await makeTempDir(), 'gate-report.json');
+      if (dirty) {
+        await writeFile(path.join(repoDir, 'pre-existing.txt'), 'dirty before the gate\n');
+        if (mutatesExisting) {
+          await writeFile(path.join(repoDir, fileName), 'dirty before setup\n');
+        }
+      }
+
+      const failure = await execFileAsync('npm', ['run', '--silent', 'sensor:ci-gate:run'], {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          THREADLOOP_SESSION_ID: sessionId,
+          THREADLOOP_PLAN_SHA256: recorded.data.proof_plan.sha256,
+          THREADLOOP_GATE_ID: 'check',
+          THREADLOOP_GATE_JSON: canonicalJson(plan.gates[0]),
+          THREADLOOP_SOURCE_ROOT: repoDir,
+          THREADLOOP_REPORT_PATH: reportPath,
+          GITHUB_SERVER_URL: 'https://github.com',
+          GITHUB_REPOSITORY: 'example/threadloop-fixture',
+          GITHUB_REF: `refs/heads/${fixtureBranch}`,
+          GITHUB_SHA: head,
+          GITHUB_RUN_ID: '123',
+          GITHUB_RUN_ATTEMPT: '1',
+          RUNNER_OS: 'Linux',
+          RUNNER_ARCH: 'X64',
+        },
+      }).then(
+        () => null,
+        (error: Error & { stderr?: string }) => error,
+      );
+
+      expect(failure).not.toBeNull();
+      const message =
+        actor === 'setup'
+          ? 'Setup step sync changed the repository before the gate ran: "package-lock.json".'
+          : 'Gate command changed the repository while it ran: "package-lock.json".';
+      const recoveryPaths = dirty
+        ? 'all dirty paths (use git status --short --untracked-files=all for the full list)'
+        : 'the listed paths';
+      const hint =
+        actor === 'setup'
+          ? `Restore or commit ${recoveryPaths}, change the setup declaration to use a frozen installer and gitignored output, then start a new session.`
+          : `Restore or commit ${recoveryPaths}, change the gate to write generated output outside the repository or to gitignored paths, then start a new session.`;
+      if (dirty && (!mutates || mutatesExisting)) {
+        const subject = actor === 'setup' ? 'Setup step sync' : 'Gate command';
+        expect(failure?.stderr).toContain(`${subject} ran with an already-dirty repository:`);
+        expect(failure?.stderr).toContain('pre-existing.txt');
+        if (cleansBaseline) {
+          expect(failure?.stderr).toContain(
+            'The repository was clean after this command, but the run started from a dirty baseline.',
+          );
+          expect(failure?.stderr).toContain(
+            'Inspect the run output, then start a new session from a clean repository.',
+          );
+        } else {
+          expect(failure?.stderr).toContain("Git status can't attribute edits to those existing dirty paths.");
+          expect(failure?.stderr).toContain('Restore or commit the pre-existing dirty paths');
+        }
+        expect(failure?.stderr).not.toContain('changed the repository');
+        expect(failure?.stderr?.trimEnd().split('\n')).toHaveLength(2);
+        expect(failure?.stderr?.replaceAll('\n', '')).not.toMatch(/\p{Cc}|\p{Cf}|[\u2028\u2029]/u);
+      } else if (malicious) {
+        expect(failure?.stderr?.trimEnd().split('\n')).toHaveLength(2);
+        expect(failure?.stderr?.replaceAll('\n', '')).not.toMatch(/\p{Cc}|\p{Cf}|[\u2028\u2029]/u);
+        expect(failure?.stderr).toContain(
+          'report\\n::add-mask::forged\\u001b[31m\\u0085\\u2028\\u202e\\u202c\\u2066\\u2069\\u200e\\u200f\\u061c\\udb40\\udc61.txt',
+        );
+      } else {
+        expect(failure?.stderr).toContain(`${message}\nRecovery: ${hint}\n`);
+      }
+      const report = JSON.parse(await readFile(reportPath, 'utf8')) as { result: string };
+      expect(report.result).toBe('invalidated');
+      expect(report).not.toHaveProperty('diagnostic');
+    },
+  );
+  it.each(['setup', 'gate'] as const)('preserves SHA-only CI binding when %s switches branches', async (actor) => {
+    const repoDir = await makeCommittedRepo();
+    const sessionId = await startFramedSession(repoDir);
+    const switchBranch = ['git', 'checkout', '-b', 'other-ci-branch'];
+    const marker = path.join(await makeTempDir(), 'ci-gate.txt');
+    const plan = proofPlan(
+      actor === 'setup'
+        ? {
+            setup: [{ id: 'switch', command: switchBranch, working_directory: '.', timeout_ms: 5_000 }],
+            command: writeMarker(marker),
+          }
+        : { command: switchBranch },
+    );
+    const recorded = await recordProofPlan(repoDir, sessionId, plan);
+    const head = await git(repoDir, 'rev-parse', 'HEAD');
+    const reportPath = path.join(await makeTempDir(), 'gate-report.json');
+
+    const output = await execFileAsync('npm', ['run', '--silent', 'sensor:ci-gate:run'], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        THREADLOOP_SESSION_ID: sessionId,
+        THREADLOOP_PLAN_SHA256: recorded.data.proof_plan.sha256,
+        THREADLOOP_GATE_ID: 'check',
+        THREADLOOP_GATE_JSON: canonicalJson(plan.gates[0]),
+        THREADLOOP_SOURCE_ROOT: repoDir,
+        THREADLOOP_REPORT_PATH: reportPath,
+        GITHUB_SERVER_URL: 'https://github.com',
+        GITHUB_REPOSITORY: 'example/project',
+        GITHUB_REF: `refs/heads/${fixtureBranch}`,
+        GITHUB_SHA: head,
+        GITHUB_RUN_ID: '123',
+        GITHUB_RUN_ATTEMPT: '1',
+        RUNNER_OS: 'Linux',
+        RUNNER_ARCH: 'X64',
+      },
+    });
+    const report = JSON.parse(await readFile(reportPath, 'utf8')) as { result: string; head_after: string };
+    expect(report).toMatchObject({ result: 'passed', head_after: head });
+    expect(output.stderr).toBe('');
+    expect(await git(repoDir, 'branch', '--show-current')).toBe('other-ci-branch');
+    if (actor === 'setup') expect(existsSync(marker)).toBe(true);
   });
 });

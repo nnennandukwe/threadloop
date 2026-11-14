@@ -36,6 +36,17 @@ export interface GateProcessResult {
 export interface GateRepositoryObservation {
   headSha: string;
   clean: boolean;
+  changedFiles: string[];
+  /** Present when the caller also binds execution to a branch; CI binds only the caller SHA. */
+  branch?: string | null;
+}
+
+export interface RepositoryMutationDiagnostic {
+  code: 'SETUP_MUTATED_REPOSITORY' | 'GATE_MUTATED_REPOSITORY' | 'REPOSITORY_ALREADY_DIRTY';
+  message: string;
+  step_id: string | null;
+  changed_files: string[];
+  hint: string;
 }
 
 export interface GateSetupStepInput extends GateProcessInput {
@@ -70,6 +81,8 @@ export interface GateWithSetupResult {
   /** Null when a setup step short-circuited the sequence, so the gate command never ran. */
   gate: GateProcessResult | null;
   observedAfter: GateRepositoryObservation | null;
+  /** Transient operator guidance. It's kept outside the persisted receipt contract. */
+  diagnostic: RepositoryMutationDiagnostic | null;
   /**
    * Spans everything that actually ran, from the first process started to the last one that ended. A gate
    * blocked by failing setup still reports the real duration of the setup that was attempted.
@@ -82,9 +95,9 @@ export interface GateWithSetupResult {
 }
 
 /**
- * Runs every declared setup step in order and then the gate command. The single execution path shared by
- * `session gate run` and the CI sensor, so a local receipt and a signed receipt for the same HEAD cannot
- * describe setup differently.
+ * Runs every declared setup step in order and then the gate command. Local and CI execution share the same
+ * runner and receipt serialization while applying their existing repository bindings: local observations
+ * include the bound branch, while CI observations bind only the caller SHA.
  *
  * A setup step that does not pass stops the sequence: remaining steps and the gate command do not run. A
  * compromised repository observation stops it too, because continuing would attribute later work to a HEAD
@@ -93,11 +106,12 @@ export interface GateWithSetupResult {
 export async function runGateWithSetup(input: GateWithSetupInput): Promise<GateWithSetupResult> {
   const setup: SetupStepExecution[] = [];
   let observed: GateRepositoryObservation | null = input.observedBefore;
+  let baselineDiagnostic: RepositoryMutationDiagnostic | null = null;
 
   for (const step of input.setup) {
     const stepBefore = observed;
     if (!stepBefore) {
-      return { setup, gate: null, observedAfter: null, window: executionWindow(setup, null) };
+      return { setup, gate: null, observedAfter: null, diagnostic: null, window: executionWindow(setup, null) };
     }
     const process = await runGateProcess(step);
     const stepAfter = await input.observe();
@@ -113,14 +127,149 @@ export async function runGateWithSetup(input: GateWithSetupInput): Promise<GateW
       cleanAfter: stepAfter?.clean ?? false,
     });
     observed = stepAfter;
+    const diagnostic = repositoryMutationDiagnostic('setup', step.id, stepBefore, stepAfter);
+    if (diagnostic?.code === 'REPOSITORY_ALREADY_DIRTY') {
+      baselineDiagnostic ??= diagnostic;
+    }
 
-    if (process.result !== 'passed' || !stepAfter || !stepAfter.clean || stepAfter.headSha !== stepBefore.headSha) {
-      return { setup, gate: null, observedAfter: stepAfter, window: executionWindow(setup, null) };
+    if (
+      process.result !== 'passed' ||
+      !stepAfter ||
+      !stepAfter.clean ||
+      stepAfter.headSha !== stepBefore.headSha ||
+      repositoryBranchChanged(stepBefore, stepAfter)
+    ) {
+      return {
+        setup,
+        gate: null,
+        observedAfter: stepAfter,
+        diagnostic: diagnostic ?? (stepAfter ? baselineDiagnostic : null),
+        window: executionWindow(setup, null),
+      };
     }
   }
 
+  if (!observed) {
+    throw new Error('Gate execution lost its repository observation before the gate started.');
+  }
   const gate = await runGateProcess(input.gate);
-  return { setup, gate, observedAfter: await input.observe(), window: executionWindow(setup, gate) };
+  const observedAfter = await input.observe();
+  return {
+    setup,
+    gate,
+    observedAfter,
+    diagnostic:
+      repositoryMutationDiagnostic('gate', null, observed, observedAfter) ??
+      (observedAfter ? baselineDiagnostic : null),
+    window: executionWindow(setup, gate),
+  };
+}
+
+function repositoryMutationDiagnostic(
+  actor: 'setup' | 'gate',
+  stepId: string | null,
+  before: GateRepositoryObservation,
+  after: GateRepositoryObservation | null,
+): RepositoryMutationDiagnostic | null {
+  if (!after) {
+    return null;
+  }
+
+  // A dirty CI baseline can contain unrelated paths. Only newly dirty paths can be attributed from status alone.
+  const previouslyDirty = new Set(before.changedFiles);
+  const changedFiles = after.changedFiles.filter((file) => !previouslyDirty.has(file)).sort();
+  const headChanged = before.headSha !== after.headSha;
+  const branchChanged = repositoryBranchChanged(before, after);
+  const subject = actor === 'setup' ? `Setup step ${stepId}` : 'Gate command';
+  if (!headChanged && !branchChanged && changedFiles.length === 0) {
+    if (!before.clean) {
+      const baselinePaths = diagnosticPathSummary([...before.changedFiles].sort());
+      const detail = after.clean
+        ? 'The repository was clean after this command, but the run started from a dirty baseline.'
+        : "Git status can't attribute edits to those existing dirty paths.";
+      return {
+        code: 'REPOSITORY_ALREADY_DIRTY',
+        message: `${subject} ran with an already-dirty repository${before.changedFiles.length > 0 ? `: ${baselinePaths.text}` : ''}. ${detail}`,
+        step_id: stepId,
+        changed_files: [],
+        hint: after.clean
+          ? 'Inspect the run output, then start a new session from a clean repository.'
+          : 'Restore or commit the pre-existing dirty paths (use git status --short --untracked-files=all for the current list), then start a new session from a clean repository.',
+      };
+    }
+    return null;
+  }
+  const timing = actor === 'setup' ? 'before the gate ran' : 'while it ran';
+  const pathSummary = diagnosticPathSummary(changedFiles);
+  const paths = changedFiles.length > 0 ? `: ${pathSummary.text}` : '';
+  const branchDetail = branchChanged
+    ? ` (branch changed from ${quoteDiagnosticValue(before.branch ?? '(detached HEAD)')} to ${quoteDiagnosticValue(after.branch ?? '(detached HEAD)')})`
+    : '';
+  const detail = `${paths}${headChanged ? ' (HEAD changed)' : ''}${branchDetail}`;
+  const verificationTarget = [
+    headChanged ? `the intended verification HEAD ${before.headSha}` : null,
+    branchChanged
+      ? before.branch === null
+        ? 'detached HEAD'
+        : `branch ${quoteDiagnosticValue(before.branch ?? '(detached HEAD)')}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(' and ');
+  const affectedPaths = !before.clean
+    ? 'all dirty paths (use git status --short --untracked-files=all for the full list)'
+    : pathSummary.shortened
+      ? 'all affected paths (use git status --short --untracked-files=all for the full list)'
+      : 'the listed paths';
+  const restoration = verificationTarget
+    ? `${changedFiles.length > 0 || !before.clean ? `Restore or commit ${affectedPaths} and restore` : 'Restore'} ${verificationTarget}`
+    : `Restore or commit ${affectedPaths}`;
+  const prevention =
+    headChanged || branchChanged
+      ? `change the ${actor === 'setup' ? 'setup declaration' : 'gate'} so it preserves ${branchChanged ? 'HEAD and the bound branch' : 'HEAD'} and writes only to gitignored paths or outside the repository`
+      : actor === 'setup'
+        ? 'change the setup declaration to use a frozen installer and gitignored output'
+        : 'change the gate to write generated output outside the repository or to gitignored paths';
+
+  return {
+    code: actor === 'setup' ? 'SETUP_MUTATED_REPOSITORY' : 'GATE_MUTATED_REPOSITORY',
+    message: `${subject} changed the repository ${timing}${detail}.`,
+    step_id: stepId,
+    changed_files: changedFiles,
+    hint: `${restoration}, ${prevention}, then start a new session.`,
+  };
+}
+
+function diagnosticPathSummary(paths: readonly string[]): { text: string; shortened: boolean } {
+  const displayed = paths.slice(0, 5).map((file) => {
+    const characters = Array.from(file);
+    const shortened = characters.length > 80;
+    return {
+      value: quoteDiagnosticValue(shortened ? `${characters.slice(0, 80).join('')}...` : file),
+      shortened,
+    };
+  });
+  const shortenedNames = displayed.some((file) => file.shortened);
+  const shortened = displayed.length < paths.length || shortenedNames;
+  const count = shortened
+    ? ` (${displayed.length} of ${paths.length} paths shown${shortenedNames ? '; long paths shortened' : ''})`
+    : '';
+  return { text: `${displayed.map((file) => file.value).join(', ')}${count}`, shortened };
+}
+
+function quoteDiagnosticValue(value: string): string {
+  // Keep raw paths in changed_files, but prevent terminal controls and visual reordering in human-readable logs.
+  // Escape UTF-16 units so astral format characters retain both halves of their surrogate pair.
+  return JSON.stringify(value).replace(/\p{Cc}|\p{Cf}|[\u2028\u2029]/gu, (character) =>
+    character
+      .split('')
+      .map((unit) => `\\u${unit.charCodeAt(0).toString(16).padStart(4, '0')}`)
+      .join(''),
+  );
+}
+
+function repositoryBranchChanged(before: GateRepositoryObservation, after: GateRepositoryObservation): boolean {
+  return before.branch !== undefined && after.branch !== undefined && before.branch !== after.branch;
 }
 
 /**
@@ -136,6 +285,7 @@ export function gateExecutionWasInvalidated(
     !observedAfter ||
     !observedAfter.clean ||
     observedAfter.headSha !== observedBefore.headSha ||
+    repositoryBranchChanged(observedBefore, observedAfter) ||
     execution.setup.some(
       (step) =>
         !step.cleanBefore ||

@@ -146,7 +146,7 @@ describe('gate runner with declared setup', () => {
     return {
       observe: () => {
         calls += 1;
-        return Promise.resolve({ headSha: head, clean: true });
+        return Promise.resolve({ headSha: head, clean: true, changedFiles: [] });
       },
       calls: () => calls,
     };
@@ -170,7 +170,7 @@ describe('gate runner with declared setup', () => {
         stdoutPath: path.join(directory, 'gate.stdout.log'),
         stderrPath: path.join(directory, 'gate.stderr.log'),
       },
-      observedBefore: { headSha: head, clean: true },
+      observedBefore: { headSha: head, clean: true, changedFiles: [] },
       observe: observer.observe,
     });
 
@@ -199,7 +199,7 @@ describe('gate runner with declared setup', () => {
         stdoutPath: path.join(directory, 'gate.stdout.log'),
         stderrPath: path.join(directory, 'gate.stderr.log'),
       },
-      observedBefore: { headSha: head, clean: true },
+      observedBefore: { headSha: head, clean: true, changedFiles: [] },
       observe: observer.observe,
     });
 
@@ -212,7 +212,7 @@ describe('gate runner with declared setup', () => {
   it('stops the sequence when a setup step leaves the repository dirty', async () => {
     const directory = await makeDirectory();
     const observer = {
-      observe: () => Promise.resolve({ headSha: head, clean: false }),
+      observe: () => Promise.resolve({ headSha: head, clean: false, changedFiles: ['package-lock.json'] }),
     };
 
     const result = await runGateWithSetup({
@@ -227,7 +227,7 @@ describe('gate runner with declared setup', () => {
         stdoutPath: path.join(directory, 'gate.stdout.log'),
         stderrPath: path.join(directory, 'gate.stderr.log'),
       },
-      observedBefore: { headSha: head, clean: true },
+      observedBefore: { headSha: head, clean: true, changedFiles: [] },
       observe: observer.observe,
     });
 
@@ -238,7 +238,7 @@ describe('gate runner with declared setup', () => {
 
   it('keeps a failed mid-run observation invalidated when a later observation succeeds', async () => {
     const directory = await makeDirectory();
-    const observedBefore = { headSha: head, clean: true };
+    const observedBefore = { headSha: head, clean: true, changedFiles: [] };
 
     const result = await runGateWithSetup({
       setup: [stepInput(directory, 'sync', ['node', '-e', 'process.exit(0)'])],
@@ -256,13 +256,120 @@ describe('gate runner with declared setup', () => {
     expect(result.setup[0]).toMatchObject({ headAfter: head, cleanAfter: false });
     expect(result.gate).toBeNull();
     expect(result.observedAfter).toBeNull();
+    expect(result.diagnostic).toBeNull();
 
-    const finalObservation = { headSha: head, clean: true };
+    const finalObservation = { headSha: head, clean: true, changedFiles: [] };
     const invalidated =
       gateExecutionWasInvalidated(result, observedBefore) ||
       !finalObservation.clean ||
       finalObservation.headSha !== observedBefore.headSha;
 
+    expect(classifyGateOutcome({ setup: result.setup, gate: result.gate, invalidated })).toBe('invalidated');
+  });
+
+  it.each(['unchanged', 'head', 'branch', 'cleaned'] as const)(
+    'reports a dirty baseline and complete recovery for the %s observation',
+    async (change) => {
+      const directory = await makeDirectory();
+      const observedBefore = {
+        headSha: head,
+        clean: false,
+        changedFiles: ['pre-existing.txt'],
+        branch: 'verification',
+      };
+      const result = await runGateWithSetup({
+        setup: [stepInput(directory, 'sync', ['node', '-e', 'process.exit(0)'])],
+        gate: {
+          command: ['node', '-e', 'process.exit(0)'],
+          cwd: directory,
+          timeoutMs: 5_000,
+          stdoutPath: path.join(directory, 'gate.stdout.log'),
+          stderrPath: path.join(directory, 'gate.stderr.log'),
+        },
+        observedBefore,
+        observe: () =>
+          Promise.resolve({
+            ...observedBefore,
+            headSha: change === 'head' ? 'e'.repeat(40) : head,
+            clean: change === 'cleaned',
+            changedFiles: change === 'cleaned' ? [] : observedBefore.changedFiles,
+            branch: change === 'branch' ? 'other' : observedBefore.branch,
+          }),
+      });
+
+      expect(result.diagnostic).toMatchObject({
+        code: change === 'unchanged' || change === 'cleaned' ? 'REPOSITORY_ALREADY_DIRTY' : 'SETUP_MUTATED_REPOSITORY',
+        step_id: 'sync',
+        changed_files: [],
+      });
+      if (change === 'unchanged' || change === 'cleaned') {
+        expect(result.diagnostic?.message).toContain('"pre-existing.txt"');
+        expect(result.diagnostic?.message).not.toContain('changed the repository');
+      } else {
+        expect(result.diagnostic?.hint).toContain(
+          'Restore or commit all dirty paths (use git status --short --untracked-files=all for the full list)',
+        );
+        expect(result.diagnostic?.hint).toContain(change === 'head' ? head : 'branch "verification"');
+      }
+      if (change === 'cleaned') {
+        expect(result.gate?.result).toBe('passed');
+        expect(result.diagnostic?.hint).toContain('start a new session from a clean repository');
+      } else {
+        expect(result.gate).toBeNull();
+      }
+      expect(gateExecutionWasInvalidated(result, observedBefore)).toBe(true);
+    },
+  );
+
+  it('leaves failed observations unattributed after dirty baseline cleanup', async () => {
+    const directory = await makeDirectory();
+    const observedBefore = { headSha: head, clean: false, changedFiles: ['pre-existing.txt'] };
+    let observations = 0;
+    const result = await runGateWithSetup({
+      setup: [stepInput(directory, 'sync', ['node', '-e', 'process.exit(0)'])],
+      gate: {
+        command: ['node', '-e', 'process.exit(0)'],
+        cwd: directory,
+        timeoutMs: 5_000,
+        stdoutPath: path.join(directory, 'gate.stdout.log'),
+        stderrPath: path.join(directory, 'gate.stderr.log'),
+      },
+      observedBefore,
+      observe: () => {
+        observations += 1;
+        return Promise.resolve(observations === 1 ? { headSha: head, clean: true, changedFiles: [] } : null);
+      },
+    });
+
+    expect(result.gate?.result).toBe('passed');
+    expect(result.observedAfter).toBeNull();
+    expect(result.diagnostic).toBeNull();
+    expect(gateExecutionWasInvalidated(result, observedBefore)).toBe(true);
+  });
+
+  it('retains a branch mismatch and safely quotes its recovery target', async () => {
+    const directory = await makeDirectory();
+    const observedBefore = { headSha: head, clean: true, changedFiles: [], branch: 'verification\u202e\u{e0061}' };
+    const result = await runGateWithSetup({
+      setup: [stepInput(directory, 'switch', ['node', '-e', 'process.exit(0)'])],
+      gate: {
+        command: ['node', '-e', 'process.exit(0)'],
+        cwd: directory,
+        timeoutMs: 5_000,
+        stdoutPath: path.join(directory, 'gate.stdout.log'),
+        stderrPath: path.join(directory, 'gate.stderr.log'),
+      },
+      observedBefore,
+      observe: () => Promise.resolve({ ...observedBefore, branch: 'other\u2066' }),
+    });
+
+    expect(result.gate).toBeNull();
+    expect(result.diagnostic?.message).not.toMatch(/\p{Cf}/u);
+    expect(result.diagnostic?.hint).not.toMatch(/\p{Cf}/u);
+    expect(result.diagnostic?.hint).toContain('branch "verification\\u202e\\udb40\\udc61"');
+    const finalObservation = { ...observedBefore };
+    const invalidated =
+      gateExecutionWasInvalidated(result, observedBefore) || finalObservation.branch !== observedBefore.branch;
     expect(classifyGateOutcome({ setup: result.setup, gate: result.gate, invalidated })).toBe('invalidated');
   });
 
@@ -279,7 +386,7 @@ describe('gate runner with declared setup', () => {
         stdoutPath: path.join(directory, 'gate.stdout.log'),
         stderrPath: path.join(directory, 'gate.stderr.log'),
       },
-      observedBefore: { headSha: head, clean: true },
+      observedBefore: { headSha: head, clean: true, changedFiles: [] },
       observe: observer.observe,
     });
 

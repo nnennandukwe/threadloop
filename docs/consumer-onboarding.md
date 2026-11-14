@@ -111,15 +111,53 @@ modified tracked files. `uv sync` refreshes `uv.lock` when it is stale, which ma
 path counts as dirty. `.venv/`, `node_modules/`, and equivalents must already be in `.gitignore`, which for most
 repositories they are. Confirm it before the first session rather than after a gate reports `invalidated`.
 
-[Issue #84](https://github.com/nnennandukwe/threadloop/issues/84) tracks distinguishing a setup-caused tree change from
-a gate that mutated the repository, so this failure names the offending step directly. Until then, `invalidated` on a
-gate with setup usually means one of the two constraints above.
+ThreadLoop distinguishes these two causes without changing the receipt contract. If `sync` creates an untracked
+`package-lock.json`, the local JSON response contains:
+
+```json
+{
+  "diagnostic": {
+    "code": "SETUP_MUTATED_REPOSITORY",
+    "message": "Setup step sync changed the repository before the gate ran: \"package-lock.json\".",
+    "step_id": "sync",
+    "changed_files": ["package-lock.json"],
+    "hint": "Restore or commit the listed paths, change the setup declaration to use a frozen installer and gitignored output, then start a new session."
+  }
+}
+```
+
+The receipt still records `invalidated`. If the gate command creates the file instead, the diagnostic code is
+`GATE_MUTATED_REPOSITORY`, `step_id` is null, and the hint directs generated gate output outside the repository or to
+gitignored paths. The CI sensor writes the same message and hint to stderr. Human-readable messages quote and escape
+paths, including directional and invisible formatting characters; `changed_files` keeps their raw names. If HEAD changes
+without dirty paths, recovery names the original commit. For local execution, a branch switch also invalidates the
+receipt and recovery names the bound branch, even when the commit stays the same. Setup stops before later steps or the
+gate can run on that other branch. CI retains its caller-SHA binding. This preserves machine compatibility while closing
+the operator-diagnosis gap tracked in [issue #84](https://github.com/nnennandukwe/threadloop/issues/84).
+
+For large installs, the displayed message shows at most five paths and shortens each after 80 characters. It reports the
+shown and total counts and directs operators to `git status` for the full list. JSON's `changed_files` still contains
+every raw path.
+
+If CI starts with dirty paths and observes no newly dirty paths, `REPOSITORY_ALREADY_DIRTY` names the executed setup
+step or gate and the pre-existing paths. Its `changed_files` is empty because Git status can't attribute edits to those
+paths. Restore or commit them and start a new session from a clean repository. The receipt stays `invalidated`. When the
+run creates additional dirty paths, its mutation message lists those new paths; recovery still requires cleaning all
+dirty paths. Use `git status --short --untracked-files=all` to include the pre-existing baseline. Cleaning an initially
+dirty workspace during the run still leaves the receipt `invalidated`. The diagnostic retains the baseline cause through
+later clean observations and directs the operator to start a new session from a clean repository.
+
+Before updating the CLI in a consumer repository, refresh any copied
+[runner skill](../.agents/skills/threadloop-runner/SKILL.md) so it handles the additive `data.diagnostic` field. An
+older copy can stop after an invalidated gate without passing its cause and recovery guidance to the operator. Consumer
+owners must update and verify their own copies.
 
 ### Getting it wrong mid-session
 
 The proof plan is immutable once bound, so a declaration cannot be corrected in place. A `setup_failed` receipt tells
-you which step failed and with what exit status, but adopting the fix means starting a new session. Both constraints
-above are worth checking against your repository before the first one.
+you which step failed and with what exit status. A setup-mutation diagnostic names the step and changed paths. In both
+cases, adopting a declaration fix means restoring or committing the repository and starting a new session. Both
+constraints above are worth checking against your repository before the first one.
 
 ## 4. Know where the CLI lives
 
