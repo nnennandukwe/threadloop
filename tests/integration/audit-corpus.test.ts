@@ -136,6 +136,36 @@ it('rolls back the session-start transaction when genesis persistence fails', as
   for (const table of ['tasks', 'sessions', 'entries', 'audit_events']) expect(countRows(repoDir, table)).toBe(0);
 });
 
+it('reports unavailable ledger consistently with single-session export and preserves the missing state', async () => {
+  const repoDir = await makeCommittedRepo();
+  const { session_id: sessionId } = await startSession(repoDir);
+  withStateDb(repoDir, (db) => db.exec('DROP TABLE audit_events'), { readOnly: false });
+  const output = path.join(repoDir, 'unavailable.jsonl');
+  for (const command of [
+    ['audit', 'export', '--session', sessionId, '--output', output, '--json'],
+    ['audit', 'corpus', '--all', '--output', output, '--json'],
+  ]) {
+    expect(await runCliError(repoDir, command)).toMatchObject({ error: { code: 'AUDIT_UNAVAILABLE' } });
+    await expect(readFile(output)).rejects.toMatchObject({ code: 'ENOENT' });
+  }
+});
+
+it('retains all-session and explicit membership semantics across a batch of sessions', async () => {
+  const repoDir = await makeCommittedRepo();
+  const ids: string[] = [];
+  for (let index = 0; index < 16; index++) ids.push((await startSession(repoDir, `Batch fixture ${index}`)).session_id);
+  for (const [name, selector, expected] of [
+    ['all', ['--all'], ids],
+    ['selected', ['--session', ids[0]!, ids[15]!], [ids[0]!, ids[15]!]],
+  ] as const) {
+    const output = path.join(repoDir, `${name}.jsonl`);
+    await runCli(repoDir, ['audit', 'corpus', ...selector, '--output', output, '--json']);
+    const inspected = verifyAuditCorpus(await readFile(output, 'utf8'), sha256);
+    expect(inspected.manifest.sessions.map((session) => session.session_id)).toEqual([...expected].sort());
+    expect(inspected.event_count).toBe(expected.length);
+  }
+});
+
 it('refuses the whole selection when one chain is corrupt and rejects invalid UTF-8 without changing retained bytes', async () => {
   const repoDir = await makeCommittedRepo();
   await startSession(repoDir);

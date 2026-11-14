@@ -6,6 +6,7 @@ import {
   CURRENT_SCHEMA_VERSION,
   inspectAuditLedgerReadOnly,
   readAuditCorpusReadOnly,
+  AuditLedgerUnavailableError,
 } from '../adapters/fs/sqlite-store.js';
 import { ThreadloopError } from '../contracts/errors.js';
 import { createAuditCorpus, verifyAuditCorpus } from '../domain/audit-corpus.js';
@@ -38,6 +39,16 @@ export async function exportAuditCorpus(input: { cwd: string; sessionIds?: strin
   try {
     corpus = createAuditCorpus(readAuditCorpusReadOnly(repoRoot, input.sessionIds), sha256);
   } catch (cause) {
+    if (cause instanceof AuditLedgerUnavailableError) {
+      throw new ThreadloopError('AUDIT_UNAVAILABLE', cause.message, {
+        cause,
+        details: {
+          schema_version: cause.schemaVersion,
+          reason: cause.reason,
+          hint: 'Restore the missing audit ledger from trusted storage; run `threadloop init` only for an explicit supported schema migration.',
+        },
+      });
+    }
     throw new ThreadloopError(
       'AUDIT_CORPUS_INVALID',
       'Selected session audit records could not form a verified corpus.',

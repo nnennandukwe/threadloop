@@ -475,8 +475,9 @@ export function readAuditCorpusReadOnly(repoRoot: string, sessionIds?: string[])
       (row) => row.id,
     );
     const selected = sessionIds ?? available;
+    const availableIds = new Set(available);
     for (const id of selected)
-      if (!available.includes(id)) {
+      if (!availableIds.has(id)) {
         throw new Error(`Could not find selected session: ${id}`);
       }
     return selected.map((sessionId) => ({
