@@ -199,11 +199,13 @@ function repositoryMutationDiagnostic(
   ]
     .filter(Boolean)
     .join(' and ');
-  const affectedPaths = pathSummary.shortened
-    ? 'all affected paths (use git status --short --untracked-files=all for the full list)'
-    : 'the listed paths';
+  const affectedPaths = !before.clean
+    ? 'all dirty paths (use git status --short --untracked-files=all for the full list)'
+    : pathSummary.shortened
+      ? 'all affected paths (use git status --short --untracked-files=all for the full list)'
+      : 'the listed paths';
   const restoration = verificationTarget
-    ? `${changedFiles.length > 0 ? `Restore or commit ${affectedPaths} and restore` : 'Restore'} ${verificationTarget}`
+    ? `${changedFiles.length > 0 || !before.clean ? `Restore or commit ${affectedPaths} and restore` : 'Restore'} ${verificationTarget}`
     : `Restore or commit ${affectedPaths}`;
   const prevention =
     headChanged || branchChanged

@@ -1290,6 +1290,7 @@ describe('local and CI receipts describe setup identically', { timeout: 60_000 }
     { actor: 'gate', dirty: true, malicious: false, mutates: true },
     { actor: 'gate', dirty: true, malicious: false, mutates: false },
     { actor: 'setup', dirty: true, malicious: false, mutates: false },
+    { actor: 'setup', dirty: true, malicious: false, mutates: true },
     { actor: 'setup', dirty: true, malicious: false, mutates: true, mutatesExisting: true },
     { actor: 'setup', dirty: true, malicious: true, mutates: true, mutatesExisting: true },
     { actor: 'gate', dirty: false, malicious: true, mutates: true },
@@ -1349,10 +1350,13 @@ describe('local and CI receipts describe setup identically', { timeout: 60_000 }
         actor === 'setup'
           ? 'Setup step sync changed the repository before the gate ran: "package-lock.json".'
           : 'Gate command changed the repository while it ran: "package-lock.json".';
+      const recoveryPaths = dirty
+        ? 'all dirty paths (use git status --short --untracked-files=all for the full list)'
+        : 'the listed paths';
       const hint =
         actor === 'setup'
-          ? 'Restore or commit the listed paths, change the setup declaration to use a frozen installer and gitignored output, then start a new session.'
-          : 'Restore or commit the listed paths, change the gate to write generated output outside the repository or to gitignored paths, then start a new session.';
+          ? `Restore or commit ${recoveryPaths}, change the setup declaration to use a frozen installer and gitignored output, then start a new session.`
+          : `Restore or commit ${recoveryPaths}, change the gate to write generated output outside the repository or to gitignored paths, then start a new session.`;
       if (dirty && (!mutates || mutatesExisting)) {
         const subject = actor === 'setup' ? 'Setup step sync' : 'Gate command';
         expect(failure?.stderr).toContain(`${subject} ran with an already-dirty repository:`);

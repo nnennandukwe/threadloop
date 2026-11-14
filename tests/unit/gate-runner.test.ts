@@ -267,32 +267,52 @@ describe('gate runner with declared setup', () => {
     expect(classifyGateOutcome({ setup: result.setup, gate: result.gate, invalidated })).toBe('invalidated');
   });
 
-  it('reports a dirty baseline without attributing its paths to the setup step', async () => {
-    const directory = await makeDirectory();
-    const observedBefore = { headSha: head, clean: false, changedFiles: ['pre-existing.txt'] };
-    const result = await runGateWithSetup({
-      setup: [stepInput(directory, 'sync', ['node', '-e', 'process.exit(0)'])],
-      gate: {
-        command: ['node', '-e', 'process.exit(0)'],
-        cwd: directory,
-        timeoutMs: 5_000,
-        stdoutPath: path.join(directory, 'gate.stdout.log'),
-        stderrPath: path.join(directory, 'gate.stderr.log'),
-      },
-      observedBefore,
-      observe: () => Promise.resolve({ ...observedBefore }),
-    });
+  it.each(['unchanged', 'head', 'branch'] as const)(
+    'reports a dirty baseline and complete recovery for the %s observation',
+    async (change) => {
+      const directory = await makeDirectory();
+      const observedBefore = {
+        headSha: head,
+        clean: false,
+        changedFiles: ['pre-existing.txt'],
+        branch: 'verification',
+      };
+      const result = await runGateWithSetup({
+        setup: [stepInput(directory, 'sync', ['node', '-e', 'process.exit(0)'])],
+        gate: {
+          command: ['node', '-e', 'process.exit(0)'],
+          cwd: directory,
+          timeoutMs: 5_000,
+          stdoutPath: path.join(directory, 'gate.stdout.log'),
+          stderrPath: path.join(directory, 'gate.stderr.log'),
+        },
+        observedBefore,
+        observe: () =>
+          Promise.resolve({
+            ...observedBefore,
+            headSha: change === 'head' ? 'e'.repeat(40) : head,
+            branch: change === 'branch' ? 'other' : observedBefore.branch,
+          }),
+      });
 
-    expect(result.diagnostic).toMatchObject({
-      code: 'REPOSITORY_ALREADY_DIRTY',
-      step_id: 'sync',
-      changed_files: [],
-    });
-    expect(result.diagnostic?.message).toContain('"pre-existing.txt"');
-    expect(result.diagnostic?.message).not.toContain('changed the repository');
-    expect(result.gate).toBeNull();
-    expect(gateExecutionWasInvalidated(result, observedBefore)).toBe(true);
-  });
+      expect(result.diagnostic).toMatchObject({
+        code: change === 'unchanged' ? 'REPOSITORY_ALREADY_DIRTY' : 'SETUP_MUTATED_REPOSITORY',
+        step_id: 'sync',
+        changed_files: [],
+      });
+      if (change === 'unchanged') {
+        expect(result.diagnostic?.message).toContain('"pre-existing.txt"');
+        expect(result.diagnostic?.message).not.toContain('changed the repository');
+      } else {
+        expect(result.diagnostic?.hint).toContain(
+          'Restore or commit all dirty paths (use git status --short --untracked-files=all for the full list)',
+        );
+        expect(result.diagnostic?.hint).toContain(change === 'head' ? head : 'branch "verification"');
+      }
+      expect(result.gate).toBeNull();
+      expect(gateExecutionWasInvalidated(result, observedBefore)).toBe(true);
+    },
+  );
 
   it('retains a branch mismatch and safely quotes its recovery target', async () => {
     const directory = await makeDirectory();
