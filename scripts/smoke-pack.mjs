@@ -37,6 +37,35 @@ async function main() {
   console.log(`Installing ${tarballPath} into ${consumerRepo}`);
   await run('npm', ['install', tarballPath], consumerRepo);
 
+  // Dependency overrides only apply at the install root. Check the libraries
+  // reached from the installed CLI, where its package.json is a dependency.
+  const installedRoot = path.join(consumerRepo, 'node_modules', 'threadloop');
+  await run(
+    process.execPath,
+    [
+      '--input-type=module',
+      '--eval',
+      `
+        import assert from 'node:assert/strict';
+        import { createRequire } from 'node:module';
+        const contracts = createRequire(import.meta.resolve('threadloop-contracts/controller'));
+        const zod = contracts('zod');
+        const result = zod.array(zod.string()).max(1).safeParse(Array.from({ length: 16 }, () => 0));
+        assert.equal(result.success, false);
+        assert.equal(result.error.issues.length, 1, 'Packaged contracts must stop before expanding oversized collections.');
+        const sigstore = createRequire(import.meta.resolve('sigstore'));
+        const tuf = createRequire(sigstore.resolve('@sigstore/tuf'));
+        const client = createRequire(tuf.resolve('tuf-js'));
+        const models = createRequire(client.resolve('@tufjs/models'));
+        const { Minimatch } = models('minimatch');
+        assert.throws(() => new Minimatch('a/**/../b/c', {
+          optimizationLevel: 2, braceExpandMax: 1
+        }), /too many patterns/, 'Packaged TUF matching must enforce its pattern budget.');
+      `,
+    ],
+    installedRoot,
+  );
+
   await writeFile(path.join(consumerRepo, 'app.js'), 'export const value = 1;\n', 'utf8');
 
   const threadloop = (...args) => run('npx', ['threadloop', ...args], consumerRepo);

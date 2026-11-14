@@ -109,6 +109,19 @@ Do not add blanket vulnerability or secret-scanning baselines. An unavoidable de
 advisory in `osv-scanner.toml`, explain why the vulnerable behavior is unreachable, link a remediation issue, and expire
 within 30 days. High or critical advisories must be fixed rather than ignored.
 
+ThreadLoop replaces nested Zod `4.4.3` with its direct patched `4.6.7` through the version-scoped `$zod` override. The
+pinned contracts package retains its original code and assets. Three version-scoped overrides select minimatch `11.0.8`
+for `@tufjs/models` `5.0.2`, `@typescript-eslint/typescript-estree` `8.72.0`, and `markdownlint-cli` `0.50.0`. These
+callers use the retained matching interfaces; `tests/integration/dependency-security.test.ts` checks pattern budgets,
+TUF delegation paths, TypeScript default-project admission, and Markdown ignore patterns. It also verifies that an
+oversized constrained array stops before Zod expands element errors.
+
+The CLI bundles its locked runtime dependencies into the npm tarball because npm only applies overrides at the
+installation root. Run `npm ci` before packaging so the bundle contains the locked graph. `npm run smoke:pack` checks
+the patched libraries reached from the installed CLI and exercises its session workflow. Development tools aren't
+bundled. Consumers receive security updates by installing an updated ThreadLoop package. Remove each override when its
+owning dependency accepts a patched version directly, then repeat the compatibility and installed-package checks.
+
 The Markdown lint command uses `markdownlint-cli` `0.50.0` with the `markdownlint` `0.42.1` rule engine. It replaces
 `markdownlint-cli2`, whose glob dependency chain includes an unpatched high-severity `braces` advisory. The CLI now
 selects patched `smol-toml` `~1.9.1` and `js-yaml` `~5.5.0` directly, so their overrides are removed.
