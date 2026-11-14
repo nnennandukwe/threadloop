@@ -109,7 +109,8 @@ Do not add blanket vulnerability or secret-scanning baselines. An unavoidable de
 advisory in `osv-scanner.toml`, explain why the vulnerable behavior is unreachable, link a remediation issue, and expire
 within 30 days. High or critical advisories must be fixed rather than ignored.
 
-ThreadLoop replaces nested Zod `4.4.3` with its direct patched `4.6.7` through the version-scoped `$zod` override. The
+ThreadLoop replaces nested Zod `4.4.3` with patched `4.6.7` through a version-scoped override. The literal version lets
+npm 10 install the bundled CLI from another project; its resolver fails on a `$zod` reference in that context. The
 pinned contracts package retains its original code and assets. Three version-scoped overrides select minimatch `11.0.8`
 for `@tufjs/models` `5.0.2`, `@typescript-eslint/typescript-estree` `8.72.0`, and `markdownlint-cli` `0.50.0`. These
 callers use the retained matching interfaces; `tests/integration/dependency-security.test.ts` checks pattern budgets,
