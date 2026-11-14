@@ -42,7 +42,7 @@ export interface GateRepositoryObservation {
 }
 
 export interface RepositoryMutationDiagnostic {
-  code: 'SETUP_MUTATED_REPOSITORY' | 'GATE_MUTATED_REPOSITORY';
+  code: 'SETUP_MUTATED_REPOSITORY' | 'GATE_MUTATED_REPOSITORY' | 'REPOSITORY_ALREADY_DIRTY';
   message: string;
   step_id: string | null;
   changed_files: string[];
@@ -168,10 +168,20 @@ function repositoryMutationDiagnostic(
   const changedFiles = after.changedFiles.filter((file) => !previouslyDirty.has(file)).sort();
   const headChanged = before.headSha !== after.headSha;
   const branchChanged = repositoryBranchChanged(before, after);
+  const subject = actor === 'setup' ? `Setup step ${stepId}` : 'Gate command';
   if (!headChanged && !branchChanged && changedFiles.length === 0) {
+    if (!before.clean && !after.clean) {
+      const baselinePaths = diagnosticPathSummary([...before.changedFiles].sort());
+      return {
+        code: 'REPOSITORY_ALREADY_DIRTY',
+        message: `${subject} ran with an already-dirty repository${before.changedFiles.length > 0 ? `: ${baselinePaths.text}` : ''}. Git status can't attribute edits to those existing dirty paths.`,
+        step_id: stepId,
+        changed_files: [],
+        hint: 'Restore or commit the pre-existing dirty paths (use git status --short --untracked-files=all for the current list), then start a new session from a clean repository.',
+      };
+    }
     return null;
   }
-  const subject = actor === 'setup' ? `Setup step ${stepId}` : 'Gate command';
   const timing = actor === 'setup' ? 'before the gate ran' : 'while it ran';
   const pathSummary = diagnosticPathSummary(changedFiles);
   const paths = changedFiles.length > 0 ? `: ${pathSummary.text}` : '';

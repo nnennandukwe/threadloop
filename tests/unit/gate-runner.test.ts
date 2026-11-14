@@ -267,6 +267,33 @@ describe('gate runner with declared setup', () => {
     expect(classifyGateOutcome({ setup: result.setup, gate: result.gate, invalidated })).toBe('invalidated');
   });
 
+  it('reports a dirty baseline without attributing its paths to the setup step', async () => {
+    const directory = await makeDirectory();
+    const observedBefore = { headSha: head, clean: false, changedFiles: ['pre-existing.txt'] };
+    const result = await runGateWithSetup({
+      setup: [stepInput(directory, 'sync', ['node', '-e', 'process.exit(0)'])],
+      gate: {
+        command: ['node', '-e', 'process.exit(0)'],
+        cwd: directory,
+        timeoutMs: 5_000,
+        stdoutPath: path.join(directory, 'gate.stdout.log'),
+        stderrPath: path.join(directory, 'gate.stderr.log'),
+      },
+      observedBefore,
+      observe: () => Promise.resolve({ ...observedBefore }),
+    });
+
+    expect(result.diagnostic).toMatchObject({
+      code: 'REPOSITORY_ALREADY_DIRTY',
+      step_id: 'sync',
+      changed_files: [],
+    });
+    expect(result.diagnostic?.message).toContain('"pre-existing.txt"');
+    expect(result.diagnostic?.message).not.toContain('changed the repository');
+    expect(result.gate).toBeNull();
+    expect(gateExecutionWasInvalidated(result, observedBefore)).toBe(true);
+  });
+
   it('retains a branch mismatch and safely quotes its recovery target', async () => {
     const directory = await makeDirectory();
     const observedBefore = { headSha: head, clean: true, changedFiles: [], branch: 'verification\u202e\u{e0061}' };

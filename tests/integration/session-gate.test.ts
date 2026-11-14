@@ -1289,10 +1289,15 @@ describe('local and CI receipts describe setup identically', { timeout: 60_000 }
     { actor: 'gate', dirty: false, malicious: false, mutates: true },
     { actor: 'gate', dirty: true, malicious: false, mutates: true },
     { actor: 'gate', dirty: true, malicious: false, mutates: false },
+    { actor: 'setup', dirty: true, malicious: false, mutates: false },
+    { actor: 'setup', dirty: true, malicious: false, mutates: true, mutatesExisting: true },
+    { actor: 'setup', dirty: true, malicious: true, mutates: true, mutatesExisting: true },
     { actor: 'gate', dirty: false, malicious: true, mutates: true },
   ] as const)(
     'keeps CI diagnostics accurate for $actor, dirty $dirty, malicious $malicious, mutates $mutates',
-    async ({ actor, dirty, malicious, mutates }) => {
+    async (scenario) => {
+      const { actor, dirty, malicious, mutates } = scenario;
+      const mutatesExisting = 'mutatesExisting' in scenario && scenario.mutatesExisting;
       const repoDir = await makeCommittedRepo();
       const sessionId = await startFramedSession(repoDir);
       const fileName = malicious
@@ -1310,6 +1315,9 @@ describe('local and CI receipts describe setup identically', { timeout: 60_000 }
       const reportPath = path.join(await makeTempDir(), 'gate-report.json');
       if (dirty) {
         await writeFile(path.join(repoDir, 'pre-existing.txt'), 'dirty before the gate\n');
+        if (mutatesExisting) {
+          await writeFile(path.join(repoDir, fileName), 'dirty before setup\n');
+        }
       }
 
       const failure = await execFileAsync('npm', ['run', '--silent', 'sensor:ci-gate:run'], {
@@ -1345,8 +1353,15 @@ describe('local and CI receipts describe setup identically', { timeout: 60_000 }
         actor === 'setup'
           ? 'Restore or commit the listed paths, change the setup declaration to use a frozen installer and gitignored output, then start a new session.'
           : 'Restore or commit the listed paths, change the gate to write generated output outside the repository or to gitignored paths, then start a new session.';
-      if (!mutates) {
-        expect(failure?.stderr).toBe('');
+      if (dirty && (!mutates || mutatesExisting)) {
+        const subject = actor === 'setup' ? 'Setup step sync' : 'Gate command';
+        expect(failure?.stderr).toContain(`${subject} ran with an already-dirty repository:`);
+        expect(failure?.stderr).toContain('pre-existing.txt');
+        expect(failure?.stderr).toContain("Git status can't attribute edits to those existing dirty paths.");
+        expect(failure?.stderr).toContain('Restore or commit the pre-existing dirty paths');
+        expect(failure?.stderr).not.toContain('changed the repository');
+        expect(failure?.stderr?.trimEnd().split('\n')).toHaveLength(2);
+        expect(failure?.stderr?.replaceAll('\n', '')).not.toMatch(/\p{Cc}|\p{Cf}|[\u2028\u2029]/u);
       } else if (malicious) {
         expect(failure?.stderr?.trimEnd().split('\n')).toHaveLength(2);
         expect(failure?.stderr?.replaceAll('\n', '')).not.toMatch(/\p{Cc}|\p{Cf}|[\u2028\u2029]/u);
