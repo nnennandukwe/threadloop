@@ -77,8 +77,12 @@ const execution = await runGateWithSetup({
     stderrPath,
     env: gateEnvironment(),
   },
-  observedBefore: before,
-  observe: () => observeProofRepository(sourceRoot).catch(() => null),
+  // CI binds the caller SHA, so branch changes at that same commit retain their existing meaning.
+  observedBefore: { headSha: before.headSha, clean: before.clean, changedFiles: before.changedFiles },
+  observe: () =>
+    observeProofRepository(sourceRoot)
+      .then(({ headSha, clean, changedFiles }) => ({ headSha, clean, changedFiles }))
+      .catch(() => null),
 });
 
 let after: Awaited<ReturnType<typeof observeProofRepository>>;
@@ -143,6 +147,9 @@ const canonicalArtifact = canonicalizeSignedGateReceiptArtifact(artifact, sha256
 await writeFile(reportPath, canonicalArtifact.json, { encoding: 'utf8', flag: 'wx' });
 
 if (result !== 'passed') {
+  if (execution.diagnostic) {
+    process.stderr.write(`${execution.diagnostic.message}\nRecovery: ${execution.diagnostic.hint}\n`);
+  }
   const exitStatus =
     execution.gate?.exitStatus ?? execution.setup.find((step) => step.process.exitStatus)?.process.exitStatus;
   process.exitCode = exitStatus && exitStatus > 0 ? exitStatus : 1;

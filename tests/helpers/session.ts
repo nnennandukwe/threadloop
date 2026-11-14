@@ -35,6 +35,7 @@ export async function git(cwd: string, ...args: string[]) {
 export async function makeRepo() {
   const repoDir = await makeTempDir('threadloop-repo-');
   await git(repoDir, 'init');
+  await git(repoDir, 'config', '--local', 'core.excludesFile', os.devNull);
   await git(repoDir, 'config', 'user.email', 'test@example.com');
   await git(repoDir, 'config', 'user.name', 'Test User');
   return repoDir;

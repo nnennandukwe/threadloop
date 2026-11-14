@@ -274,6 +274,7 @@ export async function sessionGateRunCommand(context: CommandContext, gateId: str
     text: [
       `Gate ${result.receipt.gate_id}: ${result.receipt.result}`,
       `Receipt: ${result.receipt.id} (#${result.receipt.sequence})`,
+      ...(result.diagnostic ? [result.diagnostic.message, `Recovery: ${result.diagnostic.hint}`] : []),
     ],
     data: result,
   });

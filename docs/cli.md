@@ -196,6 +196,30 @@ run: no later step executes, the gate command doesn't run, and the receipt recor
 handoff rather than code repair and consumes no repair budget. Gate execution never changes lifecycle state. A later
 receipt for the same gate supersedes an earlier receipt by database sequence.
 
+When a setup step changes the repository, the JSON response includes a transient `diagnostic` sibling to the receipt
+with `code: "SETUP_MUTATED_REPOSITORY"`, the setup `step_id`, sorted `changed_files`, and a recovery hint. When the gate
+command changes it, the code is `GATE_MUTATED_REPOSITORY` and `step_id` is null. Text output and the CI sensor print the
+same message and recovery hint. The immutable local and signed receipt schemas don't change: their result remains
+`invalidated`, so existing consumers keep their current contract while operators get the missing cause.
+
+When CI starts with dirty paths and observes no newly dirty paths, `REPOSITORY_ALREADY_DIRTY` names the executed step
+and pre-existing paths. Its `changed_files` is empty because status alone can't attribute edits to those paths. Recovery
+requires a clean baseline, including when setup rewrites an already-dirty file. The receipt still records `invalidated`.
+If the run also creates newly dirty paths, the message attributes those paths while recovery requires cleaning all dirty
+paths, including the baseline. `git status --short --untracked-files=all` provides the current list. If setup or the
+gate cleans the initial dirty paths, the baseline warning still explains why the run is invalidated. Later clean
+observations don't remove it; recovery requires a new session from a clean repository.
+
+Human-readable messages show at most five paths, shortening each after 80 characters. A summary gives the shown and
+total counts when paths are omitted or shortened; its recovery hint directs operators to `git status` for the full list.
+JSON's `changed_files` retains every raw path.
+
+Displayed paths and branch names escape control and formatting characters, including characters that reorder text.
+
+The local CLI also names branch changes, including a switch at the same HEAD or a detached checkout. A setup branch
+change stops later setup and the gate. Recovery names the original branch. CI retains its caller-SHA binding, so a
+branch change at the same commit preserves its existing outcome.
+
 ### `threadloop session gate import <package-path> --session <id> [--json]`
 
 Verifies and appends one signed GitHub Actions gate receipt. The input is limited to 10 MiB and the command accepts no
