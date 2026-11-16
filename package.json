@@ -52,7 +52,7 @@
   },
   "dependencies": {
     "@noble/curves": "2.4.0",
-    "@sigstore/bundle": "5.0.0",
+    "@sigstore/bundle": "5.0.1",
     "@sigstore/sign": "5.0.0",
     "ajv": "8.20.0",
     "commander": "^15.0.0",
