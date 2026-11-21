@@ -1,5 +1,5 @@
 /** Deliberately synthetic signed output for real process/storage failure tests. */
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   buildGaapRequest,
@@ -15,6 +15,11 @@ import { canonicalGaapJson, parseGaapJson } from '../../src/domain/gaap-json.js'
 const chunks: Buffer[] = [];
 for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk as Uint8Array));
 const request = parseGaapJson(Buffer.concat(chunks)) as ExecutorRequest;
+if (process.env.TEST_GAAP_COUNTER_DIRECTORY)
+  appendFileSync(
+    path.join(process.env.TEST_GAAP_COUNTER_DIRECTORY, 'invocations.log'),
+    request.request.attempt_id + '\n',
+  );
 const mode = process.env.TEST_GAAP_MODE;
 if (mode === 'effect_response_lost' || mode === 'effect_publication_lost') {
   // Real filesystem mutation by a synthetic process; no signed/native execution claim.

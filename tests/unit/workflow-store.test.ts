@@ -284,7 +284,7 @@ it('isolates an opaque future setup from v1 runs in the same database', async ()
       ['future-run', true],
       ['damaged-run', false],
     ] as const) {
-      const setup = { ...genesis.setup, schema_version: 'threadloop.workflow-setup/2' };
+      const setup = { ...genesis.setup, schema_version: 'threadloop.workflow-setup/3' };
       const retained = { ...genesis, run_id: id, setup, setup_sha256: valid ? workflowDigest(setup) : '0'.repeat(64) };
       const genesisDigest = workflowDigest(retained);
       const request = canonicalJson({ ...(JSON.parse(requestJson) as Record<string, unknown>), run: id, setup });

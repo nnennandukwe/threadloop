@@ -98,7 +98,7 @@ describe('workflow genesis', () => {
     const run = 'session_wf_compatibility';
     const prepare = () => prepareWorkflowGenesis(control, run, governedProfile, 'setup.json');
     const genesis = prepare().build(now);
-    const future = { schema_version: 'threadloop.workflow-setup/2', future_specific: 'opaque' };
+    const future = { schema_version: 'threadloop.workflow-setup/3', future_specific: 'opaque' };
     await writeFile(path.join(control, 'setup.json'), JSON.stringify(future));
     const diagnostic = {
       code: 'WORKFLOW_RUNTIME_UNSUPPORTED',
@@ -106,7 +106,7 @@ describe('workflow genesis', () => {
         workflow_run_id: run,
         schema_version: future.schema_version,
         reason: 'unsupported_workflow_setup',
-        supported_schema_version: 'threadloop.workflow-setup/1',
+        supported_schema_version: 'threadloop.workflow-setup/2',
         hint: expect.stringContaining('runtime') as string,
       },
     };

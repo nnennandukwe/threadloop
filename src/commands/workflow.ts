@@ -8,14 +8,31 @@ import {
   importWorkflowEvidence,
   type WorkflowPrepareOptions,
 } from '../services/workflow-runtime.js';
+import { collectWorkflowEvidence, type CollectOptions } from '../services/workflow-collection.js';
+import { executeWorkflowRun, importWorkflowGaap } from '../services/workflow-execution.js';
 import type { RunView } from '../domain/workflow-run.js';
 
-function writeRun(context: CommandContext, view: RunView) {
+type ManagedInspection = Extract<Awaited<ReturnType<typeof inspectWorkflowRun>>, { collections: unknown }>;
+function writeRun(
+  context: CommandContext,
+  view: RunView & Partial<Pick<ManagedInspection, 'execution' | 'collections'>>,
+) {
   writeCommandSuccess(context, {
     data: view,
     text: [
       view.workflow_run_id + ' is at ' + view.state + ' (version ' + view.state_version + ').',
       'Graph ' + view.graph_digest,
+      ...(view.execution
+        ? [
+            'Execution ' + view.execution.disposition,
+            'Correlation ' + JSON.stringify(view.execution.correlation),
+            view.execution.recovery,
+            JSON.stringify(view.execution.recovery_argv),
+          ]
+        : []),
+      ...(view.collections?.map(
+        (collection) => 'Collection ' + collection.attempt + ' ' + collection.kind + ' ' + collection.phase,
+      ) ?? []),
     ],
   });
 }
@@ -100,6 +117,18 @@ export async function workflowImportCommand(
   kind: string,
   options: { run: string; source: string; expectedStateVersion: number },
 ) {
+  if (kind === 'gaap') {
+    const data = await importWorkflowGaap(context.cwd, options.run, options.source, options.expectedStateVersion);
+    writeCommandSuccess(context, {
+      data,
+      text: [
+        'Imported ' + data.source_id + ' for Attempt ' + data.attempt_id + '.',
+        'State version ' + data.state_version + '.',
+        'Correlation ' + JSON.stringify(data.correlation),
+      ],
+    });
+    return;
+  }
   const data = await importWorkflowEvidence(context.cwd, kind, options);
   writeCommandSuccess(context, {
     data,
@@ -111,5 +140,37 @@ export async function workflowImportCommand(
         data.evidence_revision +
         '.',
     ],
+  });
+}
+
+export async function workflowExecuteCommand(context: CommandContext, run: string, options: { decision: string }) {
+  const cancellation = new AbortController();
+  const cancel = () => cancellation.abort();
+  process.once('SIGINT', cancel);
+  process.once('SIGTERM', cancel);
+  try {
+    const data = await executeWorkflowRun(context.cwd, run, options.decision, cancellation.signal);
+    writeCommandSuccess(context, {
+      data,
+      text:
+        data.disposition === 'human_handoff'
+          ? ['Human action required: ' + data.action_request.request.action_id]
+          : [
+              'Imported ' + data.source_id + ' for Attempt ' + data.attempt_id + '.',
+              'State version ' + data.state_version + '.',
+              'Correlation ' + JSON.stringify(data.correlation),
+            ],
+    });
+  } finally {
+    process.removeListener('SIGINT', cancel);
+    process.removeListener('SIGTERM', cancel);
+  }
+}
+
+export async function workflowCollectCommand(context: CommandContext, kind: string, options: CollectOptions) {
+  const data = await collectWorkflowEvidence(context.cwd, kind, options);
+  writeCommandSuccess(context, {
+    data,
+    text: ['Admitted ' + data.admission_id + ' at evidence revision ' + data.evidence_revision + '.'],
   });
 }

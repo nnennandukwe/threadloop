@@ -1,0 +1,35 @@
+import { writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { controllerFixture } from '../fixtures/gaap-controller.js';
+import { governedWorkflowFixture } from './workflow-run.js';
+
+export async function managedWorkflowFixture(mode = 'success') {
+  const { control, subject, setup } = await governedWorkflowFixture();
+  const { root: producerRoot, binding, host } = await controllerFixture(mode);
+  const adapter = {
+    schema_version: 'threadloop.workflow-gaap-adapter/1',
+    mapping_policy: binding.mapping_policy,
+    parameters: { ...binding.parameters, subject_locator: subject },
+    executor: binding.executor,
+    lease_ms: binding.lease_ms,
+    execution_policy: {
+      id: binding.execution_policy.id,
+      retry_safety: binding.execution_policy.rules.retry_safety,
+      max_attempts: binding.execution_policy.rules.max_attempts,
+    },
+  };
+  host.workspace = subject;
+  host.environment.TEST_GAAP_MAPPING = JSON.stringify(adapter.mapping_policy);
+  host.environment.TEST_GAAP_IMPLEMENTATION = JSON.stringify(host.verification.implementation);
+  const managedSetup = {
+    ...setup,
+    schema_version: 'threadloop.workflow-setup/2',
+    gaap: { adapter: 'adapter.json', host: 'host.json' },
+  };
+  await Promise.all([
+    writeFile(path.join(control, 'adapter.json'), JSON.stringify(adapter)),
+    writeFile(path.join(control, 'host.json'), JSON.stringify(host)),
+    writeFile(path.join(control, 'setup.json'), JSON.stringify(managedSetup)),
+  ]);
+  return { control, subject, setup: managedSetup, host, adapter, producerRoot };
+}

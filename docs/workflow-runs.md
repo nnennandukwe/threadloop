@@ -142,3 +142,64 @@ The previous CLI at `0694d0c50143aa4dd2799586456aa5a18008514f` returned identica
 24.20.0 and 26.8.2. Both versions read the same legacy audit exports. An older session writer could commit a transition
 while the graph-bound run retained its original state.
 [Compatibility checks](plans/issue-170-durable-workflow-runs.md#verification-at-the-implementation-checkpoint)
+
+## Execute a selected engineering action
+
+Create the run with `schema_version` set to `threadloop.workflow-setup/2` and `gaap` set to
+`{"adapter":"adapter.json","host":"host.json"}`. Keep the other setup fields from the example above. The
+`threadloop.gaap-host/1` file identifies the absolute executable, its invocation, the subject workspace, verification
+keys and limits. The host and its private environment belong outside the subject. The
+`threadloop.workflow-gaap-adapter/1` file supplies the frozen `mapping_policy`, executor `parameters`, `executor`
+identity and `lease_ms`. Its `execution_policy` has an `id`, `retry_safety` and `max_attempts`. Enroll a mapping for an
+executor capability the graph declares. Check that its required evidence families cover the action's guards. The
+existing native proof shows how to construct these files for the governed profile.
+[Executor formats and limits](gaap-executor.md)
+
+Save the decision in the control repository. A managed run derives its Action Request from current evidence and checks
+it again when the Attempt starts. A selected human action returns its handoff.
+
+```bash
+threadloop workflow decide shipping --json > decision.json
+threadloop workflow execute shipping --decision decision.json --json > execution.json
+threadloop workflow inspect shipping --json
+```
+
+A successful execute records the authenticated child admission in the outer execution history. Its JSON result includes
+`data.correlation`. Save that object as `correlation.json`. After a lost response, the inspector also exposes
+`data.execution.correlation`. For a reservation that hasn't enrolled yet, retry the original execute. For a started
+Attempt, inspect its child and import its evidence. The inspector counts durable start records. A crash between the
+start commit and process creation can leave one start and zero invocations. The import can verify an observed result or
+recover a committed receipt, including after the original output directory disappeared. A start without a confirmed
+outcome remains held for reconciliation.
+
+```bash
+threadloop workflow evidence import gaap --run shipping --source correlation.json --expected-state-version 3 --json
+threadloop workflow decide shipping --json
+```
+
+The lifecycle advances when you deliberately apply a fresh transition. If the action changed the workspace, the next
+guard can require a scoped commit or independent proof. Use the run's current state version in each request. Keep both
+the outer state database and its owned child directories when backing up or restoring a managed run.
+
+## Collect gate or pre-PR review evidence
+
+For a local gate, use the ID from the immutable proof plan. ThreadLoop captures the gate's actual outputs in the control
+repository and admits them for its observed subject. Retry the same request key to recover a completed observation. A
+gate interrupted after launch can leave an outstanding attempt.
+
+```bash
+threadloop workflow evidence collect local-gate --run shipping --gate check --expected-state-version 4 --idempotency-key verify-local
+```
+
+To collect a Qodo review, enroll an optional `review_reader` in setup/2. It has `provider` set to `qodo`, the absolute
+`executable` of the trusted Qodo status reader, an immutable `base_commit` and a `reviewer_id`. Preserve the operation
+ID when submitting the authorized full review of the subject.
+
+```bash
+threadloop workflow evidence collect pre-pr-review --run shipping --operation "$operation_id" --expected-state-version 5 --idempotency-key collect-review
+```
+
+The collector reads that operation's terminal result. It checks the base, current commit and Git tree, primary review,
+coverage and active finding inventory. Previously open findings can still block the run. Independent CI, human approval
+and merge observations use their signed sources. Request protocol 5 and check `workflow_gaap_execution_v1` before
+calling managed execution commands.

@@ -13,6 +13,8 @@ import {
   workflowInspectCommand,
   workflowDecideCommand,
   workflowApplyCommand,
+  workflowExecuteCommand,
+  workflowCollectCommand,
   workflowPrepareCommand,
   workflowImportCommand,
 } from './commands/workflow.js';
@@ -330,7 +332,25 @@ export function createThreadloopProgram() {
       .requiredOption('--decision <file>', 'saved workflow decide JSON response')
       .requiredOption('--idempotency-key <key>', 'stable key for this request', parseIdempotencyKey),
   ).action(action(workflowApplyCommand));
+  withJsonOption(
+    workflow
+      .command('execute')
+      .argument('<run-id>')
+      .description('Execute a selected engineering action through the enrolled GAAP bridge')
+      .requiredOption('--decision <file>', 'saved workflow decide JSON response'),
+  ).action(action(workflowExecuteCommand));
   const evidence = workflow.command('evidence').description('Prepare and admit authenticated workflow evidence');
+  withJsonOption(
+    evidence
+      .command('collect')
+      .argument('<kind>')
+      .description('Collect local gate or pre-PR review evidence from the enrolled producer')
+      .requiredOption('--run <run-id>', 'workflow run ID')
+      .option('--gate <id>', 'adopted local proof gate', parseRequiredGateId)
+      .option('--operation <id>', 'Qodo review operation UUID')
+      .requiredOption('--expected-state-version <n>', 'expected lifecycle version', parseExpectedStateVersion)
+      .requiredOption('--idempotency-key <key>', 'stable collection key', parseIdempotencyKey),
+  ).action(action(workflowCollectCommand));
   withJsonOption(
     evidence
       .command('prepare')
@@ -349,7 +369,7 @@ export function createThreadloopProgram() {
       .argument('<kind>')
       .description('Verify and retain a prepared sensor package')
       .requiredOption('--run <run-id>', 'workflow run ID')
-      .requiredOption('--source <file>', 'signed sensor package', parseInputPath)
+      .requiredOption('--source <file>', 'signed sensor package or GAAP correlation file', parseInputPath)
       .requiredOption('--expected-state-version <n>', 'expected lifecycle version', parseExpectedStateVersion),
   ).action(action(workflowImportCommand));
   withJsonOption(

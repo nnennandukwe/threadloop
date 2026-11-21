@@ -139,7 +139,7 @@ export function buildProtocolContract(program: Command, version: 4 | 5 = 4): Pro
   return {
     ...legacy,
     contractVersions: { ...legacy.contractVersions, protocol: 5, workflowRun: 1 },
-    capabilities: ['workflow_runs_v1'],
+    capabilities: ['workflow_runs_v1', 'workflow_gaap_execution_v1'],
   };
 }
 

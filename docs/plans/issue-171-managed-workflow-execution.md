@@ -216,10 +216,11 @@ run. After enrollment use the verified claim and Attempt for the frozen waiting 
 completed request references after verified child admission and outer import, even when the admitted effect changed the
 physical subject. The historical journal keeps the original subject. A new decision observes the successor.
 
-Require a v2 setup before any reservation. The older #170 loader validates retained setup on every operation and reports
-`WORKFLOW_RUNTIME_UNSUPPORTED` for a later setup version. Its reader can still inspect and apply v1 runs in the same
-database. A side table on a v1 run wouldn't fence the old reader. Keep the protocol capability as discovery and use the
-persisted run version to enforce this boundary.
+Require a v2 setup before any reservation. The #170 loader reports `WORKFLOW_RUNTIME_UNSUPPORTED` when it reaches a
+later stored setup version. Its argument parser can refuse a v2 decision envelope earlier with
+`INVALID_ARGUMENT/invalid_decision`. Its reader can still inspect and apply v1 runs in the same database. A side table
+on a v1 run wouldn't fence the old reader. Keep the protocol capability as discovery and use the persisted run version
+to enforce this boundary.
 
 ### Child enrollment and writes
 
@@ -321,7 +322,7 @@ identities and the reopened result or refusal reason. Run the fault with the pre
 
 | Fault or race                                                                                                                 | Observable result                                                                                                                                                                                                    | Safe next operation                                                                                                |
 | ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| Newer setup beside a v1 run                                                                                                   | The built #170 CLI can use the v1 run. Inspect, decide, apply and evidence writes to the v2 run return `WORKFLOW_RUNTIME_UNSUPPORTED`. Both database heads retain their prior values.                                | Open the v2 run with the version advertising `workflow_gaap_execution_v1`.                                         |
+| Newer setup beside a v1 run                                                                                                   | The built #170 CLI can use the v1 run. Old operations refuse the v2 run. Its closed argument parser can reject v2 decision fields before the stored setup check. Both database heads retain their prior values.      | Open the v2 run with the version advertising `workflow_gaap_execution_v1`.                                         |
 | Prior standalone binary or an unowned new standalone writer targets a pending managed child                                   | The old binary rejects child SQLite version 2. The new standalone writer reports the owning run. Inspection finds zero launches and the original enrolled claim. Existing standalone generation-1 state still works. | Use the owning workflow command.                                                                                   |
 | Stale decision, different request bytes, changed config, unmapped work, human handoff or expired authority before reservation | Both inspectors show no new reservation or child launch. The response identifies the stale binding or required human action.                                                                                         | Decide again or present the handoff.                                                                               |
 | Race to reserve or enroll, crash before/after registration, child directory collision                                         | Exactly one original reservation and at most one matching pending child. Only committed enrollment authorizes a launch. A collision preserves unowned files.                                                         | Inspect, verify the owned child, then finish exact enrollment.                                                     |

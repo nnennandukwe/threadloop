@@ -17,11 +17,15 @@ import type {
   RunView,
   WorkflowGenesis,
 } from '../../domain/workflow-run.js';
+import { demand, equal } from './workflow-storage-checks.js';
 import { sha256 } from '../crypto/sha256.js';
 import type { DatabaseSync } from './sqlite-driver.js';
 import { restoreSource, type SourceRecord, projectAdmission } from './workflow-stored-source.js';
+import { executionReader, initialExecution, persistInitialExecution } from './workflow-execution-journal.js';
 
-type Content =
+export { expectVersion } from './workflow-storage-checks.js';
+
+type Content = (
   | { kind: 'create'; request: string; genesis_digest: string }
   | { kind: 'prepare'; version: number; target: PrepareTarget; prepared: Preparation }
   | { kind: 'admit'; source: SourceRecord; batch: Batch; at: string }
@@ -31,7 +35,8 @@ type Content =
       at: string;
       observed: PhysicalObservation;
       fresh_decision_digest: string;
-    };
+    }
+) & { execution_head?: { revision: number; digest: string } };
 interface Entry {
   run_id: string;
   ordinal: number;
@@ -61,31 +66,10 @@ interface Index {
   sequence: number;
   states: string[];
 }
-interface Journal {
+export interface Journal {
   snapshot: RunSnapshot;
   head: Head;
   index: Index;
-}
-
-export function demand(ok: unknown, message: string): asserts ok {
-  if (!ok) throw new StateCorruptedError(`Invalid Workflow Run storage: ${message}`);
-}
-export function equal(a: unknown, b: unknown) {
-  return canonicalJson(a) === canonicalJson(b);
-}
-export function conflict(message: string): never {
-  throw new ThreadloopError('IDEMPOTENCY_CONFLICT', message, {
-    details: { reason: 'identity_reused', hint: 'Retry the original request or choose a new identity.' },
-  });
-}
-export function expectVersion(actual: number, expected: number) {
-  if (actual !== expected)
-    throw new ThreadloopError('STATE_VERSION_CONFLICT', 'The Workflow Run version changed.', {
-      details: {
-        reason: 'stale_version',
-        hint: 'Inspect the run, decide again, and retry with its current version.',
-      },
-    });
 }
 
 function checkedJson<T>(text: string): T {
@@ -150,8 +134,12 @@ function verifyGenesis(row: Entry, g: WorkflowGenesis): Journal {
     product_pr: null,
     observations: [],
   };
+  if (g.setup.schema_version === 'threadloop.workflow-setup/2') {
+    snapshot.managed_execution = initialExecution(g.run_id, row.digest);
+    snapshot.view = { ...view, execution_revision: 0, execution_digest: snapshot.managed_execution.digest };
+  }
   const index: Index = {
-    create: { request: content.request, reply: view },
+    create: { request: content.request, reply: snapshot.view },
     preparations: new Map(),
     byId: new Map(),
     instructions: new Set(),
@@ -223,6 +211,14 @@ function advance(journal: Journal, row: Entry, content: Content) {
     content.kind === row.kind && row.previous === journal.head.digest && row.ordinal === journal.head.ordinal + 1,
     'event chain has a gap',
   );
+  const exec = journal.snapshot.managed_execution;
+  demand(
+    exec
+      ? equal(content.execution_head, { revision: exec.revision, digest: exec.digest })
+      : content.execution_head === undefined,
+    'lifecycle event uses a different execution prefix',
+  );
+  demand(content.kind !== 'apply' || !exec?.active, 'cannot apply while an execution is outstanding');
   switch (content.kind) {
     case 'create':
       throw new StateCorruptedError('Workflow Run has a second genesis');
@@ -282,11 +278,24 @@ export function loadJournal(db: DatabaseSync, run: string): Journal | null {
     )
     .get(run);
   if (!stored) {
-    for (const table of ['workflow_heads', 'workflow_events']) {
-      demand(!db.prepare(`SELECT 1 FROM ${table} WHERE run_id=?`).get(run), 'missing run binding');
+    const ledgers = [
+      'workflow_heads',
+      'workflow_events',
+      'workflow_execution_heads',
+      'workflow_execution_events',
+      'workflow_collection_events',
+    ];
+    for (const table of ledgers) {
+      if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=? COLLATE NOCASE").get(table)) continue;
+      demand(
+        db.prepare("SELECT 1 FROM pragma_table_info(?) WHERE name='run_id'").get(table),
+        'ledger has no run identity',
+      );
+      demand(!db.prepare(`SELECT 1 FROM ${table} WHERE run_id=? LIMIT 1`).get(run), 'missing run binding');
     }
     return null;
   }
+  let execution: ReturnType<typeof executionReader> | null = null;
   try {
     const genesis = checkedJson<WorkflowGenesis>(String(stored.genesis_json));
     demand(
@@ -294,6 +303,7 @@ export function loadJournal(db: DatabaseSync, run: string): Journal | null {
       'genesis bytes or run identity changed',
     );
     checkGraph(genesis, stored.graph_json, stored.schema_version, stored.graph_digest);
+    if (genesis.gaap) execution = executionReader(db, run);
     const rows = db
       .prepare(
         'SELECT run_id,ordinal,previous,kind,operation_key,secondary_id,lifecycle_version,evidence_revision,body,digest,response_json,response_sha256 FROM workflow_events WHERE run_id=? ORDER BY ordinal',
@@ -318,8 +328,10 @@ export function loadJournal(db: DatabaseSync, run: string): Journal | null {
           canonicalJson(response(journal, row)) === response_json,
         'stored operation result differs from its event',
       );
+      execution?.at(journal);
     }
     demand(journal, 'missing genesis event');
+    execution?.finish(journal);
     const head = db.prepare('SELECT state,version,revision,ordinal,digest FROM workflow_heads WHERE run_id=?').get(run);
     demand(equal(head, journal.head), 'projection differs from the verified journal');
     return journal;
@@ -330,6 +342,8 @@ export function loadJournal(db: DatabaseSync, run: string): Journal | null {
     )
       throw cause;
     throw new StateCorruptedError('Workflow Run contains invalid stored data.', { cause });
+  } finally {
+    execution?.close();
   }
 }
 
@@ -396,6 +410,7 @@ export function createJournal(db: DatabaseSync, g: WorkflowGenesis, request: str
     head.ordinal,
     head.digest,
   );
+  persistInitialExecution(db, snapshot);
   return snapshot.view;
 }
 
@@ -407,14 +422,22 @@ export function appendEntry(
   secondaryId: string | null = null,
 ) {
   const previous = journal.head;
+  const exec = journal.snapshot.managed_execution;
+  if (exec) content = { ...content, execution_head: { revision: exec.revision, digest: exec.digest } };
   const row = entry(journal.snapshot.genesis.run_id, previous, key, content, secondaryId);
   advance(journal, row, content);
   insertEntry(db, row, journal);
   const head = journal.head;
+  const executionFence = exec
+    ? ' AND EXISTS (SELECT 1 FROM workflow_execution_heads WHERE run_id=? AND revision=? AND digest=? AND active_reservation IS ?)'
+    : '';
+  const executionParameters = exec
+    ? [row.run_id, exec.revision, exec.digest, exec.active?.owner.reservation_id ?? null]
+    : [];
   const update = db
     .prepare(
       `UPDATE workflow_heads SET state=?,version=?,revision=?,ordinal=?,digest=?
-    WHERE run_id=? AND state=? AND version=? AND revision=? AND ordinal=? AND digest=?`,
+    WHERE run_id=? AND state=? AND version=? AND revision=? AND ordinal=? AND digest=?` + executionFence,
     )
     .run(
       head.state,
@@ -428,6 +451,7 @@ export function appendEntry(
       previous.revision,
       previous.ordinal,
       previous.digest,
+      ...executionParameters,
     );
   demand(update.changes === 1, 'projection changed during commit');
 }

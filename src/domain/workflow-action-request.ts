@@ -22,7 +22,7 @@ function requestInputs(input: ControllerInput, capability: WorkflowAction['capab
   return result;
 }
 
-function requestedFamily(
+export function workflowGuardEvidenceFamily(
   guard: WorkflowGuard,
   capability: WorkflowAction['capability'],
 ): ActionIntent['evidence_requirements'][number]['family'] | null {
@@ -118,7 +118,7 @@ export function buildSelectedWorkflowRequest(
     evidence_requirements: input.compiled_graph.graph.guards
       .filter((guard) => guardIds.has(guard.id))
       .flatMap((guard) => {
-        const family = requestedFamily(guard, choice.action.capability);
+        const family = workflowGuardEvidenceFamily(guard, choice.action.capability);
         return family ? [{ family, guard_id: guard.id, subject: input.binding.subject }] : [];
       }),
     valid_until: null,

@@ -11,7 +11,10 @@ host-adopted action in separate storage. [Architecture](architecture.md) · [GAA
 Use `create <run-id> --profile <yaml> --setup <json>` to start a run. `inspect <run-id>` reads its durable state.
 `decide <run-id>` evaluates fresh facts. To apply its selected transition, save the JSON response and use
 `apply <run-id> --decision <file> --idempotency-key <key>`. Use `evidence prepare` and `evidence import` for prepared
-signed gates, reviews and human instructions. [Setup, examples and evidence requirements](workflow-runs.md)
+signed gates, reviews and human instructions. A managed run also accepts `execute <run-id> --decision <file>` for a
+selected engineering action. Save the returned correlation to recover its evidence with `evidence import gaap`. Use
+`evidence collect` for a declared local gate or a retained pre-PR review. Each operation has its own help.
+[Setup, commands and recovery](workflow-runs.md)
 
 ### `threadloop executor <command> --state <directory> [--json]`
 

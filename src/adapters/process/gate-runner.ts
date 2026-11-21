@@ -13,6 +13,7 @@ export interface GateProcessInput {
   stderrPath: string;
   env?: NodeJS.ProcessEnv;
   abortSignal?: AbortSignal;
+  maxOutputBytes?: number;
 }
 
 export interface GateOutputDigest {
@@ -375,8 +376,8 @@ export async function runGateProcess(input: GateProcessInput): Promise<GateProce
 
   const started = Date.now();
   const startedAt = new Date(started).toISOString();
-  const stdoutDigest = new DigestTransform();
-  const stderrDigest = new DigestTransform();
+  const stdoutDigest = new DigestTransform(input.maxOutputBytes);
+  const stderrDigest = new DigestTransform(input.maxOutputBytes);
   const stdoutWrite = createWriteStream(input.stdoutPath, { flags: 'wx' });
   const stderrWrite = createWriteStream(input.stderrPath, { flags: 'wx' });
   // The gate leads its own process group so a timeout or abort can terminate everything it started. Signalling
@@ -524,6 +525,9 @@ function settlePipeline(pipelinePromise: Promise<void>) {
 }
 
 class DigestTransform extends Transform {
+  constructor(private readonly limit?: number) {
+    super();
+  }
   readonly hash = createHash('sha256');
   bytes = 0;
   finished = false;
@@ -533,6 +537,10 @@ class DigestTransform extends Transform {
     _encoding: BufferEncoding,
     callback: (error?: Error | null, data?: Buffer) => void,
   ) {
+    if (this.limit !== undefined && this.bytes + chunk.byteLength > this.limit) {
+      callback(new Error('The gate exceeded its retained output limit.'));
+      return;
+    }
     this.hash.update(chunk);
     this.bytes += chunk.byteLength;
     callback(null, chunk);
