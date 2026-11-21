@@ -48,7 +48,25 @@ Options:
 - `--base <ref>`: Git base ref for comparisons; when omitted, ThreadLoop uses `main` if that ref exists
 - `--issue <ref>`: issue reference for branch and PR traceability
 - `--actor <cli|agent>`: source for the initial intent entry, default `cli`
+- `--run-config <file>`: optional immutable caller attribution; see the
+  [run configuration format](observability.md#attribute-a-new-session)
 - `--json`: render machine-readable session output
+
+### `threadloop audit corpus (--session <ids...> | --all) --output <path> [--format <format>] [--json]`
+
+Creates a new file from one verified snapshot of the selected sessions. Explicit ids must be unique. `--all` includes
+active and legacy sessions. The command refuses an existing output path. The default `native` format retains one outcome
+per session and its original hash chain. Choose `--format otel` for a sanitized viewer or `--format otel-verifiable` for
+a controlled archive with the original records. Both OpenTelemetry options report the published file's `root` and the
+native corpus's `source_root`. [OpenTelemetry export formats](observability.md#opentelemetry-export-formats)
+
+### `threadloop audit verify-export --input <path> [--root <sha256>] [--json]`
+
+Verifies a native corpus or `otel-verifiable` archive offline. `--root` compares the SHA-256 of the supplied file with a
+previously retained value. The OpenTelemetry verifier also recovers the native corpus, checks its hash chains and seal,
+and checks the projected fields. A sanitized viewer file lacks the native records required for verification. Supply a
+regular file containing up to 16 MiB and 32,768 JSONL records. For a larger selection, export fewer sessions per file.
+Missing, altered, unsupported, or incomplete records fail with `AUDIT_CORPUS_INVALID`.
 
 ### `threadloop session list [--json]`
 

@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -128,6 +128,40 @@ async function main() {
   const status = await threadloop('session', 'status', '--session', sessionId);
   expect(status.stdout.includes('Task: Smoke packaged install'), 'Session status output is missing the task.');
   expect(status.stdout.includes('Status: framed'), 'Session status did not report the framed state.');
+
+  const configuration = async (id) =>
+    (await threadloopJson('audit', 'show', '--session', id)).events[0].event.payload.run_configuration;
+  const newConfiguration = async () => {
+    const result = await threadloopJson('session', 'start', 'Package identity', '--goal', 'Compare installed files');
+    return configuration(result.session_id);
+  };
+  const installed = await configuration(sessionId);
+  expect(installed.implementation_scope === 'npm_bundled_files', 'The installed CLI must identify its bundled files.');
+  // This nested copy ships with the contracts package. Its entry file and the CLI bundle stay identical.
+  const nestedModule = path.join(
+    installedRoot,
+    'node_modules/threadloop-contracts/node_modules/yaml/dist/compose/compose-node.js',
+  );
+  const original = await readFile(nestedModule);
+  await appendFile(nestedModule, '\n// Smoke fixture change.\n');
+  const changed = await newConfiguration();
+  expect(
+    changed.implementation_scope === installed.implementation_scope &&
+      changed.implementation_sha256 !== installed.implementation_sha256,
+    'Changed nested package bytes must change the fingerprint.',
+  );
+  await writeFile(nestedModule, original);
+  await writeFile(path.join(consumerRepo, 'app.js'), 'export const value = 2;\n');
+  expect(
+    (await newConfiguration()).implementation_sha256 === installed.implementation_sha256,
+    'Restoring package bytes must restore the fingerprint regardless of consumer files.',
+  );
+  // An optional bundled package can still resolve from the consumer after npm hoists it.
+  await rename(path.join(installedRoot, 'node_modules/iconv-lite'), path.join(consumerRepo, 'node_modules/iconv-lite'));
+  expect(
+    (await newConfiguration()).implementation_scope === 'javascript_bundle',
+    'A hoisted installation must report its narrower scope.',
+  );
 
   console.log('Smoke pack verification passed.');
   await Promise.all([packDir, consumerRepo].map((directory) => rm(directory, { recursive: true, force: true })));

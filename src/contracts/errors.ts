@@ -37,6 +37,7 @@ export const THREADLOOP_ERROR_CODES = [
   'AUDIT_VERIFICATION_FAILED',
   'AUDIT_EXPORT_CONFLICT',
   'AUDIT_EXPORT_FAILED',
+  'AUDIT_CORPUS_INVALID',
 ] as const;
 
 export type ThreadloopErrorCode = (typeof THREADLOOP_ERROR_CODES)[number];

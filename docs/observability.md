@@ -1,11 +1,9 @@
 # Audit export and OpenTelemetry
 
-**Implemented now:** ThreadLoop applies guarded lifecycle transitions and records their decisions in its durable audit
-ledger. A verified export is a read-only projection of that ledger. OpenTelemetry is an optional export consumer;
-telemetry input cannot authorize or alter a ThreadLoop transition.
-
-See the [architecture guide](architecture.md) for the lifecycle authority boundary and the distinction between current
-exports and planned export alignment in [#88](https://github.com/nnennandukwe/threadloop/issues/88).
+ThreadLoop records lifecycle transitions and guard decisions in its durable audit ledger. Use the native corpus to
+compare sessions, the OpenTelemetry viewer export to inspect selected outcomes, or the controlled OpenTelemetry archive
+to recover and verify the original records. Every export reads a snapshot of the ledger.
+[Lifecycle authority](architecture.md#audit-export-and-observability)
 
 ## Export
 
@@ -30,13 +28,206 @@ reported audit root outside the local database if you need to detect later tail 
 `audit show` and `audit verify` never apply lifecycle transitions. Use `threadloop init` for the explicit semantic
 migration to the current schema; prior audit events and honest forward-only coverage remain unchanged.
 
+## Attribute a new session
+
+ThreadLoop records a `threadloop.run-configuration/1` descriptor in the immutable `session_started` payload. It derives
+its package version, implementation fingerprint, protocol component versions, and storage schema version.
+`implementation_scope` identifies which files contributed to the fingerprint. Each scope includes the build's dependency
+lock.
+
+| Scope                 | Files covered                                                                                                                                                                                         |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `source_and_lockfile` | The development checkout's package manifest, lockfile, TypeScript source and JSON resources under `src`.                                                                                              |
+| `npm_bundled_files`   | The installed ThreadLoop package manifest, regular files under `dist`, and regular files in the bundled dependency directories listed in the npm lock. Each nested package contributes its own files. |
+| `javascript_bundle`   | JavaScript files alongside the running CLI. Standalone builds and installations with missing, relocated or linked bundled dependencies report this narrower scope.                                    |
+
+Compare fingerprints within their recorded scope. The npm package scope uses package-relative paths, so moving the same
+intact installation to a different directory preserves its identity. Consumer files, external peers and the Node runtime
+are outside these fingerprints. Retain the matching source or distribution separately when you need to reproduce a run.
+
+For caller attribution, provide a JSON file when starting the session:
+
+```json
+{
+  "harness": "my-harness/revision-123",
+  "model": "caller-selected-model/revision-456",
+  "proof_plan_path": "./proof-plan.json",
+  "runner_skill_path": "./runner/SKILL.md"
+}
+```
+
+```bash
+threadloop session start "Evaluate a guard change" --goal "Exercise the declared task" \
+  --run-config ./run-config.json --json
+```
+
+Artifact paths resolve from the configuration file's directory. ThreadLoop validates the supplied proof plan, hashes its
+canonical JSON, and hashes the exact runner file bytes before creating a session. The descriptor contains digests and
+opaque harness/model labels, with no artifact paths or raw plan/runner contents. Use `model: null` when the caller can't
+declare a model. Keep secrets, prompts, and personal information out of these labels.
+
+The supplied plan is a caller declaration. The normal `proof_ready` transition independently validates and binds the
+authoritative proof plan. Its audit event records the bound digest. Corpus output reports whether that digest matches
+the startup declaration (`matched` or `mismatched`). A declaration with no recorded binding digest reports `unbound`. An
+unknown declaration reports `unknown`. These fields describe the run. Editing configuration or snapshot files later
+can't replace a retained descriptor.
+
+Startup without `--run-config` retains runtime identity with `caller` and both snapshot digests set to null. Corpus
+attribution is `runtime_only`. A supplied configuration reports `declared`, which identifies its source without
+certifying the caller's harness/model claim or adoption of its runner. Earlier sessions retain their original bytes and
+report `legacy_unattributable`. The verifier rejects a startup descriptor on an `audit_activated` record because that
+record marks the point where audit coverage began for an existing session.
+
+## Export and independently verify a corpus
+
+```bash
+threadloop audit corpus --session "$BASELINE_SESSION" "$CANDIDATE_SESSION" \
+  --output ./comparison.jsonl --json
+threadloop audit corpus --all --output ./all-sessions.jsonl --json
+threadloop audit verify-export --input ./comparison.jsonl --root "$RETAINED_CORPUS_ROOT" --json
+```
+
+Choose unique explicit session ids or `--all`. Membership and all selected event prefixes come from one SQLite read
+transaction. Active sessions are included as observed snapshots; completion isn't implied. Verification runs outside the
+source repository and doesn't need its database. The existing single-session export remains available.
+
+Corpus export and standalone verification accept up to 16 MiB and 32,768 JSONL records per file, including its manifest
+and seal. SQLite checks the event count and stored byte lengths in the same snapshot before loading the selection. The
+encoder counts the final UTF-8 bytes, including JSON escaping and newlines. The verifier reads a regular file within
+those limits. If a selection exceeds a limit, export fewer session ids per file. A single session that exceeds a corpus
+limit can still use the native single-session export.
+
+The `threadloop.audit-corpus/1` format is canonical UTF-8 JSONL, including a final newline:
+
+1. A `manifest` declares `comparison_unit: "session"` and sorted, unique session summaries with event count, root,
+   coverage, run descriptor, attribution, proof-plan binding status, and outcome.
+2. Grouped `event` records contain `session_id`, the exact stored canonical event JSON as a string in `canonical_event`,
+   and its original `event_sha256`. The digest covers the UTF-8 bytes of that string's value, before JSON string
+   escaping.
+3. A final `seal` contains session/event counts and `prefix_sha256`, covering every preceding byte including newlines.
+
+`verify-export` checks versions, framing, canonical bytes, each original hash chain, membership, recomputed outcomes,
+and the seal. Unknown versions, missing events, changed summaries, reordered records, appended records, and incomplete
+files fail verification. The reported `root` hashes the entire file, including the seal. Retain it outside the export to
+detect a fully rewritten corpus or a deliberately removed and resealed session. Hashes establish integrity against a
+retained root; they aren't signatures or independent proof that the recorded actions occurred.
+
+The verifier checks lifecycle edges against the history each session retained. Older writers allowed a session to move
+directly from `verifying` to `reviewing` before the pre-PR review step existed. If auditing began while a session was
+blocked, its first resume must return to a state that could've entered `blocked`. Once the export records a block, its
+resume must return to that exact prior state. These checks describe the recorded history. ThreadLoop evaluates
+transition authority when the session runs. Each applied transition identifies its request digest and transition id.
+Only the recorded move from `framed` to `proof_ready` can supply a bound plan digest. Local receipt counts require a
+receipt id and digest, gate id, Git head and recognized gate result at the session's observed verifying state.
+
+The comparison unit is one session, identified by its session id. Task ids or caller labels can support an external
+consumer's pairing policy, but ThreadLoop doesn't assume that two sessions performed equivalent tasks. Metric
+computation, grouping, baselines, denominators, and outcome comparisons belong to that consumer.
+
+| Outcome field                               | Meaning                                                                                                                                               |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `state`, `state_version`, `terminal`        | Last covered lifecycle state/version; only `completed` is terminal.                                                                                   |
+| `started_at`, `observed_at`, `completed_at` | Session genesis, last covered event, and recorded completion; unavailable times are null.                                                             |
+| `wall_clock_to_completed_ms`                | Nonnegative difference between full session genesis and completion; otherwise null, including a backward clock.                                       |
+| `pre_pr_implementation_entries`             | Entries into `implementing` before the first post-PR state, including the first entry; null for forward-only coverage whose earlier phase is unknown. |
+| `repair_entries_consumed`                   | Covered transitions into `repairing` from a repair-eligible state, matching the lifecycle budget rule.                                                |
+| `setup_failed_count`                        | Covered local receipts whose result is `setup_failed`.                                                                                                |
+| `gate_failures_by_id`                       | Covered local receipts with other non-`passed` results, counted by gate id.                                                                           |
+| `wake_count`, `stop_only_handoff_count`     | Null: scheduler wake and stop-only handoff records aren't in the native ledger.                                                                       |
+| `counts_scope`                              | `session` for full coverage; `covered_events` for `schema_v6_forward` coverage.                                                                       |
+
+These observations include failed attempts. Forward-only coverage never supplies an unobserved session start or implies
+complete totals. Corpus files can contain repository paths, evidence references, caller labels, and sensitive native
+payloads. Retain them only in a destination authorized for those contents.
+
+## Publication and recovery
+
+Exports create an exclusive sibling staging file with mode `0600`. On POSIX filesystems, the creating account can read
+and write it, subject to a stricter umask. The filesystem `link` operation publishes that file at a new path without
+overwriting an existing target. Concurrent cooperative publishers produce one winner. A write or close failure before
+publication leaves the target absent; retries use a new writable path. A cleanup failure after publication is committed
+success with a warning naming the retained stage. Inspect the target before removing that stage.
+
+An interrupted process can leave an unpublished staging file or a published target whose response was lost. Use
+`verify-export` to inspect a native or controlled corpus after restart. With a viewer file, compare the file hash to its
+previously retained root when available. Keep an existing target and choose a new filename for another export.
+ThreadLoop doesn't scan for orphan stages or promise power-loss durability. The output directory must be trusted against
+actors replacing staging paths during publication. Export cleanup removes only its own created stage.
+
+## OpenTelemetry export formats
+
+Choose the format according to who can read the file. For a general viewer, use `otel`. For an authorized reviewer who
+needs the original audit payloads, use `otel-verifiable`. Both commands read the same kind of completed snapshot. An
+active session's last observed event can appear in that snapshot.
+
+```bash
+threadloop audit corpus --session "$SESSION_ID" --format otel --output ./viewer.jsonl --json
+threadloop audit corpus --session "$SESSION_ID" --format otel-verifiable --output ./archive.jsonl --json
+threadloop audit verify-export --input ./archive.jsonl --root "$RETAINED_ARCHIVE_ROOT" --json
+```
+
+Each UTF-8 line is an OTLP `LogsData` JSON object. Its single `resourceLogs` entry contains one `scopeLogs` entry with
+one log record. The first record describes the manifest, one record follows for each observed event, and the last
+describes the seal. Each line ends in LF. An OTLP file reader can decode these envelopes directly. The native corpus
+stays the default, and `audit export --session` retains its single-session format.
+
+| Field group                       | What a reader gets                                                                                                                                                                                                                                                                                                                                                                     |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Standard OpenTelemetry fields     | Resource `service.name` identifies ThreadLoop. A supported numeric `service.version` comes from the session's recorded implementation version when available. The instrumentation scope identifies `threadloop.audit`. `eventName` names the observed governance event or framing record. `timeUnixNano` carries a representable event time. OTLP 64-bit integers use decimal strings. |
+| ThreadLoop fields                 | The `threadloop.*` attributes identify the profile, output format, source root, counts, and selected governance observations. Event records can include a generated session id, sequence, state version, event digest, allowed guard decision, lifecycle states, or a receipt result and evidence digest. Outcome fields describe the session as of its last observed event.           |
+| Fields withheld from viewers      | Caller harness and model labels, task text, filesystem paths, gate names, guard details and raw payloads stay out of the viewer. Unknown observations stay absent. Observed zero and false retain their values.                                                                                                                                                                        |
+| Fields the ledger doesn't observe | ThreadLoop creates no trace or span IDs, model-call spans, token counts or inferred parentage. A viewer correlates observations through retained session identities and digests.                                                                                                                                                                                                       |
+
+Read `threadloop.audit.profile` and `threadloop.audit.format` on the instrumentation scope. Each log record carries
+`threadloop.audit.source_root`. For example, a refused transition can report `threadloop.guard.allowed` as a `boolValue`
+of `false` and `threadloop.audit.state_version` as an `intValue` of `"0"`. The viewer omits raw refusal messages. A
+receipt's `threadloop.evidence.receipt_sha256` refers to retained evidence. Its presence grants no admission to a
+lifecycle transition.
+
+Event times preserve the recorded UTC offset's meaning and up to nine fractional digits. The exporter omits time when
+OTLP can't represent it exactly, including dates before the Unix epoch, the reserved zero timestamp, and values beyond
+the unsigned 64-bit range. Controlled archives retain the original timestamp string.
+
+Both outputs identify profile `threadloop.audit-otel/1`. The resource schema URL pins the OpenTelemetry Semantic
+Conventions to 1.37.0. The profile also records specification 1.49.0 and OTLP protobuf 1.7.0. The service attributes are
+stable in the pinned registry. The file serialization has Development status in the pinned specification.
+[Service registry](https://github.com/open-telemetry/semantic-conventions/blob/v1.37.0/docs/registry/attributes/service.md)
+·
+[File serialization](https://github.com/open-telemetry/opentelemetry-specification/blob/v1.49.0/specification/protocol/file-exporter.md)
+·
+[Logs protobuf](https://github.com/open-telemetry/opentelemetry-proto/blob/v1.7.0/opentelemetry/proto/logs/v1/logs.proto)
+·
+[JSON encoding](https://github.com/open-telemetry/opentelemetry-proto/blob/v1.7.0/docs/specification.md#json-protobuf-encoding)
+
+### Verify a controlled archive
+
+For each record, read the string value of `threadloop.audit.canonical_record` after JSON decoding. Append one LF to each
+string and concatenate them in file order. Those UTF-8 bytes reproduce the entire native corpus, including its manifest
+and seal. Each event's original digest still covers its canonical event string. `source_root` hashes the recovered
+native corpus. The export command's `root` hashes the entire OpenTelemetry file. Retain that outer root separately and
+pass it to `verify-export --root` to detect a full rewrite.
+
+The offline verifier checks the native chains, membership and seal, then regenerates the projection and compares the
+outer bytes. The viewer carries the source root as a reference. Its allowlisted fields alone can't verify the native
+chains. For a large archive, select fewer sessions per file. The 16 MiB and 32,768-line limits apply to both the native
+corpus and the final OpenTelemetry representation.
+
+Profile 1 freezes the field mapping, encoding and version pins. A change to those pins or their meaning requires a new
+opt-in profile and verification fixtures for both versions. An existing artifact keeps its original profile and
+hash-covered bytes.
+
 ## Collector recipe
 
 The OpenTelemetry Collector `filelog` receiver can consume completed exports. This recipe forwards full canonical
 records, not a sanitized viewer projection. Use it only with a destination authorized to receive those payloads;
 retaining an export for verification does not itself authorize copying its contents into a generic telemetry backend.
 
-The recipe illustrates transport, not the standardized record shape or privacy projection planned in #88:
+The publisher creates private files. Run the receiver under the account that writes these exports, or give the
+authorized Collector account read access to each completed file and search access to its parent directories through your
+deployment's access controls. Apply the same access policy to each new rotated file. Confirm the receiver can open one
+completed export before enabling the pipeline.
+
+This recipe illustrates the file transport:
 
 ```yaml
 receivers:
@@ -79,14 +270,5 @@ new filename; do not modify or append to a published ThreadLoop export.
 - The Collector and downstream telemetry store are read-only consumers of that projection.
 - A dashboard, alert, missing log, or ingested JSONL record is never evidence for a lifecycle transition.
 
-## Planned export alignment
-
-[#88](https://github.com/nnennandukwe/threadloop/issues/88) owns a standardized completed-export envelope and the
-privacy boundary for optional viewer projections. Neither that envelope nor a sanitized viewer is implemented here.
-Preserve canonical hash-covered records under the controlled verifiable-export contract. A future viewer projection
-should expose selected correlation identities, namespaced governance outcomes, and safe evidence references, with raw
-content absent by default and provenance/completeness limits visible.
-
-Dashboard deletion, eviction, sampling, and restart must not change the durable ledger, evidence freshness, or lifecycle
-state. Trace success and trace identity do not establish evidence admission. This work adds no live telemetry,
-dashboard, or authority channel.
+Dashboard deletion, sampling and restart affect what the viewer can show. ThreadLoop reads the ledger and evaluates its
+existing evidence requirements whenever a caller requests a transition.

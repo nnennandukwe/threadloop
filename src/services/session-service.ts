@@ -107,6 +107,7 @@ import {
 } from './signed-receipt-import.js';
 import { assertInitializedReadOnly, mapAuditChainCorruption, resolveRepositoryRoot } from './preconditions.js';
 import { readControlledSignedReceiptPackageContents } from './signed-receipt-files.js';
+import { captureRunConfiguration } from '../adapters/fs/run-configuration.js';
 
 export interface StartTaskInput {
   cwd: string;
@@ -116,6 +117,7 @@ export interface StartTaskInput {
   baseRef?: string | null;
   issueRef?: string | null;
   actor?: EntrySource;
+  runConfigPath?: string;
 }
 
 export interface CaptureInput {
@@ -188,6 +190,7 @@ export async function initThreadloop(cwd: string) {
 
 export async function startTask(input: StartTaskInput) {
   const repoRoot = await resolveRepositoryRoot(input.cwd);
+  const runConfiguration = await captureRunConfiguration(input.cwd, input.runConfigPath);
   if (isThreadloopInitialized(repoRoot)) {
     await readConfig(repoRoot);
     assertSchemaDoesNotRequireExplicitMigration(repoRoot);
@@ -234,6 +237,7 @@ export async function startTask(input: StartTaskInput) {
   await insertTaskSession(repoRoot, {
     task,
     session,
+    runConfiguration,
     intentEntry: {
       id: createId('entry'),
       sessionId: session.id,
@@ -962,8 +966,9 @@ export async function exportSessionAudit(input: ExportSessionAuditInput) {
   const content = `${audit.storedEvents
     .map((event) => canonicalJson({ event: event.value, event_sha256: event.sha256 }))
     .join('\n')}\n`;
+  let warnings: string[];
   try {
-    await writeAuditExportExclusive(outputPath, content);
+    ({ warnings } = await writeAuditExportExclusive(outputPath, content));
   } catch (error) {
     if (error instanceof AuditExportConflictError) {
       throw new ThreadloopError('AUDIT_EXPORT_CONFLICT', error.message, {
@@ -989,6 +994,7 @@ export async function exportSessionAudit(input: ExportSessionAuditInput) {
     root: audit.root,
     coverage: audit.coverage,
     output: outputPath,
+    ...(warnings.length > 0 ? { warnings } : {}),
   };
 }
 

@@ -1,6 +1,7 @@
 import type { Argument, Command, Option } from 'commander';
 import { ARTIFACT_KINDS, DEFAULT_BASE_REF, ENTRY_KINDS } from '../domain/types.js';
 import { commandPath, getProtocolCommandRules } from '../cli-program.js';
+import { PROTOCOL_COMPONENT_VERSIONS } from './versions.js';
 
 export interface WorkflowContract {
   defaultBaseRef: string;
@@ -47,14 +48,7 @@ export function buildProtocolContract(program: Command): ProtocolContract {
   );
 
   return {
-    contractVersions: {
-      protocol: 4,
-      proofPlan: 4,
-      sessionNext: 4,
-      signedReviewReceipt: 1,
-      auditEvent: 1,
-      handoff: 3,
-    },
+    contractVersions: { ...PROTOCOL_COMPONENT_VERSIONS },
     envVars: deriveEnvVars(program),
     commands,
     captureKinds: [...ENTRY_KINDS],
@@ -92,6 +86,9 @@ export function buildProtocolContract(program: Command): ProtocolContract {
       'Review receipt import verifies the current PR HEAD, canonical provider-neutral snapshot, in-toto subject, Sigstore signature, transparency log, workflow invocation identity, repository, session, and proof-plan bindings before persistence.',
       'Entering pre_pr_reviewing requires current-HEAD local proof and verified signed CI proof for every gate; post-PR human readiness additionally requires a current verified signed review receipt.',
       'Audit export verifies the hash-linked ledger and refuses to overwrite an existing output path.',
+      'Session start records run-configuration v1 metadata; optional --run-config supplies caller declarations and snapshot paths without lifecycle authority.',
+      'Audit corpus v1 uses one session as the comparison unit; verify-export checks retained bytes without a source repository or database. Metrics belong to external consumers.',
+      'Audit corpus defaults to native. Use --format otel for a sanitized viewer or --format otel-verifiable to retain canonical records. Verify-export checks a native or verifiable file against its own optional whole-file root.',
       'Artifact generate targets the only active session when --session is omitted.',
       'ThreadLoop state and local receipt output are excluded through .git/info/exclude; review artifacts remain visible.',
       'Reconcile refreshes metadata without creating semantic entries.',

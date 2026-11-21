@@ -28,13 +28,25 @@ Require exactly these four explicit inputs:
 - `repo_root`: canonical absolute path of the dedicated Git worktree;
 - `session_id`: exact non-empty ThreadLoop session id;
 - `wake_id`: 1-64 characters matching `^[A-Za-z0-9][A-Za-z0-9._-]*$`; and
-- `mode`: exactly `normal` or `replay`.
+- `mode`: exactly `normal` or `duplicate_delivery`; accept `replay` as a deprecated compatibility alias.
 
 Reject leading or trailing whitespace and NUL or newline characters. Do not infer an input from `PWD`, environment
 variables, a prior wake, the current branch, or `threadloop session list`.
 
-Both modes select at most one fresh action from a validated snapshot. `replay` records scheduler intent; it does not
-select a fixture, package, sensor, or evidence source. Mode does not change lifecycle authority.
+All accepted modes select at most one fresh action from a validated snapshot. `duplicate_delivery` records scheduler
+intent to redeliver a wake under the retained-record rules below. Use it for new duplicate-delivery records. Existing
+`replay` records retain their original spelling, including during retries; never rewrite a retained record's mode to the
+new spelling. Mode doesn't change lifecycle authority or select a fixture, package, sensor, or evidence source.
+
+The retained record format is explicitly versioned: v1 accepts `normal` or `replay`; v2 accepts `normal` or
+`duplicate_delivery`. New schedulers must opt into v2 before emitting the new spelling. Existing v1 records remain valid
+with their original version and mode. An old scheduler that only understands v1 must keep using v1 until its record
+validator supports v2; there's no automatic record migration.
+
+For an existing `(repo_root, session_id, wake_id)`, require the incoming mode bytes to equal the retained mode. A
+redelivery that changes `replay` to `duplicate_delivery`, the reverse change, or any other mode change must stop before
+selecting or performing an action. Preserve the original record and redeliver with its original mode. The alias doesn't
+make different mode bytes interchangeable within one retained wake.
 
 ## Scheduler-retained wake record
 
