@@ -49,9 +49,18 @@ import type {
   ThreadloopConfig,
 } from '../../domain/types.js';
 import { TASK_STATUS, isTaskStatus } from '../../domain/types.js';
-import { StateCorruptedError, type ThreadloopErrorCode } from '../../contracts/errors.js';
+import { StateCorruptedError, ThreadloopError, type ThreadloopErrorCode } from '../../contracts/errors.js';
 import { threadloopPaths } from './repo.js';
 import { DatabaseSync } from './sqlite-driver.js';
+import {
+  GATE_RECEIPTS_TABLE,
+  GATE_RECEIPT_SEQUENCE_INDEX,
+  createGateResultCatalog,
+  detachLegacyGateReceipts,
+  gateReceiptLayout,
+  restoreLegacyGateReceipts,
+  seedGateResults,
+} from './gate-result-catalog.js';
 import type { RunConfiguration } from '../../domain/run-configuration.js';
 
 export const CURRENT_SCHEMA_VERSION = 8;
@@ -143,8 +152,6 @@ const SIGNED_RECEIPT_COLUMNS = [
   'state_version',
   'verified_at',
 ] as const;
-
-type ConnectionState = { writer: DatabaseSync | null; ready: boolean };
 
 type TransitionSessionRow = {
   session_id: string;
@@ -323,7 +330,7 @@ type TransitionGuardEvaluator = (
   blockedFromState: TaskStatus | null,
 ) => TransitionGuardDecision;
 
-const connections = new Map<string, ConnectionState>();
+const connections = new Map<string, DatabaseSync>();
 
 export function createId(prefix: string) {
   return `${prefix}_${randomUUID()}`;
@@ -341,10 +348,8 @@ export async function ensureThreadloopLayout(repoRoot: string) {
   await mkdir(paths.artifactsDir, { recursive: true });
 }
 
-export async function ensureStateDatabase(repoRoot: string) {
-  await ensureThreadloopLayout(repoRoot);
-  const state = connectionState(repoRoot);
-  ensureDatabaseReady(writer(repoRoot, state), state);
+export async function ensureStateDatabase(repoRoot: string, options?: { allowMigration: boolean }) {
+  await withWriteTransaction(repoRoot, () => undefined, options?.allowMigration ?? false);
 }
 
 export async function writeConfig(repoRoot: string, config: ThreadloopConfig) {
@@ -363,10 +368,10 @@ export async function readConfig(repoRoot: string): Promise<ThreadloopConfig> {
   return parsed.data;
 }
 
-export async function readState(repoRoot: string): Promise<StateData> {
-  await ensureStateDatabase(repoRoot);
-
+export function readStateReadOnly(repoRoot: string): StateData {
   return withReadSnapshot(repoRoot, (db) => {
+    assertCurrentSchemaVersion(db);
+    assertCanonicalSchemaShape(db, STATE_TABLES);
     const parsed = stateDataSchema.safeParse(loadState(db));
     if (!parsed.success) {
       throw new StateCorruptedError(INVALID_STATE_DB_ERROR);
@@ -399,6 +404,8 @@ export async function readSessionGateContext(repoRoot: string, sessionId: string
 
 export function readSessionProofEvidenceReadOnly(repoRoot: string, sessionId: string) {
   return withReadSnapshot(repoRoot, (db) => {
+    assertCurrentSchemaVersion(db);
+    assertCanonicalSchemaShape(db, PROOF_TABLES);
     const receipts = db
       .prepare(
         `SELECT ${camelColumns([
@@ -460,13 +467,14 @@ export function readSessionProofEvidenceReadOnly(repoRoot: string, sessionId: st
   });
 }
 
-export function readSessionAuditReadOnly(repoRoot: string, sessionId: string): StoredAuditEvent[] {
+export function readSessionAuditReadOnly(repoRoot: string, sessionId: string): StoredAuditEvent[] | null {
   return withReadSnapshot(repoRoot, (db) => {
     const schemaVersion = assertSupportedSchemaVersion(db);
     if (!tableExists(db, 'audit_events')) {
       throw new AuditLedgerUnavailableError(schemaVersion);
     }
-    return readAuditEvents(db, sessionId);
+    assertCanonicalSchemaShape(db, ['metadata', 'sessions', 'audit_events']);
+    return readSessionExists(db, sessionId) ? readAuditEvents(db, sessionId) : null;
   });
 }
 
@@ -477,7 +485,7 @@ export function readAuditCorpusReadOnly(repoRoot: string, sessionIds?: string[])
     if (schemaVersion !== CURRENT_SCHEMA_VERSION || !tableExists(db, 'audit_events')) {
       throw new AuditLedgerUnavailableError(schemaVersion);
     }
-    assertCanonicalSchemaShape(db);
+    assertCanonicalSchemaShape(db, HISTORY_TABLES);
     // Every valid session contributes at least one event. Reserve two records for the manifest and seal.
     let remainingEvents = MAX_AUDIT_CORPUS_RECORDS - 2;
     const selected = sessionIds ?? readCorpusSessionIds(db, remainingEvents);
@@ -533,7 +541,8 @@ export function inspectAuditLedgerReadOnly(repoRoot: string) {
 
 export function readSessionTransitionHistoryReadOnly(repoRoot: string, sessionId: string) {
   return withReadSnapshot(repoRoot, (db) => {
-    assertCanonicalSchemaShape(db);
+    assertCurrentSchemaVersion(db);
+    assertCanonicalSchemaShape(db, HISTORY_TABLES);
     return assertSessionTransitionHistoryAuthority(db, sessionId).history;
   });
 }
@@ -739,7 +748,7 @@ export function readSessionLifecycleReadOnly(repoRoot: string, sessionId: string
 
   return withReadSnapshot(repoRoot, (db) => {
     const schemaVersion = assertSupportedSchemaVersion(db);
-    assertCanonicalSchemaShape(db);
+    assertCanonicalSchemaShape(db, HISTORY_TABLES);
     const current = readTransitionSession(db, sessionId);
     if (!current) {
       return null;
@@ -1403,7 +1412,7 @@ export async function readRepoSnapshot(repoRoot: string, sessionId: string): Pro
 
 export function closeSqliteConnections(repoRoot?: string) {
   for (const currentRepoRoot of repoRoot ? [repoRoot] : Array.from(connections.keys())) {
-    connections.get(currentRepoRoot)?.writer?.close();
+    connections.get(currentRepoRoot)?.close();
     connections.delete(currentRepoRoot);
   }
 }
@@ -1450,80 +1459,72 @@ function openReadOnlyStateDatabase(file: string) {
   }
 }
 
-function connectionState(repoRoot: string) {
-  let state = connections.get(repoRoot);
-  if (!state) {
-    state = { writer: null, ready: false };
-    connections.set(repoRoot, state);
+function writer(repoRoot: string) {
+  let db = connections.get(repoRoot);
+  if (!db) {
+    db = new DatabaseSync(threadloopPaths(repoRoot).stateDbPath, { enableForeignKeyConstraints: true });
+    db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    connections.set(repoRoot, db);
   }
-  return state;
+  return db;
 }
 
-function writer(repoRoot: string, state: ConnectionState) {
-  if (!state.writer) {
-    state.writer = new DatabaseSync(threadloopPaths(repoRoot).stateDbPath, { enableForeignKeyConstraints: true });
-    state.writer.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
-  }
-  return state.writer;
-}
-
-/**
- * node:sqlite is synchronous and `action` is synchronous, so a write transaction runs to completion without
- * yielding; writes from one process cannot interleave, and IMMEDIATE serializes them against other processes.
- */
-async function withWriteTransaction<T>(repoRoot: string, action: (db: DatabaseSync) => T): Promise<T> {
+async function withWriteTransaction<T>(
+  repoRoot: string,
+  action: (db: DatabaseSync) => T,
+  allowMigration = false,
+): Promise<T> {
   await ensureThreadloopLayout(repoRoot);
-  const state = connectionState(repoRoot);
-  const db = writer(repoRoot, state);
-  ensureDatabaseReady(db, state);
-  return runInTransaction(db, 'BEGIN IMMEDIATE', () => action(db));
-}
-
-/**
- * Brings the database to the current schema once per process, then only re-checks the schema version. A newer
- * schema is rejected before anything is changed, including the journal mode.
- */
-function ensureDatabaseReady(db: DatabaseSync, state: ConnectionState) {
-  if (state.ready) {
-    assertCurrentSchemaVersion(db);
-    return;
-  }
-
-  if (tableExists(db, 'metadata')) {
-    assertSupportedSchemaVersion(db);
-  }
-  if (!databaseNeedsSetup(db)) {
-    state.ready = true;
-    return;
-  }
-
-  db.exec('PRAGMA journal_mode = WAL');
-  runInTransaction(db, 'BEGIN IMMEDIATE', () => {
-    // Detaches a v7 gate_receipts so bootstrapDatabase can recreate it with the widened result domain from the
-    // one authoritative DDL; rows are copied back immediately after.
-    const legacyResultDomain = detachLegacyGateReceiptResultDomain(db);
-    bootstrapDatabase(db);
-    restoreLegacyGateReceipts(db, legacyResultDomain);
-    assertSupportedSchemaVersion(db);
-    assertCanonicalSchemaShape(db);
-    for (const { id } of db.prepare(`SELECT id FROM sessions ORDER BY id`).all() as Array<{ id: string }>) {
-      assertSessionTransitionHistoryAuthority(db, id);
-    }
-    writeActiveProjection(db);
-    db.prepare(
-      `INSERT INTO metadata (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-    ).run(String(CURRENT_SCHEMA_VERSION));
+  const db = writer(repoRoot);
+  // Only a new, empty database needs a journal-mode change outside the transaction.
+  if (!db.prepare('SELECT 1 FROM sqlite_schema LIMIT 1').get()) db.exec('PRAGMA journal_mode = WAL');
+  return runInTransaction(db, 'BEGIN IMMEDIATE', () => {
+    ensureDatabaseReady(db, allowMigration);
+    return action(db);
   });
-  assertCurrentSchemaVersion(db);
-  state.ready = true;
 }
 
-function databaseNeedsSetup(db: DatabaseSync) {
-  return (
-    !tableExists(db, 'metadata') ||
-    readDatabaseSchemaVersion(db) !== CURRENT_SCHEMA_VERSION ||
-    schemaShapeProblem(db) !== null
-  );
+function ensureDatabaseReady(db: DatabaseSync, allowMigration: boolean) {
+  const empty = !db.prepare('SELECT 1 FROM sqlite_schema LIMIT 1').get();
+  if (empty) {
+    bootstrapDatabase(db);
+    createGateResultCatalog(db);
+    return;
+  }
+  const generation = assertSupportedSchemaVersion(db);
+  if (requiresExplicitInitMigration(generation) && !allowMigration) {
+    throw new ThreadloopError(
+      'SESSION_SCHEMA_MIGRATION_REQUIRED',
+      `ThreadLoop schema v${generation} requires explicit migration before this command can run.`,
+      {
+        details: {
+          storage_schema_version: generation,
+          hint: 'Run `threadloop init`, then retry the original command.',
+        },
+      },
+    );
+  }
+  assertCanonicalSchemaShape(db, generation === CURRENT_SCHEMA_VERSION ? undefined : ['gate_receipts']);
+  const layout = gateReceiptLayout(db, generation);
+  if (layout === 'legacy') {
+    detachLegacyGateReceipts(db);
+  } else if (generation === CURRENT_SCHEMA_VERSION) {
+    seedGateResults(db);
+    return;
+  }
+  bootstrapDatabase(db);
+  if (layout === 'legacy') {
+    createGateResultCatalog(db);
+    restoreLegacyGateReceipts(db);
+  }
+  assertCanonicalSchemaShape(db);
+  for (const { id } of db.prepare('SELECT id FROM sessions ORDER BY id').all() as Array<{ id: string }>) {
+    assertSessionTransitionHistoryAuthority(db, id);
+  }
+  if (generation !== CURRENT_SCHEMA_VERSION) {
+    writeActiveProjection(db);
+    db.prepare("UPDATE metadata SET value = ? WHERE key = 'schema_version'").run(String(CURRENT_SCHEMA_VERSION));
+  }
 }
 
 function tableExists(db: DatabaseSync, tableName: string) {
@@ -1659,30 +1660,9 @@ function bootstrapDatabase(db: DatabaseSync) {
       created_at TEXT NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS gate_receipts (
-      sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-      id TEXT NOT NULL UNIQUE,
-      session_id TEXT NOT NULL REFERENCES sessions(id),
-      gate_id TEXT NOT NULL,
-      plan_sha256 TEXT NOT NULL CHECK(length(plan_sha256) = 64),
-      head_before TEXT NOT NULL,
-      head_after TEXT NOT NULL,
-      result TEXT NOT NULL CHECK(
-        result IN (
-          'passed', 'failed', 'timed_out', 'aborted', 'invalidated',
-          'execution_error', 'cleanup_failed', 'setup_failed'
-        )
-      ),
-      artifact_path TEXT NOT NULL,
-      artifact_sha256 TEXT NOT NULL CHECK(length(artifact_sha256) = 64),
-      receipt_json TEXT NOT NULL,
-      receipt_sha256 TEXT NOT NULL CHECK(length(receipt_sha256) = 64),
-      state_version INTEGER NOT NULL CHECK(state_version >= 0),
-      created_at TEXT NOT NULL
-    );
+    ${GATE_RECEIPTS_TABLE};
 
-    CREATE INDEX IF NOT EXISTS gate_receipts_session_gate_sequence_idx
-      ON gate_receipts(session_id, gate_id, sequence DESC);
+    ${GATE_RECEIPT_SEQUENCE_INDEX};
 
     CREATE TABLE IF NOT EXISTS signed_gate_receipts (
       sequence INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1776,54 +1756,130 @@ function immutableTableTriggers({ table, noun, collision }: (typeof IMMUTABLE_TA
   `;
 }
 
-let canonicalShape: { columns: Map<string, Set<string>>; triggers: Set<string> } | undefined;
+// These are the existing session operations' generation-8 dependencies. New features declare their own
+// requirements, so a fresh install's optional tables or columns never become implicit requirements on old stores.
+const HISTORY_TABLES = ['metadata', 'tasks', 'sessions', 'session_transitions', 'audit_events'] as const;
+const PROOF_TABLES = [
+  'metadata',
+  'proof_plans',
+  'gate_receipts',
+  'signed_gate_receipts',
+  'signed_review_receipts',
+  'session_transitions',
+] as const;
+const STATE_TABLES = ['metadata', 'tasks', 'sessions', 'entries', 'artifacts'] as const;
 
-function readSchemaShape(db: DatabaseSync) {
-  const objects = db
-    .prepare(`SELECT type, name FROM sqlite_master WHERE type IN ('table', 'trigger') AND name NOT LIKE 'sqlite_%'`)
-    .all() as Array<{ type: 'table' | 'trigger'; name: string }>;
-  const columns = new Map<string, Set<string>>();
-  for (const { name } of objects.filter((object) => object.type === 'table')) {
-    const info = db.prepare(`PRAGMA table_info(${name})`).all() as Array<{ name: string }>;
-    columns.set(name, new Set(info.map((column) => column.name)));
-  }
-  return { columns, triggers: new Set(objects.filter((object) => object.type === 'trigger').map(({ name }) => name)) };
+const SESSION_COLUMNS = {
+  metadata: 'key value',
+  tasks: 'id title goal constraints_json issue_ref repo_root status state_version blocked_from_state created_at',
+  sessions: 'id task_id started_at ended_at base_ref branch head_sha last_heartbeat_at last_heartbeat_source',
+  entries: 'id session_id kind body metadata_json created_at source',
+  artifacts: 'id session_id kind path template_version generated_at snapshot_source',
+  active_state: 'id task_id session_id',
+  active_sessions: 'session_id task_id',
+  repo_snapshots:
+    'session_id branch head_sha base_ref changed_files_json diff_stats_json commit_range_json reconciled_at',
+  session_transitions:
+    'id session_id task_id from_state to_state from_state_version to_state_version actor input_json request_sha256 created_at',
+  transition_idempotency:
+    'session_id idempotency_key request_json request_sha256 outcome transition_id result_json created_at',
+  transition_idempotency_conflicts: 'id session_id idempotency_key request_json request_sha256 result_json created_at',
+  proof_plans: 'session_id plan_json plan_sha256 baseline_branch baseline_head_sha created_at',
+  gate_receipts:
+    'sequence id session_id gate_id plan_sha256 head_before head_after result artifact_path artifact_sha256 receipt_json receipt_sha256 state_version created_at',
+  signed_gate_receipts: [
+    'sequence id session_id gate_id plan_sha256 subject_head_sha result',
+    ...SIGNED_RECEIPT_COLUMNS,
+  ].join(' '),
+  signed_review_receipts: [
+    'sequence id session_id plan_sha256 pull_request_number subject_head_sha',
+    ...SIGNED_RECEIPT_COLUMNS,
+  ].join(' '),
+  audit_events: 'id session_id sequence event_type state_version previous_sha256 event_json event_sha256 recorded_at',
+};
+type SessionTable = keyof typeof SESSION_COLUMNS;
+const SESSION_TABLES = Object.keys(SESSION_COLUMNS) as SessionTable[];
+
+function readTableShape(db: DatabaseSync, table: SessionTable) {
+  const columns = db.prepare('SELECT name, type, "notnull", pk FROM pragma_table_info(?)').all(table);
+  const foreignKeys = db
+    .prepare('SELECT "from", "to", "table", on_delete, on_update FROM pragma_foreign_key_list(?)')
+    .all(table);
+  const uniqueKeys = db
+    .prepare(
+      `
+    SELECT json_group_array(json_array(i.name, i.coll) ORDER BY i.seqno) AS columns
+    FROM pragma_index_list(?) l JOIN pragma_index_xinfo(l.name) i
+    WHERE l."unique" = 1 AND l.partial = 0 AND i.key = 1 GROUP BY l.name
+  `,
+    )
+    .all(table);
+  const triggers = db.prepare("SELECT name, sql FROM sqlite_schema WHERE type = 'trigger' AND tbl_name = ?").all(table);
+
+  const requiredColumns = SESSION_COLUMNS[table].split(' ');
+  return {
+    columns: new Map(columns.map((row) => [String(row.name), JSON.stringify([row.type, row.notnull, row.pk])])),
+    foreignKeys: new Set(
+      foreignKeys
+        .filter(
+          (row) => requiredColumns.includes(String(row.from)) && Object.hasOwn(SESSION_COLUMNS, String(row.table)),
+        )
+        .map((row) => JSON.stringify(row)),
+    ),
+    uniqueKeys: new Set(uniqueKeys.map((row) => String(row.columns))),
+    triggers: new Map(triggers.map((row) => [String(row.name), String(row.sql)])),
+  };
 }
 
-/**
- * Compares the database against the shape this build creates: every table, column, and immutability trigger the
- * code depends on. The expectation is derived from the DDL itself, so it cannot drift from it.
- */
-function schemaShapeProblem(db: DatabaseSync) {
-  if (!canonicalShape) {
+let sessionSchema: Map<SessionTable, ReturnType<typeof readTableShape>> | undefined;
+
+function schemaShapeProblem(db: DatabaseSync, tables: readonly SessionTable[] = SESSION_TABLES) {
+  if (!sessionSchema) {
     const reference = new DatabaseSync(':memory:');
     try {
       bootstrapDatabase(reference);
-      canonicalShape = readSchemaShape(reference);
+      sessionSchema = new Map(SESSION_TABLES.map((table) => [table, readTableShape(reference, table)]));
     } finally {
       reference.close();
     }
   }
-  const actual = readSchemaShape(db);
-  for (const [table, columns] of canonicalShape.columns) {
-    const actualColumns = actual.columns.get(table);
-    if (!actualColumns || [...columns].some((column) => !actualColumns.has(column))) {
+  for (const table of tables) {
+    const required = sessionSchema.get(table);
+    if (!required) throw new Error(`Missing reference schema for ${table}`);
+    const actual = readTableShape(db, table);
+    const requiredColumns = SESSION_COLUMNS[table].split(' ');
+    if (
+      requiredColumns.some(
+        (name) => !actual.columns.has(name) || actual.columns.get(name) !== required.columns.get(name),
+      )
+    ) {
       return `Invalid schema for ${table}`;
     }
-  }
-  for (const trigger of canonicalShape.triggers) {
-    if (!actual.triggers.has(trigger)) {
-      return `Invalid schema for ${trigger.replace(/_no_(update|delete|replace)$/, '')}: missing trigger ${trigger}`;
+    for (const key of required.uniqueKeys) {
+      if (!actual.uniqueKeys.has(key)) {
+        return `Invalid schema for ${table}: missing unique key ${key}`;
+      }
+    }
+    for (const key of required.foreignKeys) {
+      if (!actual.foreignKeys.has(key)) {
+        return `Invalid schema for ${table}: missing foreign key`;
+      }
+    }
+    if (IMMUTABLE_TABLES.some((item) => item.table === table)) {
+      for (const suffix of ['no_update', 'no_delete', 'no_replace']) {
+        const name = `${table}_${suffix}`;
+        if (!actual.triggers.has(name)) return `Invalid schema for ${table}: missing trigger ${name}`;
+        if (actual.triggers.get(name) !== required.triggers.get(name))
+          return `Invalid schema for ${table}: changed trigger ${name}`;
+      }
     }
   }
   return null;
 }
 
-function assertCanonicalSchemaShape(db: DatabaseSync) {
-  const problem = schemaShapeProblem(db);
-  if (problem) {
-    throw new StateCorruptedError(problem);
-  }
+function assertCanonicalSchemaShape(db: DatabaseSync, tables?: readonly SessionTable[]) {
+  const problem = schemaShapeProblem(db, tables);
+  if (problem) throw new StateCorruptedError(problem);
 }
 
 function readDatabaseSchemaVersion(db: DatabaseSync) {
@@ -1858,62 +1914,10 @@ function assertSupportedSchemaVersion(db: DatabaseSync) {
 }
 
 function assertCurrentSchemaVersion(db: DatabaseSync) {
-  const version = readDatabaseSchemaVersion(db);
+  const version = assertSupportedSchemaVersion(db);
   if (version !== CURRENT_SCHEMA_VERSION) {
     throw new StateCorruptedError(`Unsupported ThreadLoop schema version: ${version}`);
   }
-}
-
-const LEGACY_GATE_RECEIPTS_TABLE = 'gate_receipts_pre_setup_result_domain';
-
-/**
- * Schema v8 widened the gate_receipts result domain to admit `setup_failed`. SQLite cannot alter a CHECK
- * constraint, so the table has to be rebuilt. Rather than duplicate the table DDL here and risk it drifting
- * from bootstrapDatabase, this renames the old table out of the way and lets bootstrapDatabase create the
- * current one; restoreLegacyGateReceipts then copies the rows back.
- *
- * Returns whether a legacy table was detached. Idempotent: a table that already admits `setup_failed`, or a
- * database with no gate_receipts at all, is left untouched.
- */
-function detachLegacyGateReceiptResultDomain(db: DatabaseSync) {
-  const definition = db
-    .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'gate_receipts'`)
-    .get() as { sql: string } | undefined;
-  if (!definition?.sql || definition.sql.includes('setup_failed')) {
-    return false;
-  }
-  if (tableExists(db, LEGACY_GATE_RECEIPTS_TABLE)) {
-    throw new StateCorruptedError(`A previous gate-receipt migration left ${LEGACY_GATE_RECEIPTS_TABLE} behind.`);
-  }
-
-  // The append-only triggers and the covering index carry the table name, so they must go before the rename;
-  // bootstrapDatabase recreates all of them against the rebuilt table.
-  for (const suffix of ['no_update', 'no_delete', 'no_replace']) {
-    db.exec(`DROP TRIGGER IF EXISTS gate_receipts_${suffix}`);
-  }
-  db.exec(`DROP INDEX IF EXISTS gate_receipts_session_gate_sequence_idx`);
-  db.exec(`ALTER TABLE gate_receipts RENAME TO ${LEGACY_GATE_RECEIPTS_TABLE}`);
-  return true;
-}
-
-function restoreLegacyGateReceipts(db: DatabaseSync, detached: boolean) {
-  if (!detached) {
-    return;
-  }
-  const count = (table: string) =>
-    (db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count;
-  const expected = count(LEGACY_GATE_RECEIPTS_TABLE);
-  // Explicit sequence values preserve receipt ordering, which the proof projection depends on.
-  const columns = `sequence, id, session_id, gate_id, plan_sha256, head_before, head_after, result,
-    artifact_path, artifact_sha256, receipt_json, receipt_sha256, state_version, created_at`;
-  db.exec(
-    `INSERT INTO gate_receipts (${columns}) SELECT ${columns} FROM ${LEGACY_GATE_RECEIPTS_TABLE} ORDER BY sequence`,
-  );
-  const copied = count('gate_receipts');
-  if (copied !== expected) {
-    throw new StateCorruptedError(`Gate-receipt migration copied ${copied} of ${expected} receipts.`);
-  }
-  db.exec(`DROP TABLE ${LEGACY_GATE_RECEIPTS_TABLE}`);
 }
 
 function loadState(db: DatabaseSync): StateData {

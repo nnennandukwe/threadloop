@@ -21,7 +21,7 @@ import {
   readSessionProofEvidenceReadOnly,
   readSessionLifecycleReadOnly,
   readRepoSnapshot,
-  readState,
+  readStateReadOnly,
   recordArtifact,
   recordSessionHeartbeat,
   requiresExplicitInitMigration,
@@ -33,6 +33,7 @@ import {
   EvidenceChangedError,
   AuditLedgerUnavailableError,
   SessionTransitionHistoryCorruptedError,
+  StateDatabaseMissingError,
 } from '../adapters/fs/sqlite-store.js';
 import { AuditExportConflictError, writeAuditExportExclusive } from '../adapters/fs/audit-export.js';
 import { isThreadloopInitialized } from '../adapters/fs/repo.js';
@@ -166,7 +167,7 @@ interface ResolvedSession extends SessionRecord {
 export async function initThreadloop(cwd: string) {
   const repoRoot = await resolveRepositoryRoot(cwd);
   try {
-    const { created, gitignoreStatus } = await initializeThreadloopRepo(repoRoot);
+    const { created, gitignoreStatus } = await initializeThreadloopRepo(repoRoot, true);
     return { repoRoot, created, gitignoreStatus };
   } catch (error) {
     if (error instanceof AuditChainCorruptedError) {
@@ -266,7 +267,7 @@ export async function startTask(input: StartTaskInput) {
 }
 
 export async function listSessions(cwd: string) {
-  const { repoRoot, state } = await loadStateContext(cwd);
+  const { repoRoot, state } = await loadStateContext(cwd, { readOnly: true });
   return {
     repoRoot,
     sessions: state.sessions.map((session) => {
@@ -1002,33 +1003,6 @@ async function loadSessionAudit(input: SessionAuditInput, expectedRoot?: string)
   const repoRoot = await resolveRepositoryRoot(input.cwd);
   await assertInitializedReadOnly(repoRoot);
   assertSchemaDoesNotRequireExplicitMigration(repoRoot);
-  const availability = inspectAuditLedgerReadOnly(repoRoot);
-  if (!availability.available && availability.schemaVersion !== null) {
-    throw auditUnavailableFailure(input.sessionId, new AuditLedgerUnavailableError(availability.schemaVersion));
-  }
-  try {
-    await ensureStateDatabase(repoRoot);
-  } catch (error) {
-    if (error instanceof AuditChainCorruptedError) {
-      throw mapAuditChainCorruption(input.sessionId, error, 'Restore the ledger from trusted storage.');
-    }
-    if (error instanceof StateCorruptedError) {
-      throw new ThreadloopError('STATE_CORRUPTED', error instanceof Error ? error.message : String(error), {
-        cause: error,
-        details: {
-          session_id: input.sessionId,
-          hint: 'Restore transition history from trusted storage before retrying the audit operation.',
-        },
-      });
-    }
-    throw error;
-  }
-  const state = await readState(repoRoot);
-  if (!state.sessions.some((session) => session.id === input.sessionId)) {
-    throw new ThreadloopError('SESSION_NOT_FOUND', `Could not find session: ${input.sessionId}`, {
-      details: { session_id: input.sessionId },
-    });
-  }
   const storedEvents = readRequiredSessionAudit(repoRoot, input.sessionId);
   const verification = verifyAuditChain(storedEvents, sha256, expectedRoot);
   const first = storedEvents[0]?.value;
@@ -1061,7 +1035,13 @@ function readRequiredSessionAudit(repoRoot: string, sessionId: string) {
     if (error instanceof AuditChainCorruptedError) {
       throw mapAuditChainCorruption(sessionId, error, 'Restore the ledger from trusted storage.');
     }
-    throw error;
+    if (!(error instanceof StateDatabaseMissingError)) throw error;
+    storedEvents = null;
+  }
+  if (storedEvents === null) {
+    throw new ThreadloopError('SESSION_NOT_FOUND', `Could not find session: ${sessionId}`, {
+      details: { session_id: sessionId },
+    });
   }
   if (storedEvents.length === 0) {
     throw new ThreadloopError('AUDIT_EMPTY', `Session ${sessionId} has no audit events.`, {
@@ -1219,6 +1199,7 @@ export async function getNextSessionAction(input: NextSessionInput) {
       blocked_from_state: lifecycle.blockedFromState,
       phase,
       storage_schema_version: lifecycle.schemaVersion,
+      storage_capabilities: lifecycleMigrationRequired ? [] : ['session_next_v1'],
       contract_status: lifecycleMigrationRequired ? ('migration_required' as const) : ('current' as const),
       history: lifecycleHistory,
     },
@@ -1815,7 +1796,7 @@ export async function captureEntry(input: CaptureInput) {
 }
 
 export async function getStatus(cwd: string, sessionId: string) {
-  const { repoRoot, state } = await loadStateContext(cwd);
+  const { repoRoot, state } = await loadStateContext(cwd, { readOnly: true });
   const { task, session } = resolveSessionRecord(state, sessionId);
   const entries = state.entries.filter((entry) => entry.sessionId === session.id);
   const repoSnapshot = session.endedAt === null ? await snapshotRepo(repoRoot, session.id, session.baseRef) : null;
@@ -1878,13 +1859,19 @@ export async function generateArtifact(cwd: string, artifactKind: ArtifactKind, 
   return { repoRoot, task: resolved.task, session: resolved.session, artifact, fullPath };
 }
 
-async function loadStateContext(cwd: string): Promise<StateContext> {
+async function loadStateContext(cwd: string, { readOnly = false } = {}): Promise<StateContext> {
   const repoRoot = await resolveRepositoryRoot(cwd);
-  await assertInitialized(repoRoot);
-  return { repoRoot, state: await readState(repoRoot) };
+  await assertInitialized(repoRoot, { readOnly });
+  try {
+    return { repoRoot, state: readStateReadOnly(repoRoot) };
+  } catch (error) {
+    if (!readOnly || !(error instanceof StateDatabaseMissingError)) throw error;
+    // An initialized config with no database has no sessions to list or inspect.
+    return { repoRoot, state: { tasks: [], sessions: [], entries: [], artifacts: [], activeSessions: [] } };
+  }
 }
 
-async function initializeThreadloopRepo(repoRoot: string) {
+async function initializeThreadloopRepo(repoRoot: string, allowMigration = false) {
   await ensureThreadloopLayout(repoRoot);
 
   const created = !isThreadloopInitialized(repoRoot);
@@ -1894,21 +1881,15 @@ async function initializeThreadloopRepo(repoRoot: string) {
     await readConfig(repoRoot);
   }
 
-  await ensureStateDatabase(repoRoot);
+  await ensureStateDatabase(repoRoot, { allowMigration });
   const gitignoreStatus = await ensureThreadloopStateIgnored(repoRoot);
   return { created, gitignoreStatus };
 }
 
-async function assertInitialized(repoRoot: string) {
-  if (!isThreadloopInitialized(repoRoot)) {
-    throw new ThreadloopError(
-      'THREADLOOP_NOT_INITIALIZED',
-      'ThreadLoop is not initialized in this repo. Run `threadloop init` first.',
-    );
-  }
-  await readConfig(repoRoot);
+async function assertInitialized(repoRoot: string, { readOnly = false } = {}) {
+  await assertInitializedReadOnly(repoRoot);
   assertSchemaDoesNotRequireExplicitMigration(repoRoot);
-  await ensureStateDatabase(repoRoot);
+  if (!readOnly) await ensureStateDatabase(repoRoot);
 }
 
 function assertSchemaDoesNotRequireExplicitMigration(repoRoot: string) {

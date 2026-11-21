@@ -136,7 +136,9 @@ refresh snapshots, migrate the database, repair projections, or mutate lifecycle
 JSON contract v4 reports the history-derived lifecycle phase and schema status, candidate, repository, local `proof`,
 `ci_proof`, provider-neutral `pre_pr_review`, exact `implementation_basis`, signed review, staleness, post-PR repair
 usage, audit validity/root/coverage, and one `next_human_action`. Completed and blocked sessions return terminal
-reasons. Schema v7 reports `migration_required` without mutating the database.
+reasons. A current projection includes `session_next_v1` in `data.lifecycle.storage_capabilities` after ThreadLoop
+checks the required storage. Consumers can require that name and `contract_status: "current"`. Existing v4 consumers
+still receive `storage_schema_version: 8`. Schema v7 reports `migration_required` and an empty capability list.
 
 ### `threadloop session transition <target-state> [options]`
 
@@ -322,16 +324,23 @@ ThreadLoop stores state locally in the repo:
 - `.threadloop/state/state.db`
 - `.threadloop/artifacts/*.md`
 
-ThreadLoop opens schema v7 and v8 databases. Schema v7 is upgraded in place by `threadloop init`; older schemas existed
-only in development builds and are rejected rather than upgraded.
+### Storage compatibility
 
-SQLite schema v8 stores transition/idempotency records, one immutable proof plan per session, append-only local gate,
-signed gate, and signed review receipts, plus a hash-linked append-only audit ledger. New sessions begin with
-`session_started`; migrated sessions begin honest forward-only coverage with `audit_activated`. Migration is atomic,
-schema metadata accepts canonical unsigned decimal text only, and persistent triggers reject update, delete, or
-replacement of immutable evidence. Schema migration is one-way; older binaries reject the resulting database. Schema v8
-widened the recorded gate result domain to admit `setup_failed`, rebuilding the gate-receipt table in place while
-preserving every stored receipt and its ordering.
+Generation 8 identifies databases that support the legacy session and evidence contracts. A compatible addition keeps
+existing operations working and preserves the meaning and ordering of their evidence. An optional table, a nullable
+column or an index can qualify. A change that alters required fields, reinterprets a receipt or removes an authority
+check needs a new generation and a migration policy. ThreadLoop rejects unknown generations and malformed version text.
+An operator can upgrade generation 7 with `threadloop init`.
+
+The first compatible write to an original generation-8 database converts its ordinary gate receipts within a single
+SQLite transaction. It copies their original sequence numbers, JSON and hashes, and installs a result catalog seeded
+from ThreadLoop's gate-result definitions. Future compatible result additions extend that catalog without rebuilding the
+table or changing the generation. Readers still validate the values they interpret. A signed gate receipt can only
+record a passing result. Update, delete and replacement protections still apply to recorded evidence.
+
+Session status, next and audit exports can read existing generation-8 evidence before adoption. A failed conversion
+leaves the original records in place. Reopen the store after an interrupted write and retry the operation once its
+reported cause is resolved. Preserve any unrecognized receipt-table structure for inspection.
 
 Recommended default:
 

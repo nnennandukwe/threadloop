@@ -291,7 +291,9 @@ describe('schema v7 lifecycle and audit persistence', () => {
       { readOnly: false },
     );
 
-    await expect(ensureStateDatabase(repoDir)).rejects.toThrow('Invalid schema for transition_idempotency');
+    await expect(ensureStateDatabase(repoDir, { allowMigration: true })).rejects.toThrow(
+      'Invalid schema for transition_idempotency',
+    );
     closeSqliteConnections(repoDir);
 
     expect(readSchemaVersion(repoDir)).toEqual({ value: '7' });

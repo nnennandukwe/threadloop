@@ -117,9 +117,13 @@ Require `ok: true`, `command: "session next"`, `data.contract_version: 4`, and a
 session read, require:
 
 ```text
-data.lifecycle.storage_schema_version = 8
 data.lifecycle.contract_status = "current"
+data.lifecycle.storage_capabilities is an array of strings containing "session_next_v1"
 ```
+
+ThreadLoop checks the session's required storage before it reports this capability. Stop if the field or capability is
+missing. Treat other capability names as optional. A reviewed older runner can still use its generation-8 projection.
+Use each session's recorded runner snapshot for audit attribution.
 
 Stop when the lifecycle contract or any proof, staleness, repair-budget, or audit status is `migration_required`.
 `SESSION_SCHEMA_MIGRATION_REQUIRED -> MIGRATE_SESSION_SCHEMA` is a recognized external-operator handoff. The runner must
@@ -137,7 +141,7 @@ Run session next again and require it to match the retained session and Git snap
 
 - lifecycle state/version match session status;
 - `lifecycle.phase` is `pre_pr` or `post_pr`;
-- schema is `8` and contract status is `current`;
+- contract status is `current` and the storage capability list still contains `session_next_v1`;
 - candidate is null or has known source/target, matching source/version, and boolean `executable`;
 - repository branch, HEAD, and clean status exactly match the Git snapshot;
 - repair limit is `3` and status, counts, remaining count, and exhausted flag agree;

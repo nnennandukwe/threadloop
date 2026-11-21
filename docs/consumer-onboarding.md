@@ -189,9 +189,10 @@ contract explicitly forbids a wake from invoking it, and surfaces
 ### Already-enabled repositories need one migration
 
 Declared setup required widening the recorded gate result domain, which moved storage schema v7 to v8. A repository
-enabled before that reports `migration_required` on every read until an operator runs `threadloop init` once. The
-migration rebuilds the gate-receipt table in place, preserving every stored receipt and its ordering; it does not
-reinterpret or discard prior evidence.
+still on generation 7 reports `migration_required` on `session next` until an operator runs `threadloop init` once. The
+migration preserves every stored receipt and its ordering. A repository already on generation 8 adopts the ordinary
+result catalog on its next compatible write. Status, next and audit reads can run before adoption. See the
+[storage compatibility policy](cli.md#storage-compatibility).
 
 Consumers also pin the sensor by commit SHA in `build_signer_sha`, so declaring `setup` requires re-pinning
 `build_signer_uri` and `build_signer_sha` to a ThreadLoop commit that supports it. Because those live in the immutable

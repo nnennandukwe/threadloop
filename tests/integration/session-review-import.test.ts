@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { runGate, sessionNext, transition, transitionFailure } from '../helpers/cli.js';
+import { runCli, runGate, sessionNext, transition, transitionFailure } from '../helpers/cli.js';
 import {
   cleanupTemporaryState,
   commitFiles,
@@ -15,6 +15,7 @@ import {
   recordProofPlan,
   startFramedSession,
 } from '../helpers/session.js';
+import { installLegacyGateSchema } from '../helpers/legacy-gate-schema.js';
 import { countRows, deleteAuditLedger, readLifecycle, withStateDb, withTriggersDisabled } from '../helpers/state-db.js';
 import {
   boundGateArtifact,
@@ -163,6 +164,67 @@ const reviewImportAuditCount = (repoDir: string) =>
 const repairTransitionCount = (repoDir: string) => countRows(repoDir, 'session_transitions', `to_state = 'repairing'`);
 
 afterEach(cleanupTemporaryState);
+
+it('preserves both signed packages and their verified audit export when a generation-8 writer adopts ordinary receipts', async () => {
+  const fixture = await makeAuthoritativeReviewingSession();
+  await importReview(fixture);
+  const { repoDir, sessionId, inputDir } = fixture;
+  await installLegacyGateSchema(repoDir, 8);
+
+  async function signedEvidence() {
+    const rows = withStateDb(repoDir, (db) => [
+      ...db.prepare('SELECT * FROM signed_gate_receipts ORDER BY sequence').all(),
+      ...db.prepare('SELECT * FROM signed_review_receipts ORDER BY sequence').all(),
+    ]);
+    expect(rows).toHaveLength(2);
+    const packages = await Promise.all(
+      rows.map(async (row) => {
+        const contents = await readFile(path.join(repoDir, String(row.package_path)));
+        expect(sha256(contents)).toEqual(row.package_sha256);
+        return contents;
+      }),
+    );
+    return { rows, packages };
+  }
+
+  async function auditExport(name: string) {
+    const output = path.join(inputDir, name);
+    await runCli(repoDir, [
+      'audit',
+      'corpus',
+      '--session',
+      sessionId,
+      '--format',
+      'otel-verifiable',
+      '--output',
+      output,
+      '--json',
+    ]);
+    return readFile(output);
+  }
+
+  const before = await signedEvidence();
+  const exported = await auditExport('original.jsonl');
+  const hasCatalog = () =>
+    withStateDb(repoDir, (db) =>
+      Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'gate_result_catalog'").get()),
+    );
+  expect(hasCatalog()).toBe(false);
+  await runCli(repoDir, ['init']);
+  expect(hasCatalog()).toBe(true);
+  expect(await signedEvidence()).toEqual(before);
+  expect(await auditExport('adopted.jsonl')).toEqual(exported);
+  withStateDb(
+    repoDir,
+    (db) => {
+      db.exec(`PRAGMA foreign_keys = OFF;
+      CREATE TEMP TABLE signed_copy AS SELECT * FROM signed_gate_receipts LIMIT 1;
+      UPDATE signed_copy SET sequence = 99, id = 'another', package_sha256 = hex(zeroblob(32)), result = 'failed';`);
+      expect(() => db.exec('INSERT INTO signed_gate_receipts SELECT * FROM signed_copy')).toThrow(/CHECK constraint/);
+    },
+    { readOnly: false },
+  );
+});
 
 describe('signed review receipt import', () => {
   it('imports one verified current-HEAD package idempotently without advancing lifecycle state', async () => {
