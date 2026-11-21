@@ -246,6 +246,37 @@ it.each([
   });
 });
 
+it.each([descriptor, { ...descriptor, caller: null, proof_plan_sha256: null, runner_skill_sha256: null }])(
+  'rejects startup attribution on a forward-only activation',
+  (configuration) => {
+    const events: StoredAuditEvent[] = [];
+    appendEvent(events, 'legacy', 'audit_activated', 8, {
+      coverage: 'schema_v6_forward',
+      lifecycle_state_at_activation: 'verifying',
+      run_configuration: configuration,
+    });
+    expect(() => createAuditCorpus([{ session_id: 'legacy', events }], sha256)).toThrow(/only at session start/);
+  },
+);
+
+it('retains original forward-only activation bytes and reports unknown startup identity', () => {
+  const history = transitionHistory(['verifying'], 'activation');
+  const genesis = history.events[0]!;
+  const corpus = createAuditCorpus([history], sha256);
+  const verified = verifyAuditCorpus(corpus.content, sha256, corpus.root);
+  expect(verified.manifest.sessions[0]).toMatchObject({
+    coverage: 'schema_v6_forward',
+    attribution: 'legacy_unattributable',
+    run_configuration: null,
+    proof_plan_binding: 'unknown',
+    root: genesis.sha256,
+  });
+  expect(JSON.parse(corpus.content.split('\n')[1]!)).toMatchObject({
+    canonical_event: genesis.json,
+    event_sha256: genesis.sha256,
+  });
+});
+
 it('requires a full audit history to start in queued', () => {
   expect(() => createAuditCorpus([transitionHistory(['completed'], 'legacy')], sha256)).toThrow(/Session start/);
 });

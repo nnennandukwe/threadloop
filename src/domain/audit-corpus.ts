@@ -73,6 +73,8 @@ export function projectAuditSession(session: AuditCorpusSession, digest: ProofDi
         ? 'schema_v6_forward'
         : null;
   if (coverage === null) throw new AuditCorpusError('Session audit coverage is unknown.');
+  if (genesis.event_type === 'audit_activated' && genesis.payload.run_configuration !== undefined)
+    throw new AuditCorpusError('ThreadLoop records run configuration only at session start.');
   const configuration =
     genesis.payload.run_configuration === undefined
       ? null

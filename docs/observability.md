@@ -77,7 +77,8 @@ can't replace a retained descriptor.
 Startup without `--run-config` retains runtime identity with `caller` and both snapshot digests set to null. Corpus
 attribution is `runtime_only`. A supplied configuration reports `declared`, which identifies its source without
 certifying the caller's harness/model claim or adoption of its runner. Earlier sessions retain their original bytes and
-report `legacy_unattributable`, with no invented descriptor or retroactive backfill.
+report `legacy_unattributable`. The verifier rejects a startup descriptor on an `audit_activated` record because that
+record marks the point where audit coverage began for an existing session.
 
 ## Export and independently verify a corpus
 
@@ -160,7 +161,12 @@ The OpenTelemetry Collector `filelog` receiver can consume completed exports. Th
 records, not a sanitized viewer projection. Use it only with a destination authorized to receive those payloads;
 retaining an export for verification does not itself authorize copying its contents into a generic telemetry backend.
 
-The recipe illustrates transport, not the standardized record shape or privacy projection planned in #88:
+The publisher creates private files. Run the receiver under the account that writes these exports, or give the
+authorized Collector account read access to each completed file and search access to its parent directories through your
+deployment's access controls. Apply the same access policy to each new rotated file. Confirm the receiver can open one
+completed export before enabling the pipeline.
+
+This recipe illustrates the file transport:
 
 ```yaml
 receivers:
