@@ -1,7 +1,7 @@
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, expect, it } from 'vitest';
-import { writeAuditExportExclusive } from '../../src/adapters/fs/audit-export.js';
+import { AuditExportConflictError, writeAuditExportExclusive } from '../../src/adapters/fs/audit-export.js';
 import { cleanupTemporaryState, makeTempDir } from '../helpers/session.js';
 
 afterEach(cleanupTemporaryState);
@@ -94,4 +94,35 @@ it('preserves an unowned staging collision and reports a retained owned stage af
   ).rejects.toThrow('owned staging file needs removal');
   await expect(fs.readFile(output)).rejects.toMatchObject({ code: 'ENOENT' });
   expect(await fs.readFile(unowned, 'utf8')).toBe('someone else');
+});
+
+it('retains the output conflict and identifies its staging file when cleanup also fails', async () => {
+  const dir = await makeTempDir();
+  const output = path.join(dir, 'chosen.jsonl');
+  await fs.writeFile(output, 'first export');
+  const cleanupFailure = new Error('Injected staging removal failure');
+  let retained = '';
+  const attempt = writeAuditExportExclusive(output, 'second export', {
+    ...fs,
+    rm: (file) => {
+      retained = file;
+      return Promise.reject(cleanupFailure);
+    },
+  });
+  await expect(attempt).rejects.toBeInstanceOf(AuditExportConflictError);
+  await expect(attempt).rejects.toMatchObject({
+    message: expect.stringContaining(retained) as unknown,
+    cause: {
+      errors: [
+        expect.objectContaining({ cause: expect.objectContaining({ code: 'EEXIST' }) as unknown }),
+        cleanupFailure,
+      ],
+    },
+  });
+  await expect(attempt).rejects.toThrow('new output path');
+  expect(await fs.readFile(output, 'utf8')).toBe('first export');
+  expect(await fs.readFile(retained, 'utf8')).toBe('second export');
+  const retry = path.join(dir, 'fresh.jsonl');
+  await writeAuditExportExclusive(retry, 'second export');
+  expect(await fs.readFile(retry, 'utf8')).toBe('second export');
 });

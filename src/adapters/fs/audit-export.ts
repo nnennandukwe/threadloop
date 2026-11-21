@@ -39,7 +39,7 @@ export async function writeAuditExportExclusive(
       committed = true;
     } catch (error) {
       if (isErrorCode(error, 'EEXIST')) {
-        throw new AuditExportConflictError(`Audit export already exists: ${outputPath}`);
+        throw new AuditExportConflictError(`Audit export already exists: ${outputPath}`, { cause: error });
       }
       throw error;
     }
@@ -50,12 +50,18 @@ export async function writeAuditExportExclusive(
       try {
         await files.rm(stagedPath, { force: true });
       } catch (cause) {
-        if (committed)
+        if (committed) {
           warnings.push(`Export committed; remove the retained staging file after inspection: ${stagedPath}`);
-        else
+        } else if (failure instanceof AuditExportConflictError) {
+          failure = new AuditExportConflictError(
+            `${failure.message}\nInspect and remove the retained staging file before retrying with a new output path.\n${stagedPath}`,
+            { cause: new AggregateError([failure, cause], 'The output exists and staging cleanup failed.') },
+          );
+        } else {
           failure = new Error(`Export wasn't published; owned staging file needs removal before retry: ${stagedPath}`, {
             cause: failure ?? cause,
           });
+        }
       }
     }
   }
