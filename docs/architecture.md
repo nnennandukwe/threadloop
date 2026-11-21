@@ -224,12 +224,10 @@ scheduler delivery don't choose lifecycle state. Failed or stale proof requires 
 Verified exports are read-only projections. A dashboard's success, trace identity, deletion, sampling, or restart can't
 authorize a transition or change the ledger, evidence freshness, or lifecycle state.
 
-[Export alignment #88](https://github.com/nnennandukwe/threadloop/issues/88) remains separate planned work. The current
-[Collector recipe](observability.md#collector-recipe) consumes completed exports; it doesn't implement a standardized
-semantic envelope or a sanitized viewer. Retaining canonical hash-covered records for controlled verification isn't
-permission to copy raw payloads into a generic telemetry backend. A future viewer projection should expose selected
-identities, governance outcomes, and safe evidence references with raw content absent by default, and disclose its
-provenance and completeness limits.
+The OpenTelemetry viewer export carries selected session identities, governance outcomes and evidence digests. The
+controlled OpenTelemetry archive embeds the native corpus so an independent reader can recover the bytes and verify each
+original chain. Both formats read an existing snapshot. SQLite and the lifecycle guards retain authority.
+[OpenTelemetry export formats](observability.md#opentelemetry-export-formats)
 
 ## Contract index
 

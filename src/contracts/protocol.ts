@@ -88,6 +88,7 @@ export function buildProtocolContract(program: Command): ProtocolContract {
       'Audit export verifies the hash-linked ledger and refuses to overwrite an existing output path.',
       'Session start records run-configuration v1 metadata; optional --run-config supplies caller declarations and snapshot paths without lifecycle authority.',
       'Audit corpus v1 uses one session as the comparison unit; verify-export checks retained bytes without a source repository or database. Metrics belong to external consumers.',
+      'Audit corpus defaults to native. Use --format otel for a sanitized viewer or --format otel-verifiable to retain canonical records. Verify-export checks a native or verifiable file against its own optional whole-file root.',
       'Artifact generate targets the only active session when --session is omitted.',
       'ThreadLoop state and local receipt output are excluded through .git/info/exclude; review artifacts remain visible.',
       'Reconcile refreshes metadata without creating semantic entries.',

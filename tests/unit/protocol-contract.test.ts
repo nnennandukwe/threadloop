@@ -56,6 +56,7 @@ describe('protocol contract', () => {
     expect(contract.commands['audit export']).toContain(
       'threadloop audit export --session <id> --output <path> [--json]',
     );
+    expect(contract.commands['audit corpus']).toContain('--format');
     expect(contract.notes).toContain(
       'Entering pre_pr_reviewing requires current-HEAD local proof and verified signed CI proof for every gate; post-PR human readiness additionally requires a current verified signed review receipt.',
     );

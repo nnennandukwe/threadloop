@@ -11,6 +11,8 @@ import {
 } from '../adapters/fs/sqlite-store.js';
 import { ThreadloopError } from '../contracts/errors.js';
 import { createAuditCorpus, verifyAuditCorpus } from '../domain/audit-corpus.js';
+import { AUDIT_OTEL_PROFILE, renderAuditOtel, type AuditOtelFormat } from '../domain/audit-otel.js';
+import { AuditOtelProjectionError, verifyAuditOtel } from '../domain/audit-otel-verification.js';
 import {
   AuditCorpusLimitError,
   MAX_AUDIT_CORPUS_BYTES,
@@ -18,7 +20,13 @@ import {
 } from '../domain/audit-corpus-limits.js';
 import { assertInitializedReadOnly, resolveRepositoryRoot } from './preconditions.js';
 
-export async function exportAuditCorpus(input: { cwd: string; sessionIds?: string[]; all?: boolean; output: string }) {
+export async function exportAuditCorpus(input: {
+  cwd: string;
+  sessionIds?: string[];
+  all?: boolean;
+  output: string;
+  format?: 'native' | AuditOtelFormat;
+}) {
   if (input.sessionIds && input.sessionIds.length > MAX_AUDIT_CORPUS_RECORDS - 2)
     throw corpusLimitFailure(new AuditCorpusLimitError());
   if (
@@ -44,9 +52,12 @@ export async function exportAuditCorpus(input: { cwd: string; sessionIds?: strin
     );
   }
   let corpus: ReturnType<typeof createAuditCorpus>;
+  let rendered: ReturnType<typeof renderAuditOtel> | undefined;
+  const format = input.format ?? 'native';
   try {
     corpus = createAuditCorpus(readAuditCorpusReadOnly(repoRoot, input.sessionIds), sha256);
     assertAuditCorpusLimits(corpus.content);
+    if (format !== 'native') rendered = renderAuditOtel(corpus, format, sha256);
   } catch (cause) {
     if (cause instanceof AuditCorpusLimitError) throw corpusLimitFailure(cause);
     if (cause instanceof StateDatabaseMissingError) {
@@ -84,7 +95,7 @@ export async function exportAuditCorpus(input: { cwd: string; sessionIds?: strin
   const output = path.resolve(input.cwd, input.output);
   let publication: Awaited<ReturnType<typeof writeAuditExportExclusive>>;
   try {
-    publication = await writeAuditExportExclusive(output, corpus.content);
+    publication = await writeAuditExportExclusive(output, rendered?.content ?? corpus.content);
   } catch (cause) {
     throw new ThreadloopError(
       cause instanceof AuditExportConflictError ? 'AUDIT_EXPORT_CONFLICT' : 'AUDIT_EXPORT_FAILED',
@@ -101,15 +112,22 @@ export async function exportAuditCorpus(input: { cwd: string; sessionIds?: strin
       },
     );
   }
-  return {
+  const result = {
     contract_version: 1 as const,
     output,
-    root: corpus.root,
+    root: rendered?.root ?? corpus.root,
     comparison_unit: 'session' as const,
     session_count: corpus.session_count,
     event_count: corpus.event_count,
     warnings: publication.warnings,
-    sessions: corpus.manifest.sessions,
+  };
+  if (format === 'native') return { ...result, sessions: corpus.manifest.sessions };
+  return {
+    ...result,
+    format,
+    profile: AUDIT_OTEL_PROFILE,
+    source_root: corpus.root,
+    verification: format === 'otel' ? ('projection_only' as const) : ('canonical_records' as const),
   };
 }
 
@@ -117,8 +135,10 @@ export async function verifyAuditExport(input: { cwd: string; input: string; roo
   const file = path.resolve(input.cwd, input.input);
   try {
     const content = await readAuditCorpusFile(file);
-    const verified = verifyAuditCorpus(content, sha256, input.root);
-    return { contract_version: 1 as const, input: file, ...verified };
+    const output = { contract_version: 1 as const, input: file };
+    if (/^\s*\{\s*"resourceLogs"\s*:/.test(content))
+      return { ...output, ...verifyAuditOtel(content, sha256, input.root) };
+    return { ...output, ...verifyAuditCorpus(content, sha256, input.root) };
   } catch (cause) {
     if (cause instanceof AuditCorpusLimitError) throw corpusLimitFailure(cause);
     throw new ThreadloopError('AUDIT_CORPUS_INVALID', 'Audit corpus verification failed.', {
@@ -126,7 +146,10 @@ export async function verifyAuditExport(input: { cwd: string; input: string; roo
       details: {
         input: file,
         reason: cause instanceof Error ? cause.message : String(cause),
-        hint: 'Restore the complete original export and compare its root with a separately retained trusted root.',
+        hint:
+          cause instanceof AuditOtelProjectionError
+            ? 'Use audit corpus --format otel-verifiable or a native corpus for offline chain verification.'
+            : 'Restore the complete original export and compare its root with a separately retained trusted root.',
       },
     });
   }
