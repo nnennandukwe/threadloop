@@ -157,10 +157,7 @@ export function workflowGuardEvidence(
       const admission = history.repair_admission;
       return admission !== null &&
         guard.required_actions.includes(admission.action_id) &&
-        admission.bound_state_version === input.binding.state_version &&
-        input.compiled_graph.graph.transitions.some(
-          (entry) => entry.id === admission.transition_id && entry.to === input.binding.source_state,
-        )
+        repairAdmissionIsCurrent(input, admission)
         ? []
         : null;
     }

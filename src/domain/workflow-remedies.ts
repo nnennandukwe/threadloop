@@ -1,6 +1,10 @@
 import type { ControllerInput } from 'threadloop-contracts/controller';
 import { canonicalJson } from './canonical-json.js';
-import { workflowGuardEvidence, type WorkflowRoute } from './workflow-guard-facts.js';
+import {
+  repairAdmissionIsCurrent,
+  workflowGuardEvidence,
+  type WorkflowRoute,
+} from './workflow-guard-facts.js';
 import type { WorkflowAction, WorkflowEdge, WorkflowGuard, WorkflowReason } from './workflow-selection-types.js';
 
 type SelectedAction = {
@@ -537,6 +541,11 @@ function resolveCandidates(input: ControllerInput, candidates: SelectedAction[])
         code: 'NO_APPLICABLE_REMEDY',
         message: 'The graph has no applicable declared remedy for these facts.',
         recovery: 'Inspect the missing prerequisites and supply current evidence or authority.',
+      },
+    ],
+  };
+}
+current evidence or authority.',
       },
     ],
   };
