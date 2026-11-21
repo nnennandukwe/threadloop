@@ -1,6 +1,7 @@
 import { exportSessionAudit, showSessionAudit, verifySessionAudit } from '../services/session-service.js';
 import { type CommandContext, writeCommandSuccess } from './runtime.js';
 import { exportAuditCorpus, verifyAuditExport } from '../services/audit-corpus.js';
+import type { AuditOtelFormat } from '../domain/audit-otel.js';
 
 interface AuditSessionOptions {
   session: string;
@@ -8,7 +9,7 @@ interface AuditSessionOptions {
 
 export async function auditCorpusCommand(
   context: CommandContext,
-  options: { session?: string[]; all?: boolean; output: string },
+  options: { session?: string[]; all?: boolean; output: string; format?: 'native' | AuditOtelFormat },
 ) {
   const result = await exportAuditCorpus({
     cwd: context.cwd,
@@ -18,7 +19,13 @@ export async function auditCorpusCommand(
   writeCommandSuccess(context, {
     text: [
       `Exported ${result.session_count} session(s), ${result.event_count} event(s): ${result.output}`,
-      `Corpus root: ${result.root}`,
+      ...('format' in result
+        ? [
+            `Format: ${result.format} (${result.verification})`,
+            `File root: ${result.root}`,
+            `Native source root: ${result.source_root}`,
+          ]
+        : [`Corpus root: ${result.root}`]),
       ...result.warnings,
     ],
     data: result,
@@ -28,7 +35,12 @@ export async function auditCorpusCommand(
 export async function auditVerifyExportCommand(context: CommandContext, options: { input: string; root?: string }) {
   const result = await verifyAuditExport({ cwd: context.cwd, ...options });
   writeCommandSuccess(context, {
-    text: [`Verified ${result.session_count} session(s): ${result.input}`, `Corpus root: ${result.root}`],
+    text: [
+      `Verified ${result.session_count} session(s): ${result.input}`,
+      ...('source_root' in result
+        ? [`File root: ${result.root}`, `Native source root: ${result.source_root}`]
+        : [`Corpus root: ${result.root}`]),
+    ],
     data: result,
   });
 }

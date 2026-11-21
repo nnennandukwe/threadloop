@@ -52,18 +52,21 @@ Options:
   [run configuration format](observability.md#attribute-a-new-session)
 - `--json`: render machine-readable session output
 
-### `threadloop audit corpus (--session <ids...> | --all) --output <path> [--json]`
+### `threadloop audit corpus (--session <ids...> | --all) --output <path> [--format <format>] [--json]`
 
-Creates a new verified multi-session corpus with one comparison outcome per session. Explicit ids must be unique.
-`--all` selects every session, including active and legacy sessions. Existing output paths are preserved. See
-[corpus bytes and outcomes](observability.md#export-and-independently-verify-a-corpus).
+Creates a new file from one verified snapshot of the selected sessions. Explicit ids must be unique. `--all` includes
+active and legacy sessions. The command refuses an existing output path. The default `native` format retains one outcome
+per session and its original hash chain. Choose `--format otel` for a sanitized viewer or `--format otel-verifiable` for
+a controlled archive with the original records. Both OpenTelemetry options report the published file's `root` and the
+native corpus's `source_root`. [OpenTelemetry export formats](observability.md#opentelemetry-export-formats)
 
 ### `threadloop audit verify-export --input <path> [--root <sha256>] [--json]`
 
-Verifies a retained corpus without its source repository or database. `--root` compares the whole-file SHA-256 with a
-previously retained value. Supply a regular file containing up to 16 MiB and 32,768 JSONL records, including its
-manifest and seal. For a larger selection, export fewer sessions per file. Missing, altered, unsupported, or incomplete
-records fail with `AUDIT_CORPUS_INVALID`.
+Verifies a native corpus or `otel-verifiable` archive offline. `--root` compares the SHA-256 of the supplied file with a
+previously retained value. The OpenTelemetry verifier also recovers the native corpus, checks its hash chains and seal,
+and checks the projected fields. A sanitized viewer file lacks the native records required for verification. Supply a
+regular file containing up to 16 MiB and 32,768 JSONL records. For a larger selection, export fewer sessions per file.
+Missing, altered, unsupported, or incomplete records fail with `AUDIT_CORPUS_INVALID`.
 
 ### `threadloop session list [--json]`
 

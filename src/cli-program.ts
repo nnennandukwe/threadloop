@@ -47,7 +47,7 @@ const HANDLER_REQUIRED_OPTIONS: Record<string, string[]> = {
 /** Commands whose usage cannot be derived from their options. */
 const USAGE_OVERRIDES: Record<string, string> = {
   'session reconcile': '(--session <id> | --all) [--json]',
-  'audit corpus': '(--session <ids...> | --all) --output <path> [--json]',
+  'audit corpus': '(--session <ids...> | --all) --output <path> [--format <format>] [--json]',
 };
 
 export function getProtocolCommandRules(commandPath: string) {
@@ -282,6 +282,11 @@ export function createThreadloopProgram() {
     audit
       .command('corpus')
       .description('Export a verified corpus with one outcome per session')
+      .addOption(
+        new Option('--format <format>', 'native corpus, viewer logs or verifiable logs')
+          .choices(['native', 'otel', 'otel-verifiable'])
+          .default('native'),
+      )
       .option('--session <ids...>', 'explicit session ids to include')
       .option('--all', 'include every session in the current repository')
       .requiredOption('--output <path>', 'new output path; existing files are never overwritten', parseOutputPath),
