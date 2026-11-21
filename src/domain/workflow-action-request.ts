@@ -76,7 +76,7 @@ function supportingReceipts(
     case 'merge_change':
       return [...local(), ...independent(), ...review(), ...approved()];
     case 'verify_publication':
-      return witnesses({ capability: 'completion_observed', parameters: { kind: 'publication' } });
+      return [...approved(), ...witnesses({ capability: 'completion_observed', parameters: { kind: 'publication' } })];
     case 'verify_release':
       return witnesses({ capability: 'artifact', parameters: { stage: 'release_prepared', result: 'passed' } });
     case 'publish_release':

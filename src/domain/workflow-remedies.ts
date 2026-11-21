@@ -346,6 +346,51 @@ function neededCapability(
   }
 }
 
+// A prerequisite keeps its place on this route even when its facts don't authorize any declared action.
+function unresolvedPriority(guard: WorkflowGuard, facts: Facts): number {
+  switch (guard.capability) {
+    case 'proof_plan_bound':
+      return remedyPriority.bind_proof_plan;
+    case 'repository':
+      return guard.parameters.condition === 'clean_descendant' || guard.parameters.condition === 'committed_repair'
+        ? remedyPriority.implement_change
+        : remedyPriority.restore_repository;
+    case 'local_proof':
+      return remedyPriority.run_local_gates;
+    case 'independent_proof':
+      return remedyPriority.obtain_independent_proof;
+    case 'pre_pr_review':
+      return remedyPriority.record_pre_pr_review;
+    case 'review':
+      if (guard.parameters.condition === 'proof_set_current') {
+        if (!facts.localPassed) return remedyPriority.run_local_gates;
+        if (!facts.independentPassed) return remedyPriority.obtain_independent_proof;
+      }
+      return remedyPriority.obtain_review_evidence;
+    case 'human_approval':
+      return guard.parameters.scope === 'recovery' ? remedyPriority.recover_run : remedyPriority.approve_change;
+    case 'completion_observed':
+      return remedyPriority.merge_change;
+    case 'artifact':
+      switch (guard.parameters.stage) {
+        case 'release_prepared':
+          return remedyPriority.prepare_release;
+        case 'release_verified':
+          return remedyPriority.verify_release;
+        case 'publication_verified':
+          return remedyPriority.verify_publication;
+      }
+      break;
+    case 'block_evidence':
+    case 'stop_requested':
+    case 'recorded_prior_state':
+    case 'budget_available':
+    case 'phase':
+      // These predicates determine whether the route applies before ordinary remedies are considered.
+      return Infinity;
+  }
+}
+
 export function chooseWorkflowRemedy(
   input: ControllerInput,
   receipts: ControllerInput['receipts'],
@@ -359,7 +404,7 @@ export function chooseWorkflowRemedy(
   const stop = receipts.find(({ payload }) => payload.type === 'stop_requested');
   const admittedAction = input.history.status === 'verified' ? input.history.repair_admission?.action_id : undefined;
   const candidates: SelectedAction[] = [];
-  let nextPriority = stop || exhausted.size ? 0 : Infinity;
+  let interventionRequired = source?.kind === 'suspended' || stop !== undefined || exhausted.size > 0;
   for (const route of routes) {
     const { edge, checks } = route;
     if (source?.kind === 'suspended' && (input.history.status !== 'verified' || edge.to !== input.history.prior_state))
@@ -374,6 +419,8 @@ export function chooseWorkflowRemedy(
         )
         .flatMap(({ guard }) => guard.required_actions),
     );
+    const routeCandidates = new Map<string, SelectedAction>();
+    let routePriority = Infinity;
     for (const { guard, evidenceIds } of checks) {
       if (evidenceIds !== null) continue;
       let capability = neededCapability(input, edge, guard, facts, blockWitness !== null);
@@ -381,6 +428,11 @@ export function chooseWorkflowRemedy(
         capability =
           guard.capability === 'human_approval' && guard.parameters.scope === 'recovery' ? 'recover_run' : null;
       }
+      const priority = capability ? remedyPriority[capability] : unresolvedPriority(guard, facts);
+      if (capability && priority === 0) interventionRequired = true;
+      if (priority > routePriority) continue;
+      if (priority < routePriority) routeCandidates.clear();
+      routePriority = priority;
       if (!capability) continue;
       for (const actionId of guard.required_actions) {
         const action = actions.get(actionId);
@@ -395,11 +447,7 @@ export function chooseWorkflowRemedy(
           compositeActions.has(actionId)
         )
           continue;
-        const priority = remedyPriority[capability];
-        if (priority > nextPriority) continue;
-        if (priority < nextPriority) candidates.length = 0;
-        nextPriority = priority;
-        const prior = candidates.find((entry) => entry.edge.id === edge.id && entry.action.id === actionId);
+        const prior = routeCandidates.get(actionId);
         if (prior) {
           prior.guardIds.push(guard.id);
           continue;
@@ -408,19 +456,28 @@ export function chooseWorkflowRemedy(
         if (capability === 'repair_change') selected.supportingEvidenceIds = facts.repairEvidence;
         if (capability === 'correct_gate_setup') selected.supportingEvidenceIds = facts.setupFailures;
         if (capability === 'block_run' && blockWitness) selected.supportingEvidenceIds = blockWitness;
-        candidates.push(selected);
+        routeCandidates.set(actionId, selected);
       }
     }
+    for (const selected of routeCandidates.values()) candidates.push(selected);
   }
-  return resolveCandidates(input, candidates);
+  const applicable = interventionRequired
+    ? candidates.filter(({ action }) => remedyPriority[action.capability] === 0)
+    : candidates;
+  return resolveCandidates(input, applicable);
 }
 
 function resolveCandidates(input: ControllerInput, candidates: SelectedAction[]): WorkflowRemedy {
   const authorities = new Set(input.policy.rules.authorities.map((authority) => authority.type));
   const edgeAuthorized = candidates.filter(({ edge }) => edge.authority.every((type) => authorities.has(type)));
   const authorized = edgeAuthorized.filter(({ action }) => action.authority !== 'human' || authorities.has('human'));
-  if (authorized.length === 1) {
-    const candidate = authorized[0]!;
+  const priority = authorized.reduce(
+    (lowest, { action }) => Math.min(lowest, remedyPriority[action.capability]),
+    Infinity,
+  );
+  const best = authorized.filter(({ action }) => remedyPriority[action.capability] === priority);
+  if (best.length === 1) {
+    const candidate = best[0]!;
     if (
       !input.available_capabilities.some(
         (item) => item.actor === candidate.action.authority && item.capability === candidate.action.capability,
@@ -462,7 +519,7 @@ function resolveCandidates(input: ControllerInput, candidates: SelectedAction[])
         },
       ],
     };
-  if (authorized.length > 1)
+  if (best.length > 1)
     return {
       kind: 'blocked',
       reasons: [

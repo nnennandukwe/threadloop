@@ -6,6 +6,34 @@ import { parse, stringify } from 'yaml';
 import { selectWorkflowDecision } from '../../src/domain/workflow-controller.js';
 import { addWorkflowReceipt, makeWorkflowInput } from '../helpers/workflow-input.js';
 
+function governedProfile() {
+  const url = import.meta.resolve('threadloop-contracts/assets/workflow-graph-v0.1/fixtures/valid/governed-pr.yaml');
+  return parse(readFileSync(new URL(url), 'utf8')) as {
+    guards: { id: string; required_actions: string[] }[];
+    required_actions: { id: string; capability: string }[];
+    transitions: {
+      id: string;
+      from: string;
+      to: string;
+      priority: number;
+      authority: string[];
+      guard_refs: string[];
+    }[];
+  };
+}
+
+function wrongBranchInput(profile: ReturnType<typeof governedProfile>, humanAvailable = true) {
+  const input = makeWorkflowInput(stringify(profile, { aliasDuplicateObjects: false }));
+  input.binding.source_state = 'verifying';
+  input.observation.repository!.branch = 'other';
+  if (!humanAvailable) {
+    input.policy.rules.authorities = input.policy.rules.authorities.filter((item) => item.type === 'threadloop');
+    input.policy.digest = workflowDigest(input.policy.rules);
+  }
+  addWorkflowReceipt(input, 'local_pass', { type: 'local_proof', gate_id: 'unit', result: 'passed', clean: true });
+  return input;
+}
+
 function releaseInput() {
   const profile = readFileSync(
     new URL(
@@ -51,12 +79,7 @@ describe('workflow remedy selection', () => {
   });
 
   it('blocks when either of two declared actions could collect the same missing gate', () => {
-    const url = import.meta.resolve('threadloop-contracts/assets/workflow-graph-v0.1/fixtures/valid/governed-pr.yaml');
-    const profile = parse(readFileSync(new URL(url), 'utf8')) as {
-      guards: { id: string; required_actions: string[] }[];
-      required_actions: { id: string; capability: string }[];
-      transitions: { guard_refs: string[] }[];
-    };
+    const profile = governedProfile();
     const collector = profile.required_actions.find((action) => action.capability === 'run_local_gates')!;
     const alternate = { ...collector, id: 'collect_in_workspace' };
     profile.required_actions.push(alternate);
@@ -297,6 +320,76 @@ describe('workflow remedy selection', () => {
     checkout.branch = 'unbound';
     expect(choose(input)).toMatchObject({ kind: 'action', action: { capability: 'restore_repository' } });
     input.binding.source_state = 'reviewing';
+    expect(choose(input)).toMatchObject({ kind: 'blocked', reasons: [{ code: 'NO_APPLICABLE_REMEDY' }] });
+  });
+
+  it('keeps later work blocked on an edge with no declared checkout restoration', () => {
+    const profile = governedProfile();
+    profile.guards.find((guard) => guard.id === 'checkout')!.required_actions = [];
+    expect(choose(wrongBranchInput(profile))).toMatchObject({
+      kind: 'blocked',
+      reasons: [{ code: 'NO_APPLICABLE_REMEDY' }],
+    });
+  });
+
+  it('allows a separate authorized edge with its own proof requirements', () => {
+    const profile = governedProfile();
+    profile.transitions.push({
+      id: 'separate_review',
+      from: 'verifying',
+      to: 'pre_pr_reviewing',
+      priority: 35,
+      authority: ['threadloop'],
+      guard_refs: ['independent'],
+    });
+    const next = () => choose(wrongBranchInput(profile, false));
+    expect(next()).toMatchObject({
+      kind: 'action',
+      edge: { id: 'separate_review' },
+      action: { capability: 'obtain_independent_proof' },
+    });
+    profile.guards.find((guard) => guard.id === 'checkout')!.required_actions = [];
+    expect(next()).toMatchObject({
+      kind: 'action',
+      edge: { id: 'separate_review' },
+      action: { capability: 'obtain_independent_proof' },
+    });
+    profile.transitions.at(-1)!.guard_refs = ['local_pass'];
+    expect(next()).toMatchObject({ kind: 'transition_available', transition_id: 'separate_review' });
+  });
+
+  it('holds review on an implementation edge until its required basis can be established', () => {
+    const profile = governedProfile();
+    profile.transitions.find((edge) => edge.id === 'verify_implementation')!.guard_refs.push('review_clean');
+    const input = makeWorkflowInput(stringify(profile));
+    input.binding.source_state = 'implementing';
+    if (input.history.status !== 'verified') throw new Error('Expected verified history');
+    input.history.implementation_basis = null;
+    addWorkflowReceipt(input, 'local', { type: 'local_proof', gate_id: 'unit', result: 'passed', clean: true });
+    addWorkflowReceipt(input, 'independent', { type: 'independent_proof', gate_id: 'ci', result: 'passed' });
+    expect(choose(input)).toMatchObject({ kind: 'blocked', reasons: [{ code: 'NO_APPLICABLE_REMEDY' }] });
+  });
+
+  it('keeps a configured setup intervention ahead of an independent implementation route', () => {
+    const profile = governedProfile();
+    const local = profile.guards.find((guard) => guard.id === 'local_pass')!;
+    local.required_actions = local.required_actions.filter((id) => id !== 'correct_setup');
+    profile.transitions.push({
+      id: 'change_again',
+      from: 'verifying',
+      to: 'pre_pr_reviewing',
+      priority: 35,
+      authority: ['threadloop'],
+      guard_refs: ['work_committed'],
+    });
+    const input = makeWorkflowInput(stringify(profile));
+    input.binding.source_state = 'verifying';
+    addWorkflowReceipt(input, 'bad_setup', {
+      type: 'local_proof',
+      gate_id: 'unit',
+      result: 'setup_failed',
+      clean: true,
+    });
     expect(choose(input)).toMatchObject({ kind: 'blocked', reasons: [{ code: 'NO_APPLICABLE_REMEDY' }] });
   });
 

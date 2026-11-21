@@ -208,9 +208,22 @@ it('ties publication verification to the observed publication at the configured 
     kind: 'publication',
     destination: 'release-registry',
   });
+  const approval = addWorkflowReceipt(input, 'approval', {
+    type: 'human_approval',
+    scope: 'current_subject',
+    approver: { type: 'human', id: 'reviewer' },
+    reason: 'Approved this release.',
+  });
+  approval.valid_until = '2026-01-02T00:00:00.000Z';
   expect(buildSelectedWorkflowRequest(input, input.receipts, choice)).toMatchObject({
     ok: true,
-    value: { request: { capability: 'verify_publication', evidence_ids: ['published_here'] } },
+    value: {
+      request: {
+        capability: 'verify_publication',
+        evidence_ids: ['approval', 'published_here'],
+        constraints: { valid_until: approval.valid_until },
+      },
+    },
   });
 });
 
