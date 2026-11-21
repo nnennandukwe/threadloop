@@ -37,6 +37,11 @@ On a current-schema repository, `audit show` and `audit verify` are storage-read
 transition. A repository on schema v7 instead stops with `SESSION_SCHEMA_MIGRATION_REQUIRED`; run `threadloop init`
 explicitly in a writable checkout before retrying audit inspection.
 
+A runner consuming `session next` checks for `session_next_v1` in `data.lifecycle.storage_capabilities` alongside
+`contract_status: "current"`. A missing capability stops the wake. A previously reviewed runner that checks for
+generation 8 can still read the legacy fields. Existing run-configuration records retain the digest of the runner bytes
+used at session start.
+
 ## Recommended orchestrator flow
 
 The current operator model is one autonomous task per checkout or worktree.

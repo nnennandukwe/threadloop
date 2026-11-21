@@ -36,6 +36,7 @@ import {
   withStateDb,
   withTriggersDisabled,
 } from '../helpers/state-db.js';
+import { installLegacyGateSchema } from '../helpers/legacy-gate-schema.js';
 import { closeSqliteConnections } from '../../src/adapters/fs/sqlite-store.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
 import type { ProofSetupStep } from '../../src/domain/proof.js';
@@ -1092,36 +1093,224 @@ describe('declared gate setup', () => {
 });
 
 describe('gate receipt result domain migration', () => {
-  it('widens a pre-v8 gate_receipts result domain while preserving every stored receipt', async () => {
-    const { repoDir, sessionId, receipt: first } = await verifyingSessionWithReceipt();
-
-    // Rebuild the table with the pre-v8 result domain, which is the current one without `setup_failed`, and roll
-    // the recorded version back, so the next CLI invocation exercises the real migration against stored evidence.
-    closeSqliteConnections(repoDir);
+  it('adds an ordinary result as data and enforces it on an independent FK-off connection', async () => {
+    const { repoDir } = await verifyingSessionWithReceipt();
     withStateDb(
       repoDir,
       (db) => {
-        const definition = (key: string) =>
-          (db.prepare(`SELECT sql FROM sqlite_master WHERE name = ?`).get(key) as { sql: string }).sql;
-        const table = definition('gate_receipts');
-        const index = definition('gate_receipts_session_gate_sequence_idx');
-        const narrowTable = table.replace(`, 'setup_failed'`, '');
-        expect(narrowTable).not.toContain('setup_failed');
-        withTriggersDisabled(db, 'gate_receipts', () => {
-          db.exec(`
-            DROP INDEX gate_receipts_session_gate_sequence_idx;
-            ALTER TABLE gate_receipts RENAME TO gate_receipts_downgraded;
-            ${narrowTable};
-            INSERT INTO gate_receipts SELECT * FROM gate_receipts_downgraded;
-            DROP TABLE gate_receipts_downgraded;
-            ${index};
-          `);
-        });
-        db.prepare(`UPDATE metadata SET value = '7' WHERE key = 'schema_version'`).run();
+        db.exec('PRAGMA foreign_keys = OFF');
+        const schemaCookie = () => db.prepare('PRAGMA schema_version').get();
+        const cookie = schemaCookie();
+        const insert = db.prepare(`
+        INSERT INTO gate_receipts (id, session_id, gate_id, plan_sha256, head_before, head_after, result,
+          artifact_path, artifact_sha256, receipt_json, receipt_sha256, state_version, created_at)
+        SELECT ?, session_id, gate_id, plan_sha256, head_before, head_after, ?,
+          artifact_path, artifact_sha256, receipt_json, receipt_sha256, state_version, created_at
+        FROM gate_receipts WHERE sequence = 1
+      `);
+        expect(() => insert.run('unknown', 'future_result')).toThrow();
+        db.prepare('INSERT INTO gate_result_catalog (value) VALUES (?)').run('future_result');
+        expect(insert.run('future', 'future_result').changes).toBe(1);
+        for (const write of [
+          "UPDATE gate_result_catalog SET value = 'replacement' WHERE value = 'future_result'",
+          "DELETE FROM gate_result_catalog WHERE value = 'future_result'",
+          "INSERT OR REPLACE INTO gate_result_catalog(value) VALUES ('future_result')",
+        ]) {
+          expect(() => db.exec(write)).toThrow('catalog entries are immutable');
+        }
+        expect(schemaCookie()).toEqual(cookie);
       },
       { readOnly: false },
     );
-    closeSqliteConnections(repoDir);
+  });
+  it('seeds a newly recognized result on reopen without DDL or removal of newer entries', async () => {
+    const { repoDir } = await verifyingSessionWithReceipt();
+    const tableIdentity = () =>
+      withStateDb(repoDir, (db) => ({
+        schemaCookie: db.prepare('PRAGMA schema_version').get(),
+        root: db.prepare("SELECT rootpage FROM sqlite_schema WHERE name = 'gate_receipts'").get(),
+      }));
+    withStateDb(
+      repoDir,
+      (db) => {
+        // Model a catalog last seeded by a build that didn't know setup_failed.
+        withTriggersDisabled(db, 'gate_result_catalog', () =>
+          db.exec("DELETE FROM gate_result_catalog WHERE value = 'setup_failed'"),
+        );
+        db.exec("INSERT INTO gate_result_catalog (value) VALUES ('another_build_result')");
+      },
+      { readOnly: false },
+    );
+    const before = tableIdentity();
+    await runCli(repoDir, ['init']);
+    expect(countRows(repoDir, 'gate_result_catalog', 'value IN (?,?)', 'setup_failed', 'another_build_result')).toBe(2);
+    expect(tableIdentity()).toEqual(before);
+  });
+
+  it('adopts a generation-8 receipt table on the next gate write and retains every original field', async () => {
+    const { repoDir, sessionId } = await verifyingSessionWithReceipt();
+    await installLegacyGateSchema(repoDir, 8);
+    const readFirst = () =>
+      withStateDb(repoDir, (db) => db.prepare('SELECT * FROM gate_receipts WHERE sequence = 1').get());
+    const original = readFirst();
+    expect((await runGate(repoDir, sessionId)).sequence).toBe(2);
+    expect(readFirst()).toEqual(original);
+    expect(countRows(repoDir, 'gate_result_catalog', 'value = ?', 'setup_failed')).toBe(1);
+    expect(
+      withStateDb(repoDir, (db) =>
+        db
+          .prepare(
+            `SELECT "from" AS result FROM pragma_foreign_key_list('gate_receipts') WHERE "table" = 'gate_result_catalog'`,
+          )
+          .get(),
+      ),
+    ).toEqual({ result: 'result' });
+  });
+
+  it('rolls back interrupted adoption and recognizes a committed adoption after a lost response', async () => {
+    const { repoDir } = await verifyingSessionWithReceipt();
+    await installLegacyGateSchema(repoDir, 8);
+    const stored = () =>
+      withStateDb(repoDir, (db) => ({
+        schema: db.prepare('SELECT name, sql FROM sqlite_schema ORDER BY name').all(),
+        receipts: db.prepare('SELECT * FROM gate_receipts ORDER BY sequence').all(),
+      }));
+    const original = stored();
+    const preload = path.join(await makeTempDir('threadloop-adoption-cut-'), 'interrupt.cjs');
+    // Terminate only this child, after the selected real SQLite operation. Never give the writer a JS finally.
+    await writeFile(
+      preload,
+      `
+      const { DatabaseSync } = require('node:sqlite');
+      const exec = DatabaseSync.prototype.exec;
+      let adopting = false;
+      DatabaseSync.prototype.exec = function(sql) {
+        if (sql.startsWith('DROP TRIGGER gate_receipts_no_update')) adopting = true;
+        const result = exec.call(this, sql);
+        if (adopting && sql.includes(process.env.THREADLOOP_TEST_ADOPTION_CUT)) process.exit(79);
+        return result;
+      };
+    `,
+    );
+    const interrupt = async (cut: string) => {
+      const failure = await runCliFailure(repoDir, ['init'], {
+        NODE_OPTIONS: `--require "${preload}"`,
+        THREADLOOP_TEST_ADOPTION_CUT: cut,
+      });
+      expect(failure).toHaveProperty('code', 79);
+    };
+    for (const cut of [
+      'DROP TRIGGER gate_receipts_no_update',
+      'DROP INDEX gate_receipts_session_gate_sequence_idx',
+      'ALTER TABLE gate_receipts RENAME',
+      'CREATE TABLE gate_result_catalog',
+      'CREATE TRIGGER gate_receipts_validate_result',
+      'INSERT INTO gate_receipts (sequence',
+      'DROP TABLE gate_receipts_pre_setup_result_domain',
+    ]) {
+      await interrupt(cut);
+      expect(stored()).toEqual(original);
+    }
+    await interrupt('COMMIT');
+    const committed = stored();
+    expect(committed.schema.some((row) => row.name === 'gate_receipts_validate_result')).toBe(true);
+    expect(committed.receipts).toEqual(original.receipts);
+    await runCli(repoDir, ['init']);
+    expect(stored()).toEqual(committed);
+  });
+
+  it('keeps an unreadable historical row and the old schema when copying fails', async () => {
+    const { repoDir } = await verifyingSessionWithReceipt();
+    await installLegacyGateSchema(repoDir, 8);
+    withStateDb(
+      repoDir,
+      (db) => {
+        db.exec('PRAGMA ignore_check_constraints = ON');
+        withTriggersDisabled(db, 'gate_receipts', () => db.exec("UPDATE gate_receipts SET result = 'damaged_result'"));
+      },
+      { readOnly: false },
+    );
+    const failure = await runCliFailure(repoDir, ['init']);
+    expect(failure.stderr).toContain('Failed to copy the historical gate receipts');
+    expect(countRows(repoDir, 'gate_receipts', 'result = ?', 'damaged_result')).toBe(1);
+    expect(countRows(repoDir, 'sqlite_schema', 'name = ?', 'gate_result_catalog')).toBe(0);
+    expect(countRows(repoDir, 'sqlite_schema', 'name = ?', 'gate_receipts_no_update')).toBe(1);
+    withStateDb(
+      repoDir,
+      (db) => {
+        withTriggersDisabled(db, 'gate_receipts', () => db.exec("UPDATE gate_receipts SET result = 'passed'"));
+      },
+      { readOnly: false },
+    );
+    await runCli(repoDir, ['init']);
+    expect(countRows(repoDir, 'gate_receipts', 'result = ?', 'passed')).toBe(1);
+  });
+
+  it('serializes the first two writers and preserves the prior sequence high-water mark', async () => {
+    const { repoDir, sessionId } = await verifyingSessionWithReceipt();
+    await installLegacyGateSchema(repoDir, 8);
+    withStateDb(repoDir, (db) => db.exec("UPDATE sqlite_sequence SET seq = 19 WHERE name = 'gate_receipts'"), {
+      readOnly: false,
+    });
+    const appended = await Promise.all([runGate(repoDir, sessionId), runGate(repoDir, sessionId)]);
+    expect(appended.map((r) => r.sequence).sort((a, b) => a - b)).toEqual([20, 21]);
+    expect(countRows(repoDir, 'gate_receipts')).toBe(3);
+  });
+
+  it('preserves a dependent view and rejects a reserved catalog name before adoption', async () => {
+    const { repoDir } = await verifyingSessionWithReceipt();
+    await installLegacyGateSchema(repoDir, 8);
+    const update = (sql: string) => withStateDb(repoDir, (db) => db.exec(sql), { readOnly: false });
+    update(
+      'CREATE VIEW extension_receipts AS SELECT id FROM gate_receipts; CREATE TABLE gate_result_catalog (note TEXT)',
+    );
+    const blocked = await runCliFailure(repoDir, ['init']);
+    expect(blocked.stderr).toContain('gate_result_catalog already exists');
+    update('DROP TABLE gate_result_catalog');
+    const dependent = await runCliFailure(repoDir, ['init']);
+    expect(dependent.stderr).toContain('extension_receipts refers to it');
+    expect(countRows(repoDir, 'extension_receipts')).toBe(1);
+    expect(countRows(repoDir, 'sqlite_schema', "name = 'gate_receipts_no_delete'")).toBe(1);
+    update('DROP VIEW extension_receipts');
+    await runCli(repoDir, ['init']);
+    expect(countRows(repoDir, 'gate_receipts')).toBe(1);
+  });
+
+  it('rejects a writer whose validation trigger was replaced on an independent connection', async () => {
+    const { repoDir } = await verifyingSessionWithReceipt();
+    withStateDb(
+      repoDir,
+      (db) =>
+        db.exec(`
+      DROP TRIGGER gate_receipts_validate_result;
+      CREATE TRIGGER gate_receipts_validate_result BEFORE INSERT ON gate_receipts BEGIN SELECT 1; END;
+    `),
+      { readOnly: false },
+    );
+    const failure = await runCliFailure(repoDir, ['init']);
+    expect(failure.stderr).toContain('Invalid schema for gate_receipts_validate_result');
+    expect(countRows(repoDir, 'gate_receipts')).toBe(1);
+  });
+
+  it('retains compatible nullable columns when a previously adopted store reopens', async () => {
+    const { repoDir, sessionId } = await verifyingSessionWithReceipt();
+    withStateDb(
+      repoDir,
+      (db) =>
+        db.exec(`
+      ALTER TABLE gate_receipts ADD COLUMN extra_hint TEXT;
+      ALTER TABLE gate_result_catalog ADD COLUMN description TEXT;
+    `),
+      { readOnly: false },
+    );
+    expect((await runGate(repoDir, sessionId)).sequence).toBe(2);
+    expect(countRows(repoDir, 'gate_receipts', 'extra_hint IS NULL')).toBe(2);
+  });
+
+  it('widens a pre-v8 gate_receipts result domain while preserving every stored receipt', async () => {
+    const { repoDir, sessionId, receipt: first } = await verifyingSessionWithReceipt();
+
+    await installLegacyGateSchema(repoDir, 7);
 
     // A schema at or above v6 but below current requires an explicit operator migration, so reads report
     // migration_required rather than silently rewriting stored evidence.
@@ -1134,10 +1323,9 @@ describe('gate receipt result domain migration', () => {
     closeSqliteConnections(repoDir);
     withStateDb(repoDir, (db) => {
       expect(db.prepare(`SELECT value FROM metadata WHERE key = 'schema_version'`).get()).toEqual({ value: '8' });
-      const definition = db
-        .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'gate_receipts'`)
-        .get() as { sql: string };
-      expect(definition.sql).toContain('setup_failed');
+      expect(db.prepare("SELECT value FROM gate_result_catalog WHERE value = 'setup_failed'").get()).toEqual({
+        value: 'setup_failed',
+      });
       expect(
         db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'gate_receipts_%'`).all(),
       ).toEqual([]);

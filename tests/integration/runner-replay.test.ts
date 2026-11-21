@@ -32,6 +32,21 @@ function transitionEvents(audit: AuditShow) {
 }
 
 describe('threadloop runner v4 contract', () => {
+  it('serves the reviewed generation-8 runner and the capability-aware runner from the same projection', async () => {
+    const { repoDir, sessionId } = await makeQueuedSession();
+    const projection = parseJson<{ data: { lifecycle: Record<string, unknown> } }>(
+      (await runCli(repoDir, ['session', 'next', '--session', sessionId, '--json'])).stdout,
+    ).data;
+
+    // The runner reviewed at 7c54c2b reads the first two fields and checks the v4 envelope.
+    expect(projection).toMatchObject({
+      contract_version: 4,
+      session_id: sessionId,
+      lifecycle: { storage_schema_version: 8, contract_status: 'current' },
+    });
+    expect(projection.lifecycle.storage_capabilities).toContain('session_next_v1');
+  });
+
   it('returns one stored result for an exact duplicate or lost response and rejects changed bytes', async () => {
     const { repoDir, sessionId } = await makeQueuedSession();
     const key = 'runner:v1:duplicate-delivery:0';
