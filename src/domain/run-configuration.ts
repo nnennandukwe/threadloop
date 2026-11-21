@@ -19,7 +19,7 @@ export const runConfigurationSchema = z
     schema_version: z.literal('threadloop.run-configuration/1'),
     threadloop_version: z.string().min(1),
     implementation_sha256: digest,
-    implementation_scope: z.enum(['source_and_lockfile', 'javascript_bundle']),
+    implementation_scope: z.enum(['source_and_lockfile', 'javascript_bundle', 'npm_bundled_files']),
     storage_schema_version: z.number().int().positive(),
     protocol_components: z.strictObject({
       protocol: z.number().int().positive(),

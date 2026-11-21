@@ -33,10 +33,19 @@ migration to the current schema; prior audit events and honest forward-only cove
 ## Attribute a new session
 
 ThreadLoop records a `threadloop.run-configuration/1` descriptor in the immutable `session_started` payload. It derives
-its package version, implementation fingerprint, protocol component versions, and storage schema version. The
-fingerprint covers JavaScript bundle files and the build's dependency lock, or source files and the lockfile for the
-development command. Source and bundle fingerprints have different scopes, recorded as `implementation_scope`. Retain
-the matching distribution or source separately when reproducibility requires it.
+its package version, implementation fingerprint, protocol component versions, and storage schema version.
+`implementation_scope` identifies which files contributed to the fingerprint. Each scope includes the build's dependency
+lock.
+
+| Scope                 | Files covered                                                                                                                                                                                         |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `source_and_lockfile` | The development checkout's package manifest, lockfile, TypeScript source and JSON resources under `src`.                                                                                              |
+| `npm_bundled_files`   | The installed ThreadLoop package manifest, regular files under `dist`, and regular files in the bundled dependency directories listed in the npm lock. Each nested package contributes its own files. |
+| `javascript_bundle`   | JavaScript files alongside the running CLI. Standalone builds and installations with missing, relocated or linked bundled dependencies report this narrower scope.                                    |
+
+Compare fingerprints within their recorded scope. The npm package scope uses package-relative paths, so moving the same
+intact installation to a different directory preserves its identity. Consumer files, external peers and the Node runtime
+are outside these fingerprints. Retain the matching source or distribution separately when you need to reproduce a run.
 
 For caller attribution, provide a JSON file when starting the session:
 

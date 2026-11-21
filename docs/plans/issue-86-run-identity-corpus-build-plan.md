@@ -93,9 +93,10 @@ selects sessions and their verified chains, so concurrent appends can't mix obse
 session-start transaction commits task, session, initial entry, and genesis together. Identity is read only by export
 code; lifecycle evaluators keep their existing inputs.
 
-The implementation fingerprint covers the running bundle and sibling JavaScript chunks, or source files and the lockfile
-in the development path. It's content identity, not a signature or a deployment claim. Caller declarations remain
-labeled as declarations. No analytics engine or generic telemetry abstraction enters the domain.
+The implementation fingerprint will record its scope. A complete npm bundle will cover the installed package and its
+shipped dependencies. A standalone bundle will use its adjacent JavaScript chunks. Development runs will use TypeScript
+source, JSON resources, the manifest and the lockfile. Each scope includes the build's dependency lock. Caller
+declarations remain labeled as declarations. No analytics engine or generic telemetry abstraction enters the domain.
 
 ## Failure And Recovery Rules
 
