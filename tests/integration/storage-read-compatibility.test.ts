@@ -6,7 +6,7 @@ import { showSessionAudit } from '../../src/services/session-service.js';
 import { runCli, runCliError, sessionNext } from '../helpers/cli.js';
 import { cleanupTemporaryState, makeRepo, startSession } from '../helpers/session.js';
 import { installLegacyGateSchema } from '../helpers/legacy-gate-schema.js';
-import { stateDbPath, withStateDb } from '../helpers/state-db.js';
+import { stateDbPath, withStateDb, withTriggersDisabled } from '../helpers/state-db.js';
 
 afterEach(cleanupTemporaryState);
 
@@ -101,3 +101,67 @@ it('reports the session and recovery hint when audit storage has a missing requi
   expect(await readFile(stateDbPath(repo))).toEqual(before);
   await expect(readFile(path.join(repo, 'rejected.jsonl'))).rejects.toMatchObject({ code: 'ENOENT' });
 });
+
+it.each(['missing', 'changed'])('refuses next when the adopted receipt result validator is %s', async (failure) => {
+  const repo = await makeRepo();
+  const { session_id: id } = await startSession(repo);
+  withStateDb(
+    repo,
+    (db) => {
+      db.exec('DROP TRIGGER gate_receipts_validate_result');
+      if (failure === 'changed') {
+        db.exec('CREATE TRIGGER gate_receipts_validate_result BEFORE INSERT ON gate_receipts BEGIN SELECT 1; END');
+      }
+    },
+    { readOnly: false },
+  );
+  const before = await readFile(stateDbPath(repo));
+  const { error } = await runCliError(repo, ['session', 'next', '--session', id, '--json']);
+  expect(error.code).toBe('STATE_CORRUPTED');
+  expect(error.message).toContain('gate_receipts_validate_result');
+  await runCli(repo, ['session', 'status', '--session', id, '--json']);
+  await runCli(repo, ['audit', 'verify', '--session', id, '--json']);
+  expect(await readFile(stateDbPath(repo))).toEqual(before);
+});
+
+it.each(['legacy', 'adopted'])('reads the %s receipt domain after an additive column change', async (layout) => {
+  const repo = await makeRepo();
+  const { session_id: id } = await startSession(repo);
+  if (layout === 'legacy') await installLegacyGateSchema(repo, 8);
+  withStateDb(
+    repo,
+    (db) =>
+      db.exec(
+        `ALTER TABLE gate_receipts ADD COLUMN "field, (with punctuation)" TEXT DEFAULT '), expect trailing comma,'`,
+      ),
+    { readOnly: false },
+  );
+  const before = await readFile(stateDbPath(repo));
+  expect(await sessionNext(repo, id)).toMatchObject({ lifecycle: { storage_capabilities: ['session_next_v1'] } });
+  expect(await readFile(stateDbPath(repo))).toEqual(before);
+});
+
+it.each(['catalog', 'result foreign key and catalog'])(
+  'rejects adopted proof storage missing the %s',
+  async (defect) => {
+    const repo = await makeRepo();
+    const { session_id: id } = await startSession(repo);
+    withStateDb(
+      repo,
+      (db) => {
+        if (defect === 'result foreign key and catalog') {
+          db.exec('DROP TRIGGER gate_receipts_validate_result');
+          withTriggersDisabled(db, 'gate_receipts', () => {
+            db.exec(
+              "ALTER TABLE gate_receipts DROP COLUMN result; ALTER TABLE gate_receipts ADD COLUMN result TEXT NOT NULL DEFAULT 'passed'",
+            );
+          });
+        }
+        db.exec('DROP TABLE gate_result_catalog');
+      },
+      { readOnly: false },
+    );
+    const { error } = await runCliError(repo, ['session', 'next', '--session', id, '--json']);
+    expect(error.code).toBe('STATE_CORRUPTED');
+  },
+);

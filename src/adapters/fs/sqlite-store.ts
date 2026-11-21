@@ -408,6 +408,7 @@ export function readSessionProofEvidenceReadOnly(repoRoot: string, sessionId: st
   return withReadSnapshot(repoRoot, (db) => {
     assertCurrentSchemaVersion(db);
     assertCanonicalSchemaShape(db, PROOF_TABLES);
+    gateReceiptLayout(db, CURRENT_SCHEMA_VERSION, 'read');
     const receipts = db
       .prepare(
         `SELECT ${camelColumns([
@@ -1529,7 +1530,7 @@ function ensureDatabaseReady(db: DatabaseSync, allowMigration: boolean) {
     );
   }
   assertCanonicalSchemaShape(db, generation === CURRENT_SCHEMA_VERSION ? undefined : ['gate_receipts']);
-  const layout = gateReceiptLayout(db, generation);
+  const layout = gateReceiptLayout(db, generation, 'write');
   if (layout === 'legacy') {
     detachLegacyGateReceipts(db);
   } else if (generation === CURRENT_SCHEMA_VERSION) {

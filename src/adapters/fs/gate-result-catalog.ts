@@ -38,10 +38,11 @@ const catalogDefinitions = {
 };
 
 const OLD_RECEIPTS = 'gate_receipts_pre_setup_result_domain';
-// Exact sqlite_schema.sql bytes from the shipped v7 and v8 tables, retained in tests/fixtures/storage-v*-gate-receipts.sql.
-const legacyReceiptTableDigests = new Map([
-  [7, 'e0a2bcb53b325530ea5ba84fffaf483bcae745852bf25b5853900819c22e3495'],
-  [8, '6aee68d43662104b35241a74cd1afc16fccb2d6477d8def918cfd9560fd60876'],
+// Fingerprints of SQLite's stored ASCII DDL, including the final closing parenthesis.
+// The original definitions live in tests/fixtures/storage-v*-gate-receipts.sql.
+const legacyReceiptTables = new Map([
+  [7, { length: 826, sha256: 'e0a2bcb53b325530ea5ba84fffaf483bcae745852bf25b5853900819c22e3495' }],
+  [8, { length: 842, sha256: '6aee68d43662104b35241a74cd1afc16fccb2d6477d8def918cfd9560fd60876' }],
 ]);
 
 function storedSql(db: DatabaseSync, name: string) {
@@ -55,9 +56,25 @@ function matchesTablePrefix(actual: string, expected: string) {
   return actual === expected || actual.startsWith(expected.slice(0, -1) + ',');
 }
 
-export function gateReceiptLayout(db: DatabaseSync, generation: number): 'legacy' | 'catalog' {
+export function gateReceiptLayout(
+  db: DatabaseSync,
+  generation: number,
+  operation: 'read' | 'write',
+): 'legacy' | 'catalog' {
   const sql = storedSql(db, 'gate_receipts');
-  if (sql && sha256(sql) === legacyReceiptTableDigests.get(generation)) return 'legacy';
+  const legacy = legacyReceiptTables.get(generation);
+  if (sql && legacy) {
+    // ADD COLUMN inserts a comma at the original closing parenthesis. A reader can verify the entire shipped
+    // definition without parsing the added declarations. A writer can only rebuild the exact historical table.
+    const end = legacy.length - 1;
+    const extended = operation === 'read' && sql[end] === ',';
+    if (
+      (extended || sql.length === legacy.length) &&
+      sha256(extended ? sql.slice(0, end) + ')' : sql) === legacy.sha256
+    ) {
+      return 'legacy';
+    }
+  }
   if (!sql || !matchesTablePrefix(sql, GATE_RECEIPTS_TABLE.replace(' IF NOT EXISTS', ''))) {
     throw new StateCorruptedError(
       'Unrecognized gate_receipts schema. Preserve the database and inspect the stored definition before retrying.',
