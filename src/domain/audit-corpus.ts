@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { AUDIT_EVENT_TYPES, verifyAuditChain, type StoredAuditEvent } from './audit.js';
+import { AUDIT_EVENT_TYPES, ZERO_AUDIT_HASH, verifyAuditChain, type StoredAuditEvent } from './audit.js';
+import { AuditCorpusLimitError, MAX_AUDIT_CORPUS_BYTES, MAX_AUDIT_CORPUS_RECORDS } from './audit-corpus-limits.js';
 import { canonicalJson } from './canonical-json.js';
 import { deriveLifecyclePhase, evaluateLifecycleTransition, isRepairEntryTransition } from './lifecycle.js';
 import { gateReceiptResult, type ProofDigest } from './proof.js';
@@ -195,44 +196,68 @@ export function projectAuditSession(session: AuditCorpusSession, digest: ProofDi
   };
 }
 
-export function createAuditCorpus(sessions: AuditCorpusSession[], digest: ProofDigest) {
+export function createAuditCorpus(
+  sessions: AuditCorpusSession[],
+  digest: ProofDigest,
+  limits: { maxBytes?: number; maxRecords?: number } = {},
+) {
+  const maxRecords = Math.min(limits.maxRecords ?? MAX_AUDIT_CORPUS_RECORDS, MAX_AUDIT_CORPUS_RECORDS);
+  const maxBytes = Math.min(limits.maxBytes ?? MAX_AUDIT_CORPUS_BYTES, MAX_AUDIT_CORPUS_BYTES);
+  // Each selected session needs at least one event, in addition to the manifest and seal.
+  if (!(sessions.length + 2 <= maxRecords)) throw new AuditCorpusLimitError();
+  let eventCount = 0;
+  for (const session of sessions) {
+    eventCount += session.events.length;
+    if (eventCount + 2 > maxRecords) throw new AuditCorpusLimitError();
+  }
   const ordered = [...sessions].sort((left, right) =>
     left.session_id < right.session_id ? -1 : left.session_id > right.session_id ? 1 : 0,
   );
   if (ordered.length === 0 || new Set(ordered.map((session) => session.session_id)).size !== ordered.length) {
     throw new AuditCorpusError('Select at least one session, with no duplicate session ids.');
   }
+  const summaries: ReturnType<typeof projectAuditSession>[] = [];
   const manifest = {
     record_type: 'manifest',
     schema_version: 'threadloop.audit-corpus/1',
     comparison_unit: 'session',
-    sessions: ordered.map((session) => projectAuditSession(session, digest)),
+    sessions: summaries,
   };
-  const lines = [canonicalJson(manifest)];
-  let eventCount = 0;
+  const seal = {
+    record_type: 'seal',
+    prefix_sha256: ZERO_AUDIT_HASH,
+    session_count: ordered.length,
+    event_count: eventCount,
+  };
+  // Reserve the complete seal with a fixed-width digest, the empty manifest, and their newlines.
+  let remaining = maxBytes;
+  function reserve(bytes: number) {
+    remaining -= bytes;
+    if (!(remaining >= 0)) throw new AuditCorpusLimitError();
+  }
+  reserve(Buffer.byteLength(canonicalJson(manifest)) + Buffer.byteLength(canonicalJson(seal)) + 2);
+  const eventLines: string[] = [];
   for (const session of ordered) {
     for (const event of session.events) {
-      lines.push(
-        canonicalJson({
-          record_type: 'event',
-          session_id: session.session_id,
-          canonical_event: event.json,
-          event_sha256: event.sha256,
-        }),
-      );
-      eventCount++;
+      if (event.json.length + session.session_id.length + event.sha256.length > remaining)
+        throw new AuditCorpusLimitError();
+      const line = canonicalJson({
+        record_type: 'event',
+        session_id: session.session_id,
+        canonical_event: event.json,
+        event_sha256: event.sha256,
+      });
+      reserve(Buffer.byteLength(line) + 1);
+      eventLines.push(line);
     }
+    const summary = projectAuditSession(session, digest);
+    // Account for each summary inside the manifest array, including its separating comma.
+    reserve(Buffer.byteLength(canonicalJson(summary)) + (summaries.length ? 1 : 0));
+    summaries.push(summary);
   }
-  const prefix = lines.join('\n') + '\n';
-  const content =
-    prefix +
-    canonicalJson({
-      record_type: 'seal',
-      prefix_sha256: digest(prefix),
-      session_count: ordered.length,
-      event_count: eventCount,
-    }) +
-    '\n';
+  const prefix = [canonicalJson(manifest), ...eventLines, ''].join('\n');
+  seal.prefix_sha256 = hash.parse(digest(prefix));
+  const content = prefix + canonicalJson(seal) + '\n';
   return { content, root: digest(content), manifest, session_count: ordered.length, event_count: eventCount };
 }
 

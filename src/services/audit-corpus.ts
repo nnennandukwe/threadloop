@@ -1,12 +1,6 @@
 import path from 'node:path';
 import { sha256 } from '../adapters/crypto/sha256.js';
-import {
-  assertAuditCorpusLimits,
-  AuditCorpusLimitError,
-  MAX_AUDIT_CORPUS_BYTES,
-  MAX_AUDIT_CORPUS_RECORDS,
-  readAuditCorpusFile,
-} from '../adapters/fs/audit-corpus-file.js';
+import { assertAuditCorpusLimits, readAuditCorpusFile } from '../adapters/fs/audit-corpus-file.js';
 import { AuditExportConflictError, writeAuditExportExclusive } from '../adapters/fs/audit-export.js';
 import {
   CURRENT_SCHEMA_VERSION,
@@ -17,9 +11,16 @@ import {
 } from '../adapters/fs/sqlite-store.js';
 import { ThreadloopError } from '../contracts/errors.js';
 import { createAuditCorpus, verifyAuditCorpus } from '../domain/audit-corpus.js';
+import {
+  AuditCorpusLimitError,
+  MAX_AUDIT_CORPUS_BYTES,
+  MAX_AUDIT_CORPUS_RECORDS,
+} from '../domain/audit-corpus-limits.js';
 import { assertInitializedReadOnly, resolveRepositoryRoot } from './preconditions.js';
 
 export async function exportAuditCorpus(input: { cwd: string; sessionIds?: string[]; all?: boolean; output: string }) {
+  if (input.sessionIds && input.sessionIds.length > MAX_AUDIT_CORPUS_RECORDS - 2)
+    throw corpusLimitFailure(new AuditCorpusLimitError());
   if (
     Boolean(input.all) === Boolean(input.sessionIds?.length) ||
     (input.sessionIds && new Set(input.sessionIds).size !== input.sessionIds.length)

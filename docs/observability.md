@@ -93,8 +93,10 @@ transaction. Active sessions are included as observed snapshots; completion isn'
 source repository and doesn't need its database. The existing single-session export remains available.
 
 Corpus export and standalone verification accept up to 16 MiB and 32,768 JSONL records per file, including its manifest
-and seal. The verifier reads a regular file within those limits. If a selection exceeds a limit, export fewer session
-ids per file. A single session that exceeds a corpus limit can still use the native single-session export.
+and seal. SQLite checks the event count and stored byte lengths in the same snapshot before loading the selection. The
+encoder counts the final UTF-8 bytes, including JSON escaping and newlines. The verifier reads a regular file within
+those limits. If a selection exceeds a limit, export fewer session ids per file. A single session that exceeds a corpus
+limit can still use the native single-session export.
 
 The `threadloop.audit-corpus/1` format is canonical UTF-8 JSONL, including a final newline:
 

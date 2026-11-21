@@ -6,6 +6,11 @@ import type { SQLInputValue } from 'node:sqlite';
 import { stateDataSchema, threadloopConfigSchema } from '../../schemas/state.js';
 import { sha256 } from '../crypto/sha256.js';
 import {
+  AuditCorpusLimitError,
+  MAX_AUDIT_CORPUS_BYTES,
+  MAX_AUDIT_CORPUS_RECORDS,
+} from '../../domain/audit-corpus-limits.js';
+import {
   createAuditEvent,
   type AuditEventType,
   type AuditVerificationErrorCode,
@@ -473,20 +478,43 @@ export function readAuditCorpusReadOnly(repoRoot: string, sessionIds?: string[])
       throw new AuditLedgerUnavailableError(schemaVersion);
     }
     assertCanonicalSchemaShape(db);
-    const available = (db.prepare('SELECT id FROM sessions ORDER BY id').all() as Array<{ id: string }>).map(
-      (row) => row.id,
-    );
-    const selected = sessionIds ?? available;
-    const availableIds = new Set(available);
-    for (const id of selected)
-      if (!availableIds.has(id)) {
-        throw new Error(`Could not find selected session: ${id}`);
-      }
+    // Every valid session contributes at least one event. Reserve two records for the manifest and seal.
+    let remainingEvents = MAX_AUDIT_CORPUS_RECORDS - 2;
+    const selected = sessionIds ?? readCorpusSessionIds(db, remainingEvents);
+    if (selected.length > remainingEvents) throw new AuditCorpusLimitError();
+    const sessionExists = db.prepare('SELECT 1 FROM sessions WHERE id = ?');
+    const eventSize = db.prepare(`
+      SELECT COUNT(*) AS count, COALESCE(SUM(bytes), 0) AS bytes
+      FROM (SELECT octet_length(event_json) AS bytes FROM audit_events WHERE session_id = ? LIMIT ?)
+    `);
+    let remainingBytes = MAX_AUDIT_CORPUS_BYTES;
+    for (const id of selected) {
+      if (sessionIds && !sessionExists.get(id)) throw new Error(`Could not find selected session: ${id}`);
+      const size = eventSize.get(id, remainingEvents + 1) as { count: number; bytes: number };
+      // These bytes appear in the manifest and the wrapped events. Encoding adds framing and escaping.
+      remainingBytes -= Buffer.byteLength(id) + size.bytes;
+      remainingEvents -= size.count;
+      if (remainingBytes < 0 || remainingEvents < 0) throw new AuditCorpusLimitError();
+    }
     return selected.map((sessionId) => ({
       session_id: sessionId,
       events: assertSessionTransitionHistoryAuthority(db, sessionId).auditEvents,
     }));
   });
+}
+
+function readCorpusSessionIds(db: DatabaseSync, maxSessions: number) {
+  const size = db
+    .prepare(
+      `
+    SELECT COUNT(*) AS count, COALESCE(SUM(bytes), 0) AS bytes
+    FROM (SELECT octet_length(id) AS bytes FROM sessions LIMIT ?)
+  `,
+    )
+    .get(maxSessions + 1) as { count: number; bytes: number };
+  if (size.count > maxSessions || size.bytes > MAX_AUDIT_CORPUS_BYTES) throw new AuditCorpusLimitError();
+  const rows = db.prepare('SELECT id FROM sessions ORDER BY id LIMIT ?').all(size.count) as Array<{ id: string }>;
+  return rows.map((row) => row.id);
 }
 
 export function inspectAuditLedgerReadOnly(repoRoot: string) {

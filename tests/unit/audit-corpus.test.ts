@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import { createAuditEvent, ZERO_AUDIT_HASH } from '../../src/domain/audit.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
@@ -6,6 +6,7 @@ import type { AuditEventType, StoredAuditEvent } from '../../src/domain/audit.js
 import type { TaskStatus } from '../../src/domain/types.js';
 import { GATE_RECEIPT_RESULTS, type GateReceiptResult } from '../../src/domain/proof.js';
 import type { RunConfiguration } from '../../src/domain/run-configuration.js';
+import { AuditCorpusLimitError, MAX_AUDIT_CORPUS_RECORDS } from '../../src/domain/audit-corpus-limits.js';
 import { createAuditCorpus, verifyAuditCorpus } from '../../src/domain/audit-corpus.js';
 
 const descriptor: RunConfiguration = {
@@ -421,4 +422,49 @@ it('bounds manifest membership by the number of retained event records before in
   const rows = content.trimEnd().split('\n');
   rows[0] = canonicalJson({ ...manifest, sessions: Array.from({ length: rows.length }, () => null) });
   expect(() => verifyAuditCorpus(rows.join('\n') + '\n', sha256)).toThrow(/more sessions than/);
+});
+
+it('budgets encoded UTF-8, JSON escaping, the manifest, the seal and every newline before hashing the file', () => {
+  const sample = session('研"\\é');
+  const original = createAuditCorpus([sample], sha256);
+  expect(original.root).toBe('343b93441e40eff4f2a8300ee2b83f03e8f65573e47789f407e057a351e75d45');
+  const bytes = Buffer.byteLength(original.content);
+  expect(bytes).toBeGreaterThan(original.content.length);
+  expect(createAuditCorpus([sample], sha256, { maxBytes: bytes, maxRecords: 3 })).toEqual(original);
+
+  const digest = vi.fn(sha256);
+  expect(() => createAuditCorpus([sample], digest, { maxBytes: bytes - 1 })).toThrow(AuditCorpusLimitError);
+  expect(digest).not.toHaveBeenCalledWith(original.content);
+  const [manifestLine, eventLine, sealLine] = original.content.trimEnd().split('\n');
+  expect(digest).not.toHaveBeenCalledWith(`${manifestLine}\n${eventLine}\n`);
+
+  digest.mockClear();
+  const emptyManifest = canonicalJson({ ...original.manifest, sessions: [] });
+  const withoutSummary = Buffer.byteLength(`${emptyManifest}\n${eventLine}\n${sealLine}\n`);
+  expect(() => createAuditCorpus([sample], digest, { maxBytes: withoutSummary - 1 })).toThrow(AuditCorpusLimitError);
+  expect(digest).not.toHaveBeenCalled();
+
+  expect(() => createAuditCorpus([sample], digest, { maxRecords: 2 })).toThrow(AuditCorpusLimitError);
+  expect(digest).not.toHaveBeenCalled();
+});
+
+it('charges session summaries to the remaining bytes before processing later sessions', () => {
+  const inputs = ['a', 'b', 'c', 'd'].map((id) => session(id));
+  const { content } = createAuditCorpus(inputs.slice(0, 2), sha256);
+  const digest = vi.fn(sha256);
+  expect(() => createAuditCorpus(inputs, digest, { maxBytes: Buffer.byteLength(content) - 1 })).toThrow(
+    AuditCorpusLimitError,
+  );
+  expect(digest).not.toHaveBeenCalledWith(inputs[2]!.events[0]!.json);
+  expect(digest).not.toHaveBeenCalledWith(inputs[3]!.events[0]!.json);
+});
+
+it('reserves both framing records before processing events or allowing a larger requested record limit', () => {
+  const sample = session();
+  sample.events = Array<StoredAuditEvent>(MAX_AUDIT_CORPUS_RECORDS - 1).fill(sample.events[0]!);
+  const digest = vi.fn(sha256);
+  expect(() => createAuditCorpus([sample], digest, { maxRecords: MAX_AUDIT_CORPUS_RECORDS + 10 })).toThrow(
+    AuditCorpusLimitError,
+  );
+  expect(digest).not.toHaveBeenCalled();
 });

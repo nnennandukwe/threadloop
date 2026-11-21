@@ -3,7 +3,7 @@ import { readFile, rm, truncate, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
-import { MAX_AUDIT_CORPUS_BYTES, MAX_AUDIT_CORPUS_RECORDS } from '../../src/adapters/fs/audit-corpus-file.js';
+import { MAX_AUDIT_CORPUS_BYTES, MAX_AUDIT_CORPUS_RECORDS } from '../../src/domain/audit-corpus-limits.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
 import * as auditCorpus from '../../src/domain/audit-corpus.js';
 import { exportAuditCorpus } from '../../src/services/audit-corpus.js';
