@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import { createAuditEvent, ZERO_AUDIT_HASH } from '../../src/domain/audit.js';
+import { canonicalJson } from '../../src/domain/canonical-json.js';
 import type { AuditEventType, StoredAuditEvent } from '../../src/domain/audit.js';
 import type { TaskStatus } from '../../src/domain/types.js';
 import type { RunConfiguration } from '../../src/domain/run-configuration.js';
@@ -24,6 +25,30 @@ const descriptor: RunConfiguration = {
   proof_plan_sha256: '2'.repeat(64),
   runner_skill_sha256: '3'.repeat(64),
 };
+
+function appendEvent(
+  events: StoredAuditEvent[],
+  sessionId: string,
+  eventType: AuditEventType,
+  stateVersion: number,
+  payload: Record<string, unknown>,
+) {
+  events.push(
+    createAuditEvent(
+      {
+        id: `e-${events.length}`,
+        sessionId,
+        sequence: events.length + 1,
+        eventType,
+        recordedAt: new Date(Date.UTC(2026, 10, 14, 17, 0, events.length)).toISOString(),
+        stateVersion,
+        previousSha256: events.at(-1)?.sha256 ?? ZERO_AUDIT_HASH,
+        payload,
+      },
+      sha256,
+    ),
+  );
+}
 
 function session(sessionId = 'legacy') {
   return {
@@ -101,21 +126,7 @@ it.each(['matched', 'mismatched', 'unbound'] as const)(
     const events: StoredAuditEvent[] = [];
     let version = 0;
     function append(type: AuditEventType, payload: Record<string, unknown>) {
-      events.push(
-        createAuditEvent(
-          {
-            id: `e-${events.length}`,
-            sessionId: 'outcome',
-            sequence: events.length + 1,
-            eventType: type,
-            recordedAt: new Date(Date.UTC(2026, 10, 14, 17, 0, events.length)).toISOString(),
-            stateVersion: version,
-            previousSha256: events.at(-1)?.sha256 ?? ZERO_AUDIT_HASH,
-            payload,
-          },
-          sha256,
-        ),
-      );
+      appendEvent(events, 'outcome', type, version, payload);
     }
     append('session_started', { task_id: 't', lifecycle_state: 'queued', run_configuration: descriptor });
     let state = 'queued';
@@ -187,21 +198,8 @@ function transitionHistory(states: readonly TaskStatus[], coverage: 'current' | 
         : activation
           ? { coverage: 'schema_v6_forward', lifecycle_state_at_activation: state }
           : { lifecycle_state: state, ...(coverage === 'current' ? { run_configuration: descriptor } : {}) };
-    events.push(
-      createAuditEvent(
-        {
-          id: `e-${index}`,
-          sessionId,
-          sequence: index + 1,
-          eventType: index > 0 ? 'transition_applied' : activation ? 'audit_activated' : 'session_started',
-          recordedAt: '2026-11-14T17:00:00.000Z',
-          stateVersion,
-          previousSha256: events.at(-1)?.sha256 ?? ZERO_AUDIT_HASH,
-          payload,
-        },
-        sha256,
-      ),
-    );
+    const eventType = index > 0 ? 'transition_applied' : activation ? 'audit_activated' : 'session_started';
+    appendEvent(events, sessionId, eventType, stateVersion, payload);
   }
   return { session_id: sessionId, events };
 }
@@ -238,4 +236,76 @@ it.each([
 
 it('requires a full audit history to start in queued', () => {
   expect(() => createAuditCorpus([transitionHistory(['completed'], 'legacy')], sha256)).toThrow(/Session start/);
+});
+
+it.each([
+  ['guard_decision', 'verifying'],
+  ['proof_receipt_recorded', 'verifying'],
+  ['signed_proof_receipt_imported', 'verifying'],
+  ['signed_review_receipt_imported', 'reviewing'],
+] as const)('checks the observed state version of %s from an activation boundary', (type, state) => {
+  for (const version of [7, 8, 9]) {
+    const history = transitionHistory([state], 'activation');
+    appendEvent(history.events, history.session_id, type, version, {});
+    if (version === 8) {
+      const corpus = createAuditCorpus([history], sha256);
+      expect(verifyAuditCorpus(corpus.content, sha256).valid).toBe(true);
+    } else {
+      expect(() => createAuditCorpus([history], sha256)).toThrow(/state version/);
+    }
+  }
+});
+
+it.each(['session_started', 'audit_activated'] as const)('rejects a second %s at the current state version', (type) => {
+  const history = session();
+  const payload =
+    type === 'session_started'
+      ? history.events[0]!.value.payload
+      : { coverage: 'schema_v6_forward', lifecycle_state_at_activation: 'queued' };
+  appendEvent(history.events, history.session_id, type, 0, payload);
+  expect(() => createAuditCorpus([history], sha256)).toThrow(/genesis/);
+});
+
+it('uses the prior version for a guard decision and advances on the applied transition', () => {
+  const history = session();
+  const append = (type: AuditEventType, version: number, payload: Record<string, unknown>) =>
+    appendEvent(history.events, history.session_id, type, version, payload);
+  append('guard_decision', 0, { from_state: 'queued', target_state: 'framed', allowed: true });
+  append('transition_applied', 1, {
+    from_state: 'queued',
+    to_state: 'framed',
+    from_state_version: 0,
+    to_state_version: 1,
+  });
+  const rejection = { from_state: 'framed', target_state: 'completed', allowed: false };
+  append('guard_decision', 1, rejection);
+  const corpus = createAuditCorpus([history], sha256);
+  expect(verifyAuditCorpus(corpus.content, sha256).manifest.sessions[0]?.outcome.state_version).toBe(1);
+  append('guard_decision', 0, rejection);
+  expect(() => createAuditCorpus([history], sha256)).toThrow(/state version 1/);
+});
+
+it('verifies a forward activation only up to the largest safe integer state version', () => {
+  const history = transitionHistory(['framed'], 'activation');
+  const { manifest } = createAuditCorpus([history], sha256);
+  const summary = manifest.sessions[0]!;
+  // Rewrite the retained event and every dependent hash so only the version can invalidate the file.
+  const atVersion = (version: number) => {
+    const canonicalEvent = canonicalJson({ ...history.events[0]!.value, state_version: version });
+    const root = sha256(canonicalEvent);
+    const session = { ...summary, root, outcome: { ...summary.outcome, state_version: version } };
+    const record = {
+      record_type: 'event',
+      session_id: history.session_id,
+      canonical_event: canonicalEvent,
+      event_sha256: root,
+    };
+    const prefix = canonicalJson({ ...manifest, sessions: [session] }) + '\n' + canonicalJson(record) + '\n';
+    const seal = { record_type: 'seal', session_count: 1, event_count: 1, prefix_sha256: sha256(prefix) };
+    return prefix + canonicalJson(seal) + '\n';
+  };
+  const safe = atVersion(Number.MAX_SAFE_INTEGER);
+  expect(verifyAuditCorpus(safe, sha256, sha256(safe)).valid).toBe(true);
+  const unsafe = atVersion(Number.MAX_SAFE_INTEGER + 1);
+  expect(() => verifyAuditCorpus(unsafe, sha256, sha256(unsafe))).toThrow(/invalid JSON, fields/);
 });

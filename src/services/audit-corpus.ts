@@ -7,6 +7,7 @@ import {
   inspectAuditLedgerReadOnly,
   readAuditCorpusReadOnly,
   AuditLedgerUnavailableError,
+  StateDatabaseMissingError,
 } from '../adapters/fs/sqlite-store.js';
 import { ThreadloopError } from '../contracts/errors.js';
 import { createAuditCorpus, verifyAuditCorpus } from '../domain/audit-corpus.js';
@@ -39,6 +40,16 @@ export async function exportAuditCorpus(input: { cwd: string; sessionIds?: strin
   try {
     corpus = createAuditCorpus(readAuditCorpusReadOnly(repoRoot, input.sessionIds), sha256);
   } catch (cause) {
+    if (cause instanceof StateDatabaseMissingError) {
+      throw new ThreadloopError('AUDIT_UNAVAILABLE', 'The state database is missing.', {
+        cause,
+        details: {
+          schema_version: null,
+          reason: 'database_missing',
+          hint: 'Restore the state database from trusted storage, then retry the corpus export.',
+        },
+      });
+    }
     if (cause instanceof AuditLedgerUnavailableError) {
       throw new ThreadloopError('AUDIT_UNAVAILABLE', cause.message, {
         cause,

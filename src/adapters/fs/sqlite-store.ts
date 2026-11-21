@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { SQLInputValue } from 'node:sqlite';
@@ -281,6 +281,8 @@ export class AuditLedgerUnavailableError extends Error {
   }
 }
 
+export class StateDatabaseMissingError extends Error {}
+
 export class AuditChainCorruptedError extends Error {
   readonly code: AuditVerificationErrorCode;
   readonly sequence?: number;
@@ -488,15 +490,17 @@ export function readAuditCorpusReadOnly(repoRoot: string, sessionIds?: string[])
 }
 
 export function inspectAuditLedgerReadOnly(repoRoot: string) {
-  if (!existsSync(threadloopPaths(repoRoot).stateDbPath)) {
-    return { available: false, schemaVersion: null };
+  try {
+    return withReadSnapshot(repoRoot, (db) => {
+      if (!tableExists(db, 'metadata')) {
+        return { available: false, schemaVersion: null };
+      }
+      return { available: tableExists(db, 'audit_events'), schemaVersion: readDatabaseSchemaVersion(db) };
+    });
+  } catch (cause) {
+    if (cause instanceof StateDatabaseMissingError) return { available: false, schemaVersion: null };
+    throw cause;
   }
-  return withReadSnapshot(repoRoot, (db) => {
-    if (!tableExists(db, 'metadata')) {
-      return { available: false, schemaVersion: null };
-    }
-    return { available: tableExists(db, 'audit_events'), schemaVersion: readDatabaseSchemaVersion(db) };
-  });
 }
 
 export function readSessionTransitionHistoryReadOnly(repoRoot: string, sessionId: string) {
@@ -1390,13 +1394,31 @@ export function closeSqliteConnections(repoRoot?: string) {
  * directly; production callers should use it through the `*ReadOnly` functions.
  */
 export function withReadSnapshot<T>(repoRoot: string, action: (db: DatabaseSync) => T): T {
-  const db = new DatabaseSync(threadloopPaths(repoRoot).stateDbPath, { readOnly: true });
+  const db = openReadOnlyStateDatabase(threadloopPaths(repoRoot).stateDbPath);
   db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
 
   try {
     return runInTransaction(db, 'BEGIN DEFERRED', () => action(db));
   } finally {
     db.close();
+  }
+}
+
+function openReadOnlyStateDatabase(file: string) {
+  try {
+    return new DatabaseSync(file, { readOnly: true });
+  } catch (cause) {
+    // SQLite CANTOPEN also covers existing files. Preserve its error unless the path is missing.
+    if (cause instanceof Error && 'errcode' in cause && cause.errcode === 14) {
+      try {
+        statSync(file);
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+          throw new StateDatabaseMissingError(cause.message, { cause });
+        }
+      }
+    }
+    throw cause;
   }
 }
 

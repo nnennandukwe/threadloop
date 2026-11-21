@@ -79,7 +79,10 @@ export function projectAuditSession(session: AuditCorpusSession, digest: ProofDi
   let completedAt: string | null = null;
   let boundPlan: string | null = null;
   const gateFailures = new Map<string, number>();
-  for (const { value: event } of session.events) {
+  for (let index = 1; index < session.events.length; index++) {
+    const event = session.events[index]!.value;
+    if (event.event_type === 'session_started' || event.event_type === 'audit_activated')
+      throw new AuditCorpusError('Only the first audit event can establish the session genesis.');
     const payload = event.payload;
     if (event.event_type === 'transition_applied') {
       const from = payload.from_state;
@@ -115,6 +118,10 @@ export function projectAuditSession(session: AuditCorpusSession, digest: ProofDi
       stateVersion = event.state_version;
       if (to === 'completed') completedAt = event.recorded_at;
       if (payload.proof_plan_sha256 !== undefined) boundPlan = hash.parse(payload.proof_plan_sha256);
+    } else if (event.state_version !== stateVersion) {
+      throw new AuditCorpusError(
+        `Audit event ${event.sequence} must record the current state version ${stateVersion}.`,
+      );
     }
     if (event.event_type === 'proof_receipt_recorded') {
       if (payload.result === 'setup_failed') setupFailures++;

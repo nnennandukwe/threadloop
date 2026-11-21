@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
@@ -6,7 +6,13 @@ import { canonicalJson } from '../../src/domain/canonical-json.js';
 import { verifyAuditCorpus } from '../../src/domain/audit-corpus.js';
 import { parseJson, runCli, runCliError, transition } from '../helpers/cli.js';
 import { cleanupTemporaryState, makeCommittedRepo, makeTempDir, startSession } from '../helpers/session.js';
-import { countRows, tamperAuditEventHash, withStateDb, withTriggersDisabled } from '../helpers/state-db.js';
+import {
+  countRows,
+  stateDbPath,
+  tamperAuditEventHash,
+  withStateDb,
+  withTriggersDisabled,
+} from '../helpers/state-db.js';
 
 afterEach(cleanupTemporaryState);
 
@@ -148,6 +154,21 @@ it('reports unavailable ledger consistently with single-session export and prese
     expect(await runCliError(repoDir, command)).toMatchObject({ error: { code: 'AUDIT_UNAVAILABLE' } });
     await expect(readFile(output)).rejects.toMatchObject({ code: 'ENOENT' });
   }
+});
+
+it('reports unavailable storage without recreating a missing state database', async () => {
+  const repoDir = await makeCommittedRepo();
+  const output = path.join(repoDir, 'corpus.jsonl');
+  const args = ['audit', 'corpus', '--all', '--output', output, '--json'];
+  expect(await runCliError(repoDir, args)).toMatchObject({ error: { code: 'THREADLOOP_NOT_INITIALIZED' } });
+  await startSession(repoDir);
+  const database = stateDbPath(repoDir);
+  await rm(database);
+  expect(await runCliError(repoDir, args)).toMatchObject({
+    error: { code: 'AUDIT_UNAVAILABLE', details: { schema_version: null, reason: 'database_missing' } },
+  });
+  await expect(readFile(database)).rejects.toMatchObject({ code: 'ENOENT' });
+  await expect(readFile(output)).rejects.toMatchObject({ code: 'ENOENT' });
 });
 
 it('retains all-session and explicit membership semantics across a batch of sessions', async () => {
