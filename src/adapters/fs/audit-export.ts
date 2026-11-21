@@ -9,6 +9,7 @@ interface ExportFileSystem {
   open: (
     file: string,
     flags: 'wx',
+    mode: number,
   ) => Promise<{ writeFile: (content: string) => Promise<unknown>; close: () => Promise<void> }>;
   link: (source: string, target: string) => Promise<void>;
   rm: (file: string, options: { force: true }) => Promise<void>;
@@ -27,7 +28,7 @@ export async function writeAuditExportExclusive(
   let failure: unknown;
   const warnings: string[] = [];
   try {
-    const handle = await files.open(stagedPath, 'wx');
+    const handle = await files.open(stagedPath, 'wx', 0o600);
     owned = true;
     try {
       await handle.writeFile(content);

@@ -6,6 +6,25 @@ import { cleanupTemporaryState, makeTempDir } from '../helpers/session.js';
 
 afterEach(cleanupTemporaryState);
 
+it('requests owner-only access when creating the staging file and preserves existing target permissions', async () => {
+  const output = path.join(await makeTempDir(), 'audit.jsonl');
+  await writeAuditExportExclusive(output, 'original', {
+    ...fs,
+    open: (file, flags, mode) => {
+      expect(mode).toBe(0o600);
+      return fs.open(file, flags, mode);
+    },
+  });
+  if (process.platform !== 'win32') {
+    expect((await fs.stat(output)).mode & 0o777).toBe(0o600 & ~process.umask());
+    await fs.chmod(output, 0o640);
+  }
+  const before = (await fs.stat(output)).mode;
+  await expect(writeAuditExportExclusive(output, 'retry')).rejects.toBeInstanceOf(AuditExportConflictError);
+  expect((await fs.stat(output)).mode).toBe(before);
+  expect(await fs.readFile(output, 'utf8')).toBe('original');
+});
+
 it('publishes exactly one complete target under concurrent writers and preserves it on retry', async () => {
   const dir = await makeTempDir();
   const output = path.join(dir, 'corpus.jsonl');
