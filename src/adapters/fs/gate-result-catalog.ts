@@ -133,14 +133,18 @@ export function detachLegacyGateReceipts(db: DatabaseSync) {
       throw new StateCorruptedError(`Invalid schema for gate_receipts: missing ${name}.`);
     db.exec(drop);
   }
+  // SQLite rewrites references in other tables, views and triggers during a rename.
+  // Compare their stored definitions across that operation while the write lock is held.
+  const externalObjects = db.prepare(
+    'SELECT type, name, sql FROM main.sqlite_schema WHERE tbl_name <> ? AND sql IS NOT NULL ORDER BY type, name',
+  );
+  const before = externalObjects.all('gate_receipts');
   db.exec(`ALTER TABLE gate_receipts RENAME TO ${OLD_RECEIPTS}`);
-  // SQLite rewrites dependent views, foreign keys and triggers during a rename. Abort instead of leaving dangling references.
-  const dependent = db
-    .prepare('SELECT name FROM sqlite_schema WHERE name <> ? AND instr(lower(sql), ?) > 0 LIMIT 1')
-    .get(OLD_RECEIPTS, OLD_RECEIPTS) as { name: string } | undefined;
+  const after = externalObjects.all(OLD_RECEIPTS);
+  const dependent = before.find((object, index) => object.sql !== after[index]?.sql);
   if (dependent)
     throw new StateCorruptedError(
-      `Can't rebuild gate_receipts while ${dependent.name} refers to it. Preserve the dependent schema before retrying.`,
+      `Can't rebuild gate_receipts while ${String(dependent.name)} refers to it. Preserve the dependent schema before retrying.`,
     );
 }
 

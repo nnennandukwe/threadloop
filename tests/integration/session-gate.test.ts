@@ -1257,12 +1257,29 @@ describe('gate receipt result domain migration', () => {
     expect(countRows(repoDir, 'gate_receipts')).toBe(3);
   });
 
+  it('adopts receipts while preserving an unrelated view that names the migration table in a string', async () => {
+    const { repoDir, sessionId } = await verifyingSessionWithReceipt();
+    await installLegacyGateSchema(repoDir, 8);
+    const viewSql = "CREATE VIEW storage_note AS SELECT 'gate_receipts_pre_setup_result_domain' AS note";
+    withStateDb(repoDir, (db) => db.exec(viewSql), { readOnly: false });
+    const readView = () =>
+      withStateDb(repoDir, (db) => ({
+        definition: db.prepare("SELECT sql FROM sqlite_schema WHERE type = 'view' AND name = 'storage_note'").get(),
+        row: db.prepare('SELECT note FROM storage_note').get(),
+      }));
+    const original = readView();
+    expect(original).toEqual({ definition: { sql: viewSql }, row: { note: 'gate_receipts_pre_setup_result_domain' } });
+    expect((await runGate(repoDir, sessionId)).sequence).toBe(2);
+    expect(readView()).toEqual(original);
+    expect(countRows(repoDir, 'gate_result_catalog', 'value = ?', 'passed')).toBe(1);
+  });
+
   it('preserves a dependent view and rejects a reserved catalog name before adoption', async () => {
     const { repoDir } = await verifyingSessionWithReceipt();
     await installLegacyGateSchema(repoDir, 8);
     const update = (sql: string) => withStateDb(repoDir, (db) => db.exec(sql), { readOnly: false });
     update(
-      'CREATE VIEW extension_receipts AS SELECT id FROM gate_receipts; CREATE TABLE gate_result_catalog (note TEXT)',
+      "CREATE VIEW extension_receipts AS SELECT id, 'gate_receipts_pre_setup_result_domain' AS note FROM gate_receipts; CREATE TABLE gate_result_catalog (note TEXT)",
     );
     const blocked = await runCliFailure(repoDir, ['init']);
     expect(blocked.stderr).toContain('gate_result_catalog already exists');
@@ -1274,6 +1291,38 @@ describe('gate receipt result domain migration', () => {
     update('DROP VIEW extension_receipts');
     await runCli(repoDir, ['init']);
     expect(countRows(repoDir, 'gate_receipts')).toBe(1);
+  });
+
+  it('preserves external indexes, trigger bodies and foreign keys that depend on legacy receipts', async () => {
+    const { repoDir } = await verifyingSessionWithReceipt();
+    await installLegacyGateSchema(repoDir, 8);
+    const dependencies = [
+      {
+        type: 'INDEX',
+        ddl: 'CREATE INDEX extension_probe ON gate_receipts(gate_id)',
+        diagnostic: 'unrecognized object extension_probe',
+      },
+      {
+        type: 'TRIGGER',
+        ddl: 'CREATE TRIGGER extension_probe AFTER INSERT ON tasks BEGIN SELECT id FROM gate_receipts; END',
+        diagnostic: 'extension_probe refers to it',
+      },
+      {
+        type: 'TABLE',
+        ddl: 'CREATE TABLE extension_probe(id TEXT REFERENCES gate_receipts(id))',
+        diagnostic: 'extension_probe refers to it',
+      },
+    ];
+    for (const { type, ddl, diagnostic } of dependencies) {
+      withStateDb(repoDir, (db) => db.exec(ddl), { readOnly: false });
+      expect((await runCliFailure(repoDir, ['init'])).stderr).toContain(diagnostic);
+      expect(
+        withStateDb(repoDir, (db) => db.prepare("SELECT sql FROM sqlite_schema WHERE name = 'extension_probe'").get()),
+      ).toEqual({ sql: ddl });
+      expect(countRows(repoDir, 'gate_receipts')).toBe(1);
+      expect(countRows(repoDir, 'sqlite_schema', 'name = ?', 'gate_result_catalog')).toBe(0);
+      withStateDb(repoDir, (db) => db.exec(`DROP ${type} extension_probe`), { readOnly: false });
+    }
   });
 
   it('rejects a writer whose validation trigger was replaced on an independent connection', async () => {
