@@ -206,6 +206,27 @@ describe('workflow remedy selection', () => {
       action: { capability: 'repair_change' },
       supportingEvidenceIds: ['failed_check'],
     });
+    const nextVersion = input.binding.state_version + 1;
+    const staleAdmission = {
+      ...input,
+      binding: { ...input.binding, state_version: nextVersion },
+      observation: { ...input.observation, state_version: nextVersion },
+    };
+    const wrongEntry = {
+      ...input,
+      history: {
+        ...input.history,
+        repair_admission: { ...input.history.repair_admission, transition_id: 'frame' },
+      },
+    };
+    for (const snapshot of [staleAdmission, wrongEntry]) {
+      const result = selectWorkflowDecision(snapshot);
+      expect(result).toMatchObject({
+        ok: false,
+        diagnostics: [{ code: 'INVALID_REPAIR_ADMISSION', path: '$.history.repair_admission' }],
+      });
+      expect(result).not.toHaveProperty('value');
+    }
     input.binding.subject = { ...input.binding.subject, content_digest: 'a'.repeat(64) };
     input.observation.subject = input.binding.subject;
     input.observation.repository.clean = false;

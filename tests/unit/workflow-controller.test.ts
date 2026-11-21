@@ -2,7 +2,7 @@ import { buildActionRequest, validateControllerDecision, type ControllerInput } 
 import { describe, expect, it } from 'vitest';
 import { selectWorkflowDecision } from '../../src/domain/workflow-controller.js';
 import { workflowDigest } from '../../src/domain/workflow-selection-types.js';
-import { makeWorkflowInput } from '../helpers/workflow-input.js';
+import { addWorkflowReceipt, makeWorkflowInput } from '../helpers/workflow-input.js';
 
 describe('workflow controller', () => {
   it('returns binding diagnostics ahead of a possible terminal outcome', () => {
@@ -14,7 +14,38 @@ describe('workflow controller', () => {
     if (!result.ok) expect(result.diagnostics.map((item) => item.code)).toContain('BINDING_MISMATCH');
   });
 
-  it('observes an idle terminal run even when there is no usable new observation', () => {
+  it('rejects a transition witness from another run, another graph or a future state version', () => {
+    const input = makeWorkflowInput();
+    input.binding.source_state = 'verifying';
+    const local = addWorkflowReceipt(input, 'local', {
+      type: 'local_proof',
+      gate_id: 'unit',
+      result: 'passed',
+      clean: true,
+    });
+    const independent = addWorkflowReceipt(input, 'independent', {
+      type: 'independent_proof',
+      gate_id: 'ci',
+      result: 'passed',
+    });
+    const result = selectWorkflowDecision(input);
+    if (!result.ok || result.value.decision.outcome !== 'transition_available') throw new Error(JSON.stringify(result));
+    expect(result.value.decision.transition_id).toBe('enter_pre_pr_review');
+    expect(result.value.decision.checks).toContainEqual({ guard_id: 'local_pass', evidence_ids: [local.id] });
+
+    for (const witness of [
+      { ...local, workflow_run_id: 'another-run' },
+      { ...local, graph_digest: 'f'.repeat(64) },
+      { ...local, source_state_version: input.binding.state_version + 1 },
+    ]) {
+      expect(selectWorkflowDecision({ ...input, receipts: [witness, independent] })).toMatchObject({
+        ok: false,
+        diagnostics: [{ code: 'RECEIPT_BINDING_MISMATCH' }],
+      });
+    }
+  });
+
+  it('observes an idle terminal run without a usable new observation', () => {
     const input = makeWorkflowInput();
     input.binding.source_state = 'completed';
     input.observation.status = 'unavailable';

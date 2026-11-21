@@ -97,6 +97,7 @@ function outstandingExecution(input: ControllerInput): Outcome | undefined {
   };
 }
 
+/** Validates receipt run/graph/version and counted repair admission before evaluating any route. */
 export function selectWorkflowDecision(snapshot: unknown): ValidationResult<ControllerDecision> {
   const validated = validateControllerInput(snapshot);
   if (!validated.ok) return validated;
