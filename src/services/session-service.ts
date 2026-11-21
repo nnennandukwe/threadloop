@@ -1002,8 +1002,20 @@ export async function exportSessionAudit(input: ExportSessionAuditInput) {
 async function loadSessionAudit(input: SessionAuditInput, expectedRoot?: string) {
   const repoRoot = await resolveRepositoryRoot(input.cwd);
   await assertInitializedReadOnly(repoRoot);
-  assertSchemaDoesNotRequireExplicitMigration(repoRoot);
-  const storedEvents = readRequiredSessionAudit(repoRoot, input.sessionId);
+  let storedEvents: ReturnType<typeof readRequiredSessionAudit>;
+  try {
+    assertSchemaDoesNotRequireExplicitMigration(repoRoot);
+    storedEvents = readRequiredSessionAudit(repoRoot, input.sessionId);
+  } catch (error) {
+    if (!(error instanceof StateCorruptedError)) throw error;
+    throw new ThreadloopError('STATE_CORRUPTED', error.message, {
+      cause: error,
+      details: {
+        session_id: input.sessionId,
+        hint: 'Restore transition history from trusted storage before retrying the audit operation.',
+      },
+    });
+  }
   const verification = verifyAuditChain(storedEvents, sha256, expectedRoot);
   const first = storedEvents[0]?.value;
   const coverage =

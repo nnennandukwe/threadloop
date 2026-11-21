@@ -1,6 +1,8 @@
 import { readFile, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, expect, it } from 'vitest';
+import { StateCorruptedError } from '../../src/contracts/errors.js';
+import { showSessionAudit } from '../../src/services/session-service.js';
 import { runCli, runCliError, sessionNext } from '../helpers/cli.js';
 import { cleanupTemporaryState, makeRepo, startSession } from '../helpers/session.js';
 import { installLegacyGateSchema } from '../helpers/legacy-gate-schema.js';
@@ -74,4 +76,28 @@ it('reports an absent session without creating a database when only the configur
     'SESSION_NOT_FOUND',
   );
   await expect(readFile(stateDbPath(repo))).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
+it('reports the session and recovery hint when audit storage has a missing required column', async () => {
+  const repo = await makeRepo();
+  const { session_id: id } = await startSession(repo);
+  withStateDb(repo, (db) => db.exec('ALTER TABLE audit_events RENAME COLUMN recorded_at TO missing_recorded_at'), {
+    readOnly: false,
+  });
+  const before = await readFile(stateDbPath(repo));
+  for (const operation of [['show'], ['verify'], ['export', '--output', path.join(repo, 'rejected.jsonl')]]) {
+    const { error } = await runCliError(repo, ['audit', ...operation, '--session', id, '--json']);
+    expect(error).toMatchObject({
+      code: 'STATE_CORRUPTED',
+      message: 'Invalid schema for audit_events',
+      details: {
+        session_id: id,
+        hint: 'Restore transition history from trusted storage before retrying the audit operation.',
+      },
+    });
+  }
+  const serviceError: unknown = await showSessionAudit({ cwd: repo, sessionId: id }).catch((error: unknown) => error);
+  expect(serviceError instanceof Error && serviceError.cause).toBeInstanceOf(StateCorruptedError);
+  expect(await readFile(stateDbPath(repo))).toEqual(before);
+  await expect(readFile(path.join(repo, 'rejected.jsonl'))).rejects.toMatchObject({ code: 'ENOENT' });
 });

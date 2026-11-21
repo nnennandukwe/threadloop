@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   parseJson,
   runCli,
@@ -33,6 +33,7 @@ import {
   applySessionTransition,
   closeSqliteConnections,
   ensureStateDatabase,
+  recordSessionHeartbeat,
 } from '../../src/adapters/fs/sqlite-store.js';
 import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
 import { createAuditEvent, ZERO_AUDIT_HASH } from '../../src/domain/audit.js';
@@ -234,6 +235,76 @@ describe('schema v7 lifecycle and audit persistence', () => {
     closeSqliteConnections(repoDir);
     expect(readSchemaVersion(repoDir)).toEqual({ value: '8' });
     expect(history()).toEqual(before);
+  });
+
+  it('reuses writer validation until another connection commits, and refuses damaged storage', async () => {
+    const repoDir = await makeThreadloopRepo();
+    const { session_id: sessionId } = await startSession(repoDir);
+    const heartbeat = (lastHeartbeatAt: string) =>
+      recordSessionHeartbeat(repoDir, {
+        sessionId,
+        branch: 'main',
+        headSha: 'a'.repeat(40),
+        source: 'cli',
+        lastHeartbeatAt,
+      });
+    await heartbeat('2026-11-21T00:00:00Z');
+    const observed = vi.spyOn(DatabaseSync.prototype, 'prepare');
+    const schemaReads = () => observed.mock.calls.filter(([sql]) => sql.includes('pragma_table_info')).length;
+    try {
+      await heartbeat('2026-11-21T00:00:01Z');
+      withStateDb(repoDir, (db) => db.exec('BEGIN IMMEDIATE; DROP TRIGGER gate_receipts_no_update; ROLLBACK'), {
+        readOnly: false,
+      });
+      await heartbeat('2026-11-21T00:00:02Z');
+      expect(schemaReads()).toBe(0);
+      withStateDb(repoDir, (db) => db.exec("INSERT INTO gate_result_catalog(value) VALUES ('future_result')"), {
+        readOnly: false,
+      });
+      await heartbeat('2026-11-21T00:00:03Z');
+      expect(schemaReads()).toBeGreaterThan(0);
+      withStateDb(repoDir, (db) => db.exec('DROP TRIGGER gate_receipts_no_update'), { readOnly: false });
+      await expect(heartbeat('2026-11-21T00:00:04Z')).rejects.toThrow('missing trigger gate_receipts_no_update');
+      expect(
+        withStateDb(repoDir, (db) => db.prepare('SELECT last_heartbeat_at FROM sessions WHERE id = ?').get(sessionId)),
+      ).toEqual({ last_heartbeat_at: '2026-11-21T00:00:03Z' });
+    } finally {
+      observed.mockRestore();
+    }
+  });
+
+  it('retries catalog seeding after a failed commit on the same writer', async () => {
+    const repoDir = await makeThreadloopRepo();
+    const { session_id: sessionId } = await startSession(repoDir);
+    const heartbeat = (lastHeartbeatAt: string) =>
+      recordSessionHeartbeat(repoDir, {
+        sessionId,
+        branch: 'main',
+        headSha: 'a'.repeat(40),
+        source: 'cli',
+        lastHeartbeatAt,
+      });
+    await heartbeat('2026-11-21T00:00:00Z');
+    withStateDb(
+      repoDir,
+      (db) => {
+        withTriggersDisabled(db, 'gate_result_catalog', () =>
+          db.exec("DELETE FROM gate_result_catalog WHERE value = 'setup_failed'"),
+        );
+        db.exec(`
+        CREATE TABLE deferred_commit_probe (id TEXT REFERENCES tasks(id) DEFERRABLE INITIALLY DEFERRED);
+        CREATE TRIGGER fail_one_heartbeat AFTER UPDATE OF last_heartbeat_at ON sessions
+          WHEN NEW.last_heartbeat_at = '2026-11-21T00:00:01Z'
+          BEGIN INSERT INTO deferred_commit_probe VALUES ('missing-task'); END;
+      `);
+      },
+      { readOnly: false },
+    );
+    await expect(heartbeat('2026-11-21T00:00:01Z')).rejects.toThrow('FOREIGN KEY constraint failed');
+    expect(countRows(repoDir, 'deferred_commit_probe')).toBe(0);
+    expect(countRows(repoDir, 'gate_result_catalog', 'value = ?', 'setup_failed')).toBe(0);
+    await heartbeat('2026-11-21T00:00:02Z');
+    expect(countRows(repoDir, 'gate_result_catalog', 'value = ?', 'setup_failed')).toBe(1);
   });
 
   it('revalidates canonical schema metadata on the ready read path', async () => {

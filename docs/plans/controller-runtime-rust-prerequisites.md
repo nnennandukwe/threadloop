@@ -1,5 +1,9 @@
 # ThreadLoop Controller Runtime and Rust Prerequisites Build Plan
 
+Track delivery in [runtime milestone #4](https://github.com/nnennandukwe/threadloop/milestone/4). The
+[implementation tracker](https://github.com/nnennandukwe/threadloop/issues/168) records which prerequisites have passed
+review and verification.
+
 ## Summary
 
 Outcome: finish ThreadLoop's documented pre-Rust runtime/storage prerequisites in TypeScript, using the accepted

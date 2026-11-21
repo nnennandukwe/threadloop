@@ -330,7 +330,9 @@ type TransitionGuardEvaluator = (
   blockedFromState: TaskStatus | null,
 ) => TransitionGuardDecision;
 
-const connections = new Map<string, DatabaseSync>();
+type WriterRevision = { schemaVersion: number; dataVersion: number };
+type WriterConnection = { db: DatabaseSync; validated?: WriterRevision };
+const connections = new Map<string, WriterConnection>();
 
 export function createId(prefix: string) {
   return `${prefix}_${randomUUID()}`;
@@ -1412,7 +1414,7 @@ export async function readRepoSnapshot(repoRoot: string, sessionId: string): Pro
 
 export function closeSqliteConnections(repoRoot?: string) {
   for (const currentRepoRoot of repoRoot ? [repoRoot] : Array.from(connections.keys())) {
-    connections.get(currentRepoRoot)?.close();
+    connections.get(currentRepoRoot)?.db.close();
     connections.delete(currentRepoRoot);
   }
 }
@@ -1460,13 +1462,20 @@ function openReadOnlyStateDatabase(file: string) {
 }
 
 function writer(repoRoot: string) {
-  let db = connections.get(repoRoot);
-  if (!db) {
-    db = new DatabaseSync(threadloopPaths(repoRoot).stateDbPath, { enableForeignKeyConstraints: true });
-    db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
-    connections.set(repoRoot, db);
-  }
-  return db;
+  const existing = connections.get(repoRoot);
+  if (existing) return existing;
+  const db = new DatabaseSync(threadloopPaths(repoRoot).stateDbPath, { enableForeignKeyConstraints: true });
+  db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+  const connection: WriterConnection = { db };
+  connections.set(repoRoot, connection);
+  return connection;
+}
+
+/** The schema cookie includes our own DDL. data_version detects external commits on this open connection. */
+function writerRevision(db: DatabaseSync): WriterRevision {
+  const schema = db.prepare('PRAGMA main.schema_version').get() as { schema_version: number };
+  const data = db.prepare('PRAGMA main.data_version').get() as { data_version: number };
+  return { schemaVersion: schema.schema_version, dataVersion: data.data_version };
 }
 
 async function withWriteTransaction<T>(
@@ -1475,13 +1484,28 @@ async function withWriteTransaction<T>(
   allowMigration = false,
 ): Promise<T> {
   await ensureThreadloopLayout(repoRoot);
-  const db = writer(repoRoot);
+  const connection = writer(repoRoot);
+  const { db, validated } = connection;
   // Only a new, empty database needs a journal-mode change outside the transaction.
-  if (!db.prepare('SELECT 1 FROM sqlite_schema LIMIT 1').get()) db.exec('PRAGMA journal_mode = WAL');
-  return runInTransaction(db, 'BEGIN IMMEDIATE', () => {
-    ensureDatabaseReady(db, allowMigration);
-    return action(db);
+  if (!validated && !db.prepare('SELECT 1 FROM sqlite_schema LIMIT 1').get()) db.exec('PRAGMA journal_mode = WAL');
+  const committed = runInTransaction(db, 'BEGIN IMMEDIATE', () => {
+    let revision = writerRevision(db);
+    if (
+      validated &&
+      validated.schemaVersion === revision.schemaVersion &&
+      validated.dataVersion === revision.dataVersion
+    ) {
+      assertCurrentSchemaVersion(db);
+    } else {
+      ensureDatabaseReady(db, allowMigration);
+      // Adoption can change the schema cookie. Observe it under the lock that validated the final shape.
+      revision = writerRevision(db);
+    }
+    return { revision, value: action(db) };
   });
+  // A thrown action or failed commit leaves the previous committed revision in place.
+  connection.validated = committed.revision;
+  return committed.value;
 }
 
 function ensureDatabaseReady(db: DatabaseSync, allowMigration: boolean) {
