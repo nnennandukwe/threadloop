@@ -125,8 +125,11 @@ it('recovers preparation and transition receipts at writer and lost-response bou
 
 it('serializes independent creates and competing applies against the same version', async () => {
   const control = await initialized();
-  const [a, b] = await Promise.all([runCommand<RunView>(control, create), runCommand<RunView>(control, create)]);
-  expect(b).toEqual(a);
+  const [firstCreateReply, secondCreateReply] = await Promise.all([
+    runCommand<RunView>(control, create),
+    runCommand<RunView>(control, create),
+  ]);
+  expect(secondCreateReply).toEqual(firstCreateReply);
   const decision = await runCli(control, ['workflow', 'decide', run, '--json']);
   await writeFile(path.join(control, 'decision.json'), decision.stdout);
   const apply = (key: string) => [
