@@ -218,7 +218,7 @@ function advance(journal: Journal, row: Entry, content: Content) {
       : content.execution_head === undefined,
     'lifecycle event uses a different execution prefix',
   );
-  demand(content.kind !== 'apply' || !exec?.active, 'cannot apply while an execution is outstanding');
+  demand(content.kind !== 'apply' || !exec?.active, 'an outstanding execution holds the lifecycle');
   switch (content.kind) {
     case 'create':
       throw new StateCorruptedError('Workflow Run has a second genesis');

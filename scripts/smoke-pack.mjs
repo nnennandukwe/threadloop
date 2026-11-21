@@ -25,6 +25,14 @@ async function main() {
   const packDir = await mkdtemp(path.join(os.tmpdir(), 'threadloop-smoke-pack-'));
   const consumerRepo = await makeRepo('threadloop-smoke-consumer-');
 
+  try {
+    await verifyInstall(packDir, consumerRepo);
+  } finally {
+    await Promise.all([packDir, consumerRepo].map((directory) => rm(directory, { recursive: true, force: true })));
+  }
+}
+
+async function verifyInstall(packDir, consumerRepo) {
   console.log(`Packing ThreadLoop from ${projectRoot}`);
   await run('npm', ['pack', '--pack-destination', packDir], projectRoot);
 
@@ -135,7 +143,10 @@ async function main() {
     );
     const v5 = await threadloopJson('protocol', '--contract', '5');
     expect(
-      v5.capabilities.includes('workflow_runs_v1') && v5.commands['workflow apply'],
+      v5.capabilities.includes('workflow_runs_v1') &&
+        v5.capabilities.includes('workflow_gaap_execution_v1') &&
+        v5.commands['workflow apply'] &&
+        v5.commands['workflow execute'],
       'The installed protocol must advertise workflow runs.',
     );
     const oldStreams = [
@@ -163,6 +174,11 @@ async function main() {
     await rm(subject, { recursive: true, force: true });
   }
 
+  await run(
+    process.execPath,
+    ['--import', 'tsx', 'scripts/smoke-managed-workflow.ts', path.join(installedRoot, 'dist', 'cli.js')],
+    projectRoot,
+  );
   const { session_id: sessionId } = await threadloopJson(
     'session',
     'start',
@@ -250,7 +266,6 @@ async function main() {
   );
 
   console.log('Smoke pack verification passed.');
-  await Promise.all([packDir, consumerRepo].map((directory) => rm(directory, { recursive: true, force: true })));
 }
 
 main().catch((error) => {

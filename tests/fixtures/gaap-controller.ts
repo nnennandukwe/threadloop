@@ -129,6 +129,20 @@ export async function controllerBinding(
     retry_safety: 'reconciliation_required' as const,
     max_attempts: 1,
   };
+  return {
+    schema_version: 'threadloop.gaap-binding/1',
+    snapshot,
+    action_request: action.value,
+    execution_policy: { id: 'owned-test-execution', digest: sha256(canonicalJson(rules)), rules },
+    ...fixtureExecutorMapping(workspace, template),
+  };
+}
+
+/** Only producer parameters and mapping come from the native host's declaration. */
+export function fixtureExecutorMapping(
+  workspace: string,
+  template: GaapRequest,
+): Pick<GaapBinding, 'mapping_policy' | 'parameters' | 'executor' | 'lease_ms'> {
   const capability = {
     ...template.requested_capability,
     digest: template.requested_capability.digest.slice(7),
@@ -142,11 +156,7 @@ export async function controllerBinding(
     policies,
     evidence_mapping: [{ family: 'repository_observation', evidence_types: ['command_output', 'artifact'] }],
   };
-  const binding: GaapBinding = {
-    schema_version: 'threadloop.gaap-binding/1',
-    snapshot,
-    action_request: action.value,
-    execution_policy: { id: 'owned-test-execution', digest: sha256(canonicalJson(rules)), rules },
+  return {
     mapping_policy: { policy: mapping, policy_digest: sha256(canonicalJson(mapping)) },
     parameters: {
       subject_locator: workspace,
@@ -168,5 +178,4 @@ export async function controllerBinding(
     executor: { id: 'test-executor', incarnation: 'one' },
     lease_ms: 30000,
   };
-  return binding;
 }
