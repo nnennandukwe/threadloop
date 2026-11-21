@@ -1246,6 +1246,25 @@ describe('gate receipt result domain migration', () => {
     expect(countRows(repoDir, 'gate_receipts', 'result = ?', 'passed')).toBe(1);
   });
 
+  it('retains the reserved sequence when an empty legacy receipt table is adopted', async () => {
+    const { repoDir, sessionId } = await makeVerifyingSession();
+    await installLegacyGateSchema(repoDir, 8);
+    // SQLite reserves the explicit sequence even though missing required fields cause it to skip this insert.
+    withStateDb(repoDir, (db) => db.exec("INSERT OR IGNORE INTO gate_receipts (sequence, id) VALUES (19, 'skipped')"), {
+      readOnly: false,
+    });
+    const reservedSequence = () =>
+      withStateDb(repoDir, (db) => db.prepare("SELECT seq FROM sqlite_sequence WHERE name = 'gate_receipts'").get());
+    expect(countRows(repoDir, 'gate_receipts')).toBe(0);
+    expect(reservedSequence()).toEqual({ seq: 19 });
+
+    await runCli(repoDir, ['init']);
+    expect(countRows(repoDir, 'gate_result_catalog', 'value = ?', 'passed')).toBe(1);
+    expect(countRows(repoDir, 'gate_receipts')).toBe(0);
+    expect(reservedSequence()).toEqual({ seq: 19 });
+    expect((await runGate(repoDir, sessionId)).sequence).toBe(20);
+  });
+
   it('serializes the first two writers and preserves the prior sequence high-water mark', async () => {
     const { repoDir, sessionId } = await verifyingSessionWithReceipt();
     await installLegacyGateSchema(repoDir, 8);

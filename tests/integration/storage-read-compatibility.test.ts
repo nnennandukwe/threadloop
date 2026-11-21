@@ -165,3 +165,22 @@ it.each(['catalog', 'result foreign key and catalog'])(
     expect(error.code).toBe('STATE_CORRUPTED');
   },
 );
+
+it('allows additive columns on signed gate receipts before and after generation-8 adoption', async () => {
+  const repo = await makeRepo();
+  const { session_id: id } = await startSession(repo);
+  await installLegacyGateSchema(repo, 8);
+  withStateDb(
+    repo,
+    (db) =>
+      db.exec(`
+    ALTER TABLE signed_gate_receipts ADD COLUMN "optional, (field)" TEXT;
+    ALTER TABLE signed_gate_receipts ADD COLUMN annotation TEXT DEFAULT 'contains ), and a comma';
+  `),
+    { readOnly: false },
+  );
+  const next = () => sessionNext(repo, id);
+  expect(await next()).toMatchObject({ lifecycle: { storage_capabilities: ['session_next_v1'] } });
+  await runCli(repo, ['session', 'heartbeat', '--session', id, '--json']);
+  expect(await next()).toMatchObject({ lifecycle: { storage_capabilities: ['session_next_v1'] } });
+});

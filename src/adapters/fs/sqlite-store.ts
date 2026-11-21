@@ -135,6 +135,34 @@ const PROOF_PLAN_SELECT = `
   WHERE session_id = ?
 `;
 
+// SQLite inserts ADD COLUMN declarations between the last column and the first table constraint.
+const SIGNED_GATE_TABLE_COLUMNS = `signed_gate_receipts (
+      sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+      id TEXT NOT NULL UNIQUE,
+      session_id TEXT NOT NULL REFERENCES sessions(id),
+      gate_id TEXT NOT NULL,
+      plan_sha256 TEXT NOT NULL CHECK(length(plan_sha256) = 64),
+      subject_head_sha TEXT NOT NULL CHECK(length(subject_head_sha) = 40),
+      result TEXT NOT NULL CHECK(result = 'passed'),
+      package_path TEXT NOT NULL,
+      package_sha256 TEXT NOT NULL CHECK(length(package_sha256) = 64),
+      artifact_json TEXT NOT NULL,
+      artifact_sha256 TEXT NOT NULL CHECK(length(artifact_sha256) = 64),
+      statement_json TEXT NOT NULL,
+      statement_sha256 TEXT NOT NULL CHECK(length(statement_sha256) = 64),
+      issuer TEXT NOT NULL,
+      certificate_identity TEXT NOT NULL,
+      build_signer_uri TEXT NOT NULL,
+      build_signer_sha TEXT NOT NULL CHECK(length(build_signer_sha) = 40),
+      source_repository TEXT NOT NULL,
+      source_ref TEXT NOT NULL,
+      run_invocation_uri TEXT NOT NULL,
+      state_version INTEGER NOT NULL CHECK(state_version >= 0),
+      verified_at TEXT NOT NULL`;
+const SIGNED_GATE_TABLE_CONSTRAINTS = `,
+      UNIQUE(session_id, package_sha256)
+    )`;
+
 const SIGNED_RECEIPT_COLUMNS = [
   'package_path',
   'package_sha256',
@@ -1689,31 +1717,7 @@ function bootstrapDatabase(db: DatabaseSync) {
 
     ${GATE_RECEIPT_SEQUENCE_INDEX};
 
-    CREATE TABLE IF NOT EXISTS signed_gate_receipts (
-      sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-      id TEXT NOT NULL UNIQUE,
-      session_id TEXT NOT NULL REFERENCES sessions(id),
-      gate_id TEXT NOT NULL,
-      plan_sha256 TEXT NOT NULL CHECK(length(plan_sha256) = 64),
-      subject_head_sha TEXT NOT NULL CHECK(length(subject_head_sha) = 40),
-      result TEXT NOT NULL CHECK(result = 'passed'),
-      package_path TEXT NOT NULL,
-      package_sha256 TEXT NOT NULL CHECK(length(package_sha256) = 64),
-      artifact_json TEXT NOT NULL,
-      artifact_sha256 TEXT NOT NULL CHECK(length(artifact_sha256) = 64),
-      statement_json TEXT NOT NULL,
-      statement_sha256 TEXT NOT NULL CHECK(length(statement_sha256) = 64),
-      issuer TEXT NOT NULL,
-      certificate_identity TEXT NOT NULL,
-      build_signer_uri TEXT NOT NULL,
-      build_signer_sha TEXT NOT NULL CHECK(length(build_signer_sha) = 40),
-      source_repository TEXT NOT NULL,
-      source_ref TEXT NOT NULL,
-      run_invocation_uri TEXT NOT NULL,
-      state_version INTEGER NOT NULL CHECK(state_version >= 0),
-      verified_at TEXT NOT NULL,
-      UNIQUE(session_id, package_sha256)
-    );
+    CREATE TABLE IF NOT EXISTS ${SIGNED_GATE_TABLE_COLUMNS}${SIGNED_GATE_TABLE_CONSTRAINTS};
 
     CREATE INDEX IF NOT EXISTS signed_gate_receipts_session_gate_sequence_idx
       ON signed_gate_receipts(session_id, gate_id, sequence DESC);
@@ -1879,6 +1883,18 @@ function schemaShapeProblem(db: DatabaseSync, tables: readonly SessionTable[] = 
       )
     ) {
       return `Invalid schema for ${table}`;
+    }
+    if (table === 'signed_gate_receipts') {
+      // The PRAGMA projections omit CHECK clauses. Match the shipped declarations on both sides of the
+      // additive column position, including the passing-only result check in its owning column.
+      const sql = db.prepare("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table)?.sql;
+      if (
+        typeof sql !== 'string' ||
+        !sql.startsWith(`CREATE TABLE ${SIGNED_GATE_TABLE_COLUMNS},`) ||
+        !sql.endsWith(SIGNED_GATE_TABLE_CONSTRAINTS)
+      ) {
+        return 'Invalid schema for signed_gate_receipts: restore the signed receipt table constraints from trusted storage.';
+      }
     }
     for (const key of required.uniqueKeys) {
       if (!actual.uniqueKeys.has(key)) {
