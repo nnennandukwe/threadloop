@@ -20,7 +20,7 @@ async function fingerprintImplementation() {
         'package.json',
         'package-lock.json',
         ...(await readdir(path.join(root, 'src'), { recursive: true }))
-          .filter((name) => name.endsWith('.ts'))
+          .filter((name) => name.endsWith('.ts') || name.endsWith('.json'))
           .map((name) => `src/${name}`),
       ]
     : (await readdir(root)).filter((name) => name.endsWith('.js'));

@@ -53,10 +53,9 @@ export async function writeAuditExportExclusive(
         if (committed)
           warnings.push(`Export committed; remove the retained staging file after inspection: ${stagedPath}`);
         else
-          failure = new Error(
-            `Export was not published; owned staging file needs removal before retry: ${stagedPath}`,
-            { cause: failure ?? cause },
-          );
+          failure = new Error(`Export wasn't published; owned staging file needs removal before retry: ${stagedPath}`, {
+            cause: failure ?? cause,
+          });
       }
     }
   }

@@ -97,6 +97,12 @@ files fail verification. The reported `root` hashes the entire file, including t
 detect a fully rewritten corpus or a deliberately removed and resealed session. Hashes establish integrity against a
 retained root; they aren't signatures or independent proof that the recorded actions occurred.
 
+The verifier checks lifecycle edges against the history each session retained. Older writers allowed a session to move
+directly from `verifying` to `reviewing` before the pre-PR review step existed. If auditing began while a session was
+blocked, its first resume must return to a state that could've entered `blocked`. Once the export records a block, its
+resume must return to that exact prior state. These checks describe the recorded history. ThreadLoop evaluates
+transition authority when the session runs.
+
 The comparison unit is one session, identified by its session id. Task ids or caller labels can support an external
 consumer's pairing policy, but ThreadLoop doesn't assume that two sessions performed equivalent tasks. Metric
 computation, grouping, baselines, denominators, and outcome comparisons belong to that consumer.

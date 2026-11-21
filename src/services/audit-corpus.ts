@@ -51,7 +51,7 @@ export async function exportAuditCorpus(input: { cwd: string; sessionIds?: strin
     }
     throw new ThreadloopError(
       'AUDIT_CORPUS_INVALID',
-      'Selected session audit records could not form a verified corpus.',
+      "Selected session audit records couldn't form a verified corpus.",
       {
         cause,
         details: {
@@ -70,7 +70,7 @@ export async function exportAuditCorpus(input: { cwd: string; sessionIds?: strin
       cause instanceof AuditExportConflictError ? 'AUDIT_EXPORT_CONFLICT' : 'AUDIT_EXPORT_FAILED',
       cause instanceof AuditExportConflictError
         ? cause.message
-        : 'ThreadLoop could not publish the verified audit corpus.',
+        : "ThreadLoop couldn't publish the verified audit corpus.",
       {
         cause,
         details: {

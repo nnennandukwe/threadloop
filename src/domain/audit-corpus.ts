@@ -1,10 +1,10 @@
 import { z } from 'zod';
 import { AUDIT_EVENT_TYPES, verifyAuditChain, type StoredAuditEvent } from './audit.js';
 import { canonicalJson } from './canonical-json.js';
-import { isRepairEntryTransition } from './lifecycle.js';
+import { deriveLifecyclePhase, evaluateLifecycleTransition, isRepairEntryTransition } from './lifecycle.js';
 import type { ProofDigest } from './proof.js';
 import { runConfigurationSchema } from './run-configuration.js';
-import { isTaskStatus } from './types.js';
+import { isTaskStatus, LIFECYCLE_PHASE, type TaskStatus } from './types.js';
 
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const count = z.number().int().nonnegative();
@@ -66,8 +66,13 @@ export function projectAuditSession(session: AuditCorpusSession, digest: ProofDi
       : genesis.payload.lifecycle_state_at_activation;
   if (typeof state !== 'string' || !isTaskStatus(state))
     throw new AuditCorpusError('Audit genesis lifecycle state is invalid.');
+  if (coverage === 'full' && (state !== 'queued' || genesis.state_version !== 0))
+    throw new AuditCorpusError('Session start requires the queued state at version zero.');
   let stateVersion = genesis.state_version;
-  let postPr = ['reviewing', 'ready_for_human', 'completed'].includes(state);
+  let phase = deriveLifecyclePhase([], state);
+  // Older writers allowed verifying -> reviewing before the pre-PR review step existed.
+  let prePrBoundaryKnown = configuration !== null || state === 'pre_pr_reviewing';
+  let blockedFromState: TaskStatus | null = null;
   let implementationEntries = 0;
   let repairs = 0;
   let setupFailures = 0;
@@ -90,9 +95,22 @@ export function projectAuditSession(session: AuditCorpusSession, digest: ProofDi
         event.state_version !== stateVersion + 1
       )
         throw new AuditCorpusError('Audit transitions are inconsistent.');
-      if (!postPr && to === 'implementing') implementationEntries++;
+      // A blocked activation omits its predecessor. The resume target must still be a state that could enter blocked.
+      const decision =
+        from === 'blocked' && blockedFromState === null && coverage === 'schema_v6_forward'
+          ? evaluateLifecycleTransition(to, 'blocked')
+          : evaluateLifecycleTransition(from, to, {
+              blockedFromState,
+              ...(prePrBoundaryKnown || phase === LIFECYCLE_PHASE.POST_PR ? { phase } : {}),
+            });
+      if (!decision.allowed) throw new AuditCorpusError(`Invalid audit lifecycle transition from ${from} to ${to}.`);
+      blockedFromState = to === 'blocked' ? from : null;
+      if (phase === LIFECYCLE_PHASE.PRE_PR) {
+        if (to === 'implementing') implementationEntries++;
+        phase = deriveLifecyclePhase([], to);
+      }
+      prePrBoundaryKnown ||= to === 'pre_pr_reviewing' || (from === 'verifying' && to === 'implementing');
       if (isRepairEntryTransition(from, to)) repairs++;
-      postPr ||= ['reviewing', 'ready_for_human', 'completed'].includes(to);
       state = to;
       stateVersion = event.state_version;
       if (to === 'completed') completedAt = event.recorded_at;
@@ -188,7 +206,7 @@ export function verifyAuditCorpus(content: string, digest: ProofDigest, expected
   try {
     if (!content.endsWith('\n')) throw new AuditCorpusError('Corpus must end with a newline and a complete seal.');
     if (expectedRoot !== undefined && hash.parse(expectedRoot) !== digest(content))
-      throw new AuditCorpusError('Retained corpus root does not match.');
+      throw new AuditCorpusError("Retained corpus root doesn't match.");
     const lines = content.slice(0, -1).split('\n');
     const manifest = manifestSchema.parse(JSON.parse(lines[0]!));
     let cursor = 1;
@@ -210,7 +228,7 @@ export function verifyAuditCorpus(content: string, digest: ProofDigest, expected
     }
     const rebuilt = createAuditCorpus(sessions, digest);
     if (content !== rebuilt.content)
-      throw new AuditCorpusError('Corpus framing, projections, bytes, or seal do not match retained events.');
+      throw new AuditCorpusError("Corpus framing, projections, bytes, or seal don't match retained events.");
     return {
       valid: true as const,
       root: rebuilt.root,

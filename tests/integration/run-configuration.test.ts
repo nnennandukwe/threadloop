@@ -1,5 +1,7 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { copyFile, cp, readFile, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { afterEach, expect, it } from 'vitest';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import { canonicalizeProofPlan } from '../../src/domain/proof.js';
@@ -9,6 +11,7 @@ import {
   commitFiles,
   git,
   makeCommittedRepo,
+  makeTempDir,
   proofPlan,
   recordProofPlan,
   startSession,
@@ -16,6 +19,51 @@ import {
 import { countRows, readLifecycle, withStateDb } from '../helpers/state-db.js';
 
 afterEach(cleanupTemporaryState);
+
+it('changes the source fingerprint when the imported receipt schema changes', async () => {
+  const sourceRoot = await makeTempDir('threadloop-source-');
+  const repoDir = await makeCommittedRepo();
+  await Promise.all([
+    cp('src', path.join(sourceRoot, 'src'), { recursive: true }),
+    copyFile('package.json', path.join(sourceRoot, 'package.json')),
+    copyFile('package-lock.json', path.join(sourceRoot, 'package-lock.json')),
+    symlink(path.resolve('node_modules'), path.join(sourceRoot, 'node_modules'), 'junction'),
+  ]);
+  const fingerprintAtStart = async () => {
+    const { stdout } = await promisify(execFile)(
+      process.execPath,
+      [
+        '--import',
+        import.meta.resolve('tsx'),
+        path.join(sourceRoot, 'src/cli.ts'),
+        'session',
+        'start',
+        'Source run',
+        '--goal',
+        'Record the source fingerprint',
+        '--json',
+      ],
+      { cwd: repoDir },
+    );
+    const { session_id } = parseJson<{ data: { session_id: string } }>(stdout).data;
+    const audit = await runCli(repoDir, ['audit', 'show', '--session', session_id, '--json']);
+    const { events } = parseJson<{
+      data: { events: Array<{ event: { payload: { run_configuration: { implementation_sha256: string } } } }> };
+    }>(audit.stdout).data;
+    const descriptor = events[0]!.event.payload.run_configuration;
+    expect(descriptor).toMatchObject({ implementation_scope: 'source_and_lockfile' });
+    return descriptor.implementation_sha256;
+  };
+  const schemaPath = path.join(sourceRoot, 'src/contracts/gaap/terminal-run-v1.schema.json');
+  const original = await readFile(schemaPath, 'utf8');
+  const schema = parseJson<{ properties: { subject: { maxItems: number } } }>(original);
+  const before = await fingerprintAtStart();
+  schema.properties.subject.maxItems++;
+  await writeFile(schemaPath, JSON.stringify(schema));
+  expect(await fingerprintAtStart()).not.toBe(before);
+  await writeFile(schemaPath, original);
+  expect(await fingerprintAtStart()).toBe(before);
+});
 
 it('captures immutable startup digests without admitting the declared plan as lifecycle evidence', async () => {
   const repoDir = await makeCommittedRepo();

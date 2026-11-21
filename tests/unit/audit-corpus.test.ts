@@ -2,8 +2,28 @@ import { expect, it } from 'vitest';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
 import { createAuditEvent, ZERO_AUDIT_HASH } from '../../src/domain/audit.js';
 import type { AuditEventType, StoredAuditEvent } from '../../src/domain/audit.js';
+import type { TaskStatus } from '../../src/domain/types.js';
 import type { RunConfiguration } from '../../src/domain/run-configuration.js';
 import { createAuditCorpus, verifyAuditCorpus } from '../../src/domain/audit-corpus.js';
+
+const descriptor: RunConfiguration = {
+  schema_version: 'threadloop.run-configuration/1',
+  threadloop_version: 'fixture',
+  implementation_sha256: '1'.repeat(64),
+  implementation_scope: 'javascript_bundle',
+  storage_schema_version: 8,
+  protocol_components: {
+    protocol: 4,
+    proofPlan: 4,
+    sessionNext: 4,
+    signedReviewReceipt: 1,
+    auditEvent: 1,
+    handoff: 3,
+  },
+  caller: { harness: 'fixture', model: null },
+  proof_plan_sha256: '2'.repeat(64),
+  runner_skill_sha256: '3'.repeat(64),
+};
 
 function session(sessionId = 'legacy') {
   return {
@@ -78,24 +98,6 @@ it('rejects dropped sessions, duplicated membership, foreign events, and wrong r
 it.each(['matched', 'mismatched', 'unbound'] as const)(
   'projects observed outcomes and a %s declared proof binding',
   (binding) => {
-    const descriptor: RunConfiguration = {
-      schema_version: 'threadloop.run-configuration/1',
-      threadloop_version: 'fixture',
-      implementation_sha256: '1'.repeat(64),
-      implementation_scope: 'javascript_bundle',
-      storage_schema_version: 8,
-      protocol_components: {
-        protocol: 4,
-        proofPlan: 4,
-        sessionNext: 4,
-        signedReviewReceipt: 1,
-        auditEvent: 1,
-        handoff: 3,
-      },
-      caller: { harness: 'fixture', model: null },
-      proof_plan_sha256: '2'.repeat(64),
-      runner_skill_sha256: '3'.repeat(64),
-    };
     const events: StoredAuditEvent[] = [];
     let version = 0;
     function append(type: AuditEventType, payload: Record<string, unknown>) {
@@ -166,3 +168,74 @@ it.each(['matched', 'mismatched', 'unbound'] as const)(
     });
   },
 );
+
+function transitionHistory(states: readonly TaskStatus[], coverage: 'current' | 'legacy' | 'activation') {
+  const sessionId = 'lifecycle';
+  const activation = coverage === 'activation';
+  const firstVersion = activation ? 8 : 0;
+  const events: StoredAuditEvent[] = [];
+  for (const [index, state] of states.entries()) {
+    const stateVersion = firstVersion + index;
+    const payload =
+      index > 0
+        ? {
+            from_state: states[index - 1],
+            to_state: state,
+            from_state_version: stateVersion - 1,
+            to_state_version: stateVersion,
+          }
+        : activation
+          ? { coverage: 'schema_v6_forward', lifecycle_state_at_activation: state }
+          : { lifecycle_state: state, ...(coverage === 'current' ? { run_configuration: descriptor } : {}) };
+    events.push(
+      createAuditEvent(
+        {
+          id: `e-${index}`,
+          sessionId,
+          sequence: index + 1,
+          eventType: index > 0 ? 'transition_applied' : activation ? 'audit_activated' : 'session_started',
+          recordedAt: '2026-11-14T17:00:00.000Z',
+          stateVersion,
+          previousSha256: events.at(-1)?.sha256 ?? ZERO_AUDIT_HASH,
+          payload,
+        },
+        sha256,
+      ),
+    );
+  }
+  return { session_id: sessionId, events };
+}
+
+const toVerifying = ['queued', 'framed', 'proof_ready', 'implementing', 'verifying'] as const;
+
+it.each([
+  ['legacy', ['queued', 'completed']],
+  ['current', [...toVerifying, 'reviewing']],
+  ['legacy', [...toVerifying, 'implementing', 'verifying', 'reviewing']],
+  ['legacy', ['queued', 'framed', 'blocked', 'queued']],
+  ['activation', ['blocked', 'blocked']],
+  ['activation', ['blocked', 'completed']],
+  ['activation', ['blocked', 'verifying', 'blocked', 'reviewing']],
+  ['activation', ['ready_for_human', 'completed', 'blocked']],
+  ['activation', ['reviewing', 'repairing', 'verifying', 'implementing']],
+] as const)('rejects a hash-valid %s history with an impossible transition %j', (coverage, states) => {
+  const history = transitionHistory(states, coverage);
+  expect(() => createAuditCorpus([history], sha256)).toThrow(/lifecycle transition/);
+});
+
+it.each([
+  ['legacy', [...toVerifying, 'reviewing', 'ready_for_human', 'completed']],
+  ['current', ['queued', 'framed', 'blocked', 'framed', 'proof_ready']],
+  ['activation', ['blocked', 'reviewing', 'repairing', 'verifying', 'reviewing']],
+  ['activation', ['verifying', 'reviewing']],
+] as const)('preserves a valid %s history through export and verification %j', (coverage, states) => {
+  const corpus = createAuditCorpus([transitionHistory(states, coverage)], sha256);
+  expect(verifyAuditCorpus(corpus.content, sha256, corpus.root).manifest.sessions[0]).toMatchObject({
+    coverage: coverage === 'activation' ? 'schema_v6_forward' : 'full',
+    outcome: { state: states.at(-1) },
+  });
+});
+
+it('requires a full audit history to start in queued', () => {
+  expect(() => createAuditCorpus([transitionHistory(['completed'], 'legacy')], sha256)).toThrow(/Session start/);
+});
