@@ -311,11 +311,14 @@ and execution_scenario against production behavior. Keep expected outcomes, sele
 titles/rationale/coverage and oracle files outside the subject. Retain all 38 results, subject/artifact identities,
 graph/schema/corpus pins and runner limits.
 
-The existing deterministic proof recipe is:
+ThreadLoop owns the deterministic Goose proof. Its npm script runs the Python driver. Supply the ThreadLoop checkout as
+the npm prefix so both commands also work from the RunInvariant checkout. Each case needs a fresh output directory.
+[ThreadLoop npm scripts](../../package.json) · [Proof driver](../../scripts/prove-gaap-goose.py) ·
+[Executor proof and prerequisites](../gaap-executor.md)
 
 ```bash
-npm run prove:gaap:goose -- --gaap /absolute/gaap --goose /absolute/goose --output /absolute/new-proof
-# Repeat to a fresh output with --case bad_patch
+npm --prefix /absolute/threadloop run prove:gaap:goose -- --gaap /absolute/gaap --goose /absolute/goose --output /absolute/new-proof
+npm --prefix /absolute/threadloop run prove:gaap:goose -- --gaap /absolute/gaap --goose /absolute/goose --output /absolute/new-bad-patch-proof --case bad_patch
 ```
 
 It needs locked built GAAP host/attestor binaries and pinned Goose 1.54.0. It has no model inference/external billing
