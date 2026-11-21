@@ -123,6 +123,15 @@ The four-input runner contract is documented in
 exactly `repo_root`, `session_id`, `wake_id`, and `mode`. It stops for schema migration, pre-PR review input, signed
 evidence, PR creation, approval, merge, blocked recovery, and every other controller or human authority.
 
+For new duplicate-delivery wake records, use `mode: duplicate_delivery`. The old `replay` spelling remains a deprecated
+alias for existing schedulers. Retain the original spelling when retrying an existing wake; mode is part of that
+retained request. An incoming spelling that differs from the retained mode must stop without action, including a change
+between these two spellings. Redeliver with the original mode.
+
+Updated schedulers opt into wake-record v2 (`normal | duplicate_delivery`). Existing v1 records keep their original
+version and vocabulary (`normal | replay`); old v1-only validators keep using v1 until explicitly updated. No stored
+record is automatically migrated.
+
 ThreadLoop also does not perform Git fetch, branch creation, rebase, or PR open for you in this slice. Those remain
 orchestrator responsibilities.
 
