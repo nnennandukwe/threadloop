@@ -1,3 +1,4 @@
+import { isPreparedReceiptId } from '../../domain/attestation.js';
 import { canonicalizeSignedReviewReceiptArtifact, type SignedReviewReceiptArtifact } from '../../domain/review.js';
 import { sha256 } from '../crypto/sha256.js';
 
@@ -16,7 +17,10 @@ export interface CollectGitHubReviewSnapshotInput {
   receiptId: string;
 }
 
-const REVIEWS_QUERY = `
+type ReviewConnection = 'reviews' | 'latestOpinionatedReviews';
+function reviewsQuery(field: ReviewConnection) {
+  const writers = field === 'latestOpinionatedReviews' ? ', writersOnly: false' : '';
+  return `
   query ReviewSnapshotReviews(
     $owner: String!
     $name: String!
@@ -32,8 +36,9 @@ const REVIEWS_QUERY = `
         merged
         mergedAt
         reviewDecision
-        reviews(first: 100, after: $cursor) {
+        ${field}(first: 100, after: $cursor${writers}) {
           nodes {
+            id
             author { id login __typename }
             state
             commit { oid }
@@ -45,6 +50,7 @@ const REVIEWS_QUERY = `
     }
   }
 `;
+}
 
 const THREADS_QUERY = `
   query ReviewSnapshotThreads(
@@ -111,34 +117,37 @@ export async function collectGitHubReviewSnapshot(
   const threads: SignedReviewReceiptArtifact['review']['threads'] = [];
   let metadata: PullRequestMetadata | null = null;
 
-  await paginate('reviews', async (cursor) => {
-    const pullRequest = await queryPullRequest(input, request, REVIEWS_QUERY, {
-      ...commonVariables,
-      cursor,
-    });
-    metadata = assertStableMetadata(metadata, pullRequest);
-    const reviews = object(pullRequest.reviews, 'GitHub pull request reviews');
-    const nodes = array(reviews.nodes, 'GitHub pull request reviews.nodes');
-    for (const [index, value] of nodes.entries()) {
-      const review = object(value, `GitHub pull request reviews.nodes[${index}]`);
-      // GitHub reports a deleted account as a null author, and a review whose commit is gone as a null commit.
-      // Neither can be a current approval by an identified human, so they are left out rather than failing.
-      if (review.state !== 'APPROVED' || review.author === null || review.commit === null) {
-        continue;
+  async function readReviews(field: ReviewConnection, accept: (review: Record<string, unknown>) => void) {
+    await paginate(field, async (cursor) => {
+      const pullRequest = await queryPullRequest(input, request, reviewsQuery(field), { ...commonVariables, cursor });
+      metadata = assertStableMetadata(metadata, pullRequest);
+      const connection = object(pullRequest[field], `GitHub ${field}`);
+      for (const value of array(connection.nodes, `GitHub ${field}.nodes`)) {
+        accept(object(value, 'GitHub pull request review'));
       }
-      const author = object(review.author, `GitHub approved review ${index}.author`);
-      const commit = object(review.commit, `GitHub approved review ${index}.commit`);
-      approvals.push({
-        actor_id: text(author.id, `GitHub approved review ${index}.author.id`),
-        actor_login: text(author.login, `GitHub approved review ${index}.author.login`),
-        actor_type: text(author.__typename, `GitHub approved review ${index}.author.__typename`),
-        state: 'APPROVED',
-        commit_sha: text(commit.oid, `GitHub approved review ${index}.commit.oid`),
-        submitted_at: text(review.submittedAt, `GitHub approved review ${index}.submittedAt`),
-      });
-    }
-    return pageInfo(reviews.pageInfo, 'GitHub reviews');
-  });
+      return pageInfo(connection.pageInfo, `GitHub ${field}`);
+    });
+  }
+
+  if (isPreparedReceiptId(input.receiptId)) {
+    const opinions: Opinion[] = [];
+    const history: Opinion[] = [];
+    await readReviews('latestOpinionatedReviews', (review) => {
+      const entry = parseOpinion(review);
+      if (entry) opinions.push(entry);
+    });
+    await readReviews('reviews', (review) => {
+      const entry = parseOpinion(review);
+      if (entry) history.push(entry);
+    });
+    const reviewed = metadata as PullRequestMetadata | null;
+    if (reviewed) approvals.push(...currentApprovals(opinions, history, reviewed.headRefOid, input.observedAt));
+  } else {
+    await readReviews('reviews', (review) => {
+      const approval = parseApproval(review);
+      if (approval) approvals.push(approval);
+    });
+  }
 
   await paginate('review threads', async (cursor) => {
     const pullRequest = await queryPullRequest(input, request, THREADS_QUERY, {
@@ -212,6 +221,84 @@ export async function collectGitHubReviewSnapshot(
     },
     sha256,
   ).artifact;
+}
+
+type Approval = SignedReviewReceiptArtifact['review']['approvals'][number];
+
+function parseApproval(review: Record<string, unknown>): Approval | null {
+  if (review.state !== 'APPROVED' || review.author === null || review.commit === null) return null;
+  const author = object(review.author, 'GitHub approval author');
+  return {
+    actor_id: text(author.id, 'GitHub approval author.id'),
+    actor_login: text(author.login, 'GitHub approval author.login'),
+    actor_type: text(author.__typename, 'GitHub approval author.__typename'),
+    state: 'APPROVED',
+    commit_sha: text(object(review.commit, 'GitHub approval commit').oid, 'GitHub approval commit.oid'),
+    submitted_at: text(review.submittedAt, 'GitHub approval submittedAt'),
+  };
+}
+
+interface Opinion {
+  id: string;
+  actorId: string | null;
+  time: number;
+  approval: Approval | null;
+}
+
+function parseOpinion(review: Record<string, unknown>): Opinion | null {
+  if (review.state === 'COMMENTED' || review.state === 'PENDING') return null;
+  if (!['APPROVED', 'DISMISSED', 'CHANGES_REQUESTED'].includes(text(review.state, 'GitHub review state'))) {
+    throw new Error('GitHub returned an unknown review state.');
+  }
+  const time = Date.parse(text(review.submittedAt, 'GitHub review submittedAt'));
+  if (!Number.isFinite(time)) throw new Error('GitHub returned an invalid review submission time.');
+  const author = nullableObject(review.author, 'GitHub review author');
+  return {
+    id: text(review.id, 'GitHub review id'),
+    actorId: author && text(author.id, 'GitHub review author.id'),
+    time,
+    approval: parseApproval(review),
+  };
+}
+
+function currentApprovals(opinions: Opinion[], history: Opinion[], head: string, observedAt: string): Approval[] {
+  // A dismissal can expose an older approval in latestOpinionatedReviews. The full history must independently
+  // identify the same review as the actor's most recent opinion, with no later unidentified author or tie.
+  const latest = new Map<string, Opinion>();
+  let unidentifiedAt = opinions.reduce(
+    (time, entry) => (entry.actorId === null ? Math.max(time, entry.time) : time),
+    -Infinity,
+  );
+  for (const entry of history) {
+    if (entry.actorId === null) {
+      unidentifiedAt = Math.max(unidentifiedAt, entry.time);
+      continue;
+    }
+    const previous = latest.get(entry.actorId);
+    if (!previous || previous.time < entry.time) latest.set(entry.actorId, entry);
+    else if (previous.time === entry.time) latest.set(entry.actorId, { ...entry, approval: null });
+  }
+  const seen = new Set<string>();
+  const approvals: Approval[] = [];
+  for (const opinion of opinions) {
+    if (opinion.actorId === null) continue;
+    if (seen.has(opinion.actorId)) throw new Error('GitHub returned multiple latest opinions for the same actor.');
+    seen.add(opinion.actorId);
+    const entry = latest.get(opinion.actorId);
+    const approval = opinion.approval;
+    if (
+      approval?.actor_type === 'User' &&
+      approval.commit_sha === head &&
+      opinion.time <= Date.parse(observedAt) &&
+      opinion.time > unidentifiedAt &&
+      entry?.id === opinion.id &&
+      entry.time === opinion.time &&
+      entry.approval?.actor_type === 'User' &&
+      entry.approval.commit_sha === head
+    )
+      approvals.push(approval);
+  }
+  return approvals;
 }
 
 async function queryPullRequest(

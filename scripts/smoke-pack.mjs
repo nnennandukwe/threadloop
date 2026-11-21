@@ -1,4 +1,5 @@
-import { appendFile, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { appendFile, mkdtemp, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -77,6 +78,91 @@ async function main() {
   };
 
   await threadloop('init');
+  // A second repository keeps control storage outside the measured subject.
+  const subject = await makeRepo('threadloop-smoke-subject-');
+  try {
+    await writeFile(path.join(subject, 'quote.txt'), 'subtotal=100\n');
+    await run('git', ['add', 'quote.txt'], subject);
+    await run('git', ['-c', 'commit.gpgsign=false', 'commit', '-m', 'Initialize the shipping quote'], subject);
+    await run('git', ['branch', '-M', 'quote'], subject);
+    const profile = path.join(projectRoot, 'tests/fixtures/workflow/quote.yaml');
+    await writeFile(
+      path.join(consumerRepo, 'quote-setup.json'),
+      JSON.stringify({
+        schema_version: 'threadloop.workflow-setup/1',
+        subject_workspace: await realpath(subject),
+        repository_id: 'packaged-quote',
+        policy: {
+          id: 'quote',
+          proof_binding_transition_id: null,
+          local_gate_ids: [],
+          independent_gate_ids: [],
+          publication_destination: null,
+        },
+        proof_plan: null,
+        trusted_sources: null,
+        allowed_change_paths: [],
+      }),
+    );
+    const created = await threadloopJson(
+      'workflow',
+      'create',
+      'quote',
+      '--profile',
+      profile,
+      '--setup',
+      'quote-setup.json',
+    );
+    expect(
+      created.state === 'intake' && created.state_version === 0,
+      'The packaged CLI must create the initial graph state.',
+    );
+    const decided = await threadloop('workflow', 'decide', 'quote', '--json');
+    await writeFile(path.join(consumerRepo, 'decision.json'), decided.stdout);
+    const apply = await threadloopJson(
+      'workflow',
+      'apply',
+      'quote',
+      '--decision',
+      'decision.json',
+      '--idempotency-key',
+      'start',
+    );
+    const reopened = await threadloopJson('workflow', 'inspect', 'quote');
+    expect(
+      apply.transition_id === 'start_quote' && reopened.state === 'prepared' && reopened.state_version === 1,
+      'The installed CLI must reopen the selected, committed state.',
+    );
+    const v5 = await threadloopJson('protocol', '--contract', '5');
+    expect(
+      v5.capabilities.includes('workflow_runs_v1') && v5.commands['workflow apply'],
+      'The installed protocol must advertise workflow runs.',
+    );
+    const oldStreams = [
+      [[], '5ac51f9c27359b9f27e717adec58d4b85c3e78e4b721957ed534f2d9a7e40fcf'],
+      [['--json'], 'e5943879bfaf27696f0c791adca0d5510e6e49d5660edfa9beb75931c846ed90'],
+    ];
+    for (const [flags, hash] of oldStreams) {
+      for (const negotiated of [[], ['--contract', '4']]) {
+        const out = await threadloop('protocol', ...negotiated, ...flags);
+        expect(
+          createHash('sha256').update(out.stdout).digest('hex') === hash,
+          'The installed v4 protocol output changed.',
+        );
+      }
+    }
+    const future = await threadloop('protocol', '--contract', '6', '--json').then(
+      () => null,
+      (error) => error,
+    );
+    expect(
+      future && JSON.parse(future.stderr).error.code === 'INVALID_ARGUMENT',
+      'The installed CLI must reject an unknown protocol version.',
+    );
+  } finally {
+    await rm(subject, { recursive: true, force: true });
+  }
+
   const { session_id: sessionId } = await threadloopJson(
     'session',
     'start',

@@ -73,6 +73,13 @@ non-authoritative exports. [GAAP integration #171](https://github.com/nnennanduk
   protocol component versions, CLI/runner docs and `scripts/smoke-pack.mjs` own user-facing parity. Add focused run,
   fault and protocol tests where their production interfaces are exercised.
 
+**Compatibility decision from implementation.** Store preparations, admissions and exact responses as typed, hash-linked
+events with database-enforced unique identities. This gives the run one authoritative journal and keeps the graph,
+genesis and compare-and-swap head in their own tables. An existing run keeps its original setup semantics. Clients must
+reject an unknown future setup version before deciding or applying for that run. Other runs stay available in the same
+generation-8 database. This allows a later unit to enroll an executor at creation and bind additional execution history
+without an older client overlooking an outstanding Attempt. The v1 lifecycle event kinds retain their original meanings.
+
 ## Dependencies And Settings
 
 Retain the locked contracts pin `4ed9a94a2a089b9ae950d93297f7a6b9b939d3a6` after checking the merged base. Use

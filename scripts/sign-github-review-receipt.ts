@@ -23,7 +23,7 @@ const report = await readReport(
 );
 
 const artifact = authorizeReviewReportForSigning(report, {
-  receiptId: `review_${randomUUID()}`,
+  receiptId: run.preparedReceiptId ?? `review_${randomUUID()}`,
   sessionId: run.sessionId,
   planSha256: run.planSha256,
   pullRequestNumber: positiveIntegerEnvironment('THREADLOOP_PULL_REQUEST_NUMBER'),

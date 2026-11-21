@@ -44,7 +44,7 @@ export function requireGaapDirectory(directory: string): string {
 
 export function observeGaapWorkspace(workspace: string) {
   const root = requireGaapDirectory(workspace);
-  const manifest: Record<string, unknown> = {};
+  const manifest = Object.create(null) as Record<string, unknown>;
   const files = new Map<string, { bytes: Buffer; executable: boolean }>();
   let descendants = 0;
   function collect(directory: string, relative: string, depth: number): void {

@@ -89,6 +89,13 @@ describe('signed receipt attestation domain', () => {
     });
   });
 
+  it('requires the captured gate ID to match the prepared signing ID', () => {
+    const receiptId = 'wfr_1234567890abcdef1234567890abcdef';
+    const context = { ...signingContext('success'), receiptId };
+    expect(() => authorizeGateReportForSigning(artifact(), context)).toThrow('package.artifact.receipt_id');
+    expect(authorizeGateReportForSigning({ ...artifact(), receipt_id: receiptId }, context).receipt_id).toBe(receiptId);
+  });
+
   it('cannot sign an attacker-supplied pass when GitHub observed the execution job fail', () => {
     expect(authorizeGateReportForSigning(artifact(), signingContext('failure'))).toMatchObject({
       receipt_id: 'receipt_signer_generated',

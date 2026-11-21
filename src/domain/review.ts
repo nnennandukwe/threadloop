@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  assertPreparedSigningId,
   bindSignedStatement,
   canonicalizeSignedArtifact,
   IN_TOTO_STATEMENT_TYPE,
@@ -213,6 +214,7 @@ export function authorizeReviewReportForSigning(
   },
 ): SignedReviewReceiptArtifact {
   const report = parseFields(signedReviewReceiptArtifactSchema, value, 'package.artifact', reviewValidationError);
+  assertPreparedSigningId(context.receiptId, report.receipt_id, reviewValidationError);
   for (const [field, actual, wanted] of [
     ['package.artifact.session_id', report.session_id, context.sessionId],
     ['package.artifact.plan_sha256', report.plan_sha256, context.planSha256],

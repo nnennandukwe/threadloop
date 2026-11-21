@@ -16,7 +16,8 @@ import { gateSensorContext, requiredEnvironment } from './sensor-environment.js'
 /** sha256 of the empty string, recorded when a blocked gate produced no output stream at all. */
 const EMPTY_SHA256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 
-const { sessionId, planSha256, gate, sourceRepository, sourceRef, sourceHead, runInvocationUri } = gateSensorContext();
+const { sessionId, planSha256, preparedReceiptId, gate, sourceRepository, sourceRef, sourceHead, runInvocationUri } =
+  gateSensorContext();
 const sourceRoot = path.resolve(requiredEnvironment('THREADLOOP_SOURCE_ROOT'));
 const reportPath = path.resolve(requiredEnvironment('THREADLOOP_REPORT_PATH'));
 
@@ -106,7 +107,7 @@ const result: GateReceiptResult = classifyGateOutcome({ setup: execution.setup, 
 
 const artifact: SignedGateReceiptArtifact = {
   schema_version: 2,
-  receipt_id: `report_${randomUUID()}`,
+  receipt_id: preparedReceiptId ?? `report_${randomUUID()}`,
   session_id: sessionId,
   plan_sha256: planSha256,
   gate,

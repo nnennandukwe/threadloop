@@ -1,16 +1,17 @@
 # ThreadLoop CLI
 
-**Implemented now:** ThreadLoop's repo-local CLI stores task context and lifecycle state, reports required work, checks
-explicit transitions against current evidence, and generates review artifacts. The canonical operator surface is
-session-first; root commands remain only for compatibility.
-
-These commands operate the fixed governed PR lifecycle. The [architecture guide](architecture.md) distinguishes them
-from the accepted Controller Contract v0.1 specifications and their tooling in
-[threadloop-contracts](https://github.com/nnennandukwe/threadloop-contracts). The optional `executor` commands implement
-the [GAAP process bridge](gaap-executor.md) with separate host-owned state. There's no packaged profile compiler or
-configurable graph executor.
+ThreadLoop's session commands govern the fixed PR lifecycle. Its workflow commands create and operate a run against a
+compiled, configurable graph. Both use SQLite in the control repository. The optional executor commands operate a
+host-adopted action in separate storage. [Architecture](architecture.md) · [GAAP process bridge](gaap-executor.md)
 
 ## Commands
+
+### `threadloop workflow <command> [--json]`
+
+Use `create <run-id> --profile <yaml> --setup <json>` to start a run. `inspect <run-id>` reads its durable state.
+`decide <run-id>` evaluates fresh facts. To apply its selected transition, save the JSON response and use
+`apply <run-id> --decision <file> --idempotency-key <key>`. Use `evidence prepare` and `evidence import` for prepared
+signed gates, reviews and human instructions. [Setup, examples and evidence requirements](workflow-runs.md)
 
 ### `threadloop executor <command> --state <directory> [--json]`
 
@@ -299,9 +300,10 @@ Options:
 - `--session <id>`: target a specific session when more than one is active
 - `--json`: render machine-readable command output
 
-### `threadloop protocol [--json]`
+### `threadloop protocol [--contract <version>] [--json]`
 
-Prints the agent integration contract derived from the current CLI configuration.
+Prints the supported v4 session-runner view by default. Request `--contract 5` to discover Workflow Run commands, the
+`workflowRun` component and the `workflow_runs_v1` capability.
 
 The JSON payload includes:
 

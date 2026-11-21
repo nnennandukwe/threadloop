@@ -1490,6 +1490,7 @@ describe('local and CI receipts describe setup identically', { timeout: 60_000 }
     const { repoDir, sessionId, planSha256, head, receipt: local } = await verifyingSessionWithReceipt(plan);
 
     // Drive the real CI sensor against the same HEAD and the same declared gate.
+    const preparedId = 'wfr_0123456789abcdef0123456789abcdef';
     const reportPath = path.join(await makeTempDir(), 'gate-report.json');
     await execFileAsync('npm', ['run', '--silent', 'sensor:ci-gate:run'], {
       cwd: process.cwd(),
@@ -1497,6 +1498,7 @@ describe('local and CI receipts describe setup identically', { timeout: 60_000 }
         ...process.env,
         THREADLOOP_SESSION_ID: sessionId,
         THREADLOOP_PLAN_SHA256: planSha256,
+        THREADLOOP_PREPARED_RECEIPT_ID: preparedId,
         THREADLOOP_GATE_ID: 'check',
         THREADLOOP_GATE_JSON: canonicalJson(plan.gates[0]),
         THREADLOOP_SOURCE_ROOT: repoDir,
@@ -1532,6 +1534,7 @@ describe('local and CI receipts describe setup identically', { timeout: 60_000 }
       head_unchanged: step.head_before === step.head_after,
     });
 
+    expect(report).toHaveProperty('receipt_id', preparedId);
     expect(report.schema_version).toBe(2);
     expect(report.setup.map(describable)).toEqual(local.setup.map(describable));
     expect(report.result).toBe(local.result);

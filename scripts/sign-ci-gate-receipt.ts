@@ -16,7 +16,8 @@ import { gateSensorContext, readReport, requiredEnvironment } from './sensor-env
 
 const MAXIMUM_REPORT_BYTES = 1_048_576;
 
-const { sessionId, planSha256, gate, sourceRepository, sourceRef, sourceHead, runInvocationUri } = gateSensorContext();
+const { sessionId, planSha256, preparedReceiptId, gate, sourceRepository, sourceRef, sourceHead, runInvocationUri } =
+  gateSensorContext();
 const reportPath = path.resolve(requiredEnvironment('THREADLOOP_REPORT_PATH'));
 const outputPath = path.resolve(requiredEnvironment('THREADLOOP_OUTPUT_PATH'));
 const jobResult = parseJobResult(requiredEnvironment('THREADLOOP_GATE_JOB_RESULT'));
@@ -24,7 +25,7 @@ const jobResult = parseJobResult(requiredEnvironment('THREADLOOP_GATE_JOB_RESULT
 const report = await readReport(reportPath, MAXIMUM_REPORT_BYTES, 'gate');
 
 const artifact = authorizeGateReportForSigning(report, {
-  receiptId: `receipt_${randomUUID()}`,
+  receiptId: preparedReceiptId ?? `receipt_${randomUUID()}`,
   sessionId,
   planSha256,
   gate,

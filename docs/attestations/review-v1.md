@@ -67,6 +67,11 @@ jobs:
       id-token: write
 ```
 
+For a Workflow Run, pass the `prepared_receipt_id` from `threadloop workflow evidence prepare signed-review` or
+`signed-instruction`. The sensor checks each reviewer's latest opinion against the full review history. It records a
+human approval only when the latest opinion and history agree on a submitted approval at the reviewed HEAD. The signer
+checks the captured receipt ID against the workflow input. Leave it empty to collect a session snapshot.
+
 The reusable workflow separates collection from signing:
 
 1. `collect_review` has `contents: read` and `pull-requests: read`, but no OIDC permission. It paginates reviews and

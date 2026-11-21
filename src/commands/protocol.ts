@@ -2,8 +2,12 @@ import type { Command } from 'commander';
 import { buildProtocolContract } from '../contracts/protocol.js';
 import { type CommandContext, writeCommandSuccess } from './runtime.js';
 
-export function protocolPrintCommand(context: CommandContext, options: { json?: boolean }, program: Command) {
-  const protocol = buildProtocolContract(program);
+export function protocolPrintCommand(
+  context: CommandContext,
+  options: { json?: boolean; contract?: '4' | '5' },
+  program: Command,
+) {
+  const protocol = buildProtocolContract(program, options.contract === '5' ? 5 : 4);
 
   if (options.json) {
     writeCommandSuccess(context, { text: ['Protocol data'], data: protocol });
@@ -14,6 +18,10 @@ export function protocolPrintCommand(context: CommandContext, options: { json?: 
 
   for (const [name, version] of Object.entries(protocol.contractVersions)) {
     lines.push(`- \`${name}\`: v${version}`);
+  }
+
+  if ('capabilities' in protocol) {
+    lines.push('', '## Capabilities', '', ...protocol.capabilities.map((name) => '- ' + name));
   }
 
   lines.push('', '## Environment Variables', '');

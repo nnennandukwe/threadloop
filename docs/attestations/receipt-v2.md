@@ -74,6 +74,10 @@ jobs:
       gate_json: '{"command":["npm","run","check"],"id":"check","timeout_ms":900000,"working_directory":"."}'
 ```
 
+A Workflow Run supplies one more input, `prepared_receipt_id`, from `threadloop workflow evidence prepare signed-gate`.
+The capture job records that ID. The signer checks it against the same input before signing the gate result. Leave it
+empty when collecting a session receipt.
+
 The caller must run from a branch ref. The reusable workflow uses two fresh GitHub-hosted jobs:
 
 1. `execute_gate` checks out the caller HEAD and the pinned sensor, runs each declared setup step and then the gate

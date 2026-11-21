@@ -32,7 +32,7 @@ describe('signed gate reusable workflow', () => {
     const executionSteps = executionJob.steps as Array<Record<string, unknown>>;
     const signingSteps = signingJob.steps as Array<Record<string, unknown>>;
 
-    expect(Object.keys(inputs)).toEqual(['session_id', 'plan_sha256', 'gate_id', 'gate_json']);
+    expect(Object.keys(inputs)).toEqual(['session_id', 'prepared_receipt_id', 'plan_sha256', 'gate_id', 'gate_json']);
     expect(workflow.permissions).toEqual({ contents: 'read' });
     expect(Object.keys(jobs)).toEqual(['execute_gate', 'sign_receipt']);
     expect(executionJob.permissions).toEqual({ contents: 'read' });
@@ -102,7 +102,7 @@ describe('signed review reusable workflow', () => {
     const collectionSteps = collectionJob.steps as Array<Record<string, unknown>>;
     const signingSteps = signingJob.steps as Array<Record<string, unknown>>;
 
-    expect(Object.keys(inputs)).toEqual(['session_id', 'plan_sha256', 'pull_request_number']);
+    expect(Object.keys(inputs)).toEqual(['session_id', 'prepared_receipt_id', 'plan_sha256', 'pull_request_number']);
     expect(workflow.permissions).toEqual({ contents: 'read' });
     expect(Object.keys(jobs)).toEqual(['collect_review', 'sign_receipt']);
     expect(collectionJob.permissions).toEqual({ contents: 'read', 'pull-requests': 'read' });

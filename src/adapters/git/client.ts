@@ -223,7 +223,7 @@ function parseNumstatValue(value: string) {
   return /^\d+$/.test(value) ? Number(value) : 0;
 }
 
-function parseRepositoryIdentity(origin: string, repoRoot: string): LiveRepositoryObservation['identity'] {
+export function parseRepositoryIdentity(origin: string, repoRoot: string): LiveRepositoryObservation['identity'] {
   const fallback = {
     source: 'local' as const,
     host: null,

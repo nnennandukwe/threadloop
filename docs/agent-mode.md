@@ -105,7 +105,9 @@ threadloop artifact generate pr-summary --session "$SESSION_ID" --json
 
 ## Machine-facing contract
 
-Use `threadloop protocol --json` to discover the current command contract instead of hard-coding it in an orchestrator.
+Use `threadloop protocol --json` for the v4 session runner. A client operating graph-bound runs requests
+`threadloop protocol --contract 5 --json` and checks for `workflow_runs_v1` before invoking a workflow command. Existing
+scheduled wakes use the session runner. [Workflow Run commands](workflow-runs.md)
 
 The protocol currently publishes:
 
