@@ -32,6 +32,7 @@ export async function sessionStartCommand(
     issue?: string;
     actor?: EntrySource;
     goalEdit?: boolean;
+    runConfig?: string;
   },
 ) {
   let goal = options.goal?.trim();
@@ -60,6 +61,7 @@ export async function sessionStartCommand(
     ...(options.base ? { baseRef: options.base } : {}),
     ...(options.issue ? { issueRef: options.issue } : {}),
     ...(options.actor ? { actor: options.actor } : {}),
+    ...(options.runConfig ? { runConfigPath: options.runConfig } : {}),
   });
 
   writeCommandSuccess(context, {

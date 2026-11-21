@@ -1,10 +1,15 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { SQLInputValue } from 'node:sqlite';
 import { stateDataSchema, threadloopConfigSchema } from '../../schemas/state.js';
 import { sha256 } from '../crypto/sha256.js';
+import {
+  AuditCorpusLimitError,
+  MAX_AUDIT_CORPUS_BYTES,
+  MAX_AUDIT_CORPUS_RECORDS,
+} from '../../domain/audit-corpus-limits.js';
 import {
   createAuditEvent,
   type AuditEventType,
@@ -47,6 +52,7 @@ import { TASK_STATUS, isTaskStatus } from '../../domain/types.js';
 import { StateCorruptedError, type ThreadloopErrorCode } from '../../contracts/errors.js';
 import { threadloopPaths } from './repo.js';
 import { DatabaseSync } from './sqlite-driver.js';
+import type { RunConfiguration } from '../../domain/run-configuration.js';
 
 export const CURRENT_SCHEMA_VERSION = 8;
 /**
@@ -280,6 +286,8 @@ export class AuditLedgerUnavailableError extends Error {
   }
 }
 
+export class StateDatabaseMissingError extends Error {}
+
 export class AuditChainCorruptedError extends Error {
   readonly code: AuditVerificationErrorCode;
   readonly sequence?: number;
@@ -462,16 +470,65 @@ export function readSessionAuditReadOnly(repoRoot: string, sessionId: string): S
   });
 }
 
-export function inspectAuditLedgerReadOnly(repoRoot: string) {
-  if (!existsSync(threadloopPaths(repoRoot).stateDbPath)) {
-    return { available: false, schemaVersion: null };
-  }
+/** One read transaction fixes corpus membership and every selected session's event prefix together. */
+export function readAuditCorpusReadOnly(repoRoot: string, sessionIds?: string[]) {
   return withReadSnapshot(repoRoot, (db) => {
-    if (!tableExists(db, 'metadata')) {
-      return { available: false, schemaVersion: null };
+    const schemaVersion = assertSupportedSchemaVersion(db);
+    if (schemaVersion !== CURRENT_SCHEMA_VERSION || !tableExists(db, 'audit_events')) {
+      throw new AuditLedgerUnavailableError(schemaVersion);
     }
-    return { available: tableExists(db, 'audit_events'), schemaVersion: readDatabaseSchemaVersion(db) };
+    assertCanonicalSchemaShape(db);
+    // Every valid session contributes at least one event. Reserve two records for the manifest and seal.
+    let remainingEvents = MAX_AUDIT_CORPUS_RECORDS - 2;
+    const selected = sessionIds ?? readCorpusSessionIds(db, remainingEvents);
+    if (selected.length > remainingEvents) throw new AuditCorpusLimitError();
+    const sessionExists = db.prepare('SELECT 1 FROM sessions WHERE id = ?');
+    const eventSize = db.prepare(`
+      SELECT COUNT(*) AS count, COALESCE(SUM(bytes), 0) AS bytes
+      FROM (SELECT octet_length(event_json) AS bytes FROM audit_events WHERE session_id = ? LIMIT ?)
+    `);
+    let remainingBytes = MAX_AUDIT_CORPUS_BYTES;
+    for (const id of selected) {
+      if (sessionIds && !sessionExists.get(id)) throw new Error(`Could not find selected session: ${id}`);
+      const size = eventSize.get(id, remainingEvents + 1) as { count: number; bytes: number };
+      // These bytes appear in the manifest and the wrapped events. Encoding adds framing and escaping.
+      remainingBytes -= Buffer.byteLength(id) + size.bytes;
+      remainingEvents -= size.count;
+      if (remainingBytes < 0 || remainingEvents < 0) throw new AuditCorpusLimitError();
+    }
+    return selected.map((sessionId) => ({
+      session_id: sessionId,
+      events: assertSessionTransitionHistoryAuthority(db, sessionId).auditEvents,
+    }));
   });
+}
+
+function readCorpusSessionIds(db: DatabaseSync, maxSessions: number) {
+  const size = db
+    .prepare(
+      `
+    SELECT COUNT(*) AS count, COALESCE(SUM(bytes), 0) AS bytes
+    FROM (SELECT octet_length(id) AS bytes FROM sessions LIMIT ?)
+  `,
+    )
+    .get(maxSessions + 1) as { count: number; bytes: number };
+  if (size.count > maxSessions || size.bytes > MAX_AUDIT_CORPUS_BYTES) throw new AuditCorpusLimitError();
+  const rows = db.prepare('SELECT id FROM sessions ORDER BY id LIMIT ?').all(size.count) as Array<{ id: string }>;
+  return rows.map((row) => row.id);
+}
+
+export function inspectAuditLedgerReadOnly(repoRoot: string) {
+  try {
+    return withReadSnapshot(repoRoot, (db) => {
+      if (!tableExists(db, 'metadata')) {
+        return { available: false, schemaVersion: null };
+      }
+      return { available: tableExists(db, 'audit_events'), schemaVersion: readDatabaseSchemaVersion(db) };
+    });
+  } catch (cause) {
+    if (cause instanceof StateDatabaseMissingError) return { available: false, schemaVersion: null };
+    throw cause;
+  }
 }
 
 export function readSessionTransitionHistoryReadOnly(repoRoot: string, sessionId: string) {
@@ -710,7 +767,13 @@ export function readSessionLifecycleReadOnly(repoRoot: string, sessionId: string
 
 export async function insertTaskSession(
   repoRoot: string,
-  payload: { task: Task; session: Session; intentEntry: Entry; initialSnapshot?: StoredRepoSnapshot },
+  payload: {
+    task: Task;
+    session: Session;
+    intentEntry: Entry;
+    initialSnapshot?: StoredRepoSnapshot;
+    runConfiguration?: RunConfiguration;
+  },
 ) {
   await withWriteTransaction(repoRoot, (db) => {
     const { task, session, intentEntry } = payload;
@@ -730,6 +793,7 @@ export async function insertTaskSession(
         lifecycle_state: task.status,
         branch: session.branch,
         head_sha: session.headSha,
+        ...(payload.runConfiguration ? { run_configuration: payload.runConfiguration } : {}),
       },
     });
     writeActiveProjection(db);
@@ -987,6 +1051,7 @@ export async function applySessionTransition(
         to_state: input.targetState,
         from_state_version: current.state_version,
         to_state_version: nextVersion,
+        ...(input.boundProofPlan ? { proof_plan_sha256: input.boundProofPlan.sha256 } : {}),
         ...(readPrePrReviewEvidence(input.canonicalInput)
           ? {
               pre_pr_review: summarizePrePrReview(input.canonicalInput),
@@ -1357,13 +1422,31 @@ export function closeSqliteConnections(repoRoot?: string) {
  * directly; production callers should use it through the `*ReadOnly` functions.
  */
 export function withReadSnapshot<T>(repoRoot: string, action: (db: DatabaseSync) => T): T {
-  const db = new DatabaseSync(threadloopPaths(repoRoot).stateDbPath, { readOnly: true });
+  const db = openReadOnlyStateDatabase(threadloopPaths(repoRoot).stateDbPath);
   db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
 
   try {
     return runInTransaction(db, 'BEGIN DEFERRED', () => action(db));
   } finally {
     db.close();
+  }
+}
+
+function openReadOnlyStateDatabase(file: string) {
+  try {
+    return new DatabaseSync(file, { readOnly: true });
+  } catch (cause) {
+    // SQLite CANTOPEN also covers existing files. Preserve its error unless the path is missing.
+    if (cause instanceof Error && 'errcode' in cause && cause.errcode === 14) {
+      try {
+        statSync(file);
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+          throw new StateDatabaseMissingError(cause.message, { cause });
+        }
+      }
+    }
+    throw cause;
   }
 }
 
