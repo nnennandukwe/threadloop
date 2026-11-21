@@ -61,7 +61,9 @@ Creates a new verified multi-session corpus with one comparison outcome per sess
 ### `threadloop audit verify-export --input <path> [--root <sha256>] [--json]`
 
 Verifies a retained corpus without its source repository or database. `--root` compares the whole-file SHA-256 with a
-previously retained value. Missing, altered, unsupported, or incomplete records fail with `AUDIT_CORPUS_INVALID`.
+previously retained value. Supply a regular file containing up to 16 MiB and 32,768 JSONL records, including its
+manifest and seal. For a larger selection, export fewer sessions per file. Missing, altered, unsupported, or incomplete
+records fail with `AUDIT_CORPUS_INVALID`.
 
 ### `threadloop session list [--json]`
 

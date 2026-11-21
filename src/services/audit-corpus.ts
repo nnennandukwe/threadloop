@@ -1,6 +1,12 @@
-import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { sha256 } from '../adapters/crypto/sha256.js';
+import {
+  assertAuditCorpusLimits,
+  AuditCorpusLimitError,
+  MAX_AUDIT_CORPUS_BYTES,
+  MAX_AUDIT_CORPUS_RECORDS,
+  readAuditCorpusFile,
+} from '../adapters/fs/audit-corpus-file.js';
 import { AuditExportConflictError, writeAuditExportExclusive } from '../adapters/fs/audit-export.js';
 import {
   CURRENT_SCHEMA_VERSION,
@@ -39,7 +45,9 @@ export async function exportAuditCorpus(input: { cwd: string; sessionIds?: strin
   let corpus: ReturnType<typeof createAuditCorpus>;
   try {
     corpus = createAuditCorpus(readAuditCorpusReadOnly(repoRoot, input.sessionIds), sha256);
+    assertAuditCorpusLimits(corpus.content);
   } catch (cause) {
+    if (cause instanceof AuditCorpusLimitError) throw corpusLimitFailure(cause);
     if (cause instanceof StateDatabaseMissingError) {
       throw new ThreadloopError('AUDIT_UNAVAILABLE', 'The state database is missing.', {
         cause,
@@ -107,12 +115,11 @@ export async function exportAuditCorpus(input: { cwd: string; sessionIds?: strin
 export async function verifyAuditExport(input: { cwd: string; input: string; root?: string }) {
   const file = path.resolve(input.cwd, input.input);
   try {
-    const bytes = await readFile(file);
-    const content = bytes.toString('utf8');
-    if (!Buffer.from(content, 'utf8').equals(bytes)) throw new Error('Export contains invalid UTF-8 bytes.');
+    const content = await readAuditCorpusFile(file);
     const verified = verifyAuditCorpus(content, sha256, input.root);
     return { contract_version: 1 as const, input: file, ...verified };
   } catch (cause) {
+    if (cause instanceof AuditCorpusLimitError) throw corpusLimitFailure(cause);
     throw new ThreadloopError('AUDIT_CORPUS_INVALID', 'Audit corpus verification failed.', {
       cause,
       details: {
@@ -122,4 +129,15 @@ export async function verifyAuditExport(input: { cwd: string; input: string; roo
       },
     });
   }
+}
+
+function corpusLimitFailure(cause: AuditCorpusLimitError) {
+  return new ThreadloopError('AUDIT_CORPUS_INVALID', cause.message, {
+    cause,
+    details: {
+      max_bytes: MAX_AUDIT_CORPUS_BYTES,
+      max_records: MAX_AUDIT_CORPUS_RECORDS,
+      hint: 'Export fewer sessions with `audit corpus --session <ids...>` to a new file. For one oversized session, use `audit export --session <id>` for its native chain.',
+    },
+  });
 }

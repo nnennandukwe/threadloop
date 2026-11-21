@@ -70,8 +70,9 @@ declare a model. Keep secrets, prompts, and personal information out of these la
 
 The supplied plan is a caller declaration. The normal `proof_ready` transition independently validates and binds the
 authoritative proof plan. Its audit event records the bound digest. Corpus output reports whether that digest matches
-the startup declaration (`matched`, `mismatched`, or `unbound`); unknown declarations report `unknown`. None of this
-metadata enters a lifecycle guard. Editing configuration or snapshot files later can't replace a retained descriptor.
+the startup declaration (`matched` or `mismatched`). A declaration with no recorded binding digest reports `unbound`. An
+unknown declaration reports `unknown`. These fields describe the run. Editing configuration or snapshot files later
+can't replace a retained descriptor.
 
 Startup without `--run-config` retains runtime identity with `caller` and both snapshot digests set to null. Corpus
 attribution is `runtime_only`. A supplied configuration reports `declared`, which identifies its source without
@@ -90,6 +91,10 @@ threadloop audit verify-export --input ./comparison.jsonl --root "$RETAINED_CORP
 Choose unique explicit session ids or `--all`. Membership and all selected event prefixes come from one SQLite read
 transaction. Active sessions are included as observed snapshots; completion isn't implied. Verification runs outside the
 source repository and doesn't need its database. The existing single-session export remains available.
+
+Corpus export and standalone verification accept up to 16 MiB and 32,768 JSONL records per file, including its manifest
+and seal. The verifier reads a regular file within those limits. If a selection exceeds a limit, export fewer session
+ids per file. A single session that exceeds a corpus limit can still use the native single-session export.
 
 The `threadloop.audit-corpus/1` format is canonical UTF-8 JSONL, including a final newline:
 
@@ -110,7 +115,9 @@ The verifier checks lifecycle edges against the history each session retained. O
 directly from `verifying` to `reviewing` before the pre-PR review step existed. If auditing began while a session was
 blocked, its first resume must return to a state that could've entered `blocked`. Once the export records a block, its
 resume must return to that exact prior state. These checks describe the recorded history. ThreadLoop evaluates
-transition authority when the session runs.
+transition authority when the session runs. Each applied transition identifies its request digest and transition id.
+Only the recorded move from `framed` to `proof_ready` can supply a bound plan digest. Local receipt counts require a
+receipt id and digest, gate id, Git head and recognized gate result at the session's observed verifying state.
 
 The comparison unit is one session, identified by its session id. Task ids or caller labels can support an external
 consumer's pairing policy, but ThreadLoop doesn't assume that two sessions performed equivalent tasks. Metric
@@ -134,10 +141,11 @@ payloads. Retain them only in a destination authorized for those contents.
 
 ## Publication and recovery
 
-Exports use an exclusively created sibling staging file. Successful filesystem `link` publishes the complete target
-without overwriting an existing path. Concurrent cooperative publishers produce one winner. A write or close failure
-before publication leaves the target absent; retries use a new writable path. A cleanup failure after publication is
-committed success with a warning naming the retained stage. Inspect the target before removing that stage.
+Exports create an exclusive sibling staging file with mode `0600`. On POSIX filesystems, the creating account can read
+and write it, subject to a stricter umask. The filesystem `link` operation publishes that file at a new path without
+overwriting an existing target. Concurrent cooperative publishers produce one winner. A write or close failure before
+publication leaves the target absent; retries use a new writable path. A cleanup failure after publication is committed
+success with a warning naming the retained stage. Inspect the target before removing that stage.
 
 An interrupted process can leave an unpublished staging file or a published target whose response was lost. Use
 `verify-export` to inspect a corpus target after restart. Keep an existing target and choose a new filename for another

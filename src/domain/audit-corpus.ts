@@ -2,11 +2,11 @@ import { z } from 'zod';
 import { AUDIT_EVENT_TYPES, verifyAuditChain, type StoredAuditEvent } from './audit.js';
 import { canonicalJson } from './canonical-json.js';
 import { deriveLifecyclePhase, evaluateLifecycleTransition, isRepairEntryTransition } from './lifecycle.js';
-import type { ProofDigest } from './proof.js';
+import { gateReceiptResult, type ProofDigest } from './proof.js';
 import { runConfigurationSchema } from './run-configuration.js';
-import { isTaskStatus, LIFECYCLE_PHASE, type TaskStatus } from './types.js';
+import { isTaskStatus, LIFECYCLE_PHASE, TASK_STATUS, type TaskStatus } from './types.js';
+import { commitSha, identifier, sha256Digest as hash } from './validation.js';
 
-const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const count = z.number().int().nonnegative();
 const eventSchema = z.strictObject({
   schema_version: z.literal(1),
@@ -18,6 +18,22 @@ const eventSchema = z.strictObject({
   state_version: count,
   previous_sha256: hash,
   payload: z.record(z.string(), z.unknown()),
+});
+const transitionSchema = z.object({
+  transition_id: identifier(128),
+  request_sha256: hash,
+  from_state: z.enum(TASK_STATUS),
+  to_state: z.enum(TASK_STATUS),
+  from_state_version: count,
+  to_state_version: count,
+  proof_plan_sha256: hash.optional(),
+});
+const localReceiptSchema = z.object({
+  receipt_id: identifier(128),
+  gate_id: identifier(128),
+  receipt_sha256: hash,
+  head_sha: commitSha.or(hash),
+  result: gateReceiptResult,
 });
 const eventRecordSchema = z.strictObject({
   record_type: z.literal('event'),
@@ -79,22 +95,24 @@ export function projectAuditSession(session: AuditCorpusSession, digest: ProofDi
   let completedAt: string | null = null;
   let boundPlan: string | null = null;
   const gateFailures = new Map<string, number>();
+  const receiptIds = new Set<string>();
+  const transitionIds = new Set<string>();
   for (let index = 1; index < session.events.length; index++) {
     const event = session.events[index]!.value;
     if (event.event_type === 'session_started' || event.event_type === 'audit_activated')
       throw new AuditCorpusError('Only the first audit event can establish the session genesis.');
     const payload = event.payload;
     if (event.event_type === 'transition_applied') {
-      const from = payload.from_state;
-      const to = payload.to_state;
+      const parsed = transitionSchema.safeParse(payload);
+      if (!parsed.success) throw new AuditCorpusError(`Audit transition ${event.sequence} has invalid fields.`);
+      const transition = parsed.data;
+      const { from_state: from, to_state: to } = transition;
+      if (transitionIds.has(transition.transition_id)) throw new AuditCorpusError('Duplicate audit transition id.');
+      transitionIds.add(transition.transition_id);
       if (
-        typeof from !== 'string' ||
-        !isTaskStatus(from) ||
-        typeof to !== 'string' ||
-        !isTaskStatus(to) ||
         from !== state ||
-        payload.from_state_version !== stateVersion ||
-        payload.to_state_version !== event.state_version ||
+        transition.from_state_version !== stateVersion ||
+        transition.to_state_version !== event.state_version ||
         event.state_version !== stateVersion + 1
       )
         throw new AuditCorpusError('Audit transitions are inconsistent.');
@@ -117,16 +135,26 @@ export function projectAuditSession(session: AuditCorpusSession, digest: ProofDi
       state = to;
       stateVersion = event.state_version;
       if (to === 'completed') completedAt = event.recorded_at;
-      if (payload.proof_plan_sha256 !== undefined) boundPlan = hash.parse(payload.proof_plan_sha256);
+      if (transition.proof_plan_sha256 !== undefined) {
+        if (from !== 'framed' || to !== 'proof_ready')
+          throw new AuditCorpusError('Only a transition from framed to proof_ready can bind the proof plan.');
+        boundPlan = transition.proof_plan_sha256;
+      }
     } else if (event.state_version !== stateVersion) {
       throw new AuditCorpusError(
         `Audit event ${event.sequence} must record the current state version ${stateVersion}.`,
       );
     }
     if (event.event_type === 'proof_receipt_recorded') {
-      if (payload.result === 'setup_failed') setupFailures++;
-      else if (payload.result !== 'passed' && typeof payload.gate_id === 'string') {
-        gateFailures.set(payload.gate_id, (gateFailures.get(payload.gate_id) ?? 0) + 1);
+      const parsed = localReceiptSchema.safeParse(payload);
+      if (!parsed.success || state !== 'verifying')
+        throw new AuditCorpusError(`Invalid local proof receipt at audit event ${event.sequence}.`);
+      const receipt = parsed.data;
+      if (receiptIds.has(receipt.receipt_id)) throw new AuditCorpusError('Duplicate local proof receipt id.');
+      receiptIds.add(receipt.receipt_id);
+      if (receipt.result === 'setup_failed') setupFailures++;
+      else if (receipt.result !== 'passed') {
+        gateFailures.set(receipt.gate_id, (gateFailures.get(receipt.gate_id) ?? 0) + 1);
       }
     }
   }
@@ -215,7 +243,16 @@ export function verifyAuditCorpus(content: string, digest: ProofDigest, expected
     if (expectedRoot !== undefined && hash.parse(expectedRoot) !== digest(content))
       throw new AuditCorpusError("Retained corpus root doesn't match.");
     const lines = content.slice(0, -1).split('\n');
-    const manifest = manifestSchema.parse(JSON.parse(lines[0]!));
+    const manifestValue: unknown = JSON.parse(lines[0]!);
+    if (
+      manifestValue !== null &&
+      typeof manifestValue === 'object' &&
+      'sessions' in manifestValue &&
+      Array.isArray(manifestValue.sessions) &&
+      manifestValue.sessions.length > lines.length - 2
+    )
+      throw new AuditCorpusError('The manifest lists more sessions than there are retained event records.');
+    const manifest = manifestSchema.parse(manifestValue);
     let cursor = 1;
     const sessions: AuditCorpusSession[] = [];
     for (const summary of manifest.sessions) {

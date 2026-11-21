@@ -1,10 +1,13 @@
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { readFile, rm, truncate, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { sha256 } from '../../src/adapters/crypto/sha256.js';
+import { MAX_AUDIT_CORPUS_BYTES, MAX_AUDIT_CORPUS_RECORDS } from '../../src/adapters/fs/audit-corpus-file.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
-import { verifyAuditCorpus } from '../../src/domain/audit-corpus.js';
-import { parseJson, runCli, runCliError, transition } from '../helpers/cli.js';
+import * as auditCorpus from '../../src/domain/audit-corpus.js';
+import { exportAuditCorpus } from '../../src/services/audit-corpus.js';
+import { parseJson, resolveTestCliBundle, runCli, runCliError, transition } from '../helpers/cli.js';
 import { cleanupTemporaryState, makeCommittedRepo, makeTempDir, startSession } from '../helpers/session.js';
 import {
   countRows,
@@ -15,6 +18,81 @@ import {
 } from '../helpers/state-db.js';
 
 afterEach(cleanupTemporaryState);
+
+const { verifyAuditCorpus } = auditCorpus;
+
+it('requires a regular file for standalone corpus verification', async () => {
+  const directory = await makeTempDir();
+  const error = await runCliError(directory, ['audit', 'verify-export', '--input', directory, '--json']);
+  expect(error.error).toMatchObject({
+    code: 'AUDIT_CORPUS_INVALID',
+    details: { reason: 'Corpus verification requires a regular file.' },
+  });
+});
+
+it.skipIf(process.platform === 'win32')('rejects a FIFO without waiting for a writer', async () => {
+  const directory = await makeTempDir();
+  const fifo = path.join(directory, 'corpus.pipe');
+  execFileSync('mkfifo', [fifo]);
+  const result = spawnSync(
+    process.execPath,
+    [resolveTestCliBundle(), 'audit', 'verify-export', '--input', fifo, '--json'],
+    {
+      cwd: directory,
+      encoding: 'utf8',
+      timeout: 5000,
+    },
+  );
+  expect(result.error).toBeUndefined();
+  expect(parseJson(result.stderr)).toMatchObject({
+    error: { details: { reason: 'Corpus verification requires a regular file.' } },
+  });
+});
+
+it('reports byte and record limits for an oversized file and excess record separators', async () => {
+  const directory = await makeTempDir();
+  const file = path.join(directory, 'input.jsonl');
+  const verify = () => runCliError(directory, ['audit', 'verify-export', '--input', file, '--json']);
+  await writeFile(file, '');
+  await truncate(file, MAX_AUDIT_CORPUS_BYTES + 1);
+  const expected = {
+    error: {
+      code: 'AUDIT_CORPUS_INVALID',
+      details: {
+        max_bytes: MAX_AUDIT_CORPUS_BYTES,
+        max_records: MAX_AUDIT_CORPUS_RECORDS,
+        hint: expect.stringContaining('audit corpus --session') as unknown,
+      },
+    },
+  };
+  expect(await verify()).toMatchObject(expected);
+  await writeFile(file, '\n'.repeat(MAX_AUDIT_CORPUS_RECORDS + 1));
+  expect(await verify()).toMatchObject(expected);
+});
+
+it('refuses to publish an oversized corpus and lets a smaller selection retry', async () => {
+  const repoDir = await makeCommittedRepo();
+  const { session_id: id } = await startSession(repoDir);
+  await startSession(repoDir);
+  const output = path.join(repoDir, 'bounded.jsonl');
+  // Substitute only the encoder output to exercise publication admission with a small fixture.
+  const encode = auditCorpus.createAuditCorpus;
+  const encoder = vi.spyOn(auditCorpus, 'createAuditCorpus').mockImplementationOnce((...args) => ({
+    ...encode(...args),
+    content: '\n'.repeat(MAX_AUDIT_CORPUS_RECORDS + 1),
+  }));
+  try {
+    await expect(exportAuditCorpus({ cwd: repoDir, all: true, output })).rejects.toMatchObject({
+      code: 'AUDIT_CORPUS_INVALID',
+      details: { max_records: MAX_AUDIT_CORPUS_RECORDS },
+    });
+  } finally {
+    encoder.mockRestore();
+  }
+  await expect(readFile(output)).rejects.toMatchObject({ code: 'ENOENT' });
+  await runCli(repoDir, ['audit', 'corpus', '--session', id, '--output', output, '--json']);
+  expect(verifyAuditCorpus(await readFile(output, 'utf8'), sha256).session_count).toBe(1);
+});
 
 function makeLegacy(repoDir: string, sessionId: string, forward = false) {
   withStateDb(

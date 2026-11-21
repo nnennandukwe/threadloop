@@ -4,6 +4,7 @@ import { createAuditEvent, ZERO_AUDIT_HASH } from '../../src/domain/audit.js';
 import { canonicalJson } from '../../src/domain/canonical-json.js';
 import type { AuditEventType, StoredAuditEvent } from '../../src/domain/audit.js';
 import type { TaskStatus } from '../../src/domain/types.js';
+import { GATE_RECEIPT_RESULTS, type GateReceiptResult } from '../../src/domain/proof.js';
 import type { RunConfiguration } from '../../src/domain/run-configuration.js';
 import { createAuditCorpus, verifyAuditCorpus } from '../../src/domain/audit-corpus.js';
 
@@ -25,6 +26,14 @@ const descriptor: RunConfiguration = {
   proof_plan_sha256: '2'.repeat(64),
   runner_skill_sha256: '3'.repeat(64),
 };
+
+function transitionBinding(version: number) {
+  return { transition_id: `transition_${version}`, request_sha256: sha256(`request-${version}`) };
+}
+
+function receiptPayload(result: GateReceiptResult = 'passed', id = 'receipt_1') {
+  return { receipt_id: id, gate_id: 'check', receipt_sha256: sha256(id), head_sha: 'a'.repeat(40), result };
+}
 
 function appendEvent(
   events: StoredAuditEvent[],
@@ -147,6 +156,7 @@ it.each(['matched', 'mismatched', 'unbound'] as const)(
     ]) {
       const fromVersion = version++;
       append('transition_applied', {
+        ...transitionBinding(version),
         from_state: state,
         to_state: target,
         from_state_version: fromVersion,
@@ -157,8 +167,8 @@ it.each(['matched', 'mismatched', 'unbound'] as const)(
       });
       state = target;
       if (target === 'verifying') {
-        append('proof_receipt_recorded', { result: 'setup_failed', gate_id: 'check' });
-        append('proof_receipt_recorded', { result: 'failed', gate_id: 'check' });
+        append('proof_receipt_recorded', receiptPayload('setup_failed', `receipt_${version}_setup`));
+        append('proof_receipt_recorded', receiptPayload('failed', `receipt_${version}_gate`));
       }
     }
     const built = createAuditCorpus([{ session_id: 'outcome', events }], sha256);
@@ -190,6 +200,7 @@ function transitionHistory(states: readonly TaskStatus[], coverage: 'current' | 
     const payload =
       index > 0
         ? {
+            ...transitionBinding(stateVersion),
             from_state: states[index - 1],
             to_state: state,
             from_state_version: stateVersion - 1,
@@ -246,7 +257,13 @@ it.each([
 ] as const)('checks the observed state version of %s from an activation boundary', (type, state) => {
   for (const version of [7, 8, 9]) {
     const history = transitionHistory([state], 'activation');
-    appendEvent(history.events, history.session_id, type, version, {});
+    appendEvent(
+      history.events,
+      history.session_id,
+      type,
+      version,
+      type === 'proof_receipt_recorded' ? receiptPayload() : {},
+    );
     if (version === 8) {
       const corpus = createAuditCorpus([history], sha256);
       expect(verifyAuditCorpus(corpus.content, sha256).valid).toBe(true);
@@ -272,6 +289,7 @@ it('uses the prior version for a guard decision and advances on the applied tran
     appendEvent(history.events, history.session_id, type, version, payload);
   append('guard_decision', 0, { from_state: 'queued', target_state: 'framed', allowed: true });
   append('transition_applied', 1, {
+    ...transitionBinding(1),
     from_state: 'queued',
     to_state: 'framed',
     from_state_version: 0,
@@ -283,6 +301,94 @@ it('uses the prior version for a guard decision and advances on the applied tran
   expect(verifyAuditCorpus(corpus.content, sha256).manifest.sessions[0]?.outcome.state_version).toBe(1);
   append('guard_decision', 0, rejection);
   expect(() => createAuditCorpus([history], sha256)).toThrow(/state version 1/);
+});
+
+it.each([
+  { result: 'setup_failed' },
+  { ...receiptPayload(), receipt_id: '' },
+  { ...receiptPayload(), gate_id: null },
+  { ...receiptPayload(), receipt_sha256: 'short' },
+  { ...receiptPayload(), head_sha: 'abc123' },
+  { ...receiptPayload(), result: 'unknown' },
+])('rejects an incomplete or invalid local receipt before counting its result', (payload) => {
+  const history = transitionHistory(['verifying'], 'activation');
+  appendEvent(history.events, history.session_id, 'proof_receipt_recorded', 8, payload);
+  expect(() => createAuditCorpus([history], sha256)).toThrow(/receipt/);
+});
+
+it('accepts every native gate result and counts each observed outcome', () => {
+  const history = transitionHistory(['verifying'], 'activation');
+  for (const result of GATE_RECEIPT_RESULTS) {
+    appendEvent(
+      history.events,
+      history.session_id,
+      'proof_receipt_recorded',
+      8,
+      receiptPayload(result, `receipt_${result}`),
+    );
+  }
+  const { content } = createAuditCorpus([history], sha256);
+  expect(verifyAuditCorpus(content, sha256).manifest.sessions[0]?.outcome).toMatchObject({
+    setup_failed_count: 1,
+    gate_failures_by_id: { check: 6 },
+  });
+});
+
+it.each([
+  {},
+  { transition_id: 'transition_1' },
+  { request_sha256: 'a'.repeat(64) },
+  { transition_id: '  ', request_sha256: 'a'.repeat(64) },
+  { transition_id: 'transition_1', request_sha256: 'abc123' },
+])('requires a transition identity and full request digest', (binding) => {
+  const history = session();
+  appendEvent(history.events, history.session_id, 'transition_applied', 1, {
+    ...binding,
+    from_state: 'queued',
+    to_state: 'framed',
+    from_state_version: 0,
+    to_state_version: 1,
+  });
+  expect(() => createAuditCorpus([history], sha256)).toThrow(/transition/);
+});
+
+it('accepts plan binding only on framed to proof_ready, including when a blocked session resumes', () => {
+  const history = transitionHistory(['queued', 'framed', 'proof_ready', 'blocked'], 'current');
+  appendEvent(history.events, history.session_id, 'transition_applied', 4, {
+    ...transitionBinding(4),
+    from_state: 'blocked',
+    to_state: 'proof_ready',
+    from_state_version: 3,
+    to_state_version: 4,
+    proof_plan_sha256: descriptor.proof_plan_sha256,
+  });
+  expect(() => createAuditCorpus([history], sha256)).toThrow(/proof plan/);
+});
+
+it('rejects a repeated local receipt id before counting a gate twice', () => {
+  const history = transitionHistory(['verifying'], 'activation');
+  for (let index = 0; index < 2; index++)
+    appendEvent(history.events, history.session_id, 'proof_receipt_recorded', 8, receiptPayload('failed'));
+  expect(() => createAuditCorpus([history], sha256)).toThrow(/Duplicate local proof receipt/);
+});
+
+it('rejects a local receipt outside verifying', () => {
+  const history = session();
+  appendEvent(history.events, history.session_id, 'proof_receipt_recorded', 0, receiptPayload('failed'));
+  expect(() => createAuditCorpus([history], sha256)).toThrow(/local proof receipt/);
+});
+
+it('requires each applied transition to have its own id', () => {
+  const history = transitionHistory(['queued', 'framed'], 'legacy');
+  appendEvent(history.events, history.session_id, 'transition_applied', 2, {
+    ...transitionBinding(2),
+    transition_id: transitionBinding(1).transition_id,
+    from_state: 'framed',
+    to_state: 'proof_ready',
+    from_state_version: 1,
+    to_state_version: 2,
+  });
+  expect(() => createAuditCorpus([history], sha256)).toThrow(/Duplicate audit transition/);
 });
 
 it('verifies a forward activation only up to the largest safe integer state version', () => {
@@ -308,4 +414,11 @@ it('verifies a forward activation only up to the largest safe integer state vers
   expect(verifyAuditCorpus(safe, sha256, sha256(safe)).valid).toBe(true);
   const unsafe = atVersion(Number.MAX_SAFE_INTEGER + 1);
   expect(() => verifyAuditCorpus(unsafe, sha256, sha256(unsafe))).toThrow(/invalid JSON, fields/);
+});
+
+it('bounds manifest membership by the number of retained event records before inspecting entries', () => {
+  const { content, manifest } = createAuditCorpus([session()], sha256);
+  const rows = content.trimEnd().split('\n');
+  rows[0] = canonicalJson({ ...manifest, sessions: Array.from({ length: rows.length }, () => null) });
+  expect(() => verifyAuditCorpus(rows.join('\n') + '\n', sha256)).toThrow(/more sessions than/);
 });
