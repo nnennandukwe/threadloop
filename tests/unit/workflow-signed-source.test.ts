@@ -40,7 +40,7 @@ it('retains the exact signed package bytes and takes the prepared ID from its ar
 
 const fixtureTime = '2026-07-23T17:59:00.000Z';
 
-async function governedGenesis(plan = proofPlan()) {
+async function governedGenesis(plan = proofPlan(), evidenceTtlMs = 900000) {
   const root = await makeTempDir();
   const subject = await makeCommittedRepo();
   await writeFile(
@@ -52,7 +52,7 @@ async function governedGenesis(plan = proofPlan()) {
     JSON.stringify({
       schema_version: 'threadloop.workflow-sources/1',
       host_producers: [],
-      github: { base_ref: 'main', human_node_id: 'user-1', preparation_ttl_ms: 300000, evidence_ttl_ms: 900000 },
+      github: { base_ref: 'main', human_node_id: 'user-1', preparation_ttl_ms: 300000, evidence_ttl_ms: evidenceTtlMs },
     }),
   );
   await writeFile(
@@ -117,6 +117,30 @@ function rawPackage(value: unknown) {
   const bytes = Buffer.from(JSON.stringify(value));
   return { bytes, sha256: sha256(bytes) };
 }
+
+it('rechecks the evidence deadline at its signed measurement time', async () => {
+  const lifetime = Date.parse('9999-12-31T23:59:59.999Z') - Date.parse(fixtureTime);
+  const genesis = await governedGenesis(proofPlan(), lifetime);
+  const prepared = preparation(genesis, { kind: 'signed-gate', gate_id: 'check' });
+  const plan = genesis.proof_plan!;
+  const artifact = boundGateArtifact(
+    {
+      sessionId: genesis.run_id,
+      planSha256: plan.sha256,
+      head: genesis.baseline.revision,
+      gate: plan.plan.gates[0]!,
+    },
+    { receipt_id: preparedId },
+  );
+  await expect(
+    verifyWorkflowSignedSource(
+      rawPackage(signedGatePackage(artifact)),
+      genesis,
+      prepared,
+      verifiedSigner('gate', artifact),
+    ),
+  ).rejects.toMatchObject({ code: 'SIGNED_RECEIPT_INVALID', details: { reason: 'invalid_workflow_deadline' } });
+});
 
 it('authenticates the configured gate, preserves its producer version and maps only the signed result', async () => {
   const genesis = await governedGenesis();

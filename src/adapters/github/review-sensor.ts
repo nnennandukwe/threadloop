@@ -39,7 +39,7 @@ function reviewsQuery(field: ReviewConnection) {
         ${field}(first: 100, after: $cursor${writers}) {
           nodes {
             id
-            author { id login __typename }
+            author { login __typename ... on Node { id } }
             state
             commit { oid }
             submittedAt

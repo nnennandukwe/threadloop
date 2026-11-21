@@ -15,7 +15,14 @@ function gitRead(root: string, args: string[]) {
       timeout: 5000,
       maxBuffer: 65_536,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { PATH: process.env.PATH, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
+      env: {
+        PATH: process.env.PATH,
+        GIT_CONFIG_NOSYSTEM: '1',
+        GIT_CONFIG_GLOBAL: '/dev/null',
+        GIT_GRAFT_FILE: '/dev/null',
+        GIT_NO_LAZY_FETCH: '1',
+        GIT_ALLOW_PROTOCOL: '',
+      },
     },
   ).trim();
 }

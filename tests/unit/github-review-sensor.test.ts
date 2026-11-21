@@ -31,6 +31,8 @@ describe('GitHub review sensor adapter', () => {
       calls.push(request);
       const cursor = request.variables.cursor;
       if (request.query.includes('ReviewSnapshotReviews')) {
+        // Review.author is an Actor. Its immutable ID is a field of Node.
+        expect(request.query).toMatch(/\.\.\. on Node\s*\{\s*id\s*\}/);
         return Promise.resolve(
           response({
             data: {

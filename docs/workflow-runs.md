@@ -7,9 +7,9 @@ commands continue to use the fixed PR lifecycle.
 ## Start a run
 
 Run the commands from an initialized **control repository**. Keep the **subject**, the Git checkout whose changes
-ThreadLoop observes, in a separate directory. Start with a clean, named subject branch. The physical observer supports
-up to 64 descendants, eight directory levels and 8 KiB per file. It includes ignored files. The subject's root, branch,
-revision and physical contents determine whether a previous decision is still current.
+ThreadLoop observes, in a separate directory. Start with a clean, named subject branch that has an initial commit. The
+physical observer supports up to 64 descendants, eight directory levels and 8 KiB per file. It includes ignored files.
+The subject's root, branch, revision and physical contents determine whether a previous decision is still current.
 
 Create a workflow setup JSON file. The setup and any referenced source files are adopted at creation. Relative paths in
 the setup resolve from its directory. This example uses a local graph with a guard-free first transition.
@@ -32,8 +32,8 @@ the setup resolve from its directory. This example uses a local graph with a gua
 }
 ```
 
-Save the example profile as `quote.yaml` and the setup as `setup.json`. The first command requires an explicit run ID. A
-profile edit takes effect when you create another run. [Shipping quote profile](../tests/fixtures/workflow/quote.yaml)
+Save the example profile as `quote.yaml` and the setup as `setup.json`. Choose a run ID when you call `workflow create`.
+A profile edit takes effect when you create another run. [Shipping quote profile](../tests/fixtures/workflow/quote.yaml)
 
 ```sh
 threadloop init
@@ -48,13 +48,18 @@ decision with the same key returns the committed response. A new decision needs 
 state changes, collect a fresh decision. `inspect` can read the verified graph and run history while the subject is
 offline. `decide` reports blocked, waiting and human handoff outcomes in ordinary successful JSON responses.
 
+ThreadLoop reads up to 1 MiB per profile, setup, proof plan or source configuration, 4 MiB per decision and 32 KiB per
+instruction. Each signed receipt package can use up to 10 MiB. Keep the original package bytes for an exact retry.
+
 ## Enroll governed PR evidence
 
 Use a run ID beginning with `session_wf_` and set the repository ID to its canonical GitHub HTTPS origin. In the setup,
 name the v4 proof-plan file, its local and independent gate IDs, the matching proof-binding transition and the paths the
 plan allows engineering work to change. The plan enrolls both immutable GitHub Actions signer policies. Set
-`trusted_sources` to the path of the source configuration. For example, replace the human node ID in this configuration
-with the enrolled reviewer's GitHub User ID.
+`ci.certificate_identity` to the gate caller on the subject branch. For a run that accepts stop or recovery
+instructions, pin `review.certificate_identity` to the review caller on the enrolled base branch. Changing either signer
+requires a new run. Set `trusted_sources` to the path of the source configuration. For example, replace the human node
+ID in this configuration with the enrolled reviewer's GitHub User ID.
 
 ```json
 {
@@ -69,9 +74,10 @@ with the enrolled reviewer's GitHub User ID.
 }
 ```
 
-At the current version, prepare an observation before running its sensor. The first review preparation binds the product
-PR. The response's `sensor_inputs` contains the exact run, target, plan digest and prepared receipt ID to pass to the
-enrolled caller. Pin the caller to a reviewed ThreadLoop revision that supports prepared observations.
+The two lifetimes are positive whole milliseconds. Each deadline must fit a four-digit UTC year. Prepare an observation
+before running its sensor. The first review preparation binds the product PR. The response's `sensor_inputs` contains
+the exact run, target, plan digest and prepared receipt ID to pass to the enrolled caller. Pin the caller to a reviewed
+ThreadLoop revision that supports prepared observations.
 [Reusable caller template](../examples/threadloop-caller-workflow.yml)
 
 ```sh
@@ -118,6 +124,9 @@ enrolled human reviews the commit. Make its Git objects available in the subject
 branch checked out. Collect the prepared review with the enrolled caller from the base branch and import its package as
 `signed-instruction`. Ask for a fresh decision and apply the selected suspension edge.
 
+Keep the companion branch close to the authenticated base. ThreadLoop reads up to 70 Git objects, 128 KiB per object and
+2 MiB in total to verify the commit, ancestry, trees and instruction bytes.
+
 A `request_stop` instruction carries only its purpose and reason. A `recover_run` instruction names its purpose, the
 graph's return transition and a reason. Recovery requires a fresh preparation and approval for the exact suspended
 version and recorded prior state.
@@ -127,3 +136,9 @@ version and recorded prior state.
 `threadloop protocol --contract 5 --json` advertises `workflowRun: 1`, the `workflow_runs_v1` capability and each
 workflow command. Check the capabilities your client needs. `threadloop protocol --json` and explicit `--contract 4`
 return the v4 view consumed by the session runner. Reads and decisions never dispatch an executor.
+
+The packaged CLI at `fbfdf8a04755fab3e361f8365ce10a665dfd2b86` passed the create, decide, apply and reopen smoke check.
+The previous CLI at `0694d0c50143aa4dd2799586456aa5a18008514f` returned identical v4 text and JSON on Node 22.23.2,
+24.20.0 and 26.8.2. Both versions read the same legacy audit exports. An older session writer could commit a transition
+while the graph-bound run retained its original state.
+[Compatibility checks](plans/issue-170-durable-workflow-runs.md#verification-at-the-implementation-checkpoint)

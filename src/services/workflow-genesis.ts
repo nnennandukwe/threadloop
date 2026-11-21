@@ -9,7 +9,7 @@ import { canonicalJson, isPlainObject } from '../domain/canonical-json.js';
 import { parseGaapJson } from '../domain/gaap-json.js';
 import { gaapObjectDigest } from '../domain/gaap-content.js';
 import { bindStoredProofPlan, canonicalizeProofPlan, hasReviewTrustPolicy } from '../domain/proof.js';
-import { positiveInteger, canonicalTimestamp } from '../domain/validation.js';
+import { positiveInteger, canonicalTimestamp, workflowDeadline } from '../domain/validation.js';
 import { workflowDigest } from '../domain/workflow-selection-types.js';
 import { createInvalidArgumentError, ThreadloopError } from '../contracts/errors.js';
 import type { Policy, WorkflowGenesis, WorkflowSetup, WorkflowSources } from '../domain/workflow-run.js';
@@ -148,9 +148,12 @@ function derivePolicy(g: Pick<WorkflowGenesis, 'setup' | 'proof_plan' | 'sources
   return { source_policies: sourcePolicies, policy: { id: policyId, digest: workflowDigest(rules), rules } };
 }
 
-function validateRunId(run: string, github: boolean) {
+export function validateWorkflowRunId(run: string, github = false) {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/.test(run))
-    fail('Use a run ID of 1–160 letters, digits, dots, underscores or hyphens, starting with a letter or digit.');
+    throw createInvalidArgumentError(
+      'Use a run ID of 1 to 160 letters, digits, dots, underscores or hyphens, starting with a letter or digit.',
+      { reason: 'invalid_workflow_run_id' },
+    );
   if (github && (!/^session_wf_[A-Za-z0-9_-]+$/.test(run) || run.length > 160))
     fail('Sensor-enabled runs require a session_wf_ ID of at most 160 characters.');
 }
@@ -158,7 +161,7 @@ function assertGenesis(g: WorkflowGenesis) {
   if (workflowDigest(g.setup) !== g.setup_sha256) fail('The retained workflow setup digest differs from its bytes.');
   parseWorkflowSetup(g.setup, g.run_id);
   if (g.sources !== null) sourceSchema.parse(g.sources);
-  validateRunId(g.run_id, Boolean(g.sources?.github));
+  validateWorkflowRunId(g.run_id, Boolean(g.sources?.github));
   if (
     !canonicalTimestamp.safeParse(g.created_at).success ||
     !path.isAbsolute(g.subject_root) ||
@@ -174,6 +177,18 @@ function assertGenesis(g: WorkflowGenesis) {
     sha256(g.graph_json) !== g.compiled.graph_digest
   )
     fail('The workflow genesis fields disagree with their retained binding.');
+  const github = g.sources?.github;
+  if (github) {
+    for (const field of ['preparation_ttl_ms', 'evidence_ttl_ms'] as const) {
+      if (!workflowDeadline(g.created_at, github[field])) {
+        throw createInvalidArgumentError(`The configured ${field} exceeds the Workflow Run timestamp range.`, {
+          reason: 'invalid_workflow_deadline',
+          field,
+          hint: 'Shorten the configured lifetime so its deadline falls in year 9999 or earlier, then retry create.',
+        });
+      }
+    }
+  }
   if (g.proof_plan) {
     const bound = bindStoredProofPlan(g.proof_plan, sha256);
     if (
@@ -280,7 +295,7 @@ export function prepareWorkflowGenesis(
   if (inside(subjectRoot, control) || inside(control, subjectRoot))
     fail('The control and subject repositories must occupy separate directories.');
   const sources = setup.trusted_sources ? sourceSchema.parse(readJson(resolveInput(setup.trusted_sources))) : null;
-  validateRunId(run, Boolean(sources?.github));
+  validateWorkflowRunId(run, Boolean(sources?.github));
   const plan = setup.proof_plan
     ? canonicalizeProofPlan(readJson(resolveInput(setup.proof_plan)), sha256, {
         requireReviewPolicy: Boolean(sources?.github),

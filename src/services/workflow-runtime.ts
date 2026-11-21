@@ -17,7 +17,7 @@ import type {
 } from '../domain/workflow-run.js';
 import { assertInitializedReadOnly, resolveRepositoryRoot } from './preconditions.js';
 import { applyWorkflow, decideWorkflow, observeWorkflow } from './workflow-evaluation.js';
-import { prepareWorkflowGenesis } from './workflow-genesis.js';
+import { prepareWorkflowGenesis, validateWorkflowRunId } from './workflow-genesis.js';
 import { prepareSensorObservation, readWorkflowInstruction } from './workflow-preparation.js';
 import { projectWorkflowSignedSource, readSignedSource, verifyWorkflowSignedSource } from './workflow-signed-source.js';
 import { projectWorkflowHostSource } from './workflow-host-source.js';
@@ -32,11 +32,7 @@ export interface WorkflowPrepareOptions {
 }
 
 async function storeFor(cwd: string, run: string) {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/.test(run))
-    throw new ThreadloopError(
-      'INVALID_ARGUMENT',
-      'Use a run ID of 1–160 letters, digits, dots, underscores or hyphens, starting with a letter or digit.',
-    );
+  validateWorkflowRunId(run);
   const root = await resolveRepositoryRoot(cwd);
   await assertInitializedReadOnly(root);
   return { root, store: createWorkflowStore(root) };

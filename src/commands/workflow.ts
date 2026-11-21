@@ -38,14 +38,14 @@ export async function workflowDecideCommand(context: CommandContext, run: string
   const lines: string[] = [choice.outcome];
   switch (choice.outcome) {
     case 'transition_available':
-      lines.push(choice.transition_id + ' → ' + choice.target_state);
+      lines.push(choice.transition_id + ' -> ' + choice.target_state);
       break;
     case 'engineering_action_required':
     case 'human_action_required':
       lines.push(choice.action_request.request.action_id + ' (' + choice.action_request.request.capability + ')');
       break;
     case 'blocked':
-      lines.push(...choice.reasons.map((reason) => reason.code + ' — ' + reason.message + ' ' + reason.recovery));
+      lines.push(...choice.reasons.map((reason) => reason.code + ' - ' + reason.message + ' ' + reason.recovery));
       break;
     case 'waiting':
       lines.push(choice.attempt_id);

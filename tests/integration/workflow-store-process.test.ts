@@ -1,12 +1,15 @@
 import { execFile } from 'node:child_process';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { parseWorkflowProfile } from 'threadloop-contracts/workflow';
+import { stringify } from 'yaml';
+import { createWorkflowStore } from '../../src/adapters/fs/workflow-store.js';
 import { afterEach, beforeAll, expect, it } from 'vitest';
 import { withReadSnapshot } from '../../src/adapters/fs/sqlite-store.js';
-import type { AdmissionReply, ApplyReply, Preparation, RunView } from '../../src/domain/workflow-run.js';
-import { parseJson, resolveTestCliBundle, runCli, runCliError } from '../helpers/cli.js';
+import type { AdmissionReply, ApplyReply, DecisionReply, Preparation, RunView } from '../../src/domain/workflow-run.js';
+import { parseJson, resolveTestCliBundle, runCli, runCliError, runCliFailure } from '../helpers/cli.js';
 import { cleanupTemporaryState, git } from '../helpers/session.js';
 import { governedProfile, governedWorkflowFixture } from '../helpers/workflow-run.js';
 
@@ -142,6 +145,11 @@ it('serializes independent creates and competing applies against the same versio
   expect(parseJson<{ error: { code: string } }>((loser?.reason as { stderr: string }).stderr).error.code).toBe(
     'STATE_VERSION_CONFLICT',
   );
+  const loserKey = results[0]!.status === 'rejected' ? 'one' : 'two';
+  const staleArgs = apply(loserKey).slice(0, -1);
+  const stale = await runCliError(control, [...staleArgs, '--json']);
+  expect(stale.error.details.hint).toMatch(/inspect the run/i);
+  expect((await runCliFailure(control, staleArgs)).stderr).toContain('Hint: ' + String(stale.error.details.hint));
   const winner = results[0]!.status === 'fulfilled' ? 0 : 1;
   expect(results[winner]).toEqual({
     status: 'fulfilled',
@@ -172,5 +180,73 @@ it('recovers a single admission after process loss and refuses a decision from i
     code: 'STATE_VERSION_CONFLICT',
     details: { reason: 'stale_evidence_revision' },
   });
+  expect(eventCount(control)).toBe(2);
+});
+
+it.each([1, 2])('reopens a counted application with an entry limit of %i', async (limit) => {
+  const control = await initialized();
+  const parsed = parseWorkflowProfile(await readFile(governedProfile, 'utf8'));
+  if (!parsed.ok) throw new Error('The governed fixture must compile');
+  const profile = parsed.value;
+  const entries = ['frame', 'bind_plan'];
+  profile.budgets = [...(profile.budgets ?? []), { id: 'start_entries', limit, transition_refs: entries }];
+  profile.guards.push({
+    id: 'start_available',
+    capability: 'budget_available',
+    parameters: { budget: 'start_entries' },
+    required_actions: [],
+  });
+  for (const edge of profile.transitions.filter((edge) => entries.includes(edge.id)))
+    edge.guard_refs.push('start_available');
+  await writeFile(path.join(control, 'budget.yaml'), stringify(profile));
+  await runCli(control, ['workflow', 'create', run, '--profile', 'budget.yaml', '--setup', 'setup.json', '--json']);
+  const count = () =>
+    createWorkflowStore(control)
+      .read(run)
+      .history.budget_counts.find((budget) => budget.budget_id === 'start_entries')?.used;
+  expect(await runCommand<RunView>(control, inspect)).toMatchObject({ state: 'queued', state_version: 0 });
+  expect(count()).toBe(0);
+  const decide = ['workflow', 'decide', run, '--json'];
+  const decision = await runCli(control, decide);
+  expect(parseJson<{ data: DecisionReply }>(decision.stdout).data.controller_decision.decision).toMatchObject({
+    outcome: 'transition_available',
+    transition_id: 'frame',
+  });
+  await writeFile(path.join(control, 'decision.json'), decision.stdout);
+  const apply = ['workflow', 'apply', run, '--decision', 'decision.json', '--idempotency-key', 'frame', '--json'];
+  const first = await runCommand<ApplyReply>(control, apply);
+  expect(first).toMatchObject({ from: 'queued', to: 'framed', state_version: 1 });
+  expect(count()).toBe(1);
+  expect(await runCommand<ApplyReply>(control, apply)).toEqual(first);
+  expect(count()).toBe(1);
+  expect(await runCommand<RunView>(control, inspect)).toMatchObject({
+    state: 'framed',
+    state_version: 1,
+    history_digest: first.event_digest,
+  });
+  const nextResponse = await runCli(control, decide);
+  const next = parseJson<{ data: DecisionReply }>(nextResponse.stdout).data;
+  if (limit === 2) {
+    expect(next.controller_decision.decision).toMatchObject({
+      outcome: 'transition_available',
+      transition_id: 'bind_plan',
+    });
+  } else {
+    expect(next.controller_decision.decision).toMatchObject({ outcome: 'blocked' });
+    await writeFile(path.join(control, 'blocked.json'), nextResponse.stdout);
+    const refusal = await runCliError(control, [
+      'workflow',
+      'apply',
+      run,
+      '--decision',
+      'blocked.json',
+      '--idempotency-key',
+      'exhausted',
+      '--json',
+    ]);
+    expect(refusal.error.code).toBe('TRANSITION_GUARD_FAILED');
+    expect(await runCommand<RunView>(control, inspect)).toMatchObject({ state: 'framed', state_version: 1 });
+    expect(count()).toBe(1);
+  }
   expect(eventCount(control)).toBe(2);
 });

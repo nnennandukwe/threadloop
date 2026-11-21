@@ -82,7 +82,7 @@ export function observeGaapWorkspace(workspace: string) {
   }
   collect(root, '', 0);
   const git = (...args: string[]) =>
-    execFileSync('git', ['-c', 'core.fsmonitor=false', '-C', root, ...args], {
+    execFileSync('git', ['--no-replace-objects', '-c', 'core.fsmonitor=false', '-C', root, ...args], {
       encoding: 'utf8',
       maxBuffer: MAX_GIT_OUTPUT_BYTES,
       timeout: 5000,
@@ -91,14 +91,22 @@ export function observeGaapWorkspace(workspace: string) {
         GIT_CONFIG_NOSYSTEM: '1',
         GIT_CONFIG_GLOBAL: '/dev/null',
         GIT_OPTIONAL_LOCKS: '0',
+        GIT_NO_LAZY_FETCH: '1',
+        GIT_ALLOW_PROTOCOL: '',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
   // A nested directory mustn't borrow a parent repository's revision.
   if (realpathSync(git('rev-parse', '--show-toplevel')) !== root)
     throw new GaapEvidenceError('snapshot.repository', 'The subject must be the Git repository root.');
-  const revision = git('rev-parse', '--verify', 'HEAD');
-  if (!/^[a-f0-9]{40,64}$/.test(revision))
+  let revision: string;
+  try {
+    revision = git('rev-parse', '--verify', '--quiet', 'HEAD^{commit}');
+  } catch (cause) {
+    if (!(cause instanceof Error && 'status' in cause && cause.status === 1)) throw cause;
+    throw new GaapEvidenceError('snapshot.revision', 'Create an initial commit on the subject branch and retry.');
+  }
+  if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(revision))
     throw new GaapEvidenceError('snapshot.revision', 'The subject requires an existing Git commit.');
   // Read committed objects directly. `git status` can invoke repository-configured clean filters or fsmonitor.
   const inventory = (...args: string[]): string[] | undefined => {
@@ -122,7 +130,7 @@ export function observeGaapWorkspace(workspace: string) {
       throw error;
     }
   };
-  const tracked = inventory('ls-tree', '-rz', '--full-tree', 'HEAD');
+  const tracked = inventory('ls-tree', '-rz', '--full-tree', revision);
   const index = tracked?.length === files.size ? inventory('ls-files', '--stage', '-z') : undefined;
   const staged = new Set(
     (index ?? []).map((entry) => entry.replace(/^([0-7]{6}) ([a-f0-9]{40,64}) 0\t/, '$1 blob $2\t')),

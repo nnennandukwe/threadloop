@@ -189,7 +189,7 @@ export function projectAdmission(
       'TRANSITION_GUARD_FAILED',
       'Workflow evidence is older than or conflicts with an accepted measurement.',
       {
-        details: { reason: 'stale_measurement', recovery: 'Prepare and collect a newer trusted observation.' },
+        details: { reason: 'stale_measurement', hint: 'Prepare and collect a newer trusted observation.' },
       },
     );
   }

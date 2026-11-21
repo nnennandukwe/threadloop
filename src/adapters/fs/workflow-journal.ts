@@ -75,7 +75,7 @@ export function equal(a: unknown, b: unknown) {
 }
 export function conflict(message: string): never {
   throw new ThreadloopError('IDEMPOTENCY_CONFLICT', message, {
-    details: { reason: 'identity_reused', recovery: 'Retry the original request or choose a new identity.' },
+    details: { reason: 'identity_reused', hint: 'Retry the original request or choose a new identity.' },
   });
 }
 export function expectVersion(actual: number, expected: number) {
@@ -83,7 +83,7 @@ export function expectVersion(actual: number, expected: number) {
     throw new ThreadloopError('STATE_VERSION_CONFLICT', 'The Workflow Run version changed.', {
       details: {
         reason: 'stale_version',
-        recovery: 'Inspect the run, decide again, and retry with its current version.',
+        hint: 'Inspect the run, decide again, and retry with its current version.',
       },
     });
 }

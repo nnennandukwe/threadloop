@@ -1,7 +1,10 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+import { ThreadloopError } from '../../src/contracts/errors.js';
+import { captureError } from '../fixtures/receipts.js';
+import type { WorkflowSources } from '../../src/domain/workflow-run.js';
 import { workflowDigest } from '../../src/domain/workflow-selection-types.js';
 import { prepareWorkflowGenesis, validateWorkflowGenesis } from '../../src/services/workflow-genesis.js';
 import { cleanupTemporaryState, makeCommittedRepo, makeTempDir, proofPlan } from '../helpers/session.js';
@@ -125,4 +128,27 @@ describe('workflow genesis', () => {
       );
     }
   });
+
+  it.each(['preparation_ttl_ms', 'evidence_ttl_ms'] as const)(
+    'rejects %s when the deadline exceeds the controller timestamp range',
+    async (field) => {
+      const { control } = await governedWorkflowFixture();
+      const filename = path.join(control, 'sources.json');
+      const sources = JSON.parse(await readFile(filename, 'utf8')) as WorkflowSources;
+      if (!sources.github) throw new Error('The fixture requires registered GitHub sensors.');
+      const maxLifetime = Date.parse('9999-12-31T23:59:59.999Z') - Date.parse(now);
+      const prepare = () => prepareWorkflowGenesis(control, 'session_wf_lifetime', governedProfile, 'setup.json');
+      for (const lifetime of [Number.MAX_SAFE_INTEGER, maxLifetime + 1]) {
+        sources.github[field] = lifetime;
+        await writeFile(filename, JSON.stringify(sources));
+        expect(captureError(ThreadloopError, () => prepare().build(now))).toMatchObject({
+          code: 'INVALID_ARGUMENT',
+          details: { reason: 'invalid_workflow_deadline', field },
+        });
+      }
+      sources.github[field] = maxLifetime;
+      await writeFile(filename, JSON.stringify(sources));
+      expect(prepare().build(now).sources?.github?.[field]).toBe(maxLifetime);
+    },
+  );
 });

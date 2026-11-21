@@ -460,7 +460,7 @@ their actual names in the final proof record.
 ```bash
 npm ci
 npm test -- tests/integration/workflow-runtime.test.ts
-npm test -- tests/integration/workflow-interruption.test.ts
+npm test -- tests/integration/workflow-store-process.test.ts
 npm test -- tests/unit/protocol-contract.test.ts tests/integration/runner-replay.test.ts
 npm run test:controller
 npm run check
@@ -535,3 +535,20 @@ independent checkout and a test signer. Live recovery requires an actual approva
 [Review statement fields](https://github.com/nnennandukwe/threadloop/blob/8014d80acc8b6209560f2d6df5c9cf450544c4f2/src/domain/review.ts#L65)
 ·
 [Frozen input and trust contract](https://github.com/nnennandukwe/threadloop-contracts/blob/v0.1.0/docs/contracts/controller-v0.1/README.md#explicit-input-and-trust-boundary)
+
+## Verification at the implementation checkpoint
+
+The canonical plan was committed at `64d55ebb6c4de96ab5f2604c33eaa012294a663a` before production changes. At
+`fbfdf8a04755fab3e361f8365ce10a665dfd2b86`, the native check passed all 876 tests in 68 files, built the CLI and passed
+the package-install smoke test. The generated controller suite passed its 65 cases. The dependency audit found zero
+vulnerabilities.
+
+An independent comparison used the actual CLI from the preceding merge, `0694d0c50143aa4dd2799586456aa5a18008514f`.
+Across 65 CLI invocations, 25 checks compared protocol v4, ordinary session reads, audit records and exports. Database
+and WAL bytes stayed identical across reads. After the older CLI committed a legacy transition, an independent SQLite
+connection and the new CLI both read the original Workflow Run unchanged.
+
+The public GitHub endpoint rejected the original review query because `PullRequestReview.author` has type `Actor`. The
+shared sensor must request the ID through the `Node` interface. A read-only check of both collection modes returned the
+merged head of PR #174 and zero human approvals. This check didn't produce a signed receipt. Tests for signed admission,
+withdrawal and explicit recovery use fixture signers. Issue #172 owns the signed live proof.

@@ -108,6 +108,14 @@ export const commitSha = rule(
   'must be a full lowercase Git commit SHA',
 );
 
+/** Controller deadlines use the four-digit UTC year required by the frozen timestamp schema. */
+export function workflowDeadline(start: string, lifetimeMs: number): string | null {
+  if (!Number.isSafeInteger(lifetimeMs) || lifetimeMs <= 0) return null;
+  const expiry = new Date(Date.parse(start) + lifetimeMs);
+  const year = expiry.getUTCFullYear();
+  return year >= 0 && year <= 9999 ? expiry.toISOString() : null;
+}
+
 /** The exact form `Date#toISOString` produces, which is what ThreadLoop's own sensors record. */
 export const canonicalTimestamp = rule(
   text(64),

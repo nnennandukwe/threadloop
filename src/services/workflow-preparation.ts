@@ -1,3 +1,4 @@
+import { workflowDeadline } from '../domain/validation.js';
 import { z } from 'zod';
 import { readGaapFile } from '../adapters/fs/gaap-files.js';
 import { StateCorruptedError, ThreadloopError } from '../contracts/errors.js';
@@ -131,7 +132,19 @@ function buildPreparation(
     state_version: view.state_version,
     subject,
   };
-  const deadline = new Date(Date.parse(now) + github.preparation_ttl_ms).toISOString();
+  const deadline = workflowDeadline(now, github.preparation_ttl_ms);
+  if (!deadline) {
+    throw new ThreadloopError(
+      'TRANSITION_GUARD_FAILED',
+      'The preparation deadline exceeds the Workflow Run timestamp range.',
+      {
+        details: {
+          reason: 'invalid_workflow_deadline',
+          hint: 'Use a new run with a shorter preparation lifetime.',
+        },
+      },
+    );
+  }
   const validUntil = observationDeadline && observationDeadline < deadline ? observationDeadline : deadline;
   if (validUntil <= now) refuse('stale_observation', 'The current observation has expired.');
   const common = {

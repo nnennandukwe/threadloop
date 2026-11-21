@@ -10,7 +10,7 @@ import {
 } from '../domain/attestation.js';
 import { canonicalJson } from '../domain/canonical-json.js';
 import { hasReviewTrustPolicy } from '../domain/proof.js';
-import { escapeRegExp } from '../domain/validation.js';
+import { escapeRegExp, workflowDeadline } from '../domain/validation.js';
 import { parseGaapJson } from '../domain/gaap-json.js';
 import {
   hasBlockingReview,
@@ -312,9 +312,16 @@ export function projectWorkflowSignedSource(
       };
     }
   }
-  const deadline = Date.parse(measuredAt) + github.evidence_ttl_ms;
-  if (!Number.isFinite(new Date(deadline).getTime()))
-    reject('The signed evidence expiry falls outside the supported date range.');
+  const deadline = workflowDeadline(measuredAt, github.evidence_ttl_ms);
+  if (!deadline) {
+    throw new ThreadloopError(
+      'SIGNED_RECEIPT_INVALID',
+      'The signed evidence deadline exceeds the Workflow Run timestamp range.',
+      {
+        details: { reason: 'invalid_workflow_deadline', hint: 'Use a new run with a shorter evidence lifetime.' },
+      },
+    );
+  }
   return {
     binding: prepared.binding,
     branch: prepared.branch,
@@ -322,7 +329,7 @@ export function projectWorkflowSignedSource(
     evidence_policy: prepared.evidence_policy,
     stream,
     measured_at: measuredAt,
-    valid_until: new Date(deadline).toISOString(),
+    valid_until: deadline,
     applicable_version: applicableVersion,
     authorized_edge: authorizedEdge,
     payloads,
