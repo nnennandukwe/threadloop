@@ -3,10 +3,19 @@ import { commandPath, createThreadloopProgram } from '../../src/cli-program.js';
 import { buildProtocolContract, collectLeafCommands } from '../../src/contracts/protocol.js';
 
 describe('protocol contract', () => {
-  it('covers every leaf CLI command and reflects json support from the command tree', () => {
+  it('advertises graph runs only in the negotiated protocol', () => {
+    const program = createThreadloopProgram();
+    const current = buildProtocolContract(program, 5);
+    expect(current.contractVersions).toMatchObject({ protocol: 5, workflowRun: 1 });
+    expect(current.capabilities).toContain('workflow_runs_v1');
+    expect(current.commands['workflow create']).toContain('--profile <yaml>');
+    expect(buildProtocolContract(program, 4).commands).not.toHaveProperty('workflow create');
+  });
+
+  it('keeps the installed v4 command set and reflects its JSON support', () => {
     const program = createThreadloopProgram();
     const contract = buildProtocolContract(program);
-    const leafCommands = collectLeafCommands(program);
+    const leafCommands = collectLeafCommands(program).filter((cmd) => !commandPath(cmd).startsWith('workflow '));
 
     expect(Object.keys(contract.commands)).toEqual(leafCommands.map((command) => commandPath(command)));
     expect(contract.contractVersions).toEqual({

@@ -38,6 +38,16 @@ export const SIGNED_RECEIPT_MEDIA_TYPE_V2 = 'application/vnd.threadloop.signed-r
 export const IN_TOTO_STATEMENT_TYPE = 'https://in-toto.io/Statement/v1';
 export const IN_TOTO_PAYLOAD_TYPE = 'application/vnd.in-toto+json';
 
+export function isPreparedReceiptId(id: string) {
+  return /^wfr_[0-9a-f]{32}$/.test(id);
+}
+
+export function assertPreparedSigningId(receiptId: string, capturedId: string, error: FieldErrorFactory) {
+  if (receiptId.startsWith('wfr_') && (!isPreparedReceiptId(receiptId) || capturedId !== receiptId)) {
+    throw error('package.artifact.receipt_id', 'does not match the trusted prepared receipt ID');
+  }
+}
+
 type SignedReceiptSchemaVersion = 1 | 2;
 
 /**
@@ -266,6 +276,7 @@ export function authorizeGateReportForSigning(
   },
 ): SignedGateReceiptArtifact {
   const report = parseFields(signedGateReceiptArtifactSchema, value, 'package.artifact', attestationError);
+  assertPreparedSigningId(context.receiptId, report.receipt_id, attestationError);
   for (const [field, actual, wanted] of [
     ['package.artifact.session_id', report.session_id, context.sessionId],
     ['package.artifact.plan_sha256', report.plan_sha256, context.planSha256],

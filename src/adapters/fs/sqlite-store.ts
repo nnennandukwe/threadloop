@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import type { SQLInputValue } from 'node:sqlite';
 import { stateDataSchema, threadloopConfigSchema } from '../../schemas/state.js';
 import { sha256 } from '../crypto/sha256.js';
@@ -359,7 +360,7 @@ type TransitionGuardEvaluator = (
 ) => TransitionGuardDecision;
 
 type WriterRevision = { schemaVersion: number; dataVersion: number };
-type WriterConnection = { db: DatabaseSync; validated?: WriterRevision };
+type WriterConnection = { db: DatabaseSync; fileIdentity: string; validated?: WriterRevision };
 const connections = new Map<string, WriterConnection>();
 
 export function createId(prefix: string) {
@@ -1476,28 +1477,61 @@ function openReadOnlyStateDatabase(file: string) {
   try {
     return new DatabaseSync(file, { readOnly: true });
   } catch (cause) {
-    // SQLite CANTOPEN also covers existing files. Preserve its error unless the path is missing.
-    if (cause instanceof Error && 'errcode' in cause && cause.errcode === 14) {
-      try {
-        statSync(file);
-      } catch (error) {
-        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
-          throw new StateDatabaseMissingError(cause.message, { cause });
-        }
+    throw classifyStateOpenError(file, cause);
+  }
+}
+
+function classifyStateOpenError(file: string, cause: unknown) {
+  // SQLite CANTOPEN also covers existing files. Preserve its error unless the path is missing.
+  if (cause instanceof Error && 'errcode' in cause && cause.errcode === 14) {
+    try {
+      statSync(file);
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+        return new StateDatabaseMissingError(cause.message, { cause });
       }
+    }
+  }
+  return cause;
+}
+
+function stateFileIdentity(file: string) {
+  try {
+    const { dev, ino } = statSync(file, { bigint: true });
+    return String(dev) + '/' + String(ino);
+  } catch (cause) {
+    if (cause instanceof Error && 'code' in cause && cause.code === 'ENOENT') {
+      throw new StateDatabaseMissingError('The initialized state database is missing.', { cause });
     }
     throw cause;
   }
 }
 
-function writer(repoRoot: string) {
+function writer(repoRoot: string, existingOnly = false) {
   const existing = connections.get(repoRoot);
   if (existing) return existing;
-  const db = new DatabaseSync(threadloopPaths(repoRoot).stateDbPath, { enableForeignKeyConstraints: true });
-  db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
-  const connection: WriterConnection = { db };
-  connections.set(repoRoot, connection);
-  return connection;
+  const file = threadloopPaths(repoRoot).stateDbPath;
+  const priorIdentity = existingOnly ? stateFileIdentity(file) : null;
+  const url = pathToFileURL(file);
+  url.searchParams.set('mode', 'rw');
+  let db: DatabaseSync;
+  try {
+    db = new DatabaseSync(existingOnly ? url.href : file, { enableForeignKeyConstraints: true });
+  } catch (cause) {
+    throw classifyStateOpenError(file, cause);
+  }
+  try {
+    const fileIdentity = stateFileIdentity(file);
+    if (priorIdentity && fileIdentity !== priorIdentity)
+      throw new StateCorruptedError('The state database moved while opening the writer.');
+    db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    const connection: WriterConnection = { db, fileIdentity };
+    connections.set(repoRoot, connection);
+    return connection;
+  } catch (cause) {
+    db.close();
+    throw cause;
+  }
 }
 
 /** The schema cookie includes our own DDL. data_version detects external commits on this open connection. */
@@ -1505,6 +1539,23 @@ function writerRevision(db: DatabaseSync): WriterRevision {
   const schema = db.prepare('PRAGMA main.schema_version').get() as { schema_version: number };
   const data = db.prepare('PRAGMA main.data_version').get() as { data_version: number };
   return { schemaVersion: schema.schema_version, dataVersion: data.data_version };
+}
+
+/** Write an optional feature in an initialized database without migrating unrelated session data. */
+export function withExistingStateWrite<T>(repoRoot: string, action: (db: DatabaseSync) => T): T {
+  const { db, fileIdentity } = writer(repoRoot, true);
+  const file = threadloopPaths(repoRoot).stateDbPath;
+  const assertOwnedFile = () => {
+    if (stateFileIdentity(file) !== fileIdentity)
+      throw new StateCorruptedError('The cached writer belongs to another state database. Reopen the repository.');
+  };
+  return runInTransaction(db, 'BEGIN IMMEDIATE', () => {
+    assertOwnedFile();
+    assertExistingStateGeneration(db);
+    const result = action(db);
+    assertOwnedFile();
+    return result;
+  });
 }
 
 async function withWriteTransaction<T>(
@@ -1952,6 +2003,11 @@ function assertSupportedSchemaVersion(db: DatabaseSync) {
     );
   }
   return version;
+}
+
+export function assertExistingStateGeneration(db: DatabaseSync) {
+  assertCurrentSchemaVersion(db);
+  assertCanonicalSchemaShape(db, ['metadata']);
 }
 
 function assertCurrentSchemaVersion(db: DatabaseSync) {

@@ -31,6 +31,8 @@ describe('GitHub review sensor adapter', () => {
       calls.push(request);
       const cursor = request.variables.cursor;
       if (request.query.includes('ReviewSnapshotReviews')) {
+        // Review.author is an Actor. Its immutable ID is a field of Node.
+        expect(request.query).toMatch(/\.\.\. on Node\s*\{\s*id\s*\}/);
         return Promise.resolve(
           response({
             data: {
@@ -139,6 +141,114 @@ describe('GitHub review sensor adapter', () => {
       },
       source: { head_sha: workflowHead },
     });
+  });
+
+  it('checks the latest same-head human opinion against the full review history in prepared mode', async () => {
+    const alice = { id: 'user-node-a', login: 'alice', __typename: 'User' };
+    const bob = { id: 'user-node-b', login: 'bob', __typename: 'User' };
+    const bot = { id: 'bot-node', login: 'check-bot', __typename: 'Bot' };
+    const opinion = (id: string, author: typeof alice, state: string, minute: number, head = reviewedHead) => ({
+      id,
+      author,
+      state,
+      submittedAt: `2026-07-26T11:${String(minute).padStart(2, '0')}:00.000Z`,
+      commit: { oid: head },
+    });
+    const earlier = opinion('10', alice, 'APPROVED', 10);
+    const approving = opinion('11', bob, 'APPROVED', 11);
+    const dismissed = opinion('12', alice, 'DISMISSED', 12);
+    const comment = opinion('13', bob, 'COMMENTED', 13);
+    const automated = opinion('14', bot, 'APPROVED', 14);
+    const restored = opinion('15', alice, 'APPROVED', 15);
+    const missing = opinion('16', alice, 'APPROVED', 16, workflowHead);
+
+    const collect = async (history: unknown[], latest: unknown[]) => {
+      const requested = new Set<string>();
+      const snapshot = await collectGitHubReviewSnapshot(
+        { ...input(), receiptId: 'wfr_1234567890abcdef1234567890abcdef' },
+        (_url, init) => {
+          const { query } = JSON.parse(requestBody(init)) as { query: string };
+          const field = query.includes('latestOpinionatedReviews(')
+            ? 'latestOpinionatedReviews'
+            : query.includes('reviewThreads(')
+              ? 'reviewThreads'
+              : 'reviews';
+          if (field === 'latestOpinionatedReviews') expect(query).toMatch(/writersOnly:\s*false/);
+          requested.add(field);
+          const nodes = field === 'reviews' ? history : field === 'latestOpinionatedReviews' ? latest : [];
+          return Promise.resolve(
+            response({
+              data: {
+                repository: {
+                  pullRequest: {
+                    number: 42,
+                    url: 'https://github.com/example/project/pull/42',
+                    headRefOid: reviewedHead,
+                    baseRefName: 'main',
+                    merged: false,
+                    mergedAt: null,
+                    reviewDecision: 'APPROVED',
+                    [field]: { nodes, pageInfo: { hasNextPage: false, endCursor: null } },
+                  },
+                },
+              },
+            }),
+          );
+        },
+      );
+      expect(requested).toEqual(new Set(['reviews', 'latestOpinionatedReviews', 'reviewThreads']));
+      return snapshot.review.approvals.map((a) => a.actor_id).sort();
+    };
+    const history = [earlier, approving, dismissed, comment, automated];
+    expect(await collect(history, [earlier, approving, automated])).toEqual([bob.id]);
+    expect(await collect([...history, restored], [restored, approving, automated])).toEqual([alice.id, bob.id]);
+    expect(await collect([...history, { ...dismissed, state: 'CHANGES_REQUESTED' }], [earlier, approving])).toEqual([
+      bob.id,
+    ]);
+    expect(await collect([...history, missing], [missing, approving])).toEqual([bob.id]);
+    expect(await collect([earlier, { ...dismissed, submittedAt: earlier.submittedAt }], [earlier])).toEqual([]);
+    expect(await collect([earlier, { ...dismissed, author: null }], [earlier])).toEqual([]);
+    expect(await collect([earlier], [earlier, { ...dismissed, author: null }])).toEqual([]);
+  });
+
+  it('refuses a prepared review when the pull request changes across pages or a latest-opinion page is missing', async () => {
+    const run = { ...input(), receiptId: 'wfr_1234567890abcdef1234567890abcdef' };
+    for (const failure of ['changed head', 'missing cursor'] as const) {
+      const fetch: GitHubGraphqlFetch = (_url, init) => {
+        const { query, variables } = JSON.parse(requestBody(init)) as {
+          query: string;
+          variables: { cursor: string | null };
+        };
+        expect(query).toContain('latestOpinionatedReviews(');
+        return Promise.resolve(
+          response({
+            data: {
+              repository: {
+                pullRequest: {
+                  number: 42,
+                  url: 'https://github.com/example/project/pull/42',
+                  headRefOid: variables.cursor ? workflowHead : reviewedHead,
+                  baseRefName: 'main',
+                  merged: false,
+                  mergedAt: null,
+                  reviewDecision: 'APPROVED',
+                  latestOpinionatedReviews: {
+                    nodes: [],
+                    pageInfo: {
+                      hasNextPage: !variables.cursor,
+                      endCursor: failure === 'missing cursor' ? null : 'next',
+                    },
+                  },
+                },
+              },
+            },
+          }),
+        );
+      };
+      await expect(collectGitHubReviewSnapshot(run, fetch)).rejects.toThrow(
+        failure === 'changed head' ? /changed while/ : /omitted its next cursor/,
+      );
+    }
   });
 
   it('fails closed on GraphQL errors and repeated pagination cursors', async () => {

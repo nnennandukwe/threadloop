@@ -8,6 +8,14 @@ import {
   auditVerifyExportCommand,
 } from './commands/audit.js';
 import { initCommand } from './commands/init.js';
+import {
+  workflowCreateCommand,
+  workflowInspectCommand,
+  workflowDecideCommand,
+  workflowApplyCommand,
+  workflowPrepareCommand,
+  workflowImportCommand,
+} from './commands/workflow.js';
 import { protocolPrintCommand } from './commands/protocol.js';
 import { createCommandContext, type CommandContext } from './commands/runtime.js';
 import {
@@ -299,8 +307,60 @@ export function createThreadloopProgram() {
       .option('--root <sha256>', 'previously retained whole-file corpus root', parseSha256),
   ).action(action(auditVerifyExportCommand));
 
-  withJsonOption(program.command('protocol').description('Print the agent integration protocol')).action(
-    action((context, options: { json?: boolean }) => protocolPrintCommand(context, options, program)),
+  const workflow = program.command('workflow').description('Manage graph-bound Workflow Runs');
+  withJsonOption(
+    workflow
+      .command('create')
+      .argument('<run-id>')
+      .description('Create a run bound to one compiled graph and setup')
+      .requiredOption('--profile <yaml>', 'workflow profile file')
+      .requiredOption('--setup <json>', 'workflow setup file'),
+  ).action(action(workflowCreateCommand));
+  withJsonOption(
+    workflow.command('inspect').argument('<run-id>').description('Read the verified graph binding and current state'),
+  ).action(action(workflowInspectCommand));
+  withJsonOption(
+    workflow.command('decide').argument('<run-id>').description('Select the next outcome from verified run facts'),
+  ).action(action(workflowDecideCommand));
+  withJsonOption(
+    workflow
+      .command('apply')
+      .argument('<run-id>')
+      .description('Apply a fresh selected transition once')
+      .requiredOption('--decision <file>', 'saved workflow decide JSON response')
+      .requiredOption('--idempotency-key <key>', 'stable key for this request', parseIdempotencyKey),
+  ).action(action(workflowApplyCommand));
+  const evidence = workflow.command('evidence').description('Prepare and admit authenticated workflow evidence');
+  withJsonOption(
+    evidence
+      .command('prepare')
+      .argument('<kind>')
+      .description('Bind a sensor observation to the current run')
+      .requiredOption('--run <run-id>', 'workflow run ID')
+      .option('--gate <id>', 'declared gate ID', parseRequiredGateId)
+      .option('--pr <n>', 'positive pull request number', parsePositivePrNumber)
+      .option('--instruction <file>', 'explicit human instruction file', parseInputPath)
+      .requiredOption('--expected-state-version <n>', 'expected lifecycle version', parseExpectedStateVersion)
+      .requiredOption('--idempotency-key <key>', 'stable preparation key', parseIdempotencyKey),
+  ).action(action(workflowPrepareCommand));
+  withJsonOption(
+    evidence
+      .command('import')
+      .argument('<kind>')
+      .description('Verify and retain a prepared sensor package')
+      .requiredOption('--run <run-id>', 'workflow run ID')
+      .requiredOption('--source <file>', 'signed sensor package', parseInputPath)
+      .requiredOption('--expected-state-version <n>', 'expected lifecycle version', parseExpectedStateVersion),
+  ).action(action(workflowImportCommand));
+  withJsonOption(
+    program
+      .command('protocol')
+      .description('Print the agent integration protocol')
+      .addOption(new Option('--contract <version>', 'protocol version to print').choices(['4', '5'])),
+  ).action(
+    action((context, options: { json?: boolean; contract?: '4' | '5' }) =>
+      protocolPrintCommand(context, options, program),
+    ),
   );
 
   return program;
@@ -448,6 +508,12 @@ function parseRequiredGateId(value: string) {
     throw new InvalidArgumentError('Gate id must match [A-Za-z0-9][A-Za-z0-9._-]* and be at most 128 characters.');
   }
   return normalized;
+}
+
+function parsePositivePrNumber(value: string) {
+  const number = parseExpectedStateVersion(value);
+  if (number === 0) throw new InvalidArgumentError('A pull request number must be positive.');
+  return number;
 }
 
 function parseExpectedStateVersion(value: string) {

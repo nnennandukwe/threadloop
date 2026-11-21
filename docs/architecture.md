@@ -1,9 +1,9 @@
 # ThreadLoop architecture and Controller Contract v0.1
 
 ThreadLoop owns the outer software development lifecycle (SDLC) for a bounded software-delivery change. It stores state
-and evidence, evaluates guards, and applies explicitly requested transitions. The current TypeScript/Node CLI implements
-a fixed governed PR lifecycle. Controller Contract v0.1 specifies how that authority extends to configurable typed SDLC
-graphs and bounded external execution.
+and evidence, evaluates guards, and applies explicitly requested transitions. The TypeScript/Node CLI implements the
+fixed governed PR lifecycle and explicit graph-bound Workflow Runs. Controller Contract v0.1 specifies how that
+authority extends to configurable typed SDLC graphs and bounded external execution.
 
 Use the [README quickstart](../README.md#quick-start) to run the current CLI. Use this guide to understand the accepted
 contracts and what remains to be implemented. The [glossary](../CONTEXT.md) defines the public language; the
@@ -17,9 +17,10 @@ The status applies to the specific capability, not to every use of the same doma
 | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Implemented now**                              | Fixed PR lifecycle, SQLite persistence, guarded transitions, current-HEAD proof/review checks, repair accounting, blocking, and human completion.                  | [Lifecycle reference](lifecycle.md) and [preservation mapping](current-lifecycle-graph-mapping.md).                                                                                                                                                                                                                                            |
 | **Implemented now**                              | Session CLI, read-only next-action inspection, Markdown artifacts, and verified audit exports.                                                                     | [CLI reference](cli.md) and [audit export](observability.md).                                                                                                                                                                                                                                                                                  |
+| **Implemented now**                              | Deterministic controller selection and durable graph-bound create, inspect, decide and apply operations, including prepared signed evidence.                       | [Workflow Run commands](workflow-runs.md) and [selection implementation](../src/domain/workflow-controller.ts).                                                                                                                                                                                                                                |
 | **Implemented in threadloop-contracts**          | YAML compiler, candidate validators, executor mapping helpers, and internal conformance-corpus checks.                                                             | Development tooling in [threadloop-contracts](https://github.com/nnennandukwe/threadloop-contracts), tagged `v0.1.0`.                                                                                                                                                                                                                          |
 | **Accepted in Controller Contract v0.1**         | Profile/graph identities, deterministic decisions and action requests, claim/attempt recovery semantics, executor process seam, and external conformance protocol. | Five versioned contract families in the [contract index](#contract-index).                                                                                                                                                                                                                                                                     |
-| **Deferred to the controller-runtime milestone** | Durable graph-bound Workflow Runs, selected-action execution and conformance through the external harness.                                                         | [Runtime tracker #168](https://github.com/nnennandukwe/threadloop/issues/168), [conformance handoff](https://github.com/nnennandukwe/threadloop-contracts/blob/v0.1.0/docs/contracts/controller-conformance-v0.1/run-invariant-follow-up.md), and [generated state-machine tests #112](https://github.com/nnennandukwe/threadloop/issues/112). |
+| **Deferred to the controller-runtime milestone** | Selected-action execution and conformance through the external harness.                                                                                            | [Runtime tracker #168](https://github.com/nnennandukwe/threadloop/issues/168), [conformance handoff](https://github.com/nnennandukwe/threadloop-contracts/blob/v0.1.0/docs/contracts/controller-conformance-v0.1/run-invariant-follow-up.md), and [generated state-machine tests #112](https://github.com/nnennandukwe/threadloop/issues/112). |
 | **Implemented in the optional executor bridge**  | Host-adopted claims, GAAP process invocation, independently authenticated receipt admission, and persistence before controller reevaluation.                       | [Executor guide](gaap-executor.md) and [runtime integration #111](https://github.com/nnennandukwe/threadloop/issues/111).                                                                                                                                                                                                                      |
 | **Deferred to the Rust migration**               | A Rust replacement of ThreadLoop after the contract freeze and the separate runtime milestone prove the required behavior.                                         | [Contract tracker #110](https://github.com/nnennandukwe/threadloop/issues/110), [storage compatibility #85](https://github.com/nnennandukwe/threadloop/issues/85) and [runtime tracker #168](https://github.com/nnennandukwe/threadloop/issues/168).                                                                                           |
 
@@ -195,16 +196,13 @@ npm test -- tests/unit/controller-contract.test.ts tests/unit/execution-contract
 npm run spec:conformance:check
 ```
 
-The tests check compiler behavior, accepted candidates, rejection cases, and pinned artifacts. The conformance command
-validates the internal corpus; it doesn't launch a runtime subject or establish external conformance. There's no
-packaged `threadloop compile` or configurable graph-run command. These development tools don't launch GAAP or advance
-sessions.
+The contracts tests check the compiler, supplied decisions and pinned corpus. External conformance runs the production
+subject through RunInvariant. [External proof issue #172](https://github.com/nnennandukwe/threadloop/issues/172)
 
-**Accepted in Controller Contract v0.1:** a future Workflow Run retains its original graph schema version and digest.
-Editing the YAML can create a new graph artifact, but can't replace an active run's binding. An unavailable bound graph
-requires restoration or explicit blocking, not substitution. The optional bridge retains its explicitly adopted graph
-and rejects changed bindings. General configurable run management remains **deferred to the controller-runtime
-milestone**.
+The packaged `workflow create` command compiles a profile and retains its canonical graph bytes, schema version and
+digest. A profile edit affects a newly created run. A damaged binding requires restoring the original graph. Use
+`workflow decide` to evaluate current facts, then `workflow apply` to request the selected transition. The separate
+executor bridge retains the graph and request adopted for its Attempt. [Workflow Runs](workflow-runs.md)
 
 ## Implemented now: use the current CLI
 
@@ -236,8 +234,9 @@ original chain. Both formats read an existing snapshot. SQLite and the lifecycle
 
 These specifications are **accepted in Controller Contract v0.1** and live in
 [threadloop-contracts](https://github.com/nnennandukwe/threadloop-contracts), tagged `v0.1.0`, with their validation
-tooling. The configurable runtime and conformance by a real controller remain deferred as described above. ThreadLoop
-keeps a vendored copy of the Governed PR profile, and `tests/unit/lifecycle-contract-drift.test.ts` fails if the runtime
+tooling. The runtime now selects and applies transitions. Selected-action dispatch and external controller verification
+are tracked in [the runtime milestone](https://github.com/nnennandukwe/threadloop/issues/168). ThreadLoop keeps a
+vendored copy of the Governed PR profile, and `tests/unit/lifecycle-contract-drift.test.ts` fails if the runtime
 lifecycle and that profile drift apart.
 
 | Contract                                                                                                                                                 | Schemas and examples                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Supporting evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                        |

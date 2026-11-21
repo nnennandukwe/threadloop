@@ -112,7 +112,7 @@ describe('signed review evidence', () => {
 
   it('revalidates an observed report against the trusted signing context', () => {
     const report = reviewArtifact();
-    const authorized = reviewDomain.authorizeReviewReportForSigning(report, {
+    const context = {
       receiptId: 'review_authoritative',
       sessionId: 'session_123',
       planSha256: planSha,
@@ -121,7 +121,16 @@ describe('signed review evidence', () => {
       sourceRef: 'refs/heads/issue-42/review-audit-handoff',
       sourceHeadSha: workflowSha,
       runInvocationUri: 'https://github.com/example/project/actions/runs/123/attempts/1',
-    });
+    };
+    const authorized = reviewDomain.authorizeReviewReportForSigning(report, context);
+    const receiptId = 'wfr_1234567890abcdef1234567890abcdef';
+    expect(() => reviewDomain.authorizeReviewReportForSigning(report, { ...context, receiptId })).toThrow(
+      'package.artifact.receipt_id',
+    );
+    expect(
+      reviewDomain.authorizeReviewReportForSigning({ ...report, receipt_id: receiptId }, { ...context, receiptId })
+        .receipt_id,
+    ).toBe(receiptId);
 
     expect(authorized.receipt_id).toBe('review_authoritative');
     expect(authorized.pull_request.head_sha).toBe(headSha);

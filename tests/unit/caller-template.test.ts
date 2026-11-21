@@ -46,7 +46,7 @@ async function declaredRepositorySlug() {
 }
 
 describe('consumer caller workflow template', () => {
-  it('passes exactly the inputs each sensor declares as required', async () => {
+  it('forwards each required input and the optional prepared ID to capture and signing', async () => {
     const { workflow } = await readWorkflow(TEMPLATE);
     const { workflow: gateSensor } = await readWorkflow('.github/workflows/threadloop-gate-sensor.yml');
     const { workflow: reviewSensor } = await readWorkflow('.github/workflows/threadloop-review-sensor.yml');
@@ -66,7 +66,17 @@ describe('consumer caller workflow template', () => {
         .sort();
       const passed = Object.keys(object(object(jobs[jobName]).with)).sort();
 
-      expect(passed).toEqual(required);
+      expect(passed).toEqual([...required, 'prepared_receipt_id'].sort());
+      expect(object(declaredInputs(sensor).prepared_receipt_id)).toMatchObject({ required: false, type: 'string' });
+      expect(object(object(jobs[jobName]).with).prepared_receipt_id).toBe('${{ inputs.prepared_receipt_id }}');
+      const sensorSteps = Object.values(object(sensor.jobs))
+        .flatMap((job) => object(job).steps as unknown[])
+        .map(object)
+        .filter((step) => typeof step.run === 'string' && step.run.startsWith('npm run sensor:'));
+      expect(sensorSteps).toHaveLength(2);
+      for (const step of sensorSteps) {
+        expect(object(step.env).THREADLOOP_PREPARED_RECEIPT_ID).toBe('${{ inputs.prepared_receipt_id }}');
+      }
     }
   });
 

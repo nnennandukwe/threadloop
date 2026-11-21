@@ -7,6 +7,10 @@ on:
         description: ThreadLoop session id
         required: true
         type: string
+      prepared_receipt_id:
+        description: Workflow Run receipt ID returned by evidence prepare
+        required: false
+        type: string
       plan_sha256:
         description: Canonical v2 proof-plan digest
         required: true
@@ -65,6 +69,7 @@ jobs:
         env:
           THREADLOOP_SESSION_ID: ${{ inputs.session_id }}
           THREADLOOP_PLAN_SHA256: ${{ inputs.plan_sha256 }}
+          THREADLOOP_PREPARED_RECEIPT_ID: ${{ inputs.prepared_receipt_id }}
           THREADLOOP_GATE_ID: ${{ inputs.gate_id }}
           THREADLOOP_GATE_JSON: ${{ inputs.gate_json }}
           THREADLOOP_SOURCE_ROOT: ${{ github.workspace }}/source
@@ -121,6 +126,7 @@ jobs:
         env:
           THREADLOOP_SESSION_ID: ${{ inputs.session_id }}
           THREADLOOP_PLAN_SHA256: ${{ inputs.plan_sha256 }}
+          THREADLOOP_PREPARED_RECEIPT_ID: ${{ inputs.prepared_receipt_id }}
           THREADLOOP_GATE_ID: ${{ inputs.gate_id }}
           THREADLOOP_GATE_JSON: ${{ inputs.gate_json }}
           THREADLOOP_GATE_JOB_RESULT: ${{ needs.execute_gate.result }}

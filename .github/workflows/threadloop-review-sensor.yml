@@ -7,6 +7,10 @@ on:
         description: ThreadLoop session id
         required: true
         type: string
+      prepared_receipt_id:
+        description: Workflow Run receipt ID returned by evidence prepare
+        required: false
+        type: string
       plan_sha256:
         description: Canonical v3 proof-plan digest
         required: true
@@ -55,6 +59,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           THREADLOOP_SESSION_ID: ${{ inputs.session_id }}
           THREADLOOP_PLAN_SHA256: ${{ inputs.plan_sha256 }}
+          THREADLOOP_PREPARED_RECEIPT_ID: ${{ inputs.prepared_receipt_id }}
           THREADLOOP_PULL_REQUEST_NUMBER: ${{ inputs.pull_request_number }}
           THREADLOOP_REPORT_PATH: ${{ github.workspace }}/review-observation/review-report.json
 
@@ -107,6 +112,7 @@ jobs:
         env:
           THREADLOOP_SESSION_ID: ${{ inputs.session_id }}
           THREADLOOP_PLAN_SHA256: ${{ inputs.plan_sha256 }}
+          THREADLOOP_PREPARED_RECEIPT_ID: ${{ inputs.prepared_receipt_id }}
           THREADLOOP_PULL_REQUEST_NUMBER: ${{ inputs.pull_request_number }}
           THREADLOOP_REPORT_PATH: ${{ github.workspace }}/review-observation/review-report.json
           THREADLOOP_OUTPUT_PATH: ${{ github.workspace }}/receipt-output/signed-review-receipt.json

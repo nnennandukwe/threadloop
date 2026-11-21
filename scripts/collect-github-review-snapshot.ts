@@ -18,7 +18,7 @@ const snapshot = await collectGitHubReviewSnapshot({
   runInvocationUri: run.runInvocationUri,
   token: requiredEnvironment('GITHUB_TOKEN'),
   observedAt: new Date().toISOString(),
-  receiptId: `report_${randomUUID()}`,
+  receiptId: run.preparedReceiptId ?? `report_${randomUUID()}`,
 });
 
 await mkdir(path.dirname(outputPath), { recursive: true });

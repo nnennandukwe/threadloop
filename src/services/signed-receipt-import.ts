@@ -419,7 +419,7 @@ async function prepareImport<TEnvelope extends ImportEnvelope>(
   };
 }
 
-async function verifySigner(
+export async function verifySigner(
   envelope: ImportEnvelope,
   policy: GitHubActionsTrustPolicy,
   verifier: typeof verifySigstoreReceipt = verifySigstoreReceipt,
@@ -431,7 +431,7 @@ async function verifySigner(
   }
 }
 
-function assertSignerProjection(
+export function assertSignerProjection(
   signer: VerifiedSigstoreSigner,
   source: ImportEnvelope['artifact']['source'],
   policy: GitHubActionsTrustPolicy,
@@ -527,7 +527,7 @@ async function persistControlledPackage(input: {
   }
 }
 
-function assertSignedGateContext(input: {
+export function assertSignedGateContext(input: {
   requestedSessionId: string;
   plan: BoundProofPlan;
   expectedRepository: string | null;
@@ -575,7 +575,7 @@ function assertSignedGateContext(input: {
   }
 }
 
-function assertSignedReviewContext(input: {
+export function assertSignedReviewContext(input: {
   requestedSessionId: string;
   plan: BoundProofPlan;
   expectedRepository: string | null;
@@ -616,7 +616,7 @@ function githubRepositoryUri(repository: Awaited<ReturnType<typeof observeReposi
     : null;
 }
 
-function mapSignedReceiptParseError(error: unknown) {
+export function mapSignedReceiptParseError(error: unknown) {
   if (error instanceof AttestationValidationError || error instanceof ReviewValidationError) {
     const artifactMismatch =
       error.field.startsWith('statement.subject') || error.field.startsWith('statement.predicate.artifact');

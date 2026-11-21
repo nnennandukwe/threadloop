@@ -1,4 +1,5 @@
 import { readFile, stat } from 'node:fs/promises';
+import { isPreparedReceiptId } from '../src/domain/attestation.js';
 import { canonicalJson } from '../src/domain/canonical-json.js';
 import { validateDeclaredGate } from '../src/domain/proof.js';
 
@@ -9,6 +10,10 @@ export function sensorRunContext(environment: SensorEnvironment = process.env) {
   const required = (name: string) => requiredEnvironment(name, environment);
   const sessionId = required('THREADLOOP_SESSION_ID');
   const planSha256 = required('THREADLOOP_PLAN_SHA256');
+  const preparedReceiptId = environment.THREADLOOP_PREPARED_RECEIPT_ID || undefined;
+  if (preparedReceiptId && !isPreparedReceiptId(preparedReceiptId)) {
+    throw new Error('THREADLOOP_PREPARED_RECEIPT_ID must contain wfr_ followed by 32 lowercase hexadecimal digits.');
+  }
   const sourceRepository = `${required('GITHUB_SERVER_URL')}/${required('GITHUB_REPOSITORY')}`;
   const sourceRef = required('GITHUB_REF');
   const sourceHead = required('GITHUB_SHA');
@@ -29,7 +34,7 @@ export function sensorRunContext(environment: SensorEnvironment = process.env) {
   if (!/^[a-f0-9]{40}$/.test(sourceHead)) {
     throw new Error('GITHUB_SHA must be a full lowercase commit SHA.');
   }
-  return { sessionId, planSha256, sourceRepository, sourceRef, sourceHead, runInvocationUri };
+  return { sessionId, planSha256, preparedReceiptId, sourceRepository, sourceRef, sourceHead, runInvocationUri };
 }
 
 /**

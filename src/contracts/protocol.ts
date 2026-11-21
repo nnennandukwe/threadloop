@@ -39,15 +39,54 @@ export interface ProtocolContract {
   notes: string[];
 }
 
+export interface WorkflowRunProtocol extends Omit<ProtocolContract, 'contractVersions'> {
+  contractVersions: Omit<ProtocolContract['contractVersions'], 'protocol'> & { protocol: 5; workflowRun: 1 };
+  capabilities: string[];
+}
+
+// Protocol v4 is still used by installed runners and historical run configurations.
+const V4_COMMANDS = new Set([
+  'init',
+  'artifact generate',
+  'session start',
+  'session list',
+  'session status',
+  'session capture',
+  'session heartbeat',
+  'session transition',
+  'session next',
+  'session gate run',
+  'session gate import',
+  'session review import',
+  'session reconcile',
+  'executor register',
+  'executor run',
+  'executor inspect',
+  'executor admit',
+  'executor evaluate',
+  'audit show',
+  'audit verify',
+  'audit export',
+  'audit corpus',
+  'audit verify-export',
+  'protocol',
+]);
+
 const EDITOR_ENV_DESCRIPTION = 'Editor command used by --edit and --goal-edit flows.';
 
 /** Derives the command surface from the program itself, so the contract cannot drift from the CLI. */
-export function buildProtocolContract(program: Command): ProtocolContract {
+export function buildProtocolContract(program: Command, version?: 4): ProtocolContract;
+export function buildProtocolContract(program: Command, version: 5): WorkflowRunProtocol;
+export function buildProtocolContract(program: Command, version: 4 | 5): ProtocolContract | WorkflowRunProtocol;
+export function buildProtocolContract(program: Command, version: 4 | 5 = 4): ProtocolContract | WorkflowRunProtocol {
+  const leaves = collectLeafCommands(program).filter(
+    (command) => version === 5 || V4_COMMANDS.has(commandPath(command)),
+  );
   const commands = Object.fromEntries(
-    collectLeafCommands(program).map((command) => [commandPath(command), formatCommandUsage(command)]),
+    leaves.map((command) => [commandPath(command), formatCommandUsage(command, version)]),
   );
 
-  return {
+  const legacy: ProtocolContract = {
     contractVersions: { ...PROTOCOL_COMPONENT_VERSIONS },
     envVars: deriveEnvVars(program),
     commands,
@@ -96,6 +135,12 @@ export function buildProtocolContract(program: Command): ProtocolContract {
       'Orchestrators own fetch, branch creation, rebase, and PR opening; ThreadLoop records and renders the workflow state.',
     ],
   };
+  if (version === 4) return legacy;
+  return {
+    ...legacy,
+    contractVersions: { ...legacy.contractVersions, protocol: 5, workflowRun: 1 },
+    capabilities: ['workflow_runs_v1'],
+  };
 }
 
 export function collectLeafCommands(program: Command) {
@@ -106,7 +151,7 @@ function visitCommands(command: Command): Command[] {
   return command.commands.flatMap((child) => [child, ...visitCommands(child)]);
 }
 
-function formatCommandUsage(command: Command) {
+function formatCommandUsage(command: Command, version: 4 | 5) {
   const path = commandPath(command);
   const rule = getProtocolCommandRules(path);
   const description = command.description();
@@ -118,7 +163,9 @@ function formatCommandUsage(command: Command) {
   const handlerRequired = new Set(rule.handlerRequiredOptions);
   const args = command.registeredArguments.map(formatArgumentToken);
   const options = command.options
-    .filter((option) => option.long !== '--help')
+    .filter(
+      (option) => option.long !== '--help' && !(version === 4 && path === 'protocol' && option.long === '--contract'),
+    )
     .map((option) => formatOptionToken(option, option.mandatory || handlerRequired.has(option.attributeName())));
   const tokens = ['threadloop', path, ...args, ...options].filter(Boolean);
 

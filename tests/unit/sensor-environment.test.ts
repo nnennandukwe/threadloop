@@ -3,6 +3,7 @@ import {
   gateSensorContext,
   positiveIntegerEnvironment,
   requiredEnvironment,
+  sensorRunContext,
 } from '../../scripts/sensor-environment.js';
 
 const setupGate = {
@@ -49,6 +50,22 @@ describe('sensor environment parsing', () => {
         THREADLOOP_PULL_REQUEST_NUMBER: String(Number.MAX_SAFE_INTEGER + 1),
       }),
     ).toThrow('THREADLOOP_PULL_REQUEST_NUMBER must be a safe positive integer.');
+  });
+
+  it('carries the prepared receipt ID through the shared capture and signing context', () => {
+    const preparedReceiptId = 'wfr_1234567890abcdef1234567890abcdef';
+    const environment = { ...gateEnvironment(), THREADLOOP_PREPARED_RECEIPT_ID: preparedReceiptId };
+    expect(sensorRunContext(environment)).toMatchObject({ preparedReceiptId });
+    expect(gateSensorContext(environment)).toMatchObject({ preparedReceiptId });
+  });
+
+  it('rejects malformed prepared IDs and accepts an omitted workflow input', () => {
+    expect(() => sensorRunContext({ ...gateEnvironment(), THREADLOOP_PREPARED_RECEIPT_ID: 'wfr_123' })).toThrow(
+      'THREADLOOP_PREPARED_RECEIPT_ID',
+    );
+    expect(
+      sensorRunContext({ ...gateEnvironment(), THREADLOOP_PREPARED_RECEIPT_ID: '' }).preparedReceiptId,
+    ).toBeUndefined();
   });
 
   it('admits a gate that declares setup, which both the run and sign steps depend on', () => {
