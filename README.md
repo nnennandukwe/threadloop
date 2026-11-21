@@ -90,7 +90,9 @@ Implemented storage:
 - `.threadloop/artifacts/*.md`
 - `.threadloop/artifacts/receipts/<session-id>/<receipt-id>/`
 
-ThreadLoop opens schema v7 and v8 state databases and upgrades v7 in place with `threadloop init`.
+ThreadLoop opens generation-8 state databases and upgrades generation 7 in place with `threadloop init`. Compatible
+additions preserve the generation and existing evidence. See the
+[storage compatibility policy](https://github.com/nnennandukwe/threadloop/blob/696dcfc546273920ddceffbb8624f35c91cd1804/docs/cli.md#storage-compatibility).
 
 ## Install
 

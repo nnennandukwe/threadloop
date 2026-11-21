@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { runGate, sessionNext, transition, transitionFailure } from '../helpers/cli.js';
+import { runCli, runCliError, runGate, sessionNext, transition, transitionFailure } from '../helpers/cli.js';
 import {
   cleanupTemporaryState,
   commitFiles,
@@ -15,7 +15,15 @@ import {
   recordProofPlan,
   startFramedSession,
 } from '../helpers/session.js';
-import { countRows, deleteAuditLedger, readLifecycle, withStateDb, withTriggersDisabled } from '../helpers/state-db.js';
+import { installLegacyGateSchema } from '../helpers/legacy-gate-schema.js';
+import {
+  countRows,
+  deleteAuditLedger,
+  readLifecycle,
+  stateDbPath,
+  withStateDb,
+  withTriggersDisabled,
+} from '../helpers/state-db.js';
 import {
   boundGateArtifact,
   boundReviewArtifact,
@@ -163,6 +171,110 @@ const reviewImportAuditCount = (repoDir: string) =>
 const repairTransitionCount = (repoDir: string) => countRows(repoDir, 'session_transitions', `to_state = 'repairing'`);
 
 afterEach(cleanupTemporaryState);
+
+it('preserves both signed packages and their verified audit export when a generation-8 writer adopts ordinary receipts', async () => {
+  const fixture = await makeAuthoritativeReviewingSession();
+  await importReview(fixture);
+  const { repoDir, sessionId, inputDir } = fixture;
+  await installLegacyGateSchema(repoDir, 8);
+
+  async function signedEvidence() {
+    const rows = withStateDb(repoDir, (db) => [
+      ...db.prepare('SELECT * FROM signed_gate_receipts ORDER BY sequence').all(),
+      ...db.prepare('SELECT * FROM signed_review_receipts ORDER BY sequence').all(),
+    ]);
+    expect(rows).toHaveLength(2);
+    const packages = await Promise.all(
+      rows.map(async (row) => {
+        const contents = await readFile(path.join(repoDir, String(row.package_path)));
+        expect(sha256(contents)).toEqual(row.package_sha256);
+        return contents;
+      }),
+    );
+    return { rows, packages };
+  }
+
+  async function auditExport(name: string) {
+    const output = path.join(inputDir, name);
+    await runCli(repoDir, [
+      'audit',
+      'corpus',
+      '--session',
+      sessionId,
+      '--format',
+      'otel-verifiable',
+      '--output',
+      output,
+      '--json',
+    ]);
+    return readFile(output);
+  }
+
+  const before = await signedEvidence();
+  const exported = await auditExport('original.jsonl');
+  const hasCatalog = () =>
+    withStateDb(repoDir, (db) =>
+      Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'gate_result_catalog'").get()),
+    );
+  expect(hasCatalog()).toBe(false);
+  await runCli(repoDir, ['init']);
+  expect(hasCatalog()).toBe(true);
+  expect(await signedEvidence()).toEqual(before);
+  expect(await auditExport('adopted.jsonl')).toEqual(exported);
+  withStateDb(
+    repoDir,
+    (db) => {
+      db.exec(`PRAGMA foreign_keys = OFF;
+      CREATE TEMP TABLE signed_copy AS SELECT * FROM signed_gate_receipts LIMIT 1;
+      UPDATE signed_copy SET sequence = 99, id = 'another', package_sha256 = hex(zeroblob(32)), result = 'failed';`);
+      expect(() => db.exec('INSERT INTO signed_gate_receipts SELECT * FROM signed_copy')).toThrow(/CHECK constraint/);
+    },
+    { readOnly: false },
+  );
+});
+
+it.each([
+  ['missing', ''],
+  ['weakened', "CHECK(result IN ('passed', 'failed'))"],
+])('refuses proof reads and writes when the signed gate result restriction is %s', async (_defect, replacement) => {
+  const { repoDir, sessionId } = await makeAuthoritativeReviewingSession();
+  closeSqliteConnections(repoDir);
+  withStateDb(
+    repoDir,
+    (db) => {
+      const definition = (name: string) =>
+        String(db.prepare('SELECT sql FROM sqlite_schema WHERE name = ?').get(name)?.sql);
+      const table = definition('signed_gate_receipts');
+      const index = definition('signed_gate_receipts_session_gate_sequence_idx');
+      db.exec(`PRAGMA foreign_keys = OFF;
+      CREATE TEMP TABLE original AS SELECT * FROM signed_gate_receipts;
+      CREATE TEMP TABLE probe AS SELECT * FROM original;
+      UPDATE probe SET sequence = 99, id = 'nonpassing_probe', package_sha256 = hex(zeroblob(32)), result = 'failed';`);
+      const insertProbe = () => db.prepare('INSERT INTO signed_gate_receipts SELECT * FROM probe').run();
+      expect(insertProbe).toThrow(/CHECK constraint/);
+      withTriggersDisabled(db, 'signed_gate_receipts', () => {
+        db.exec('DROP TABLE signed_gate_receipts');
+        db.exec(table.replace("CHECK(result = 'passed')", replacement));
+        db.exec('INSERT INTO signed_gate_receipts SELECT * FROM original');
+        db.exec(index);
+      });
+      // Check the changed constraint on this connection and restore the original evidence before inspecting via the CLI.
+      db.exec('SAVEPOINT probe_insert');
+      expect(insertProbe().changes).toBe(1);
+      db.exec('ROLLBACK TO probe_insert; RELEASE probe_insert');
+    },
+    { readOnly: false },
+  );
+  const before = await readFile(stateDbPath(repoDir));
+  for (const operation of ['next', 'heartbeat']) {
+    const { error } = await runCliError(repoDir, ['session', operation, '--session', sessionId, '--json']);
+    expect(error.code).toBe('STATE_CORRUPTED');
+    expect(error.message).toContain('signed_gate_receipts');
+  }
+  await runCli(repoDir, ['session', 'status', '--session', sessionId, '--json']);
+  await runCli(repoDir, ['audit', 'verify', '--session', sessionId, '--json']);
+  expect(await readFile(stateDbPath(repoDir))).toEqual(before);
+});
 
 describe('signed review receipt import', () => {
   it('imports one verified current-HEAD package idempotently without advancing lifecycle state', async () => {

@@ -63,7 +63,9 @@ policy-missing/missing/passed/stale/corrupt. It also reports the three-cycle rep
 lifecycle phase and schema status, pre-PR review evidence, the exact implementation basis, lifecycle history, current
 signed-review findings and approval/merge state, audit validity/root/coverage, and one next human action. Reading schema
 v7 returns `migration_required` without mutation; run `threadloop init` outside the runner to perform the transactional
-v8 migration.
+v8 migration. A current v4 projection publishes the verified `session_next_v1` storage capability. A migration-required
+projection has an empty capability list. The [storage compatibility policy](cli.md#storage-compatibility) describes how
+a compatible writer adopts ordinary gate receipts.
 
 `threadloop session transition` requires the caller's expected state version and an idempotency key. State mutation,
 transition history, idempotency outcome, audit guard decision, active projection, and session completion are one
