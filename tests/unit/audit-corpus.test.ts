@@ -425,7 +425,7 @@ it('bounds manifest membership by the number of retained event records before in
 });
 
 it('budgets encoded UTF-8, JSON escaping, the manifest, the seal and every newline before hashing the file', () => {
-  const sample = session('研"\\é');
+  const sample = session('\u7814"\\\u00e9');
   const original = createAuditCorpus([sample], sha256);
   expect(original.root).toBe('343b93441e40eff4f2a8300ee2b83f03e8f65573e47789f407e057a351e75d45');
   const bytes = Buffer.byteLength(original.content);

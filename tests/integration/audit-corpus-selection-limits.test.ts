@@ -43,7 +43,7 @@ it('checks selection totals before parsing events and avoids unselected sessions
     (db) =>
       withTriggersDisabled(db, 'audit_events', () => {
         db.prepare('UPDATE audit_events SET event_json = ? WHERE session_id = ? AND sequence = 1').run(
-          'é'.repeat(MAX_AUDIT_CORPUS_BYTES / 2 + 1),
+          '\u00e9'.repeat(MAX_AUDIT_CORPUS_BYTES / 2 + 1),
           second,
         );
       }),
