@@ -6,6 +6,7 @@ A caller can ask ThreadLoop whether a proposed decision fits a run snapshot. A c
 ThreadLoop to choose the decision itself, including when every possible action must stop. This build will deliver a pure
 TypeScript selector over the accepted Workflow Graph and Controller Input v0.1. Its one review unit starts at
 `8014d80acc8b6209560f2d6df5c9cf450544c4f2`, after the storage delivery.
+[Five-unit program plan](controller-runtime-rust-prerequisites.md) ·
 [Selector issue #169](https://github.com/nnennandukwe/threadloop/issues/169) ·
 [Runtime tracker #168](https://github.com/nnennandukwe/threadloop/issues/168) ·
 [Accepted selection rules](https://github.com/nnennandukwe/threadloop-contracts/blob/v0.1.0/docs/contracts/controller-v0.1/selection.md)
@@ -108,6 +109,12 @@ receipt-backed predicates. Match each configured gate, review condition, approva
 artifact stage, block prior state or completion target. For a complete review proof set, include the selected local,
 independent and review witnesses. Track failure type as well as success so a failed predicate can't fabricate the
 opposite result. Keep evidence ordering deterministic, and avoid searching a power set of receipt combinations.
+
+**Transition eligibility.** A route needs every guard witness and every authority identity that its edge declares.
+Choose the lowest integer priority among the edges that meet both conditions. A witnessed edge with missing authority
+allows a different fully eligible edge to advance. When all witnessed edges lack authority, the blocked decision names
+the highest-priority affected transition and describes how to restore its authority.
+[Frozen selection precedence](https://github.com/nnennandukwe/threadloop-contracts/blob/v0.1.0/docs/contracts/controller-v0.1/selection.md#decision-precedence)
 
 **Branch applicability.** Use the graph's state kind, outgoing edges, guard capabilities, parameters, remedy references,
 priority and budget bindings. A phase or prior-state mismatch removes that route. A repair entry requires observed
@@ -230,3 +237,13 @@ guard capability, parameters and target state kind. The examples support these t
 leaves the extension to other graphs unspecified. Record the selected convention before implementing guard-check
 serialization. Test unrelated guard IDs and an artifact terminal transition. Keep all fixture identities, expected
 arrays and external comparison logic outside the selector.
+
+## Implementation evidence
+
+The canonical per-unit plan preceded source changes in commit `c96c3c961f5f4417f4c1b82bfe34a305c49cd43d`. At
+`b9d680decee78ee189f22c5f514c377afc905114`, all 823 tests, the build and the installed-package smoke check passed. At
+`babf903e0726b7ae3d07d3b8ae1d7746d201101e`, the selector matched all 20 published controller examples and all 25
+normalized decision cases in-process. In the same revision, 270 governed-PR variations returned valid outcomes and 135
+additional scenarios passed, including 92 independently specified outcomes. The issue's linked pull request records the
+final reviewed revision, review findings, CI and package results.
+[Delivery record for #169](https://github.com/nnennandukwe/threadloop/issues/169)

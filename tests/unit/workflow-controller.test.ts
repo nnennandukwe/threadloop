@@ -92,8 +92,8 @@ it('blocks an active run with a stale subject or corrupt history before offering
   });
 });
 
-it('chooses the eligible edge with the lowest priority in a differently named graph', () => {
-  const profile = {
+function parcelDispatchProfile() {
+  return {
     schema_version: '0.1',
     profile: { id: 'parcel_dispatch', revision: 1 },
     initial_state: 'receipt',
@@ -139,6 +139,10 @@ it('chooses the eligible edge with the lowest priority in a differently named gr
     ],
     required_actions: [{ id: 'authorize', capability: 'approve_change', authority: 'human', parameters: {} }],
   };
+}
+
+it('chooses the eligible edge with the lowest priority in a differently named graph', () => {
+  const profile = parcelDispatchProfile();
   const input = makeWorkflowInput(JSON.stringify(profile));
   const result = selectWorkflowDecision(input);
   expect(result).toMatchObject({
@@ -155,6 +159,27 @@ it('chooses the eligible edge with the lowest priority in a differently named gr
   if (result.ok) expect(validateControllerDecision(input, result.value)).toEqual(result);
   profile.transitions.reverse();
   expect(selectWorkflowDecision(makeWorkflowInput(JSON.stringify(profile)))).toEqual(result);
+});
+
+it('chooses the next eligible edge when the first requires a missing human authority', () => {
+  const profile = parcelDispatchProfile();
+  profile.transitions.find(({ id }) => id === 'use_dispatch')!.authority.push('human');
+  const input = makeWorkflowInput(JSON.stringify(profile));
+  input.policy.rules.authorities = input.policy.rules.authorities.filter(({ type }) => type !== 'human');
+  input.policy.digest = workflowDigest(input.policy.rules);
+  const result = selectWorkflowDecision(input);
+  expect(result).toMatchObject({
+    ok: true,
+    value: {
+      decision: {
+        outcome: 'transition_available',
+        transition_id: 'alphabetically_first',
+        target_state: 'packing',
+        checks: [],
+      },
+    },
+  });
+  if (result.ok) expect(validateControllerDecision(input, result.value)).toEqual(result);
 });
 
 it('holds an outstanding effect after the run or its execution authority changes', () => {
