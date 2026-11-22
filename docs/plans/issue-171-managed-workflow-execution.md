@@ -342,6 +342,37 @@ preservation of unowned paths and retention of committed or uncertain directorie
 enrolled store must never initialize it in place. Add the exact observed commit points, failures, commands, revisions,
 warnings and unproved guarantees to the unit evidence.
 
+### Interrupted local gate collection
+
+Hosted review 2090594 on PR #177 identified two failures at `202943c`. Killing the CLI after the intent committed left
+zero gate invocations, yet the next delivery refused to collect. Killing it after result capture found that the CLI had
+already published `execution.json`. The following commit points govern recovery for new local gate collections.
+
+1. The workflow database writes the intent with `launch_protocol: 1` and its unclaimed launch row in one immediate
+   transaction. The row binds the run, key, intent digest and attempt. A retry can take this reservation. A separate
+   immediate transaction checks current version and subject authority and lets one owner change the claim from zero to
+   one before setup or invocation. Database guards prevent replacement, deletion, rewind and a second claim. A preflight
+   refusal can close an unclaimed attempt only while the same transaction still owns that check.
+2. Inspection identifies the run, key, attempt and either the reservation or committed launch claim. A missing row for a
+   marked intent is damaged storage. An older bare intent has unknown launch status. After a claim commits, either the
+   original process or a retry can lose its response. Until a verified result commits, attempts on that run stay held
+   for independent reconciliation. The original claim can cover zero or one physical invocation. A loose output file
+   can't authorize a retry.
+3. The owning producer commits the complete verified source to SQLite before publishing its execution report. Repeating
+   the original collection after that commit admits the recorded result even if the output directory has disappeared.
+   The outer receipt and terminal collection reply have separate idempotent writes. A stale subject or expired authority
+   can close the captured attempt with a refusal. A reporting error after capture directs the operator to repeat the
+   original collection.
+4. Tests kill separate CLI processes after reservation, after a real counted effect and after result capture. Concurrent
+   clients compete for one reservation. Independent readers check the persisted claim and count, old intent handling,
+   damaged rows, and recovery with the output directory gone. Existing collection phases and ordinals retain their
+   stored meaning.
+
+The same review found that enrollment trusted file contents without verifying who could change them. Enrollment and
+dispatch must validate the resolved host executable and each retained file against the existing host ownership and write
+permission checks. Tests exercise permission changes between enrollment and dispatch and verify the native host still
+runs with its original inputs.
+
 ## Commit Plan
 
 1. Commit this plan at the verified predecessor and add the bounded selected-action reservation and registration with
