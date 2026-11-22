@@ -200,6 +200,26 @@ it('resumes a prelaunch intent once when two CLI processes retry the same gate',
   });
 }, 30_000);
 
+function capturedGateFiles(control: string, run: string): Map<string, Buffer> {
+  const db = new DatabaseSync(path.join(control, '.threadloop', 'state', 'state.db'), { readOnly: true });
+  try {
+    const capture = db
+      .prepare("SELECT body FROM workflow_collection_events WHERE run_id=? AND key=? AND phase='captured'")
+      .get(run, 'interrupted-gate');
+    const { record } = parseJson<{
+      record: { artifact: { base64: string }; outputs: { path: string; content: { base64: string } }[] };
+    }>(String(capture?.body));
+    return new Map(
+      [...record.outputs, { path: 'execution.json', content: record.artifact }].map(({ path: name, content }) => [
+        name,
+        Buffer.from(content.base64, 'base64'),
+      ]),
+    );
+  } finally {
+    db.close();
+  }
+}
+
 it.each(['captured', 'report-error'] as const)(
   'recovers a captured local result after %s and loss of its output directory',
   async (cut) => {
@@ -219,17 +239,7 @@ it.each(['captured', 'report-error'] as const)(
     const directory = path.join(control, '.threadloop', 'artifacts', 'workflow-collections', attempt);
     expect(await readFile(path.join(directory, 'stdout.log'), 'utf8')).toBe('local gate counted\n');
     await expect(stat(path.join(directory, 'execution.json'))).rejects.toMatchObject({ code: 'ENOENT' });
-    const db = new DatabaseSync(path.join(control, '.threadloop', 'state', 'state.db'), { readOnly: true });
-    let capturedReport: Buffer;
-    try {
-      const capture = db
-        .prepare("SELECT body FROM workflow_collection_events WHERE run_id=? AND key=? AND phase='captured'")
-        .get(run, 'interrupted-gate');
-      const event = parseJson<{ record: { artifact: { base64: string } } }>(String(capture?.body));
-      capturedReport = Buffer.from(event.record.artifact.base64, 'base64');
-    } finally {
-      db.close();
-    }
+    const capturedReport = capturedGateFiles(control, run).get('execution.json')!;
     await rm(directory, { recursive: true });
     if (cut === 'captured') {
       await interruptAt('output-published');
@@ -266,6 +276,65 @@ it.each(['captured', 'report-error'] as const)(
   },
   30_000,
 );
+
+it('syncs gate files and their directories before admitting or replaying the captured result', async () => {
+  const { control, run, args, count, inspect, interruptAt } = await countedCollection();
+  await interruptAt('captured');
+  const captured = await inspect();
+  const attempt = captured.collections[0]!.attempt;
+  const retained = capturedGateFiles(control, run);
+  const artifacts = '.threadloop/artifacts';
+  const collections = artifacts + '/workflow-collections';
+  const directory = collections + '/' + attempt;
+  const stdout = directory + '/stdout.log';
+  const trace = path.join(control, 'gate-sync-trace');
+  const preload = new URL('../fixtures/workflow/collection-sync.mjs', import.meta.url);
+  const env = { NODE_OPTIONS: '--import=' + preload.href, THREADLOOP_TEST_GATE_SYNC_TRACE: trace };
+  const failSync = async (name: string) => {
+    const result = await runCliError(control, args, { ...env, THREADLOOP_TEST_GATE_SYNC_FAILURE: name });
+    expect(result.error).toMatchObject({
+      code: 'TRANSITION_GUARD_FAILED',
+      details: { reason: 'collection_result_captured', workflow_run_id: run, key: 'interrupted-gate', attempt },
+    });
+    expect((await readFile(trace, 'utf8')).trim().split('\n').at(-1)).toBe(
+      JSON.stringify({ name, result: 'injected EIO' }),
+    );
+    expect(capturedGateFiles(control, run)).toEqual(retained);
+    expect(await count()).toBe(1);
+  };
+  const { createWorkflowStore } = await import('../../src/adapters/fs/workflow-store.js');
+  const admittedGates = () =>
+    createWorkflowStore(control)
+      .read(run)
+      .observations.flatMap((item) => item.receipts)
+      .filter((receipt) => receipt.payload.type === 'local_proof');
+  for (const name of [stdout, directory, collections]) {
+    await failSync(name);
+    expect(await inspect()).toEqual(captured);
+    expect(admittedGates()).toHaveLength(0);
+  }
+  await writeFile(trace, '');
+  const reply = (await runCli(control, args, env)).stdout;
+  expect(admittedGates()).toHaveLength(1);
+  const syncs = (await readFile(trace, 'utf8'))
+    .trim()
+    .split('\n')
+    .map((row) => parseJson<{ name: string }>(row).name);
+  const names = [
+    'stdout.log',
+    'stderr.log',
+    'setup-0-prepare.stdout.log',
+    'setup-0-prepare.stderr.log',
+    'execution.json',
+  ];
+  expect(syncs).toEqual(expect.arrayContaining(names.map((name) => directory + '/' + name)));
+  expect(syncs.slice(-5)).toEqual([directory, collections, artifacts, '.threadloop', '.']);
+  for (const name of names) expect(await readFile(path.join(control, directory, name))).toEqual(retained.get(name));
+  await failSync(directory);
+  expect(admittedGates()).toHaveLength(1);
+  expect((await runCli(control, args, env)).stdout).toBe(reply);
+  expect(await count()).toBe(1);
+}, 30_000);
 
 it('preserves conflicting gate files and refuses admission until the operator moves them aside', async () => {
   const { control, run, args, count, inspect, interruptAt } = await countedCollection();
