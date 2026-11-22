@@ -8,18 +8,19 @@ Repository maintainers and developer-tooling teams use ThreadLoop to govern AI-a
 verification, review, and human completion. Agents perform work; ThreadLoop owns advancement through the outer software
 development lifecycle (SDLC). Completion requires current evidence of same-HEAD human approval and the merged PR.
 
-ThreadLoop currently runs a fixed governed PR lifecycle. It's neither an agent harness nor a general-purpose DAG engine.
-It doesn't supply a model/tool loop, model routing, or protected-effect permission enforcement.
+ThreadLoop supports the fixed governed PR lifecycle and configurable, graph-bound Workflow Runs. A run can hand an
+enrolled engineering action to a bounded executor. ThreadLoop checks the returned evidence before it allows a
+transition.
 
 ## Capability status
 
-| Status                                           | What it covers                                                                                                                                                                                                                                                         |
-| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Implemented now**                              | Fixed PR lifecycle, durable SQLite state, current-HEAD proof and signed review checks, bounded post-PR repair, human completion, review artifacts, and verified audit export.                                                                                          |
-| **Implemented now**                              | [Graph-bound Workflow Runs](docs/workflow-runs.md) with durable graph bindings, deterministic decisions, explicit transition application and prepared signed evidence.                                                                                                 |
-| **Accepted in Controller Contract v0.1**         | Workflow Profile and Compiled Graph, Controller Decision and Action Request, Execution Claim and Attempt, executor/GAAP mapping, and controller conformance specifications, published in [threadloop-contracts](https://github.com/nnennandukwe/threadloop-contracts). |
-| **Deferred to the controller-runtime milestone** | Dispatch of selected engineering actions and verification of the production controller by the external suite.                                                                                                                                                          |
-| **Deferred to the Rust migration**               | A Rust ThreadLoop replacement, after the contract freeze and separate runtime milestone demonstrate the required behavior.                                                                                                                                             |
+| Status                                   | What it covers                                                                                                                                                                                                                                                         |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Implemented now**                      | Fixed PR lifecycle, durable SQLite state, current-HEAD proof and signed review checks, bounded post-PR repair, human completion, review artifacts, and verified audit export.                                                                                          |
+| **Implemented now**                      | [Graph-bound Workflow Runs](docs/workflow-runs.md) with durable graph bindings, deterministic decisions, explicit transition application and prepared signed evidence.                                                                                                 |
+| **Accepted in Controller Contract v0.1** | Workflow Profile and Compiled Graph, Controller Decision and Action Request, Execution Claim and Attempt, executor/GAAP mapping, and controller conformance specifications, published in [threadloop-contracts](https://github.com/nnennandukwe/threadloop-contracts). |
+| **Implemented now**                      | Selected engineering actions use the managed GAAP bridge. The caller can import a signed child result, inspect the next decision and request a guarded transition. [Workflow Run commands](docs/workflow-runs.md)                                                      |
+| **Deferred to the Rust migration**       | A Rust ThreadLoop replacement, after the contract freeze and separate runtime milestone demonstrate the required behavior.                                                                                                                                             |
 
 The optional [GAAP executor bridge](docs/gaap-executor.md) implements explicit host adoption, durable Execution Claims,
 one bounded process invocation, independent signed receipt verification, and evidence persistence before guard
@@ -30,10 +31,10 @@ The contracts and their offline compiler and validators live in
 mapping helpers also support the optional executor bridge. Existing sessions don't acquire graph bindings or Execution
 Claims from the accepted specifications.
 
-The [contract freeze #110](https://github.com/nnennandukwe/threadloop/issues/110) is complete.
-[RunInvariant PR #4](https://github.com/nnennandukwe/run-invariant/pull/4) merged the external harness for this corpus.
-Synthetic subjects exercise that harness; conformance by a real ThreadLoop controller remains unproven. These milestones
-don't establish a release or completion of the separate runtime milestone.
+RunInvariant launches ThreadLoop’s controller subject against the frozen v0.1 corpus. The readiness report records the
+measured revision, case results, rollback checks and the status of the live human completion gate.
+[TypeScript baseline](docs/pre-rust-readiness.md) ·
+[Contract freeze](https://github.com/nnennandukwe/threadloop/issues/110)
 
 The [architecture guide](docs/architecture.md) explains the four system roles, the YAML-to-canonical-JSON contract, and
 the relationship between a ThreadLoop Workflow Run and a GAAP Agent Run. It links the normative contracts and separates
