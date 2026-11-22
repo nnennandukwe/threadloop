@@ -205,7 +205,7 @@ export function workflowGaapBinding(
   };
 }
 export function decideWorkflow(snapshot: RunSnapshot, observed: PhysicalObservation, at: string): DecisionReply {
-  const v = snapshot.view;
+  const { view } = snapshot;
   const input = workflowControllerInput(snapshot, observed, at);
   const result = selectWorkflowDecision(input);
   if (!result.ok)
@@ -220,20 +220,20 @@ export function decideWorkflow(snapshot: RunSnapshot, observed: PhysicalObservat
   return {
     controller_decision: decision,
     expectation: {
-      workflow_run_id: v.workflow_run_id,
-      graph_schema_version: v.graph_schema_version,
-      graph_digest: v.graph_digest,
-      policy: v.policy,
-      state: v.state,
-      state_version: v.state_version,
-      history_digest: v.history_digest,
+      workflow_run_id: view.workflow_run_id,
+      graph_schema_version: view.graph_schema_version,
+      graph_digest: view.graph_digest,
+      policy: view.policy,
+      state: view.state,
+      state_version: view.state_version,
+      history_digest: view.history_digest,
       ...(snapshot.managed_execution
         ? {
             execution_revision: snapshot.managed_execution.revision,
             execution_digest: snapshot.managed_execution.digest,
           }
         : {}),
-      evidence_revision: v.evidence_revision,
+      evidence_revision: view.evidence_revision,
       subject: observed.subject,
       evaluation_time: at,
       input_digest: decision.decision.input_digest,

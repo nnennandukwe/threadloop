@@ -23,16 +23,16 @@ afterEach(async () => {
   await Promise.all(directories.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 async function managedFixture(mode = 'success') {
-  const f = await controllerFixture(mode);
-  directories.push(f.root);
-  f.host.environment.TEST_GAAP_MAPPING = JSON.stringify(f.binding.mapping_policy);
-  f.host.environment.TEST_GAAP_IMPLEMENTATION = JSON.stringify(f.host.verification.implementation);
+  const fixture = await controllerFixture(mode);
+  directories.push(fixture.root);
+  fixture.host.environment.TEST_GAAP_MAPPING = JSON.stringify(fixture.binding.mapping_policy);
+  fixture.host.environment.TEST_GAAP_IMPLEMENTATION = JSON.stringify(fixture.host.verification.implementation);
   const owner = {
-    workflow_run_id: f.binding.snapshot.binding.workflow_run_id,
+    workflow_run_id: fixture.binding.snapshot.binding.workflow_run_id,
     reservation_id: 'reservation-1',
-    request_digest: f.binding.action_request.request_digest,
+    request_digest: fixture.binding.action_request.request_digest,
   };
-  return { ...f, owner, store: new GaapState(f.state) };
+  return { ...fixture, owner, store: new GaapState(fixture.state) };
 }
 
 it('registers the selected request and pending Attempt under its owning workflow and refuses standalone dispatch', async () => {
