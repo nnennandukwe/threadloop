@@ -5,7 +5,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { readGaapFile, requireGaapDirectory } from '../adapters/fs/gaap-files.js';
 import { GaapState } from '../adapters/fs/gaap-state.js';
-import { ThreadloopError } from '../contracts/errors.js';
+import { StateCorruptedError, ThreadloopError } from '../contracts/errors.js';
 import { canonicalJson } from '../domain/canonical-json.js';
 import { parseGaapJson, GaapEvidenceError } from '../domain/gaap-json.js';
 import { selectWorkflowDecision } from '../domain/workflow-controller.js';
@@ -159,6 +159,25 @@ async function childFact(reservation: WorkflowReservation, store: GaapState, hos
   return checkedChild(reservation, hostDigest, child);
 }
 
+async function recordChildObservation(
+  store: WorkflowStore,
+  reservation: WorkflowReservation,
+  state: GaapState,
+  hostDigest: string,
+  child: ManagedGaapInspection,
+) {
+  const { workflow_run_id: run, reservation_id: id } = reservation.owner;
+  const recorded = store.observeExecution(run, id, child);
+  if (recorded.child && recorded.child.revision > child.revision) {
+    // A concurrent writer can publish newer progress while the first observer is reporting it.
+    // Reopen the physical child to distinguish a delayed report from a restored older database.
+    const snapshot = store.read(run);
+    const live = await childFact(recorded, state, hostDigest);
+    const latest = snapshot.managed_execution?.reservations.find((entry) => entry.owner.reservation_id === id);
+    if (!latest?.child) throw new StateCorruptedError('The recorded child is missing from this Workflow Run.');
+    verifyChild(snapshot, latest, live);
+  }
+}
 async function reconcile(
   store: WorkflowStore,
   reservation: WorkflowReservation,
@@ -195,7 +214,7 @@ async function reconcile(
   }
   const admitted = child.admitted.find((f) => f.observation_id === observation?.id);
   if (!admitted) {
-    store.observeExecution(run, reservation.owner.reservation_id, child);
+    await recordChildObservation(store, reservation, state, hostDigest, child);
     refused(
       'execution_outstanding',
       'The child has no verified admission. Inspect the retained Attempt before recovery.',
@@ -373,7 +392,7 @@ export async function expireWorkflowClaim(cwd: string, run: string, attemptId: s
     const claim = child.projection.claims[0]!;
     if (claim.status !== 'expired' || !claim.closed_at)
       refused('expiry_unconfirmed', 'The child journal has no verified expiry for this claim.', run);
-    store.observeExecution(run, reservation.owner.reservation_id, child);
+    await recordChildObservation(store, reservation, state, hostDigest, child);
     const attempt = child.projection.attempts[0]!;
     return {
       disposition: 'claim_expired' as const,

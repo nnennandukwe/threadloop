@@ -7,6 +7,7 @@ import { canonicalJson } from '../../domain/canonical-json.js';
 import { sha256 } from '../crypto/sha256.js';
 import { GaapEvidenceError } from '../../domain/gaap-json.js';
 import type { GaapBinding, GaapHost } from '../../domain/gaap-binding.js';
+import type { GaapProcessResult } from '../process/gaap-runner.js';
 import type { ExecutionJournal } from 'threadloop-contracts/execution';
 import type { ExecutorRequest } from 'threadloop-contracts/executor';
 
@@ -32,6 +33,34 @@ export type GaapRoot = (
   request: ExecutorRequest;
 };
 export type GaapStateFault = (point: string) => void;
+interface ProcessObservation {
+  transport: GaapProcessResult;
+  envelope: Buffer | null;
+  evidenceError: string | null;
+}
+
+export function gaapTransportDigest(row: Record<string, unknown>) {
+  if (
+    !(row.stdout instanceof Uint8Array) ||
+    !(row.stderr instanceof Uint8Array) ||
+    (row.envelope !== null && !(row.envelope instanceof Uint8Array))
+  )
+    throw new GaapEvidenceError(
+      'state.observation',
+      'The retained process streams and signed envelope must contain their original bytes.',
+    );
+  return sha256(
+    canonicalJson({
+      id: row.id,
+      status: row.status,
+      metadata: row.metadata,
+      stdout: sha256(row.stdout),
+      stderr: sha256(row.stderr),
+      envelope: row.envelope === null ? null : sha256(row.envelope),
+    }),
+  );
+}
+
 export class GaapStateCommittedError extends GaapEvidenceError {
   constructor(cause: unknown) {
     super(
@@ -230,6 +259,64 @@ export class GaapState {
     operation: (root: GaapRoot, database: DatabaseSync) => T,
     owner?: ManagedGaapOwner,
   ): T {
+    return this.commit((root, database) => {
+      if (root.revision !== expectedRevision)
+        throw new GaapEvidenceError(
+          'state.fenced',
+          'Executor authority changed; retain the response and reconcile this Attempt.',
+        );
+      return operation(root, database);
+    }, owner);
+  }
+
+  recordObservation(
+    request: ExecutorRequest,
+    outputDirectory: string,
+    observation: ProcessObservation,
+    owner?: ManagedGaapOwner,
+  ) {
+    return this.commit((root, database) => {
+      const launches = database.prepare('SELECT * FROM launch LIMIT 2').all();
+      const launch = launches[0];
+      const expected = {
+        attempt: request.request.attempt_id,
+        request_digest: request.request_digest,
+        output_directory: outputDirectory,
+      };
+      if (
+        launches.length !== 1 ||
+        !launch ||
+        canonicalJson(launch) !== canonicalJson(expected) ||
+        canonicalJson(root.request) !== canonicalJson(request) ||
+        (root.schema_version === 'threadloop.gaap-state/2' && root.launch_digest !== sha256(canonicalJson(launch)))
+      )
+        throw new GaapEvidenceError('state.launch', 'The returned process output must belong to its committed launch.');
+      if (
+        (root.schema_version === 'threadloop.gaap-state/2' && root.observation_digest !== null) ||
+        database.prepare('SELECT 1 FROM observation LIMIT 1').get()
+      )
+        throw new GaapEvidenceError('state.observation', 'This launch already has a retained observation.');
+      const { transport, envelope, evidenceError } = observation;
+      const { stdout, stderr, ...details } = transport;
+      const metadata = canonicalJson({
+        ...details,
+        evidence_error: evidenceError,
+        output_directory: outputDirectory,
+        request_digest: request.request_digest,
+      });
+      const inserted = database
+        .prepare('INSERT INTO observation(status,stdout,stderr,envelope,metadata) VALUES (?,?,?,?,?)')
+        .run(transport.status, stdout, stderr, envelope, metadata);
+      if (root.schema_version === 'threadloop.gaap-state/2') {
+        const row = database.prepare('SELECT * FROM observation WHERE id=?').get(inserted.lastInsertRowid)!;
+        root.observation_digest = gaapTransportDigest(row);
+      }
+      this.hit('observation.before_commit');
+      return Number(inserted.lastInsertRowid);
+    }, owner);
+  }
+
+  private commit<T>(operation: (root: GaapRoot, database: DatabaseSync) => T, owner?: ManagedGaapOwner): T {
     const generation = randomUUID();
     const database = this.open(true);
     let committed = false;
@@ -239,11 +326,6 @@ export class GaapState {
     try {
       database.exec('PRAGMA synchronous=FULL; BEGIN IMMEDIATE');
       const root = this.readRoot(database, owner);
-      if (root.revision !== expectedRevision)
-        throw new GaapEvidenceError(
-          'state.fenced',
-          'Executor authority changed; retain the response and reconcile this Attempt.',
-        );
       const value = operation(root, database);
       root.revision += 1;
       this.writeRoot(database, root);

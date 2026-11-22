@@ -1,7 +1,12 @@
 import { randomBytes } from 'node:crypto';
 import { ThreadloopError } from '../../contracts/errors.js';
-import { workflowCorrelation, type WorkflowExecutionStore } from '../../domain/workflow-execution.js';
+import {
+  workflowCorrelation,
+  type WorkflowExecutionStore,
+  type WorkflowReservation,
+} from '../../domain/workflow-execution.js';
 import { selectWorkflowDecision } from '../../domain/workflow-controller.js';
+import type { ManagedGaapInspection } from '../../services/gaap-executor.js';
 import { workflowControllerInput } from '../../services/workflow-evaluation.js';
 import type { DatabaseSync } from './sqlite-driver.js';
 import { appendExecution, childDirectory, verifyChild } from './workflow-execution-journal.js';
@@ -74,6 +79,17 @@ function inAuthority(
   return reservation;
 }
 
+function verifiedEarlierChild(
+  journal: Journal,
+  reservation: WorkflowReservation,
+  earlier: ManagedGaapInspection,
+): boolean {
+  if (!reservation.child || earlier.revision >= reservation.child.revision) return false;
+  verifyChild(journal.snapshot, { ...reservation, child: null }, earlier);
+  verifyChild(journal.snapshot, { ...reservation, child: earlier }, reservation.child);
+  return true;
+}
+
 function syncResult<T>(value: T): T {
   if (value && (typeof value === 'object' || typeof value === 'function') && 'then' in value)
     throw new ThreadloopError('INVALID_ARGUMENT', 'An execution transaction requires a synchronous callback.');
@@ -141,10 +157,7 @@ export function workflowExecutionOperations(
             conflict('The reservation already enrolled a different child.');
           if (child.revision === prior.child.revision && !equal(child, prior.child))
             conflict('The enrolled child revision already has different content.');
-          if (child.revision < prior.child.revision) {
-            verifyChild(j.snapshot, { ...prior, child: null }, child);
-            verifyChild(j.snapshot, { ...prior, child }, prior.child);
-          } else verifyChild(j.snapshot, prior, child);
+          if (!verifiedEarlierChild(j, prior, child)) verifyChild(j.snapshot, prior, child);
           return prior;
         }
         const r = inAuthority(j, id, guard, now);
@@ -157,7 +170,7 @@ export function workflowExecutionOperations(
         const j = readRun(db, run),
           r = current(j, id);
         if (!r.child) rejected('child_not_enrolled', 'Enroll the child before reading transport progress.');
-        if (equal(r.child, child)) return r;
+        if (equal(r.child, child) || verifiedEarlierChild(j, r, child)) return r;
         appendExecution(db, j, r.request_key, { kind: 'observe', child });
         return r;
       });

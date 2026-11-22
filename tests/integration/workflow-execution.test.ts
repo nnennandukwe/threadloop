@@ -1,4 +1,10 @@
-import { readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
+import { sha256 } from '../../src/adapters/crypto/sha256.js';
+import { GaapState } from '../../src/adapters/fs/gaap-state.js';
+import { createWorkflowStore } from '../../src/adapters/fs/workflow-store.js';
+import type { ManagedGaapInspection } from '../../src/services/gaap-executor.js';
+import type { GaapProcessResult } from '../../src/adapters/process/gaap-runner.js';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -95,7 +101,7 @@ it('executes a saved engineering request once and recovers its admission without
 
 const exec = promisify(execFile);
 const preload = fileURLToPath(new URL('../fixtures/workflow/execution-cut.mjs', import.meta.url));
-async function interruptAfterCommit(control: string, args: string[], cut: string, env?: NodeJS.ProcessEnv) {
+async function interruptExecution(control: string, args: string[], cut: string, env?: NodeJS.ProcessEnv) {
   const failure = await exec(process.execPath, ['--import', preload, cli, ...args], {
     cwd: control,
     timeout: 25_000,
@@ -130,15 +136,16 @@ it.each([
   { cut: 'enroll', launches: 0, reported: 'enrolled' },
   { cut: 'start', launches: 0, reported: 'started' },
   { cut: 'observe', launches: 1, reported: 'started' },
+  { cut: 'before_observation_commit', launches: 1, reported: 'started' },
   { cut: 'admit', launches: 1, reported: 'admitted' },
   { cut: 'import', launches: 1, reported: 'imported' },
 ])(
-  'recovers the child after a process dies just after $cut commits',
+  'recovers the child after a process dies at $cut',
   async ({ cut, launches, reported }) => {
     const { control, run, command, file } = await managedFixture();
     await file('expectation.json', await command('decide', run));
     const args = ['workflow', 'execute', run, '--decision', 'expectation.json', '--json'];
-    await interruptAfterCommit(control, args, cut);
+    await interruptExecution(control, args, cut);
     const readCount = () =>
       readFile(path.join(control, 'invocations.log'), 'utf8').then(
         (b) => b.trim().split('\n').length,
@@ -167,10 +174,11 @@ it.each([
       '3',
       '--json',
     ];
-    if (cut === 'start') {
+    if (cut === 'start' || cut === 'before_observation_commit') {
+      expect(inspect.data.execution).toMatchObject({ observation: null, source_id: null });
       expect((await runCliError(control, args)).error.details.reason).toBe('execution_outstanding');
       expect((await runCliError(control, recover)).error.details.reason).toBe('execution_outstanding');
-      expect(await readCount()).toBe(0);
+      expect(await readCount()).toBe(launches);
     } else {
       let deadline: NodeJS.ProcessEnv | undefined;
       if (cut === 'admit') {
@@ -249,7 +257,7 @@ it.each([
     const { control, run, command, file } = await managedFixture();
     await file('decision.json', await command('decide', run));
     const execute = ['workflow', 'execute', run, '--decision', 'decision.json', '--json'];
-    await interruptAfterCommit(control, execute, cut);
+    await interruptExecution(control, execute, cut);
     const inspect = ['workflow', 'inspect', run, '--json'];
     const before = (await command<ClaimInspection>('inspect', run)).data.execution;
     const attempt = before.correlation.attempt_id;
@@ -301,7 +309,7 @@ it.each([
         'execution_authority_changed',
       );
     }
-    await interruptAfterCommit(control, expire(attempt, 3), 'expire', deadline);
+    await interruptExecution(control, expire(attempt, 3), 'expire', deadline);
     const cutRead = parseJson<{ data: ClaimInspection }>((await runCli(control, inspect, deadline)).stdout).data;
     expect(cutRead.execution).toMatchObject({
       claim_status: 'expired',
@@ -362,7 +370,7 @@ it.each([
 it('reports the original remaining policy budget after a prelaunch expiry', async () => {
   const { control, run, command, file } = await managedFixture('success', 2);
   await file('selected.json', await command('decide', run));
-  await interruptAfterCommit(control, ['workflow', 'execute', run, '--decision', 'selected.json', '--json'], 'enroll');
+  await interruptExecution(control, ['workflow', 'execute', run, '--decision', 'selected.json', '--json'], 'enroll');
   const { execution } = (await command<ClaimInspection>('inspect', run)).data;
   const clock = atDeadline(execution.valid_until);
   const expired = await runCli(
@@ -397,3 +405,127 @@ it('reports the original remaining policy budget after a prelaunch expiry', asyn
     await readFile(path.join(control, 'invocations.log'), 'utf8').catch((error: NodeJS.ErrnoException) => error.code),
   ).toBe('ENOENT');
 }, 30_000);
+
+it('retains the returned transport when another writer expires the claim before the observation commit', async () => {
+  const { control, run, command, file } = await managedFixture();
+  await file('selected.json', await command('decide', run));
+  const args = ['workflow', 'execute', run, '--decision', 'selected.json', '--json'];
+  const captureFile = path.join(control, 'capture.json');
+  const writer = await runCliError(control, args, {
+    NODE_OPTIONS: '--import=' + new URL('../fixtures/workflow/expire-returned-observation.mjs', import.meta.url).href,
+    NODE_NO_WARNINGS: '1',
+    THREADLOOP_TEST_OBSERVATION_CAPTURE: captureFile,
+  });
+  const capture = parseJson<{
+    deadline: string;
+    captured: { stdout: string; stderr: string; envelope: string };
+    expiry: { claim_status: string; attempt_status: string; launch_count: number };
+    child_revision: number;
+    journal_digest: string;
+    authority: string[];
+  }>(await readFile(captureFile, 'utf8'));
+  expect(capture.expiry).toMatchObject({ claim_status: 'expired', attempt_status: 'unknown_outcome', launch_count: 1 });
+  expect(writer.error.details.reason).toBe('execution_outstanding');
+  const env = atDeadline(capture.deadline);
+  const inspect = async () =>
+    parseJson<{ data: ClaimInspection }>((await runCli(control, ['workflow', 'inspect', run, '--json'], env)).stdout)
+      .data;
+  const view = await inspect();
+  expect(view).toMatchObject({
+    state_version: 3,
+    execution: {
+      attempt: 'unknown_outcome',
+      claim_status: 'expired',
+      observation: { id: 1, status: 'ok' },
+      launch_count: 1,
+      source_id: null,
+    },
+  });
+  const childDir = view.execution.recovery_argv[4]!;
+  const child = new DatabaseSync(path.join(childDir, 'executor.sqlite'), { readOnly: true });
+  try {
+    const root = JSON.parse(String(child.prepare('SELECT body FROM root WHERE id=1').get()!.body)) as {
+      journal: { execution_digest: string };
+      revision: number;
+      authority: string[];
+    };
+    expect(root.revision).toBe(capture.child_revision + 1);
+    expect(root.journal.execution_digest).toBe(capture.journal_digest);
+    expect(root.authority).toEqual(capture.authority);
+    const rows = child.prepare('SELECT stdout,stderr,envelope FROM observation').all();
+    expect(rows).toHaveLength(1);
+    for (const name of ['stdout', 'stderr', 'envelope'] as const) {
+      expect(sha256(rows[0]![name] as Uint8Array)).toBe(capture.captured[name]);
+    }
+    expect(child.prepare('SELECT COUNT(*) AS count FROM accepted').get()?.count).toBe(0);
+  } finally {
+    child.close();
+  }
+  const store = new GaapState(childDir);
+  const retained = store.inspectForReport();
+  const { root } = retained;
+  if (root.schema_version !== 'threadloop.gaap-state/2') throw new Error('Expected the managed child');
+  const row = retained.observations[0]!;
+  const output = String(retained.launches[0]!.output_directory);
+  const metadata = JSON.parse(String(row.metadata)) as Omit<GaapProcessResult, 'stdout' | 'stderr'>;
+  const diagnostic = {
+    transport: {
+      ...metadata,
+      stdout: Buffer.from(row.stdout as Uint8Array),
+      stderr: Buffer.from(row.stderr as Uint8Array),
+    },
+    envelope: Buffer.from(row.envelope as Uint8Array),
+    evidenceError: null,
+  };
+  expect(() =>
+    store.recordObservation(root.request, output, diagnostic, { ...root.owner, reservation_id: 'another' }),
+  ).toThrow(/owning Workflow Run/);
+  expect(() => store.recordObservation(root.request, path.join(output, 'another'), diagnostic, root.owner)).toThrow(
+    /committed launch/,
+  );
+  expect(() => store.recordObservation(root.request, output, diagnostic, root.owner)).toThrow(
+    /already has a retained observation/,
+  );
+  expect(store.inspectForReport()).toEqual(retained);
+  // A second caller can finish its verified read before our transport commits and report it afterwards.
+  const controlDb = new DatabaseSync(path.join(control, '.threadloop', 'state', 'state.db'), { readOnly: true });
+  let earlier: ManagedGaapInspection;
+  try {
+    const event = controlDb
+      .prepare("SELECT body FROM workflow_execution_events WHERE run_id=? AND kind='observe' ORDER BY revision LIMIT 1")
+      .get(run)!;
+    earlier = (JSON.parse(String(event.body)) as { child: ManagedGaapInspection }).child;
+  } finally {
+    controlDb.close();
+  }
+  expect(earlier.revision).toBe(capture.child_revision);
+  expect(earlier.observations).toHaveLength(0);
+  const delayed = createWorkflowStore(control).observeExecution(run, root.owner.reservation_id, earlier);
+  expect(delayed.child?.observations).toEqual([{ id: 1, status: 'ok' }]);
+  expect(await inspect()).toEqual(view);
+  await file('late.json', view.execution.correlation);
+  const late = await runCliError(
+    control,
+    [
+      'workflow',
+      'evidence',
+      'import',
+      'gaap',
+      '--run',
+      run,
+      '--source',
+      'late.json',
+      '--expected-state-version',
+      '3',
+      '--json',
+    ],
+    env,
+  );
+  expect(late.error.details.reason).toBe('execution_authority_changed');
+  expect((await runCliError(control, args, env)).error.details.reason).toBe('execution_outstanding');
+  expect(await inspect()).toEqual(view);
+  await copyFile(captureFile + '.sqlite', path.join(childDir, 'executor.sqlite'));
+  expect((await runCliError(control, ['workflow', 'inspect', run, '--json'], env)).error.code).toBe('STATE_CORRUPTED');
+  expect((await runCliError(control, args, env)).error.code).toBe('STATE_CORRUPTED');
+  expect((await readFile(path.join(control, 'invocations.log'), 'utf8')).trim().split('\n')).toHaveLength(1);
+}, 35_000);

@@ -36,6 +36,7 @@ import { sha256 } from '../adapters/crypto/sha256.js';
 import { observeGaapWorkspace, readGaapFile, requireGaapDirectory } from '../adapters/fs/gaap-files.js';
 import {
   GaapState,
+  gaapTransportDigest,
   GaapStateCommittedError,
   GaapStateCommitUncertainError,
   type GaapRoot,
@@ -394,32 +395,10 @@ async function run(store: GaapState, abortSignal?: AbortSignal, access?: Managed
   } catch (error) {
     evidenceError = error instanceof Error ? error.message : String(error);
   }
-  const observationId = store.mutate(
-    store.read(access?.owner).revision,
-    (current, database) => {
-      const result = database
-        .prepare('INSERT INTO observation(status,stdout,stderr,envelope,metadata) VALUES (?,?,?,?,?)')
-        .run(
-          transport.status,
-          transport.stdout,
-          transport.stderr,
-          retainedEnvelope,
-          canonicalJson({
-            evidence_error: evidenceError,
-            ...transport,
-            stdout: undefined,
-            stderr: undefined,
-            output_directory: outputDirectory,
-            request_digest: launched.request.request_digest,
-          }),
-        );
-      if (current.schema_version === 'threadloop.gaap-state/2') {
-        const row = database.prepare('SELECT * FROM observation WHERE id=?').get(result.lastInsertRowid)!;
-        current.observation_digest = transportDigest(row);
-      }
-      store.hit('observation.before_commit');
-      return Number(result.lastInsertRowid);
-    },
+  const observationId = store.recordObservation(
+    launched.request,
+    outputDirectory,
+    { transport, envelope: retainedEnvelope, evidenceError },
     access?.owner,
   );
   if (transport.status !== 'ok')
@@ -733,27 +712,6 @@ export async function inspectManagedGaapExecutor(
     admitted,
   };
 }
-function transportDigest(row: Record<string, unknown>) {
-  if (
-    !(row.stdout instanceof Uint8Array) ||
-    !(row.stderr instanceof Uint8Array) ||
-    (row.envelope !== null && !(row.envelope instanceof Uint8Array))
-  )
-    throw new GaapEvidenceError(
-      'state.observation',
-      'The retained process streams and signed envelope must contain their original bytes.',
-    );
-  return sha256(
-    canonicalJson({
-      id: row.id,
-      status: row.status,
-      metadata: row.metadata,
-      stdout: sha256(row.stdout),
-      stderr: sha256(row.stderr),
-      envelope: row.envelope === null ? null : sha256(row.envelope),
-    }),
-  );
-}
 /** Record a host-clock expiry while the owning Workflow Run holds its writer. */
 export function expireManagedGaapClaim(store: GaapState, child: ManagedGaapInspection, snapshot: ControllerInput) {
   const actor = child.journal.execution.initial_context.actor;
@@ -815,7 +773,7 @@ function checkManagedRegistration(retained: RetainedState, projection: Execution
   if (
     retained.launches.length !== (attempt.started_at === null ? 0 : 1) ||
     root.launch_digest !== (launch ? sha256(canonicalJson(launch)) : null) ||
-    root.observation_digest !== (observation ? transportDigest(observation) : null) ||
+    root.observation_digest !== (observation ? gaapTransportDigest(observation) : null) ||
     (launch &&
       (launch.attempt !== attempt.id ||
         launch.request_digest !== root.request.request_digest ||
