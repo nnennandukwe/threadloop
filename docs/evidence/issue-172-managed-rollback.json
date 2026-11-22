@@ -1,0 +1,621 @@
+{
+  "source": {
+    "revision": "80e091c9f6412195a8444f048add977d648c4115",
+    "tree": "987ef4aeda6bb371b0c2f476a3dbeae9467d89ec",
+    "lock_blob": "b35af44702d348558f848767c6eae50a40b7ca18",
+    "node": "v26.8.2",
+    "npm": "11.19.1",
+    "tarball": "threadloop-0.1.0.tgz",
+    "sha256": "36f1a69c52e0ae4cc4c4fb7e03c207f30c6391efec12f123581b896df5c6fa51",
+    "cli_sha256": "610e586afd19fd85e0b2adade639b88a98213a039cb980772f72a65ded4cdc22",
+    "integrity": "sha512-thLVEkgwnuv9EMxiNyy9Ddm2Z+mGuirfETwpkGV/7kXXomgZQ134Mq5IuJnwNyNNPyB3TtqwsgfHqAljpMLAxA==",
+    "bundled_dependencies": 55
+  },
+  "previous": {
+    "bundled_dependencies": 55,
+    "cli_sha256": "0859b3f5c9a0cac969bbe0c744ade31080d81910d53ae04970ea654d3ce94571",
+    "integrity": "sha512-lpV4S8nRXKjCYr5Qarg7x95EY1bBDXsVmC5NrTyvYxFM1iLjY2MiNU9zWOWejexEAJo3HXjJkDa8x/ueNmLpqg==",
+    "lock_blob": "b35af44702d348558f848767c6eae50a40b7ca18",
+    "node": "v26.8.2",
+    "npm": "11.19.1",
+    "revision": "31388a07566350dfeddc30578d43b8926d5b4e22",
+    "sha256": "c8c96f8229ee141bfe31b1509440e548aa2fb64b089bd6f44b41016e7e0fe078",
+    "tarball": "threadloop-0.1.0.tgz",
+    "tree": "17124dd8949059d40c25807e297659817f2c5b11"
+  },
+  "previous_merge": "bdf68cc2d3ad915d085aecff47c9181f65fb5205",
+  "fixture_files": {
+    "scripts/pre-rust/rollback-fixture.ts": "a34dbaca9a61349b6323df7eeb2e9fd03de8c1f11ccbcaa8924d2d0195573765",
+    "tests/fixtures/gaap-producer.ts": "f310f27fa745b146c5749f73b184ea831ed274335f681b42b9a5a2717cc47a09",
+    "tests/fixtures/gaap.ts": "05dc08e35462704821d1d1d2340313ce7736f1a724b1664eb53e176a203e9886",
+    "tests/fixtures/workflow/execution-cut.mjs": "7e3d35d78c4ed13c87ae788b93df94fccce031fa617ec8347f2ff1d517cb7b41",
+    "tests/helpers/workflow-execution.ts": "da55d08c335221cb94a6116868e1cf72eb857b236ab25712bf7bc148f9f617ba"
+  },
+  "driver_sha256": "b7f13ed4027e7bf8c15717a2d9f89bd25dd619689a90806badfa3ade2c612ddc",
+  "limit_per_backup_bytes": 67108864,
+  "mode": "quiescent two-store backup and restore",
+  "per_runtime": {
+    "v22.22.2": {
+      "raw_packet_sha256": "e412f2f019cab3eb2674dc1bd0d1c97c39fc6ff4dec48500c83eb7382b66f726",
+      "sqlite": "3.51.0",
+      "cases": [
+        {
+          "accepted": [],
+          "blobs": [],
+          "case": "held",
+          "child_revision": 2,
+          "child_root_digest": "31ffb24a3949bf6f94ec395263fcf96564b61ca59b6e191a1160bb916bc71079",
+          "effect_file_sha256": "a0cb50ef664c14794b50531c2ed4c9d9e57aabde1e1ecb22d0c1d9f8df06fefa",
+          "execution_revision_before": 3,
+          "execution_revision_recovered": 3,
+          "file_hashes_before": {
+            ".threadloop/state/state.db": "d0b9bb2a4868292d5a43c34e552ac3739d071f667094a2b68cdeb99c17b19275",
+            ".threadloop/state/workflow-execution-500cab78fe7973234eb282234629ca74/executor.sqlite": "bd743fe4b23619424bf180053e42a7f9fc06213354fe80281135c28f7de11528"
+          },
+          "file_hashes_restored": {
+            ".threadloop/state/state.db": "d0b9bb2a4868292d5a43c34e552ac3739d071f667094a2b68cdeb99c17b19275",
+            ".threadloop/state/workflow-execution-500cab78fe7973234eb282234629ca74/executor.sqlite": "bd743fe4b23619424bf180053e42a7f9fc06213354fe80281135c28f7de11528"
+          },
+          "import_events_after_backup": 0,
+          "import_events_after_recovery": 0,
+          "import_events_restored": 0,
+          "initial_observation": {
+            "code": "EXECUTOR_REJECTED",
+            "exit": 1,
+            "reason": "execution_outstanding"
+          },
+          "invocations_after_recovery": 1,
+          "launches": 1,
+          "legacy_version_after_backup": 1,
+          "legacy_version_restored": 0,
+          "observations": [
+            {
+              "envelope_sha256": null,
+              "id": 1,
+              "status": "exit_failed",
+              "stderr_sha256": "8e9475953db5168b536053519c61cedbb4bfec8add48d4ff1425080f4b0de981",
+              "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          ],
+          "old_managed_refusals": {
+            "apply": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            },
+            "child_inspect": {
+              "code": "EXECUTOR_REJECTED",
+              "exit": 1,
+              "reason": "state.version"
+            },
+            "child_run": {
+              "code": "EXECUTOR_REJECTED",
+              "exit": 1,
+              "reason": "state.version"
+            },
+            "decide": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            },
+            "inspect": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            },
+            "prepare": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            },
+            "reused_create": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            }
+          },
+          "outer_state_version": 3,
+          "physical_subject_head": "9d5d5907f9673f75f8905a8aa9e801a9c0c3c8c6",
+          "recovery_disposition": "execution_outstanding",
+          "replay_disposition": "execution_outstanding",
+          "snapshot_bytes": 798250
+        },
+        {
+          "accepted": [
+            {
+              "admission_digest": "49c2efa2461c266cb4ede7db5df28dccbb7e39fc9bab9885a054b6ba51d62361",
+              "envelope_sha256": "bf755ba836a3801b684e9e47efce12070ab33bf6f5bfe77e114cc6ecabc16663",
+              "observation": 1,
+              "predicate_sha256": "c15e8f62dccf2476b27ce4d1af858f4ab0cdcc8d95044e1b2c32f9c2f9e7a3eb",
+              "result_sha256": "64b17a1083ac18ee53bffc3c2f12f55f4a982423cb08e6bedc9db5b074ae4a4d",
+              "signature_count": 1,
+              "source_digest": "098be226e4fcd6c4443587946a013aed24af4c20de94214984e4b3cb0a305082",
+              "source_id": "threadloop_attempt_5428763f129dc2d713a3b15648f3d12677910e84408c3e538fe3ea5c248e4844"
+            }
+          ],
+          "blobs": [
+            {
+              "bytes": 21,
+              "id": "sha256:0c5d8c89ef623535e4f3df8b5879e5256b52d5a54adc9c602c418391eacb21b1",
+              "sha256": "0c5d8c89ef623535e4f3df8b5879e5256b52d5a54adc9c602c418391eacb21b1"
+            },
+            {
+              "bytes": 33,
+              "id": "sha256:6ccd87ea7aa30b553ada852e153b2fce021e7a53caaf18a27a3a54ac0e38fe4d",
+              "sha256": "6ccd87ea7aa30b553ada852e153b2fce021e7a53caaf18a27a3a54ac0e38fe4d"
+            },
+            {
+              "bytes": 159,
+              "id": "sha256:ec49d61914a4e032e0444dafa9e0567db757ec7094b67aae09f874ded1fb57cd",
+              "sha256": "ec49d61914a4e032e0444dafa9e0567db757ec7094b67aae09f874ded1fb57cd"
+            }
+          ],
+          "case": "admitted",
+          "child_revision": 3,
+          "child_root_digest": "ecaa45761663f65184193ff0de57900657a5165788a2d892bb2fcf092ab1e9e4",
+          "effect_file_sha256": null,
+          "execution_revision_before": 2,
+          "execution_revision_recovered": 3,
+          "file_hashes_before": {
+            ".threadloop/state/state.db": "05c985d7fd183f663c5cbb5c377a9c96b58a1a8e64d03d8944d49e8583d9aee7",
+            ".threadloop/state/workflow-execution-65f9a12f6a72e8d77b6fe07438c2fcd5/executor.sqlite": "d92119881a58987b9af8e2a67235ac5ce295cecee471eec0fafe10e87fb225e5"
+          },
+          "file_hashes_restored": {
+            ".threadloop/state/state.db": "05c985d7fd183f663c5cbb5c377a9c96b58a1a8e64d03d8944d49e8583d9aee7",
+            ".threadloop/state/workflow-execution-65f9a12f6a72e8d77b6fe07438c2fcd5/executor.sqlite": "d92119881a58987b9af8e2a67235ac5ce295cecee471eec0fafe10e87fb225e5"
+          },
+          "import_events_after_backup": 1,
+          "import_events_after_recovery": 1,
+          "import_events_restored": 0,
+          "initial_observation": {
+            "observed_boundary": "managed-cut=admit",
+            "signal": "SIGKILL"
+          },
+          "invocations_after_recovery": 1,
+          "launches": 1,
+          "legacy_version_after_backup": 1,
+          "legacy_version_restored": 0,
+          "observations": [
+            {
+              "envelope_sha256": "bf755ba836a3801b684e9e47efce12070ab33bf6f5bfe77e114cc6ecabc16663",
+              "id": 1,
+              "status": "ok",
+              "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "stdout_sha256": "3b9cf9d1103525d61836d9c434f4492a25c323a7cfbc9637fd30af8fb0a01254"
+            }
+          ],
+          "old_managed_refusals": {
+            "apply": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            },
+            "child_inspect": {
+              "code": "EXECUTOR_REJECTED",
+              "exit": 1,
+              "reason": "state.version"
+            },
+            "child_run": {
+              "code": "EXECUTOR_REJECTED",
+              "exit": 1,
+              "reason": "state.version"
+            },
+            "decide": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            },
+            "inspect": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            },
+            "prepare": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            },
+            "reused_create": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            }
+          },
+          "outer_state_version": 3,
+          "physical_subject_head": "7e3a2fc767c807e85d9ea7e32033258dbc53d859",
+          "recovery_disposition": "imported",
+          "replay_disposition": "imported",
+          "snapshot_bytes": 788875
+        }
+      ]
+    },
+    "v24.20.0": {
+      "raw_packet_sha256": "97aa50c2a88be3249804fb379dc6440121ced62a0cde036a78017f077763d0e1",
+      "sqlite": "3.51.0",
+      "cases": [
+        {
+          "accepted": [],
+          "blobs": [],
+          "case": "held",
+          "child_revision": 2,
+          "child_root_digest": "d5ca0890b1465b683f57e665deb5af41567499071da3ff091c808ec220b8964a",
+          "effect_file_sha256": "a0cb50ef664c14794b50531c2ed4c9d9e57aabde1e1ecb22d0c1d9f8df06fefa",
+          "execution_revision_before": 3,
+          "execution_revision_recovered": 3,
+          "file_hashes_before": {
+            ".threadloop/state/state.db": "491840af7cc0a6ef3df376778f4e97b5115d3d95e6b343812fdbb7bce5eefd0a",
+            ".threadloop/state/workflow-execution-8a20b0e242554314e437294ee355a6f1/executor.sqlite": "b4a3b78d4eb5f3e8ee83f972486cba6beb13944d7612c7dca08a5a77cadfad7f"
+          },
+          "file_hashes_restored": {
+            ".threadloop/state/state.db": "491840af7cc0a6ef3df376778f4e97b5115d3d95e6b343812fdbb7bce5eefd0a",
+            ".threadloop/state/workflow-execution-8a20b0e242554314e437294ee355a6f1/executor.sqlite": "b4a3b78d4eb5f3e8ee83f972486cba6beb13944d7612c7dca08a5a77cadfad7f"
+          },
+          "import_events_after_backup": 0,
+          "import_events_after_recovery": 0,
+          "import_events_restored": 0,
+          "initial_observation": {
+            "code": "EXECUTOR_REJECTED",
+            "exit": 1,
+            "reason": "execution_outstanding"
+          },
+          "invocations_after_recovery": 1,
+          "launches": 1,
+          "legacy_version_after_backup": 1,
+          "legacy_version_restored": 0,
+          "observations": [
+            {
+              "envelope_sha256": null,
+              "id": 1,
+              "status": "exit_failed",
+              "stderr_sha256": "8e9475953db5168b536053519c61cedbb4bfec8add48d4ff1425080f4b0de981",
+              "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          ],
+          "old_managed_refusals": {
+            "apply": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            },
+            "child_inspect": {
+              "code": "EXECUTOR_REJECTED",
+              "exit": 1,
+              "reason": "state.version"
+            },
+            "child_run": {
+              "code": "EXECUTOR_REJECTED",
+              "exit": 1,
+              "reason": "state.version"
+            },
+            "decide": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            },
+            "inspect": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            },
+            "prepare": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            },
+            "reused_create": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            }
+          },
+          "outer_state_version": 3,
+          "physical_subject_head": "28b5665365f792a3899eff8402f3808d8d6e4414",
+          "recovery_disposition": "execution_outstanding",
+          "replay_disposition": "execution_outstanding",
+          "snapshot_bytes": 798233
+        },
+        {
+          "accepted": [
+            {
+              "admission_digest": "5853154e7acbaa3b59af9c7f2dcf24d8b8637b7260c27a2dd389ac16043bfa2d",
+              "envelope_sha256": "d6fd679d9eea7383b1ff208c0dde5df0c4168bbc0b3a7fcab3111b7dc8a631eb",
+              "observation": 1,
+              "predicate_sha256": "cab9038c3648dabd6943e88f6c0645bcc330d5e472bab96c06165a19f757d824",
+              "result_sha256": "f71bf442bf0386b3e198a956f84879b3baff5f5b3175264b7c1f2cade9f52c04",
+              "signature_count": 1,
+              "source_digest": "c31781a48ddbdadafea58845a6836c62171377ce7314f0f1537465421731883a",
+              "source_id": "threadloop_attempt_1a4e652a5db5c371f10dfc39c2d9ea77138d7245cf46fe1f8882fe0b70c9f58f"
+            }
+          ],
+          "blobs": [
+            {
+              "bytes": 21,
+              "id": "sha256:0c5d8c89ef623535e4f3df8b5879e5256b52d5a54adc9c602c418391eacb21b1",
+              "sha256": "0c5d8c89ef623535e4f3df8b5879e5256b52d5a54adc9c602c418391eacb21b1"
+            },
+            {
+              "bytes": 33,
+              "id": "sha256:6ccd87ea7aa30b553ada852e153b2fce021e7a53caaf18a27a3a54ac0e38fe4d",
+              "sha256": "6ccd87ea7aa30b553ada852e153b2fce021e7a53caaf18a27a3a54ac0e38fe4d"
+            },
+            {
+              "bytes": 159,
+              "id": "sha256:ec49d61914a4e032e0444dafa9e0567db757ec7094b67aae09f874ded1fb57cd",
+              "sha256": "ec49d61914a4e032e0444dafa9e0567db757ec7094b67aae09f874ded1fb57cd"
+            }
+          ],
+          "case": "admitted",
+          "child_revision": 3,
+          "child_root_digest": "7b9f9a4ba77b4c7f66e6a0ca563dfa1162eb5b839fb5df400513907d277deba4",
+          "effect_file_sha256": null,
+          "execution_revision_before": 2,
+          "execution_revision_recovered": 3,
+          "file_hashes_before": {
+            ".threadloop/state/state.db": "04f6f984268e9c934e79b7d7a6ead94eec2219d67cb365ec74108db4c56d9c81",
+            ".threadloop/state/workflow-execution-c6be86cb73dea37b1d3bfcf698c82f8e/executor.sqlite": "f1712cbd0dbb985f88a48efdc296d4a6c4c949e1db34fa4277e3105080ad2e15"
+          },
+          "file_hashes_restored": {
+            ".threadloop/state/state.db": "04f6f984268e9c934e79b7d7a6ead94eec2219d67cb365ec74108db4c56d9c81",
+            ".threadloop/state/workflow-execution-c6be86cb73dea37b1d3bfcf698c82f8e/executor.sqlite": "f1712cbd0dbb985f88a48efdc296d4a6c4c949e1db34fa4277e3105080ad2e15"
+          },
+          "import_events_after_backup": 1,
+          "import_events_after_recovery": 1,
+          "import_events_restored": 0,
+          "initial_observation": {
+            "observed_boundary": "managed-cut=admit",
+            "signal": "SIGKILL"
+          },
+          "invocations_after_recovery": 1,
+          "launches": 1,
+          "legacy_version_after_backup": 1,
+          "legacy_version_restored": 0,
+          "observations": [
+            {
+              "envelope_sha256": "d6fd679d9eea7383b1ff208c0dde5df0c4168bbc0b3a7fcab3111b7dc8a631eb",
+              "id": 1,
+              "status": "ok",
+              "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "stdout_sha256": "43b72c8753a24b704bf474baef3b2555dc1c59ba75b414e7e24c0a785235af49"
+            }
+          ],
+          "old_managed_refusals": {
+            "apply": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            },
+            "child_inspect": {
+              "code": "EXECUTOR_REJECTED",
+              "exit": 1,
+              "reason": "state.version"
+            },
+            "child_run": {
+              "code": "EXECUTOR_REJECTED",
+              "exit": 1,
+              "reason": "state.version"
+            },
+            "decide": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            },
+            "inspect": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            },
+            "prepare": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            },
+            "reused_create": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            }
+          },
+          "outer_state_version": 3,
+          "physical_subject_head": "07171b63393b7418ee2aea28519e6e052f1c26b9",
+          "recovery_disposition": "imported",
+          "replay_disposition": "imported",
+          "snapshot_bytes": 788858
+        }
+      ]
+    },
+    "v26.8.2": {
+      "raw_packet_sha256": "ef6bdd2b0f48ed6188565c48c1d886596d191c7def568a600acc0b2e9fd24e11",
+      "sqlite": "3.51.0",
+      "cases": [
+        {
+          "accepted": [],
+          "blobs": [],
+          "case": "held",
+          "child_revision": 2,
+          "child_root_digest": "46561bc239e4cb212cdcf46a5577aa175c0fc61ddebb7569179a56455516676e",
+          "effect_file_sha256": "a0cb50ef664c14794b50531c2ed4c9d9e57aabde1e1ecb22d0c1d9f8df06fefa",
+          "execution_revision_before": 3,
+          "execution_revision_recovered": 3,
+          "file_hashes_before": {
+            ".threadloop/state/state.db": "57d9ce239569268790db87ca221cd370f3203779f8961fb6cc78922ccdcec74f",
+            ".threadloop/state/workflow-execution-1190da3b473e81f20eee371fbb640d78/executor.sqlite": "e8380cfc79778f77375d29aed6ee8a5f7dfdc53f226f4504da1f42ae29732acf"
+          },
+          "file_hashes_restored": {
+            ".threadloop/state/state.db": "57d9ce239569268790db87ca221cd370f3203779f8961fb6cc78922ccdcec74f",
+            ".threadloop/state/workflow-execution-1190da3b473e81f20eee371fbb640d78/executor.sqlite": "e8380cfc79778f77375d29aed6ee8a5f7dfdc53f226f4504da1f42ae29732acf"
+          },
+          "import_events_after_backup": 0,
+          "import_events_after_recovery": 0,
+          "import_events_restored": 0,
+          "initial_observation": {
+            "code": "EXECUTOR_REJECTED",
+            "exit": 1,
+            "reason": "execution_outstanding"
+          },
+          "invocations_after_recovery": 1,
+          "launches": 1,
+          "legacy_version_after_backup": 1,
+          "legacy_version_restored": 0,
+          "observations": [
+            {
+              "envelope_sha256": null,
+              "id": 1,
+              "status": "exit_failed",
+              "stderr_sha256": "8e9475953db5168b536053519c61cedbb4bfec8add48d4ff1425080f4b0de981",
+              "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          ],
+          "old_managed_refusals": {
+            "apply": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            },
+            "child_inspect": {
+              "code": "EXECUTOR_REJECTED",
+              "exit": 1,
+              "reason": "state.version"
+            },
+            "child_run": {
+              "code": "EXECUTOR_REJECTED",
+              "exit": 1,
+              "reason": "state.version"
+            },
+            "decide": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            },
+            "inspect": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            },
+            "prepare": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            },
+            "reused_create": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            }
+          },
+          "outer_state_version": 3,
+          "physical_subject_head": "9604d74bd02bc2eb74fb253b0f8a26814fd96a60",
+          "recovery_disposition": "execution_outstanding",
+          "replay_disposition": "execution_outstanding",
+          "snapshot_bytes": 798218
+        },
+        {
+          "accepted": [
+            {
+              "admission_digest": "e5d61f3e63d5bb6a2648e66bcc3bdf615c4700c4a0fefcc666635ca4c7262e44",
+              "envelope_sha256": "eeb64d6b2e675c5d81bda03a5345c1bbfa58cba085619470cc7916b6928f3ab1",
+              "observation": 1,
+              "predicate_sha256": "6e557d664aebcc47292599a50808deb4776e6c4ee8b98e4cff9c32e6435780e4",
+              "result_sha256": "35e49567066d9822c3ebe8f2db914cf7e76f0ca850af575f59f4bfc9655023d8",
+              "signature_count": 1,
+              "source_digest": "f2fe4966cf0542e7f6cc52e667df097f5dfa1b8c3152a6d187cb7213471f9709",
+              "source_id": "threadloop_attempt_fb4105e371c23c5181d55ba4f0d1f5664783415a325608b6fb8c13e02450b8f9"
+            }
+          ],
+          "blobs": [
+            {
+              "bytes": 21,
+              "id": "sha256:0c5d8c89ef623535e4f3df8b5879e5256b52d5a54adc9c602c418391eacb21b1",
+              "sha256": "0c5d8c89ef623535e4f3df8b5879e5256b52d5a54adc9c602c418391eacb21b1"
+            },
+            {
+              "bytes": 33,
+              "id": "sha256:6ccd87ea7aa30b553ada852e153b2fce021e7a53caaf18a27a3a54ac0e38fe4d",
+              "sha256": "6ccd87ea7aa30b553ada852e153b2fce021e7a53caaf18a27a3a54ac0e38fe4d"
+            },
+            {
+              "bytes": 159,
+              "id": "sha256:ec49d61914a4e032e0444dafa9e0567db757ec7094b67aae09f874ded1fb57cd",
+              "sha256": "ec49d61914a4e032e0444dafa9e0567db757ec7094b67aae09f874ded1fb57cd"
+            }
+          ],
+          "case": "admitted",
+          "child_revision": 3,
+          "child_root_digest": "7338054f2d86e639c8cf6007bc0854641c076c4c460bfa9a6d0d1de17bd51148",
+          "effect_file_sha256": null,
+          "execution_revision_before": 2,
+          "execution_revision_recovered": 3,
+          "file_hashes_before": {
+            ".threadloop/state/state.db": "3374de8eb8ab6c0a56c340a9eee6cf28ffe8577ba0b923ab7419e46a966ff451",
+            ".threadloop/state/workflow-execution-77fc4c8250df0fafbe894752661a4647/executor.sqlite": "53f958f90bd38d5bff937a08ecab4d3fea8b04301d80d6493db9de34bf61c3a5"
+          },
+          "file_hashes_restored": {
+            ".threadloop/state/state.db": "3374de8eb8ab6c0a56c340a9eee6cf28ffe8577ba0b923ab7419e46a966ff451",
+            ".threadloop/state/workflow-execution-77fc4c8250df0fafbe894752661a4647/executor.sqlite": "53f958f90bd38d5bff937a08ecab4d3fea8b04301d80d6493db9de34bf61c3a5"
+          },
+          "import_events_after_backup": 1,
+          "import_events_after_recovery": 1,
+          "import_events_restored": 0,
+          "initial_observation": {
+            "observed_boundary": "managed-cut=admit",
+            "signal": "SIGKILL"
+          },
+          "invocations_after_recovery": 1,
+          "launches": 1,
+          "legacy_version_after_backup": 1,
+          "legacy_version_restored": 0,
+          "observations": [
+            {
+              "envelope_sha256": "eeb64d6b2e675c5d81bda03a5345c1bbfa58cba085619470cc7916b6928f3ab1",
+              "id": 1,
+              "status": "ok",
+              "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "stdout_sha256": "5741f342d4c86e77c94d3bfff7d1a53a60fa4afcedadcfc80592d37cd816d899"
+            }
+          ],
+          "old_managed_refusals": {
+            "apply": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            },
+            "child_inspect": {
+              "code": "EXECUTOR_REJECTED",
+              "exit": 1,
+              "reason": "state.version"
+            },
+            "child_run": {
+              "code": "EXECUTOR_REJECTED",
+              "exit": 1,
+              "reason": "state.version"
+            },
+            "decide": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            },
+            "inspect": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            },
+            "prepare": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            },
+            "reused_create": {
+              "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+              "exit": 1,
+              "reason": "unsupported_workflow_setup"
+            }
+          },
+          "outer_state_version": 3,
+          "physical_subject_head": "69a80cc2fdbb90e1aa0c6307233d20380705152a",
+          "recovery_disposition": "imported",
+          "replay_disposition": "imported",
+          "snapshot_bytes": 788843
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,130 @@
+{
+  "implementation": {
+    "revision": "80e091c9f6412195a8444f048add977d648c4115",
+    "tree": "987ef4aeda6bb371b0c2f476a3dbeae9467d89ec",
+    "lock_sha256": "70e168ee4e6df299cd1e1b52e3609699f54eff5e892d6c0afcc1ea498194e7c2"
+  },
+  "gaap_commit": "0a82687d6070081e0a5cb613698f0724dc6f00cb",
+  "binaries": {
+    "goose_sha256": "sha256:4b8258c24adad9e07957d1dddfc7d965b97883dce2eff64af7e3d3c005655d81",
+    "implementation_digest": "sha256:42305ab1ebed503c68ce6796fe1a9f6a727ca4442809b76c7daa261f124054db",
+    "attestor_digest": "sha256:d1ee3ef7e8e40d147d7aec1ff34c1a0af3b11b0618a39a2517f35fd5af10f257"
+  },
+  "os": "macOS-26.6-arm64-arm-64bit",
+  "source_inputs": {
+    "file_count": 296,
+    "digest": "4428f2fb639e6b0c8ff9dbdfe90981e166372813ddc696a368ef21f79bf7c4fb"
+  },
+  "installed_package": {
+    "package_sha256": "36f1a69c52e0ae4cc4c4fb7e03c207f30c6391efec12f123581b896df5c6fa51",
+    "cli_sha256": "610e586afd19fd85e0b2adade639b88a98213a039cb980772f72a65ded4cdc22"
+  },
+  "provider": "deterministic local provider",
+  "signing": "public fixture key",
+  "cases": [
+    {
+      "goose_sha256": "sha256:4b8258c24adad9e07957d1dddfc7d965b97883dce2eff64af7e3d3c005655d81",
+      "goose_version": "1.54.0",
+      "implementation_digest": "sha256:42305ab1ebed503c68ce6796fe1a9f6a727ca4442809b76c7daa261f124054db",
+      "attestor_digest": "sha256:d1ee3ef7e8e40d147d7aec1ff34c1a0af3b11b0618a39a2517f35fd5af10f257",
+      "controller_request_digest": "319ed123fb1611e1f6f38d42a92ac000d92a47d84add2e55562c1c2d460dc30c",
+      "executor_request_digest": "f46403f5f3ec2a2af9fd1418bbbc16e62ba8ed4c640fdefe587886fac587be93",
+      "claim": {
+        "id": "0e94f108-b0e3-4852-a2c6-9268ec4235b3",
+        "version": 1
+      },
+      "attempt_id": "8a587440-8b89-47ce-becf-b4560e34594b",
+      "attempt_status": "succeeded",
+      "admission_digest": "27d12a9c57b34615b3964f4c0d35c2d2a246090647415c52806271d9a94b4ded",
+      "launch_count": 1,
+      "source_id": "threadloop_attempt_e64101e1baa22be733034e28062001a1ddd294fa20c7e92e32a916eff3590f88",
+      "provider_requests": 5,
+      "provider_transcript_sha256": "881121e831020101b6a8dfa8a2ca270867f8783815dee51d183afc50b535a663",
+      "provenance_sha256": "67de0b2276e82ae7d154358219273aa3664a8ce3f054b35c1dbbea3bbf199c08",
+      "package_sha256": "36f1a69c52e0ae4cc4c4fb7e03c207f30c6391efec12f123581b896df5c6fa51",
+      "source_inputs_sha256": "4428f2fb639e6b0c8ff9dbdfe90981e166372813ddc696a368ef21f79bf7c4fb",
+      "final_state": "verifying",
+      "final_version": 4,
+      "subject_commit": "7897c380886b00c4510def0f8b28869811da3829",
+      "envelope_sha256": "585ec6c34b29f3ff612178a0509b578f8b77ff9235a8bcb9a1710340dafd1982",
+      "signed_predicate_sha256": "a3b7458c9001c840af98d7986105a9024db50c3ce1198e8738be1d3cce7ecb91",
+      "key_id": "gaap-goose-public-fixture-only",
+      "kind": "managed",
+      "case": "allow"
+    },
+    {
+      "goose_sha256": "sha256:4b8258c24adad9e07957d1dddfc7d965b97883dce2eff64af7e3d3c005655d81",
+      "goose_version": "1.54.0",
+      "implementation_digest": "sha256:42305ab1ebed503c68ce6796fe1a9f6a727ca4442809b76c7daa261f124054db",
+      "attestor_digest": "sha256:d1ee3ef7e8e40d147d7aec1ff34c1a0af3b11b0618a39a2517f35fd5af10f257",
+      "controller_request_digest": "ec5b409e2dbce3c2337129c717a9321e4e0aef4fd46fa4f11c8ca0b4318159f7",
+      "executor_request_digest": "8824b54e6ec4f911628714982a19a46ff21dba88895e7696cbab3f6b00edc331",
+      "claim": {
+        "id": "0c534839-ad3b-4c8f-84ed-d47128f9b51f",
+        "version": 1
+      },
+      "attempt_id": "263b048c-bcaa-4a31-aa86-06123f1ca975",
+      "attempt_status": "unknown_outcome",
+      "admission_digest": "d0ed209cefb78b0d12d95c59e430d2cda17c55465f0133afd702765a75506488",
+      "launch_count": 1,
+      "source_id": "threadloop_attempt_c62f85f78e5204825f29a43aaa60aae22582a7caf6cc45a51aa7e36b6787fb5a",
+      "provider_requests": 5,
+      "provider_transcript_sha256": "90482252b55b6ee2aabc0e644ea5576ebf3adf36501e75e69486d74d2c3941ff",
+      "provenance_sha256": "e1b458f53c0101848d8d02a7b7a15dec9072ecc9baa34d1ed8555a2187685106",
+      "package_sha256": "36f1a69c52e0ae4cc4c4fb7e03c207f30c6391efec12f123581b896df5c6fa51",
+      "source_inputs_sha256": "4428f2fb639e6b0c8ff9dbdfe90981e166372813ddc696a368ef21f79bf7c4fb",
+      "final_state": "implementing",
+      "final_version": 3,
+      "subject_commit": "4388142f60db37f4a59c4f4e5b7e3814f88aa42c",
+      "envelope_sha256": "cfae68186f3ca794c4cf76c45b10bd285e01ba8f1a52cf814487c1209ffbaed3",
+      "signed_predicate_sha256": "1dd55cf3c8dcb713ed56ba0cb4bd28f687495af7bfcde811baa288d5baed4307",
+      "key_id": "gaap-goose-public-fixture-only",
+      "kind": "managed",
+      "case": "bad_patch"
+    },
+    {
+      "provider_requests": 5,
+      "signer": "gaap-goose-public-fixture-only",
+      "provenance_sha256": "d908a783609a918bdc4412ae6d511b03e1f725272c634235bbe305a54bfc71da",
+      "inspection_sha256": "bfbc3b195d805fff83858a95aa47bca1690a168d5264d508526cfc61b536f432",
+      "transcript_sha256": "a573a5b3547592cf3186638c4cc08eb5ed59853e2a2ddfb7b408d852afe181ae",
+      "result_sha256": "9df083cbcc0d1bd498f321e6a5762fbee8bac976c463fbe036a0af13e84036cd",
+      "envelope_sha256": "ee00dc558d075f99fbc2b9c8aa0fa2490dd740936679e0bab2f0ef673d86a5e2",
+      "admission_digest": "7265e88fc094898d23c9ccebd2e4621a2e060ea935a97d4c04f90ab2d55f69f7",
+      "state": "implementing",
+      "state_version": 2,
+      "launches": 1,
+      "admissions": 1,
+      "request_status": "satisfied",
+      "attempt_status": "succeeded",
+      "execution_status": "idle",
+      "attempt_id": "6e2f7365-7406-468c-80bb-90317258030b",
+      "signed_predicate_sha256": "e17ad9188b6aa165b3c9d383a6361673ade788e385cdeb39557c619a9263a5c3",
+      "key_id": "gaap-goose-public-fixture-only",
+      "kind": "standalone",
+      "case": "allow"
+    },
+    {
+      "provider_requests": 5,
+      "signer": "gaap-goose-public-fixture-only",
+      "provenance_sha256": "6a909df59f6261451e0f77d24cbbd7c9707081239ba2c76fd8036136bcdec420",
+      "inspection_sha256": "c811727a8470eb3d5a5addca621ba8afa9905edcd804c3bfd6122343a941a455",
+      "transcript_sha256": "d7a8b0bdc972e9076059f60dceb08f8ad5203eb579f7a7c1c891c0e640299b16",
+      "result_sha256": "e0db2f3a0ca7c0524fc1293a300df70625cab5bae784409d95ddc040616ac5cc",
+      "envelope_sha256": "5416b178e67be82ca26b3015ce69db521d127ee36bd7e234d32f810609891091",
+      "admission_digest": "6966820dcdf2aa1b39439afac329d17fd56e4658f00ec3654d7ce9599acc41fa",
+      "state": "implementing",
+      "state_version": 2,
+      "launches": 1,
+      "admissions": 1,
+      "request_status": "open",
+      "attempt_status": "unknown_outcome",
+      "execution_status": "reconciliation_required",
+      "attempt_id": "47573497-fa59-4666-ada8-24e26f13da5b",
+      "signed_predicate_sha256": "795b778b5de28c7308b8576d0ace7a03d655a34cc07d9d9a6c94e52eaa24e008",
+      "key_id": "gaap-goose-public-fixture-only",
+      "kind": "standalone",
+      "case": "bad_patch"
+    }
+  ]
+}
