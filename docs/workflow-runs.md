@@ -148,11 +148,19 @@ while the graph-bound run retained its original state.
 Create the run with `schema_version` set to `threadloop.workflow-setup/2` and `gaap` set to
 `{"adapter":"adapter.json","host":"host.json"}`. Keep the other setup fields from the example above. The
 `threadloop.gaap-host/1` file identifies the absolute executable, its invocation, the subject workspace, verification
-keys and limits. The host and its private environment belong outside the subject. ThreadLoop measures the executable and
-each regular file named by an absolute argument or environment value. On Linux and macOS, your account or root must own
-each file and protect its path from other writers. A private installation can sit under a sticky system temporary
-directory. ThreadLoop checks these permissions and digests at enrollment and again before starting the host. The
-`threadloop.workflow-gaap-adapter/1` file supplies the frozen `mapping_policy`, executor `parameters`, `executor`
+keys and limits. Choose a native Linux or macOS executable outside the subject. For a script, set `executable` to the
+absolute path of its native interpreter and pass the script's protected absolute path as an argument. ThreadLoop
+measures the entry executable and the regular files named by absolute arguments or environment values. Your account or
+root must own each file and protect its path from other writers. A private installation can sit under a sticky system
+temporary directory. ThreadLoop checks these permissions and digests at enrollment and before starting the host.
+
+An empty `environment` works. Supply adapter settings under `GAAP_` and your own producer settings under `PRODUCER_`.
+The signed test producer uses `TEST_GAAP_`. Use uppercase names, literal scalar or structured data, and absolute paths
+for file inputs. A directory setting ends in `_DIRECTORY` and points to an existing protected directory outside the
+subject. The host installation owns the libraries, modules and other dependencies its producer uses. Run inspection can
+still read an older binding. An unsupported launch configuration needs a new run with an eligible host.
+
+The `threadloop.workflow-gaap-adapter/1` file supplies the frozen `mapping_policy`, executor `parameters`, `executor`
 identity and `lease_ms`. Its `execution_policy` has an `id`, `retry_safety` and `max_attempts`. Enroll a mapping for an
 executor capability the graph declares. Check that its required evidence families cover the action's guards. The
 existing native proof shows how to construct these files for the governed profile.
@@ -187,11 +195,15 @@ inspection recommends `expire-claim`, copy its `recovery_argv`. For example, if 
 threadloop workflow expire-claim shipping --attempt "$attempt_id" --expected-state-version 3 --json
 ```
 
-ThreadLoop records the expired claim and its Attempt status. A started Attempt retains its unknown effect. Preserve its
-transport evidence for independent verification of the stop and effect, followed by the human disposition required by
-the bound policy. A pending Attempt records that execution never started. Inspect its retry policy and remaining Attempt
-budget. An admission that committed while the claim was valid can still be imported after expiry. Clients can discover
-the expiry command through protocol v5 capability `workflow_claim_expiry_v1`.
+ThreadLoop records the expired claim and its Attempt status. If expiry commits as the producer returns, the child can
+still save its bounded stdout, stderr and available envelope for that launch. Only a current claim can admit new
+evidence. If one CLI process reports an older observation after another process has reported a newer one, ThreadLoop
+checks the child database before accepting the newer record. If the ThreadLoop process stops before it commits the
+output, the stored launch may have no output. A started Attempt retains its unknown effect. Preserve its transport
+evidence for independent verification of the stop and effect, followed by the human disposition required by the bound
+policy. A pending Attempt records that execution never started. Inspect its retry policy and remaining Attempt budget.
+An admission that committed while the claim was valid can still be imported after expiry. Clients can discover the
+expiry command through protocol v5 capability `workflow_claim_expiry_v1`.
 
 The lifecycle advances when you deliberately apply a fresh transition. If the action changed the workspace, the next
 guard can require a scoped commit or independent proof. Use the run's current state version in each request. Keep both
@@ -203,7 +215,9 @@ For a local gate, use the ID from the immutable proof plan. ThreadLoop captures 
 repository and admits them for its observed subject. If the CLI stops, run
 `threadloop workflow inspect shipping --json`. The `collections` list identifies the key and attempt. For a `reserved`
 gate, repeat the original request. One delivery can claim the launch. For a `captured` gate, the same request admits the
-result from the database even if its output directory is gone. A completed request returns its recorded reply.
+result from the database even if its output directory is gone. ThreadLoop checks the recovered bytes and syncs the files
+and containing directories before admitting the gate. If a sync fails, inspect the captured result and retry with the
+same key. A completed request restores the files and returns its recorded reply.
 
 A `launch_claimed` gate with no captured result holds the run. The process may already have changed the subject. Inspect
 its retained output and independently reconcile any effect before taking further action. An older interrupted gate
