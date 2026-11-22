@@ -393,6 +393,30 @@ original external count. The producer can complete a previously pending Qodo ope
 working and partial status responses, a completed review with a skipped conversion pass when it had no eligible
 findings, and a completed review of the wrong head. Only the completed, matching review can supply evidence.
 
+### Expire an overdue managed claim
+
+Local review at `3e0e5a7` identified a successful transport observation that arrived before admission but whose claim
+had expired by the next import. The CLI recommended repeating an import that the authority check would always refuse.
+The child retained one launch and zero admissions at outer version three. The frozen execution contract gives ThreadLoop
+authority to record claim expiry.
+
+Use `threadloop workflow expire-claim <run> --attempt <id> --expected-state-version <n> [--json]`. Inspect the retained
+owner, child and current outer version under the existing outer writer. Check the exact Attempt, bound policy actor,
+host clock and deadline. Apply the frozen `expire` operation against the child's current revision and digest. The child
+commits the expired claim first. Then the outer observation records the verified projection in its own transaction. Keep
+the original transport result, operation identity and physical invocation count. A retry after the child commit must
+recover the same expiry without a new launch.
+
+An admitted result can still be imported after its lease ends. A late, unadmitted successful process result can't
+authorize progression. When an Attempt started, expiry retains its uncertain effect for independent reconciliation and
+human disposition. If the Attempt never started, report the frozen interrupted state and applicable retry policy and
+budget. Inspection identifies the actual recovery operation for the retained Attempt.
+
+Test an early request, a wrong Attempt, a stale outer version, pending and started Attempts, an already admitted result,
+exact replay and response loss between the two commits. Verify the actual child claim, its Attempt, the counted external
+effects, outer state and absence of a late admission. Expose the command in the negotiated v5 CLI, protocol and
+installed-package checks.
+
 ## Commit Plan
 
 1. Commit this plan at the verified predecessor and add the bounded selected-action reservation and registration with
