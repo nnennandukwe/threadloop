@@ -112,6 +112,7 @@ async function retainedReview(snapshot: RunSnapshot, producing: SourceBinding, o
       const missing = z.object({
         error: z.object({
           operation_id: z.literal(operation),
+          // Qodo's wire message uses U+2014 between the missing-review marker and its explanation.
           message: z.string().startsWith('no such review \u2014 '),
         }),
       });

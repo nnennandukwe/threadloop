@@ -438,6 +438,7 @@ if (JSON.parse(response).error) process.exitCode = 1;`;
   const { control, run, call, collect, file, status } = await collectionFixture(undefined, reader);
   const first = collect('pre-pr-review', 'original-review', '--operation', operation);
   const replacement = collect('pre-pr-review', 'replacement-review', '--operation', next);
+  // This Qodo CLI response preserves the provider's U+2014 delimiter and error wording.
   const message =
     'no such review \u2014 the id may never have existed, may belong to another user, or may have expired (results are kept about 60 minutes after a review finishes, by default). The runtime does not distinguish these. Re-run the review.';
   const expired = { operation_id: operation, message, trace_id: 'review-status-trace' };
