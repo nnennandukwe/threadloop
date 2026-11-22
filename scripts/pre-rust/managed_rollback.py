@@ -555,7 +555,7 @@ def main():
             "current": csource,
             "old": psource,
             "old_merge": OLD_MERGE,
-            "process_fixture": "local signed fixture producer; no model inference or external account",
+            "process_fixture": "local fixture producer with fixture signing",
             "fixture_source": {
                 p: file_hash(source / p)
                 for p in [

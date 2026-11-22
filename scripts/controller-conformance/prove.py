@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -53,6 +54,13 @@ LIMITS = {
     "stdout_bytes": 16 * 1024 * 1024 + 1,
     "stderr_bytes": 1024 * 1024,
 }
+PARENT_SETUP_SECONDS = 30
+GIT_SECONDS = 60
+BUILD_SECONDS = 180
+# RunInvariant allows one second for each process group to close its inherited pipes.
+SECONDS_PER_CASE_WITH_CLEANUP = LIMITS["timeout_ms"] // 1000 + 1
+HARNESS_PARENT_SECONDS = PARENT_SETUP_SECONDS + 38 * SECONDS_PER_CASE_WITH_CLEANUP
+CONTROL_PARENT_SECONDS = PARENT_SETUP_SECONDS + 7 * SECONDS_PER_CASE_WITH_CLEANUP
 
 
 def require(condition, message):
@@ -87,7 +95,7 @@ def read_json(path):
 
 def git(repo, *arguments):
     """Read a value from the requested Git checkout."""
-    return subprocess.check_output(["git", "-C", repo, *arguments], text=True).strip()
+    return subprocess.check_output(["git", "-C", repo, *arguments], text=True, timeout=GIT_SECONDS).strip()
 
 
 def checkout(repo, revision):
@@ -124,6 +132,7 @@ def pinned_inputs(harness, contracts):
     )
 
     def corpus_blobs(repo, revision):
+        """List the Git object identities of the frozen executable data and canonical vectors."""
         lines = git(repo, "ls-tree", "-r", revision, "--", str(CORPUS_DIR)).splitlines()
         return [line for line in lines if line.endswith((".json", ".canonical"))]
 
@@ -223,7 +232,7 @@ def measure_build(build, contracts, head):
 
 
 def public_cases(packet, inventory):
-    """Keep identities, machine outcomes and digests; raw diagnostics and expected payloads stay with the parent."""
+    """Keep identities, machine outcomes and digests. Raw diagnostics and expected payloads stay with the parent."""
     cases = packet["cases"]
     require(len(inventory) == len(cases) == 38, "The complete external suite has 38 cases.")
     require(
@@ -277,14 +286,52 @@ def public_cases(packet, inventory):
     return {**counts, "cases": published}
 
 
-def external_checks(node, arguments):
+def await_case_teardown(roots, label):
+    """Wait for interrupted launchers to reap their sandboxed subjects and release their case directories."""
+    import fcntl
+
+    deadline = time.monotonic() + 3
+    for root in roots:
+        descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            while True:
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise ValueError(f"{label} timed out and a case launcher still owns its scratch.")
+                    time.sleep(0.02)
+        finally:
+            os.close(descriptor)
+
+
+def bounded_parent(label, command, *, seconds, cwd, case_roots=(), data=None):
+    """Bound the Node parent separately from the frozen harness's own per-case process deadlines."""
+    try:
+        return subprocess.run(command, input=data, capture_output=True, cwd=cwd, timeout=seconds)
+    except subprocess.TimeoutExpired as error:
+        # subprocess.run has killed and reaped its direct child. Each detached launcher observes reparenting.
+        await_case_teardown(case_roots, label)
+        raise ValueError(f"{label} exceeded its {seconds:g}-second deadline.") from error
+
+
+def external_checks(node, arguments, case_roots=()):
     """Read pinned harness metadata or run its independent negative controls in a separate parent process."""
-    output = subprocess.check_output(
+    inventory = arguments.get("inventoryOnly", False)
+    result = bounded_parent(
+        "conformance inventory" if inventory else "conformance controls",
         [node, SCRIPTS / "check-controls.cjs"],
-        input=json.dumps(arguments).encode(),
         cwd=REPO,
+        seconds=PARENT_SETUP_SECONDS if inventory else CONTROL_PARENT_SECONDS,
+        case_roots=case_roots,
+        data=json.dumps(arguments).encode(),
     )
-    return json.loads(output)
+    require(
+        result.returncode == 0,
+        "RunInvariant control failed: " + result.stderr.decode(errors="replace")[-400:],
+    )
+    return json.loads(result.stdout)
 
 
 def write_new(path, data):
@@ -323,7 +370,9 @@ def measure(args):
     with tempfile.TemporaryDirectory(prefix="threadloop-controller-proof-") as directory:
         scratch = Path(directory).resolve()
         rebuilt = scratch / "build"
-        subprocess.run([node, SCRIPTS / "build.mjs", "--output", rebuilt], cwd=REPO, check=True)
+        subprocess.run(
+            [node, SCRIPTS / "build.mjs", "--output", rebuilt], cwd=REPO, check=True, timeout=BUILD_SECONDS
+        )
         require(
             measure_build(rebuilt, contracts, head) == (identity, manifest),
             "Clean source rebuild produced different bytes.",
@@ -358,7 +407,8 @@ def measure(args):
             "controlRoot": str(controls_root),
         }
         inventory = external_checks(node, {**settings, "inventoryOnly": True})
-        run = subprocess.run(
+        run = bounded_parent(
+            "RunInvariant harness",
             [
                 node,
                 harness / "bin/run-invariant.js",
@@ -373,8 +423,9 @@ def measure(args):
                 "--",
                 *command,
             ],
-            capture_output=True,
             cwd=scratch,
+            seconds=HARNESS_PARENT_SECONDS,
+            case_roots=(cases,),
         )
         require(
             run.returncode in (0, 1),
@@ -412,7 +463,7 @@ def measure(args):
                 "parent_identity": rebuilt / "identity.json",
             }
             settings["canaries"] = {name: str(path) for name, path in private_files.items()}
-            proof = external_checks(node, settings)["controls"]
+            proof = external_checks(node, settings, (cases, controls_root))["controls"]
             for index in (0, 23):
                 row = results["cases"][index]
                 repeated = proof[row["id"]]
@@ -453,13 +504,23 @@ def measure(args):
             "subject_kind": raw["subject_kind"],
             "raw_packet_sha256": digest(run.stdout),
             "limits": raw["runner"]["limits"],
+            "parent_deadlines_seconds": {
+                "git": GIT_SECONDS,
+                "build": BUILD_SECONDS,
+                "node_version": PARENT_SETUP_SECONDS,
+                "inventory": PARENT_SETUP_SECONDS,
+                "harness": HARNESS_PARENT_SECONDS,
+                "controls": CONTROL_PARENT_SECONDS,
+            },
             "report_limits": raw["runner"]["report_limits"],
             "process_cleanup": raw["runner"]["process_cleanup"],
             "shell": raw["runner"]["shell"],
             "claim_boundary": raw["claim_boundary"],
             "platform": platform.mac_ver()[0],
             "architecture": platform.machine(),
-            "node_version": subprocess.check_output([node, "--version"], text=True).strip(),
+            "node_version": subprocess.check_output(
+                [node, "--version"], text=True, timeout=PARENT_SETUP_SECONDS
+            ).strip(),
             "node_sha256": node_hash,
             "launcher_sha256": file_hash(SCRIPTS / "launch.py"),
             "policy_sha256": file_hash(SCRIPTS / "subject.sb"),

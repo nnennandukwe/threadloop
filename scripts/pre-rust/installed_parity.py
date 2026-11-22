@@ -474,5 +474,5 @@ with TemporaryDirectory(prefix="threadloop-parity-") as owned:
         json.dump(report, summary, indent=2)
         summary.write("\n")
     print(
-        f"{len(report['help']) - 1} command help entries verified; rollback restored the original database and audit export."
+        f"{len(report['help']) - 1} command help entries verified. Rollback restored the original database and audit export."
     )

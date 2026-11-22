@@ -265,7 +265,9 @@ remains open.
 and run upstream checks there, then supply those clean clones to the read-only external proof. Set `CONTRACTS` and
 `HARNESS` to their absolute paths and `EVIDENCE` to a fresh directory outside the clean ThreadLoop checkout. The parent
 invokes RunInvariant, supplies the measured identity, starts each subject in its own scratch directory and retains the
-raw and public packets. The measured launcher requires macOS Seatbelt.
+raw and public packets. The measured launcher requires macOS Seatbelt. Its parent has separate deadlines for inventory,
+the complete suite and negative controls. After a parent timeout, the launcher reaps its case process before the driver
+removes scratch.
 
 ```bash
 npm ci
