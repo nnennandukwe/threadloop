@@ -180,6 +180,19 @@ threadloop workflow evidence import gaap --run shipping --source correlation.jso
 threadloop workflow decide shipping --json
 ```
 
+If an enrolled claim has passed its deadline, inspect the run for its Attempt ID and current state version. When
+inspection recommends `expire-claim`, copy its `recovery_argv`. For example, if the state version is 3:
+
+```bash
+threadloop workflow expire-claim shipping --attempt "$attempt_id" --expected-state-version 3 --json
+```
+
+ThreadLoop records the expired claim and its Attempt status. A started Attempt retains its unknown effect. Preserve its
+transport evidence for independent verification of the stop and effect, followed by the human disposition required by
+the bound policy. A pending Attempt records that execution never started. Inspect its retry policy and remaining Attempt
+budget. An admission that committed while the claim was valid can still be imported after expiry. Clients can discover
+the expiry command through protocol v5 capability `workflow_claim_expiry_v1`.
+
 The lifecycle advances when you deliberately apply a fresh transition. If the action changed the workspace, the next
 guard can require a scoped commit or independent proof. Use the run's current state version in each request. Keep both
 the outer state database and its owned child directories when backing up or restoring a managed run.
@@ -217,6 +230,7 @@ reader's digest and permissions before starting it and again before accepting it
 threadloop workflow evidence collect pre-pr-review --run shipping --operation "$operation_id" --expected-state-version 5 --idempotency-key collect-review
 ```
 
+If the Qodo operation is still working, repeat the original request with the same operation and key after it finishes.
 The collector reads that operation's terminal result. It checks the base, current commit and Git tree, primary review,
 coverage and active finding inventory. Previously open findings can still block the run. Independent CI, human approval
 and merge observations use their signed sources. Request protocol 5 and check `workflow_gaap_execution_v1` before

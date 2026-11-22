@@ -37,6 +37,25 @@ const fullReview = z.object({
     }),
   }),
 });
+const unfinished = z.union([
+  z.object({ status: z.literal('working') }),
+  z.object({
+    meta: z.object({
+      coverage: z.object({ complete: z.literal(false) }),
+      run: z.object({ timing: z.object({ finished_at: z.null().optional() }).optional() }),
+    }),
+  }),
+]);
+
+export function pendingQodoReview(): never {
+  throw new ThreadloopError('TRANSITION_GUARD_FAILED', "The Qodo review hasn't finished.", {
+    details: {
+      reason: 'review_pending',
+      hint: 'Repeat the same collection request after the original operation finishes.',
+    },
+  });
+}
+
 function reject(message: string): never {
   throw new ThreadloopError('TRANSITION_GUARD_FAILED', message, {
     details: {
@@ -46,7 +65,9 @@ function reject(message: string): never {
   });
 }
 export function verifiedQodoReview(stdout: Uint8Array, base: string, head: string, tree: string) {
-  const parsed = fullReview.safeParse(parseGaapJson(stdout));
+  const status = parseGaapJson(stdout);
+  if (unfinished.safeParse(status).success) pendingQodoReview();
+  const parsed = fullReview.safeParse(status);
   if (!parsed.success) reject('The retained review lacks complete full-diff coverage or a complete finding inventory.');
   const { meta, finding_state: state, findings: inventory } = parsed.data,
     identity = meta.run.snapshot;
@@ -61,7 +82,11 @@ export function verifiedQodoReview(stdout: Uint8Array, base: string, head: strin
     primary[0]!.agents.some(
       (agent) =>
         agent.status !== 'completed' &&
-        !(agent.name === 'spec-agent' && agent.status === 'skipped' && agent.reason === 'no_spec_content'),
+        !(
+          agent.status === 'skipped' &&
+          ((agent.name === 'spec-agent' && agent.reason === 'no_spec_content') ||
+            (agent.name === 'conversion_agent' && agent.reason === 'no_eligible_findings'))
+        ),
     )
   )
     reject('The primary review has incomplete required checks.');

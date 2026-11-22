@@ -44,14 +44,16 @@ if (cut === 'after-invocation') {
   syncBuiltinESMExports();
 }
 
-if (cut === 'report-error') {
-  const writeFile = fsPromises.writeFile;
-  fsPromises.writeFile = async (file, ...options) => {
-    if (typeof file === 'string' && path.basename(file) === 'execution.json') {
+if (cut === 'report-error' || cut === 'output-published') {
+  const link = fsPromises.link;
+  fsPromises.link = async (staged, file) => {
+    if (cut === 'report-error' && typeof file === 'string' && path.basename(file) === 'execution.json') {
       writeSync(2, 'collection-cut=report-error\n');
-      throw Object.assign(new Error('The test refused the execution report write.'), { code: 'EIO' });
+      throw Object.assign(new Error('The test refused to publish the execution report.'), { code: 'EIO' });
     }
-    return writeFile(file, ...options);
+    await link(staged, file);
+    if (cut === 'output-published' && typeof file === 'string' && path.basename(file) === 'setup-0-prepare.stdout.log')
+      interrupt();
   };
   syncBuiltinESMExports();
 }

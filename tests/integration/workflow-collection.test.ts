@@ -1,9 +1,10 @@
 import { execFile, execFileSync } from 'node:child_process';
-import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { afterEach, expect, it } from 'vitest';
+import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
 import { managedWorkflowFixture } from '../helpers/workflow-execution.js';
 import { governedProfile } from '../helpers/workflow-run.js';
 import { cleanupTemporaryState, commitFiles, git, type proofPlan } from '../helpers/session.js';
@@ -15,7 +16,7 @@ afterEach(async () => {
   await cleanupTemporaryState();
 });
 const operation = '125fe082-9417-45e2-b6c7-ab7a38e0c40e';
-async function collectionFixture(gateCommand?: (control: string) => string[]) {
+async function collectionFixture(gateCommand?: (control: string) => string[], readerBody?: string) {
   const { control, subject, producerRoot, setup } = await managedWorkflowFixture('success', [
     'local-gate',
     'pre-pr-review',
@@ -26,6 +27,18 @@ async function collectionFixture(gateCommand?: (control: string) => string[]) {
     const plan = JSON.parse(await readFile(path.join(control, 'plan.json'), 'utf8')) as ReturnType<typeof proofPlan>;
     plan.gates[0]!.command = gateCommand(control);
     plan.gates[0]!.timeout_ms = 12_000;
+    plan.gates[0]!.setup = [
+      {
+        id: 'prepare',
+        command: [
+          process.execPath,
+          '-e',
+          "process.stdout.write('setup output'); process.stderr.write('setup diagnostics');",
+        ],
+        working_directory: '.',
+        timeout_ms: 5_000,
+      },
+    ];
     await file('plan.json', plan);
   }
   const base = await git(subject, 'rev-parse', 'HEAD');
@@ -65,10 +78,11 @@ async function collectionFixture(gateCommand?: (control: string) => string[]) {
     '#!' +
       process.execPath +
       '\n' +
-      'if(JSON.stringify(process.argv.slice(2))!==' +
-      JSON.stringify(JSON.stringify(['review', 'status', operation, '--json'])) +
-      ')process.exit(3);\n' +
-      "process.stdout.write(require('node:fs').readFileSync(require('node:path').join(__dirname, '../status.json')));\n",
+      (readerBody ??
+        'if(JSON.stringify(process.argv.slice(2))!==' +
+          JSON.stringify(JSON.stringify(['review', 'status', operation, '--json'])) +
+          ')process.exit(3);\n' +
+          "process.stdout.write(require('node:fs').readFileSync(require('node:path').join(__dirname, '../status.json')));\n"),
   );
   await chmod(reader, 0o700);
   await file('status.json', status);
@@ -126,7 +140,7 @@ async function countedCollection(waitForRelease = false) {
         throw error;
       },
     );
-  async function interruptAt(cut: 'intent' | 'captured' | 'after-invocation' | 'report-error') {
+  async function interruptAt(cut: 'intent' | 'captured' | 'after-invocation' | 'report-error' | 'output-published') {
     const preload = fileURLToPath(new URL('../fixtures/workflow/collection-cut.mjs', import.meta.url));
     const failure = await promisify(execFile)(
       process.execPath,
@@ -205,11 +219,43 @@ it.each(['captured', 'report-error'] as const)(
     const directory = path.join(control, '.threadloop', 'artifacts', 'workflow-collections', attempt);
     expect(await readFile(path.join(directory, 'stdout.log'), 'utf8')).toBe('local gate counted\n');
     await expect(stat(path.join(directory, 'execution.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+    const db = new DatabaseSync(path.join(control, '.threadloop', 'state', 'state.db'), { readOnly: true });
+    let capturedReport: Buffer;
+    try {
+      const capture = db
+        .prepare("SELECT body FROM workflow_collection_events WHERE run_id=? AND key=? AND phase='captured'")
+        .get(run, 'interrupted-gate');
+      const event = parseJson<{ record: { artifact: { base64: string } } }>(String(capture?.body));
+      capturedReport = Buffer.from(event.record.artifact.base64, 'base64');
+    } finally {
+      db.close();
+    }
     await rm(directory, { recursive: true });
-    const admitted = (await runCli(control, args)).stdout;
+    if (cut === 'captured') {
+      await interruptAt('output-published');
+      expect(await readFile(path.join(directory, 'setup-0-prepare.stdout.log'), 'utf8')).toBe('setup output');
+      await expect(stat(path.join(directory, 'execution.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(await count()).toBe(1);
+    }
+    const [first, concurrent] = await Promise.all([runCli(control, args), runCli(control, args)]);
+    expect(concurrent.stdout).toBe(first.stdout);
+    const admitted = first.stdout;
     expect((await runCli(control, args)).stdout).toBe(admitted);
     expect(await count()).toBe(1);
     expect(await inspect()).toMatchObject({ state_version: 3, collections: [] });
+    const report = parseJson<{ receipt_id: string; result: string }>(
+      await readFile(path.join(directory, 'execution.json'), 'utf8'),
+    );
+    expect(report).toMatchObject({ receipt_id: 'receipt_' + attempt, result: 'passed' });
+    expect(await readFile(path.join(directory, 'execution.json'))).toEqual(capturedReport);
+    expect(await readFile(path.join(directory, 'stdout.log'), 'utf8')).toBe('local gate counted\n');
+    expect(await readFile(path.join(directory, 'stderr.log'))).toHaveLength(0);
+    expect(await readFile(path.join(directory, 'setup-0-prepare.stdout.log'), 'utf8')).toBe('setup output');
+    expect(await readFile(path.join(directory, 'setup-0-prepare.stderr.log'), 'utf8')).toBe('setup diagnostics');
+    await rm(path.join(directory, 'execution.json'));
+    expect((await runCli(control, args)).stdout).toBe(admitted);
+    expect(await readFile(path.join(directory, 'execution.json'))).toEqual(capturedReport);
+    expect(await count()).toBe(1);
     const { createWorkflowStore } = await import('../../src/adapters/fs/workflow-store.js');
     const receipts = createWorkflowStore(control)
       .read(run)
@@ -220,6 +266,45 @@ it.each(['captured', 'report-error'] as const)(
   },
   30_000,
 );
+
+it('preserves conflicting gate files and refuses admission until the operator moves them aside', async () => {
+  const { control, run, args, count, inspect, interruptAt } = await countedCollection();
+  await interruptAt('captured');
+  const pending = await inspect();
+  const attempt = pending.collections[0]!.attempt;
+  const directory = path.join(control, '.threadloop', 'artifacts', 'workflow-collections', attempt);
+  const report = path.join(directory, 'execution.json');
+  const stdout = path.join(directory, 'stdout.log');
+  const expected = {
+    code: 'TRANSITION_GUARD_FAILED',
+    details: {
+      reason: 'collection_artifact_conflict',
+      workflow_run_id: run,
+      key: 'interrupted-gate',
+      attempt,
+    },
+  };
+  await writeFile(report, 'existing report');
+  expect((await runCliError(control, args)).error).toMatchObject(expected);
+  expect(await readFile(report, 'utf8')).toBe('existing report');
+  await rm(report);
+  await rm(stdout);
+  const outside = path.join(control, 'preserved-file');
+  await writeFile(outside, 'local gate counted\n');
+  await symlink(outside, stdout);
+  expect((await runCliError(control, args)).error).toMatchObject(expected);
+  expect(await readFile(outside, 'utf8')).toBe('local gate counted\n');
+  await rm(stdout);
+  await chmod(directory, 0o777);
+  expect((await runCliError(control, args)).error).toMatchObject(expected);
+  await chmod(directory, 0o700);
+  expect(await inspect()).toEqual(pending);
+  await expect(stat(report)).rejects.toMatchObject({ code: 'ENOENT' });
+  await runCli(control, args);
+  expect(await readFile(stdout, 'utf8')).toBe('local gate counted\n');
+  expect(await count()).toBe(1);
+  expect(await inspect()).toMatchObject({ state_version: 3, collections: [] });
+}, 30_000);
 
 it('holds a local gate that ran before the host could retain its result', async () => {
   const { control, args, count, inspect, collect, interruptAt } = await countedCollection();
@@ -301,4 +386,82 @@ it('runs the declared gate once and collects only the retained review at its enr
     clean: true,
   });
   expect(await readFile(path.join(control, 'status.json'), 'utf8')).toContain(correct);
+}, 30_000);
+
+it('retries an unfinished Qodo operation with its original collection key', async () => {
+  const { control, run, collect, call, file, status } = await collectionFixture();
+  const request = collect('pre-pr-review', 'waiting-review', '--operation', operation);
+  const working = { operation_id: operation, status: 'working' };
+  const partial = {
+    ...status,
+    meta: { ...status.meta, coverage: { complete: false }, run: { ...status.meta.run, timing: {} } },
+    finding_state: { ...status.finding_state, complete: false },
+  };
+  for (const report of [working, partial]) {
+    await file('status.json', report);
+    expect((await runCliError(control, request)).error).toMatchObject({
+      code: 'TRANSITION_GUARD_FAILED',
+      details: { reason: 'review_pending' },
+    });
+  }
+  const primary = status.meta.run.passes[0]!;
+  await file('status.json', {
+    ...status,
+    meta: {
+      ...status.meta,
+      run: {
+        ...status.meta.run,
+        passes: [
+          {
+            ...primary,
+            agents: [
+              ...primary.agents,
+              { name: 'conversion_agent', status: 'skipped', reason: 'no_eligible_findings' },
+            ],
+          },
+        ],
+      },
+    },
+  });
+  const completed = (await runCli(control, request)).stdout;
+  expect((await runCli(control, request)).stdout).toBe(completed);
+  expect((await call('inspect', run)).data.collections).toEqual([]);
+}, 30_000);
+
+it('releases an expired Qodo operation while preserving retries for an outage or another operation’s error', async () => {
+  const next = '38503227-6954-40e9-8f3b-429a50cd86e1';
+  const reader = `const [command, action, id, format] = process.argv.slice(2);
+if (command !== 'review' || action !== 'status' || ![${JSON.stringify(operation)}, ${JSON.stringify(next)}].includes(id) || format !== '--json') process.exit(3);
+const response = require('node:fs').readFileSync(require('node:path').join(__dirname, '../status.json'), 'utf8');
+process.stdout.write(response);
+if (JSON.parse(response).error) process.exitCode = 1;`;
+  const { control, run, call, collect, file, status } = await collectionFixture(undefined, reader);
+  const first = collect('pre-pr-review', 'original-review', '--operation', operation);
+  const replacement = collect('pre-pr-review', 'replacement-review', '--operation', next);
+  const message =
+    'no such review — the id may never have existed, may belong to another user, or may have expired (results are kept about 60 minutes after a review finishes, by default). The runtime does not distinguish these. Re-run the review.';
+  const expired = { operation_id: operation, message, trace_id: 'review-status-trace' };
+  for (const error of [
+    { ...expired, message: 'Connection lost' },
+    { ...expired, operation_id: next },
+  ]) {
+    await file('status.json', { error });
+    expect((await runCliError(control, first)).error.details.reason).toBe('invalid_producer');
+    expect((await runCliError(control, replacement)).error.details.reason).toBe('collection_outstanding');
+  }
+  for (const [key, error] of [
+    ['original-review', expired],
+    ['without-trace', { operation_id: operation, message }],
+  ] as const) {
+    await file('status.json', { error });
+    const lookup = collect('pre-pr-review', key, '--operation', operation);
+    expect((await runCliError(control, lookup)).error.details).toMatchObject({
+      reason: 'invalid_terminal_review',
+      operation_id: operation,
+    });
+  }
+  await file('status.json', status);
+  const admitted = (await runCli(control, replacement)).stdout;
+  expect(parseJson<{ data: unknown }>(admitted).data).toMatchObject({ state_version: 3 });
+  expect((await call('inspect', run)).data.collections).toEqual([]);
 }, 30_000);

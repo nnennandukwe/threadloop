@@ -1,12 +1,13 @@
 import { execFile, execFileSync } from 'node:child_process';
-import { lstat, mkdir, writeFile } from 'node:fs/promises';
+import { lstat, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { z } from 'zod';
 import { ThreadloopError } from '../contracts/errors.js';
 import { canonicalJson } from '../domain/canonical-json.js';
-import { verifiedQodoReview } from '../domain/workflow-qodo-review.js';
+import { pendingQodoReview, verifiedQodoReview } from '../domain/workflow-qodo-review.js';
 import { sha256 } from '../adapters/crypto/sha256.js';
+import { restoreWorkflowGateArtifacts } from '../adapters/fs/workflow-gate-artifacts.js';
 import { readGaapFile, requireGaapDirectory } from '../adapters/fs/gaap-files.js';
 import {
   captureCollection,
@@ -92,6 +93,40 @@ async function retainedReview(snapshot: RunSnapshot, producing: SourceBinding, o
     timeout: 60_000,
     maxBuffer: 4 * 1024 * 1024,
     encoding: 'buffer',
+  }).catch((error: unknown) => {
+    // The Qodo status command exits with 2 while the submitted operation is still working.
+    if (error instanceof Error && 'code' in error && error.code === 2) pendingQodoReview();
+    if (
+      error instanceof Error &&
+      'code' in error &&
+      error.code === 1 &&
+      'stdout' in error &&
+      Buffer.isBuffer(error.stdout)
+    ) {
+      let response: unknown;
+      try {
+        response = JSON.parse(error.stdout.toString('utf8'));
+      } catch {
+        throw error;
+      }
+      const missing = z.object({
+        error: z.object({
+          operation_id: z.literal(operation),
+          message: z.string().startsWith('no such review — '),
+        }),
+      });
+      if (missing.safeParse(response).success) {
+        assertWorkflowReviewReader(snapshot.genesis);
+        throw new ThreadloopError('TRANSITION_GUARD_FAILED', "Qodo can't find this review operation.", {
+          details: {
+            reason: 'invalid_terminal_review',
+            operation_id: operation,
+            hint: 'Collect an available review with its own operation ID and collection key.',
+          },
+        });
+      }
+    }
+    throw error;
   });
   assertWorkflowReviewReader(snapshot.genesis);
   const {
@@ -260,12 +295,12 @@ export async function collectWorkflowEvidence(cwd: string, kind: string, o: Coll
       return sourceBinding(snapshot, kind).binding.subject.content_digest;
     },
   );
-  if (opened.stage === 'completed') return opened.reply;
+  const attempt = opened.intent.attempt;
+  const coordinates = { workflow_run_id: o.run, key: o.idempotencyKey, attempt };
   let source: HostSource;
-  if (opened.stage === 'captured') source = opened.source;
+  let completedReply = opened.stage === 'completed' ? opened.reply : undefined;
+  if (opened.stage !== 'collect') source = opened.source;
   else {
-    const attempt = opened.intent.attempt;
-    const coordinates = { workflow_run_id: o.run, key: o.idempotencyKey, attempt };
     if (kind === 'local-gate') {
       let claimed: boolean;
       try {
@@ -305,8 +340,7 @@ export async function collectWorkflowEvidence(cwd: string, kind: string, o: Coll
           ? await localGate(root, opened.snapshot, producing, target, attempt)
           : await retainedReview(opened.snapshot, producing, target);
       projectWorkflowHostSource(source, opened.snapshot.genesis);
-      const replay = captureCollection(root, o.run, o.idempotencyKey, source);
-      if (replay) return replay;
+      completedReply = captureCollection(root, o.run, o.idempotencyKey, source);
     } catch (error) {
       if (kind === 'local-gate')
         throw new ThreadloopError(
@@ -330,27 +364,9 @@ export async function collectWorkflowEvidence(cwd: string, kind: string, o: Coll
       if (error instanceof ThreadloopError) throw error;
       reject("The enrolled producer didn't return a verifiable result. Inspect its original operation.");
     }
-    if (kind === 'local-gate') {
-      try {
-        await writeFile(path.join(gateOutputDirectory(root, attempt), 'execution.json'), source.artifact.bytes, {
-          flag: 'wx',
-        });
-      } catch (error) {
-        throw new ThreadloopError(
-          'TRANSITION_GUARD_FAILED',
-          "ThreadLoop captured the gate result but couldn't write its execution report.",
-          {
-            cause: error,
-            details: {
-              ...coordinates,
-              reason: 'collection_result_captured',
-              hint: 'Repeat the original collection request to admit the stored result.',
-            },
-          },
-        );
-      }
-    }
   }
+  if (source.kind === 'local-gate') await restoreWorkflowGateArtifacts(root, coordinates, source);
+  if (completedReply) return completedReply;
   const reply = await admitWorkflowHostSource(cwd, o.run, o.expectedStateVersion, source).catch((error: unknown) => {
     if (error instanceof ThreadloopError && ['TRANSITION_GUARD_FAILED', 'STATE_VERSION_CONFLICT'].includes(error.code))
       finishCollection(root, o.run, o.idempotencyKey, {

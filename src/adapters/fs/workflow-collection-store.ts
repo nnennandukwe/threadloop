@@ -160,13 +160,16 @@ export function openCollection(
         first.intent.state_version !== target.state_version
       )
         throw new ThreadloopError('IDEMPOTENCY_CONFLICT', 'The collection key belongs to another request.');
-      if (last?.phase === 'completed') return { stage: 'completed' as const, reply: last.reply };
       if (last?.phase === 'failed') fail(last.reason);
-      if (last?.phase === 'captured') {
-        const { verified } = restoreSource(last.record);
-        if (verified.kind !== 'local-gate' && verified.kind !== 'pre-pr-review')
-          fail('The retained collector source has the wrong kind.');
-        return { stage: 'captured' as const, source: verified };
+      if (last?.phase === 'captured' || last?.phase === 'completed') {
+        const captured = events.find((event) => event.phase === 'captured');
+        if (!captured) fail('The completed collection has no captured producer result.');
+        const { verified } = restoreSource(captured.record);
+        if (verified.kind !== target.kind) fail('The retained collector source has the wrong kind.');
+        const recorded = { intent: first.intent, source: verified };
+        return last.phase === 'completed'
+          ? { ...recorded, stage: 'completed' as const, reply: last.reply }
+          : { ...recorded, stage: 'captured' as const };
       }
       if (target.kind === 'local-gate') {
         if (claimed !== false) heldGate(run, key, first.intent.attempt);
