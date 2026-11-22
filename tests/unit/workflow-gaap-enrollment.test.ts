@@ -238,6 +238,13 @@ it('binds the Qodo status executable and base to the review producer at create',
     base_commit: '1'.repeat(40),
     reviewer_id: 'reviewer',
   };
+  for (const base_commit of ['a'.repeat(41), 'A'.repeat(64)]) {
+    await writeFile(
+      path.join(control, 'setup.json'),
+      JSON.stringify({ ...setup, review_reader: { ...reader, base_commit } }),
+    );
+    expect(prepare).toThrow(expect.objectContaining({ code: 'INVALID_ARGUMENT' }));
+  }
   await writeFile(path.join(control, 'setup.json'), JSON.stringify({ ...setup, review_reader: reader }));
   expect(() => prepare().build('2026-11-21T00:00:00.000Z')).toThrow(/requires a declared pre-PR review source/);
   const sourceFile = path.join(control, 'sources.json');

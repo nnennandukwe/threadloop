@@ -3,6 +3,7 @@ import { ThreadloopError } from '../contracts/errors.js';
 import { parseGaapJson } from './gaap-json.js';
 
 const names = z.array(z.string().min(1));
+export const reviewGitObjectIdSchema = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
 const fullReview = z.object({
   findings: z.array(
     z.object({
@@ -25,7 +26,11 @@ const fullReview = z.object({
     skipped_files: z.array(z.unknown()).length(0),
     run: z.object({
       id: z.string().min(1),
-      snapshot: z.object({ base_sha: z.string(), commit_sha: z.string(), tree_sha: z.string() }),
+      snapshot: z.object({
+        base_sha: reviewGitObjectIdSchema,
+        commit_sha: reviewGitObjectIdSchema,
+        tree_sha: reviewGitObjectIdSchema,
+      }),
       timing: z.object({ finished_at: z.iso.datetime({ offset: true }) }),
       passes: z.array(
         z.object({
@@ -71,7 +76,13 @@ export function verifiedQodoReview(stdout: Uint8Array, base: string, head: strin
   if (!parsed.success) reject('The retained review lacks complete full-diff coverage or a complete finding inventory.');
   const { meta, finding_state: state, findings: inventory } = parsed.data,
     identity = meta.run.snapshot;
-  if (identity.base_sha !== base || identity.commit_sha !== head || identity.tree_sha !== tree)
+  if (
+    base.length !== head.length ||
+    tree.length !== head.length ||
+    identity.base_sha !== base ||
+    identity.commit_sha !== head ||
+    identity.tree_sha !== tree
+  )
     reject('The review belongs to another base, commit or tree.');
   const primary = meta.run.passes.filter((p) => p.kind === 'primary');
   if (

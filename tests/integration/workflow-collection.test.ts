@@ -3,7 +3,7 @@ import { chmod, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/pr
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { DatabaseSync } from '../../src/adapters/fs/sqlite-driver.js';
 import { managedWorkflowFixture } from '../helpers/workflow-execution.js';
 import { governedProfile } from '../helpers/workflow-run.js';
@@ -12,21 +12,36 @@ import { parseJson, resolveTestCliBundle, runCli, runCliError } from '../helpers
 
 const roots: string[] = [];
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   await cleanupTemporaryState();
 });
 const operation = '125fe082-9417-45e2-b6c7-ab7a38e0c40e';
-async function collectionFixture(
-  gateCommand?: (control: string) => string[],
-  readerBody?: string,
-  scratchDirectoryFor?: 'gate' | 'setup',
-) {
+interface CollectionFixtureOptions {
+  gateCommand?: (control: string) => string[];
+  readerBody?: string;
+  scratchDirectoryFor?: 'gate' | 'setup' | undefined;
+  localReviewObjectFormat?: 'sha1' | 'sha256';
+}
+async function collectionFixture({
+  gateCommand,
+  readerBody,
+  scratchDirectoryFor,
+  localReviewObjectFormat,
+}: CollectionFixtureOptions = {}) {
+  if (localReviewObjectFormat) vi.stubEnv('GIT_DEFAULT_HASH', localReviewObjectFormat);
   const { control, subject, producerRoot, setup } = await managedWorkflowFixture('success', [
     'local-gate',
     'pre-pr-review',
   ]);
   roots.push(producerRoot);
   const file = (name: string, value: unknown) => writeFile(path.join(control, name), JSON.stringify(value));
+  if (localReviewObjectFormat)
+    await file('sources.json', {
+      schema_version: 'threadloop.workflow-sources/1',
+      host_producers: ['pre-pr-review'],
+      github: null,
+    });
   if (gateCommand) {
     const plan = JSON.parse(await readFile(path.join(control, 'plan.json'), 'utf8')) as ReturnType<typeof proofPlan>;
     plan.gates[0]!.command = gateCommand(control);
@@ -136,16 +151,15 @@ async function collectionFixture(
 
 async function countedCollection(waitForRelease = false, scratchDirectoryFor?: 'gate' | 'setup') {
   const gate = fileURLToPath(new URL('../fixtures/workflow/collection-gate.mjs', import.meta.url));
-  const fixture = await collectionFixture(
-    (control) => [
+  const fixture = await collectionFixture({
+    gateCommand: (control) => [
       process.execPath,
       gate,
       path.join(control, 'gate-invocations'),
       ...(waitForRelease ? [path.join(control, 'release-gate')] : []),
     ],
-    undefined,
     scratchDirectoryFor,
-  );
+  });
   const { control, run, collect } = fixture;
   const args = collect('local-gate', 'interrupted-gate', '--gate', 'check');
   const inspect = async () =>
@@ -185,16 +199,15 @@ async function countedCollection(waitForRelease = false, scratchDirectoryFor?: '
 it.each(['gate', 'setup'] as const)(
   'restores a missing %s working directory and collects once with the original key',
   async (role) => {
-    const { control, subject, run, call, collect } = await collectionFixture(
-      (root) => [
+    const { control, subject, run, call, collect } = await collectionFixture({
+      gateCommand: (root) => [
         process.execPath,
         '-e',
         "require('fs').appendFileSync(process.argv[1], 'gate\\n')",
         path.join(root, 'commands.log'),
       ],
-      undefined,
-      role,
-    );
+      scratchDirectoryFor: role,
+    });
     const scratch = path.join(subject, 'scratch');
     const counts = path.join(control, 'commands.log');
     const request = collect('local-gate', 'restore-scratch', '--gate', 'check');
@@ -540,6 +553,41 @@ it('runs the declared gate once and collects only the retained review at its enr
   expect(await readFile(path.join(control, 'status.json'), 'utf8')).toContain(correct);
 }, 30_000);
 
+it('collects a fixture review against the full Git IDs of a SHA-256 subject and reopens its evidence', async () => {
+  const { control, subject, run, status, file, call, collect } = await collectionFixture({
+    localReviewObjectFormat: 'sha256',
+  });
+  expect(await git(subject, 'rev-parse', '--show-object-format')).toBe('sha256');
+  const identity = {
+    base_sha: await git(subject, 'rev-parse', 'HEAD^'),
+    commit_sha: await git(subject, 'rev-parse', 'HEAD'),
+    tree_sha: await git(subject, 'rev-parse', 'HEAD^{tree}'),
+  };
+  expect(status.meta.run.snapshot).toEqual(identity);
+  for (const oid of Object.values(identity)) expect(oid).toMatch(/^[0-9a-f]{64}$/);
+  for (const [key, changed] of [
+    ['wrong-base', { base_sha: identity.commit_sha }],
+    ['wrong-tree', { tree_sha: identity.base_sha }],
+    ['short-tree', { tree_sha: identity.tree_sha.slice(0, 40) }],
+    ['malformed-tree', { tree_sha: identity.tree_sha.slice(0, 63) }],
+  ] as const) {
+    status.meta.run.snapshot = { ...identity, ...changed };
+    await file('status.json', status);
+    const failure = await runCliError(control, collect('pre-pr-review', key, '--operation', operation));
+    expect(failure.error).toMatchObject({
+      code: 'TRANSITION_GUARD_FAILED',
+      details: { reason: 'invalid_terminal_review' },
+    });
+    expect((await call('inspect', run)).data.evidence_revision).toBe(0);
+  }
+  status.meta.run.snapshot = identity;
+  await file('status.json', status);
+  const request = collect('pre-pr-review', 'complete-review', '--operation', operation);
+  const result = (await runCli(control, request)).stdout;
+  expect((await call('inspect', run)).data).toMatchObject({ evidence_revision: 1, state_version: 3 });
+  expect((await runCli(control, request)).stdout).toBe(result);
+}, 30_000);
+
 it('retries an unfinished Qodo operation with its original collection key', async () => {
   const { control, run, collect, call, file, status } = await collectionFixture();
   const request = collect('pre-pr-review', 'waiting-review', '--operation', operation);
@@ -587,7 +635,7 @@ if (command !== 'review' || action !== 'status' || ![${JSON.stringify(operation)
 const response = require('node:fs').readFileSync(require('node:path').join(__dirname, '../status.json'), 'utf8');
 process.stdout.write(response);
 if (JSON.parse(response).error) process.exitCode = 1;`;
-  const { control, run, call, collect, file, status } = await collectionFixture(undefined, reader);
+  const { control, run, call, collect, file, status } = await collectionFixture({ readerBody: reader });
   const first = collect('pre-pr-review', 'original-review', '--operation', operation);
   const replacement = collect('pre-pr-review', 'replacement-review', '--operation', next);
   // This Qodo CLI response preserves the provider's U+2014 delimiter and error wording.

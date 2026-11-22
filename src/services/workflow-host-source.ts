@@ -1,4 +1,4 @@
-import { verifiedQodoReview } from '../domain/workflow-qodo-review.js';
+import { reviewGitObjectIdSchema, verifiedQodoReview } from '../domain/workflow-qodo-review.js';
 import { sha256 } from '../adapters/crypto/sha256.js';
 import { ThreadloopError } from '../contracts/errors.js';
 import { canonicalJson, isPlainObject } from '../domain/canonical-json.js';
@@ -173,14 +173,14 @@ export function projectWorkflowHostSource(source: HostSource, genesis: WorkflowG
   if (genesis.gaap) {
     const reader =
       genesis.setup.schema_version === 'threadloop.workflow-setup/2' ? genesis.setup.review_reader : undefined;
+    const treeId = reviewGitObjectIdSchema.safeParse(artifact.tree_sha);
     if (
       !reader ||
       reader.reviewer_id !== source.reviewer_id ||
       artifact.provider !== 'qodo' ||
       artifact.repository_id !== genesis.setup.repository_id ||
       artifact.base_sha !== reader.base_commit ||
-      typeof artifact.tree_sha !== 'string' ||
-      !/^[a-f0-9]{40}$/.test(artifact.tree_sha) ||
+      !treeId.success ||
       typeof artifact.status_base64 !== 'string' ||
       typeof artifact.operation !== 'string' ||
       review.evidenceRef !== 'qodo:' + artifact.operation
@@ -189,7 +189,7 @@ export function projectWorkflowHostSource(source: HostSource, genesis: WorkflowG
     const raw = Buffer.from(artifact.status_base64, 'base64');
     if (raw.toString('base64') !== artifact.status_base64 || sha256(raw) !== artifact.status_sha256)
       invalid('The retained Qodo result differs from its original bytes.');
-    const checked = verifiedQodoReview(raw, reader.base_commit, review.headSha, artifact.tree_sha);
+    const checked = verifiedQodoReview(raw, reader.base_commit, review.headSha, treeId.data);
     if (
       checked.run_id !== artifact.run_id ||
       checked.outcome !== review.outcome ||

@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { canonicalJson } from '../domain/canonical-json.js';
 import { parseGaapHost } from '../domain/gaap-binding.js';
 import { workflowDigest } from '../domain/workflow-selection-types.js';
+import { reviewGitObjectIdSchema } from '../domain/workflow-qodo-review.js';
 import type {
   WorkflowGaapAdapter,
   WorkflowGaapEnrollment,
@@ -51,7 +52,7 @@ const adapterSchema = z.strictObject({
 export const reviewReaderSchema = z.strictObject({
   provider: z.literal('qodo'),
   executable: text,
-  base_commit: z.string().regex(/^[a-f0-9]{40}$/),
+  base_commit: reviewGitObjectIdSchema,
   reviewer_id: text,
 });
 function invalid(message: string): never {
