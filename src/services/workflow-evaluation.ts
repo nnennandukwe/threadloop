@@ -99,20 +99,19 @@ export function workflowControllerInput(
   at: string,
   previousExecution?: ExecutionInput,
 ): ControllerInput {
-  const g = snapshot.genesis,
-    v = snapshot.view;
+  const { genesis, view } = snapshot;
   const input: ControllerInput = {
     schema_version: '0.1',
-    compiled_graph: g.compiled,
+    compiled_graph: genesis.compiled,
     binding: {
-      workflow_run_id: v.workflow_run_id,
-      graph_schema_version: v.graph_schema_version,
-      graph_digest: v.graph_digest,
-      source_state: v.state,
-      state_version: v.state_version,
+      workflow_run_id: view.workflow_run_id,
+      graph_schema_version: view.graph_schema_version,
+      graph_digest: view.graph_digest,
+      source_state: view.state,
+      state_version: view.state_version,
       subject: observed.subject,
     },
-    policy: g.policy,
+    policy: genesis.policy,
     history: snapshot.history,
     observation: observed.facts,
     available_capabilities: humanCapabilities(snapshot),
@@ -122,7 +121,7 @@ export function workflowControllerInput(
     existing_requests: [],
     evaluation_time: at,
   };
-  if (!g.gaap) return input;
+  if (!genesis.gaap) return input;
   const managed = snapshot.managed_execution;
   if (!managed)
     throw new ThreadloopError('STATE_CORRUPTED', 'The managed Workflow Run has no verified execution history.');
@@ -131,7 +130,7 @@ export function workflowControllerInput(
   if (!(child?.projection.claims[0]?.status === 'expired' && child.projection.attempts[0]?.started_at === null)) {
     input.available_capabilities.push({
       actor: 'executor',
-      capability: g.gaap.adapter.mapping_policy.policy.action_capability,
+      capability: genesis.gaap.adapter.mapping_policy.policy.action_capability,
     });
   }
   if (previousExecution) return { ...input, ...previousExecution };
@@ -162,14 +161,14 @@ export function workflowGaapBinding(
   input: ControllerInput,
   request: ActionRequest,
 ): GaapBinding {
-  const g = snapshot.genesis,
-    enrollment = g.gaap;
+  const { genesis } = snapshot;
+  const enrollment = genesis.gaap;
   const current = selectWorkflowDecision(input);
   if (
     !enrollment ||
-    input.binding.workflow_run_id !== g.run_id ||
-    input.binding.graph_digest !== g.compiled.graph_digest ||
-    canonicalJson(input.policy) !== canonicalJson(g.policy) ||
+    input.binding.workflow_run_id !== genesis.run_id ||
+    input.binding.graph_digest !== genesis.compiled.graph_digest ||
+    canonicalJson(input.policy) !== canonicalJson(genesis.policy) ||
     !current.ok ||
     current.value.decision.outcome !== 'engineering_action_required' ||
     canonicalJson(current.value.decision.action_request) !== canonicalJson(request) ||
@@ -190,7 +189,7 @@ export function workflowGaapBinding(
     stale('managed_mapping_mismatch', 'The enrolled verification mapping must cover every selected evidence family.');
   const rules = {
     request: requestReference(request),
-    workflow_policy: { id: g.policy.id, digest: g.policy.digest },
+    workflow_policy: { id: genesis.policy.id, digest: genesis.policy.digest },
     retry_safety: execution_policy.retry_safety,
     max_attempts: execution_policy.max_attempts,
   };

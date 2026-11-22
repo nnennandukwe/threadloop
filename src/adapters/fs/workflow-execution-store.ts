@@ -19,8 +19,8 @@ function rejected(reason: string, message: string): never {
   });
 }
 
-function managed(j: Journal) {
-  const state = j.snapshot.managed_execution;
+function managed(journal: Journal) {
+  const state = journal.snapshot.managed_execution;
   if (!state)
     throw new ThreadloopError(
       'WORKFLOW_RUNTIME_UNSUPPORTED',
@@ -35,8 +35,8 @@ function managed(j: Journal) {
   return state;
 }
 
-function current(j: Journal, id: string) {
-  const state = managed(j),
+function current(journal: Journal, id: string) {
+  const state = managed(journal),
     reservation = state.active;
   if (!reservation || reservation.owner.reservation_id !== id || reservation.imported)
     rejected('reservation_inactive', 'The named reservation has no outstanding operation.');
@@ -111,7 +111,7 @@ export function workflowExecutionOperations(
           rejected('engineering_action_unavailable', 'The decision must select an engineering action.');
         const request = selected.action_request,
           key = request.request.idempotency_key;
-        const replay = state.reservations.find((r) => r.request_key === key);
+        const replay = state.reservations.find((reservation) => reservation.request_key === key);
         if (replay) {
           if (!equal(replay.proposal, proposal)) conflict('The selected request key already has a different decision.');
           return replay;
@@ -144,35 +144,35 @@ export function workflowExecutionOperations(
     },
     enrollExecution(run, id, child, guard) {
       return write((db) => {
-        const j = readRun(db, run),
-          all = managed(j);
-        const prior = all.reservations.find((r) => r.owner.reservation_id === id);
-        if (prior?.child) {
+        const journal = readRun(db, run),
+          state = managed(journal);
+        const existing = state.reservations.find((reservation) => reservation.owner.reservation_id === id);
+        if (existing?.child) {
           if (
-            !equal(prior.owner, child.owner) ||
-            !equal(prior.child.request, child.request) ||
-            prior.child.host_digest !== child.host_digest ||
-            prior.child.binding_digest !== child.binding_digest
+            !equal(existing.owner, child.owner) ||
+            !equal(existing.child.request, child.request) ||
+            existing.child.host_digest !== child.host_digest ||
+            existing.child.binding_digest !== child.binding_digest
           )
             conflict('The reservation already enrolled a different child.');
-          if (child.revision === prior.child.revision && !equal(child, prior.child))
+          if (child.revision === existing.child.revision && !equal(child, existing.child))
             conflict('The enrolled child revision already has different content.');
-          if (!verifiedEarlierChild(j, prior, child)) verifyChild(j.snapshot, prior, child);
-          return prior;
+          if (!verifiedEarlierChild(journal, existing, child)) verifyChild(journal.snapshot, existing, child);
+          return existing;
         }
-        const r = inAuthority(j, id, guard, now);
-        appendExecution(db, j, r.request_key, { kind: 'enroll', child });
-        return r;
+        const reservation = inAuthority(journal, id, guard, now);
+        appendExecution(db, journal, reservation.request_key, { kind: 'enroll', child });
+        return reservation;
       });
     },
     observeExecution(run, id, child) {
       return write((db) => {
-        const j = readRun(db, run),
-          r = current(j, id);
-        if (!r.child) rejected('child_not_enrolled', 'Enroll the child before reading transport progress.');
-        if (equal(r.child, child) || verifiedEarlierChild(j, r, child)) return r;
-        appendExecution(db, j, r.request_key, { kind: 'observe', child });
-        return r;
+        const journal = readRun(db, run),
+          reservation = current(journal, id);
+        if (!reservation.child) rejected('child_not_enrolled', 'Enroll the child before reading transport progress.');
+        if (equal(reservation.child, child) || verifiedEarlierChild(journal, reservation, child)) return reservation;
+        appendExecution(db, journal, reservation.request_key, { kind: 'observe', child });
+        return reservation;
       });
     },
     withClaimExpiryFence(run, expectedVersion, attemptId, child, record) {
@@ -188,14 +188,15 @@ export function workflowExecutionOperations(
     },
     withExecutionFence(run, id, phase, guard, commit) {
       return write((db) => {
-        const j = readRun(db, run),
-          r = inAuthority(j, id, guard, now);
+        const journal = readRun(db, run),
+          reservation = inAuthority(journal, id, guard, now);
         if (
           phase === 'register'
-            ? r.child !== null
-            : !r.child ||
+            ? reservation.child !== null
+            : !reservation.child ||
               (phase === 'start' &&
-                (r.child.launch_count !== 0 || r.child.projection.attempts[0]?.status !== 'pending'))
+                (reservation.child.launch_count !== 0 ||
+                  reservation.child.projection.attempts[0]?.status !== 'pending'))
         )
           rejected('child_phase_mismatch', 'This execution phase differs from the enrolled child state.');
         return syncResult(commit());
@@ -203,28 +204,31 @@ export function workflowExecutionOperations(
     },
     importExecution(run, version, correlation, child) {
       return write((db) => {
-        const j = readRun(db, run),
-          state = managed(j);
-        const r = state.reservations.find((item) => item.request_key === correlation.request_key);
-        if (!r?.child || !equal(workflowCorrelation(r, correlation.observation_id), correlation))
+        const journal = readRun(db, run),
+          state = managed(journal);
+        const reservation = state.reservations.find((candidate) => candidate.request_key === correlation.request_key);
+        if (!reservation?.child || !equal(workflowCorrelation(reservation, correlation.observation_id), correlation))
           rejected('correlation_conflict', 'The named child or Attempt differs from this run.');
-        if (r.imported) {
-          verifyChild(j.snapshot, r, child);
-          const fact = child.admitted.find((f) => f.observation_id === correlation.observation_id);
+        if (reservation.imported) {
+          verifyChild(journal.snapshot, reservation, child);
+          const fact = child.admitted.find((admission) => admission.observation_id === correlation.observation_id);
           if (
             !fact ||
-            r.imported.observation_id !== correlation.observation_id ||
-            fact.admission.admission_digest !== r.imported.admission_digest ||
-            fact.source_digest !== r.imported.source_digest
+            reservation.imported.observation_id !== correlation.observation_id ||
+            fact.admission.admission_digest !== reservation.imported.admission_digest ||
+            fact.source_digest !== reservation.imported.source_digest
           )
             conflict('The imported evidence identity already has different content.');
-          return r.imported;
+          return reservation.imported;
         }
-        expectVersion(j.snapshot.view.state_version, version);
-        if (state.active !== r || !child.admitted.some((f) => f.observation_id === correlation.observation_id))
+        expectVersion(journal.snapshot.view.state_version, version);
+        if (
+          state.active !== reservation ||
+          !child.admitted.some((admission) => admission.observation_id === correlation.observation_id)
+        )
           rejected('admission_unavailable', 'The child has no matching admitted observation.');
-        appendExecution(db, j, r.request_key, { kind: 'import', child, correlation });
-        return r.imported!;
+        appendExecution(db, journal, reservation.request_key, { kind: 'import', child, correlation });
+        return reservation.imported!;
       });
     },
   };
