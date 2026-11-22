@@ -417,6 +417,55 @@ exact replay and response loss between the two commits. Verify the actual child 
 effects, outer state and absence of a late admission. Expose the command in the negotiated v5 CLI, protocol and
 installed-package checks.
 
+### Protect managed launch and preserve late process output
+
+Hosted review 2091155 examined `529816159462538a3a869872ff154d338ed26cd6`. Its four findings concern managed launch
+configuration, a child result that arrives during expiry, and publication of captured gate files.
+[Reviewed PR](https://github.com/nnennandukwe/threadloop/pull/177)
+
+A separate CLI process expired the claim immediately before the observation transaction on the reviewed package. A fresh
+reader found one launch, the expired claim, zero observation rows and zero admissions at implementing/v3. The test
+producer had returned a 6,642-byte envelope. The control run recorded eight syncs of staging files and zero syncs of
+published files or directories. Its original collector admitted the gate when the test armed a sync failure for the
+existing stdout log.
+
+**Launch authority.** At adoption and before dispatch, require a measured native executable for the supported host OS.
+An operator can run a script by enrolling its native interpreter and giving it an absolute measured script argument.
+Accept uppercase producer inputs in the `GAAP_`, `PRODUCER_` and existing fixture `TEST_GAAP_` namespaces, or an empty
+environment. The producer receives scalar and structured data literally. Measure explicitly named absolute files and
+recheck their identity before launch. A producer directory input ending in `_DIRECTORY` must identify an existing
+protected directory outside the subject. Keep loader and interpreter startup settings and process search paths outside
+that input set. Validate using inert configuration examples. Reject an unsupported configuration before a physical
+launch and identify the configuration the operator can use. Exercise the supported native producer, the signed test
+producer, an unsupported script entry and a stored configuration that no longer qualifies for launch. Historical
+inspection reads the original binding. The standalone GAAP bridge and the separately enrolled Qodo status reader keep
+their existing contracts. The enrolled producer owns the dependencies it loads internally.
+
+**Ownership and commit.** A committed child launch owns the diagnostic bytes returned by that invocation. The child
+writer acquires its immediate SQLite transaction before loading the current root. Verify the managed owner, original
+launch, Action Request, Attempt, output directory and available observation slot. Commit the bounded response,
+observation digest, current root revision increment and generation token together. Preserve the execution journal and
+authority facts already committed by expiry. Claim, start, expiry, admission and outer application each keep their own
+freshness checks. A late diagnostic observation supplies no authority to admit a receipt or run the producer again.
+
+| Fault or ordering                                                                            | Evidence from an independent reader                                                                                                                                                                              |
+| -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Expiry commits between the producer's return and observation persistence                     | The reopened child retains the expiry and the original stdout, stderr and available envelope. A late admission refuses. The outer run stays held and the invocation count stays at one.                          |
+| Observation commits first, or observation reporting fails after commit                       | The original observation stays bound to the one launch. Reopening identifies the committed result. Admission still checks the current claim and subject.                                                         |
+| An observation write fails before commit, or has a mismatched owner, launch or occupied slot | The retained root and any existing observation stay intact. A process that stops before the commit can lose its volatile output. Recovery inspects the retained launch and never reexecutes an uncertain effect. |
+
+**Gate file publication.** SQLite capture commits the verified source before any loose report is required for admission.
+Materialization verifies all existing bytes and publishes a missing file through an exclusive link from its finished
+staging file. Sync matching regular files, including producer-created logs. Sync the owned attempt directory and its
+containing directories through the control root before reporting successful materialization. Apply the same checks when
+an exact retry finds every name already present. A sync error identifies the captured run, Attempt and key. A
+conflicting file stays available for inspection. Recovery can retry the original request after checking its result.
+
+Trace successful file and directory syncs through the CLI. Inject file, leaf-directory and ancestor-directory sync
+failures before admission, and a restoration failure on completed replay. Reopen the database after each cut. Verify the
+captured bytes, original response when admission has committed, restored report and log hashes, and one physical
+invocation. Record injected faults separately from any observed power interruption.
+
 ## Commit Plan
 
 1. Commit this plan at the verified predecessor and add the bounded selected-action reservation and registration with
