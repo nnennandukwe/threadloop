@@ -214,10 +214,11 @@ the outer state database and its owned child directories when backing up or rest
 For a local gate, use the ID from the immutable proof plan. ThreadLoop captures the gate's actual outputs in the control
 repository and admits them for its observed subject. If the CLI stops, run
 `threadloop workflow inspect shipping --json`. The `collections` list identifies the key and attempt. For a `reserved`
-gate, repeat the original request. One delivery can claim the launch. For a `captured` gate, the same request admits the
-result from the database even if its output directory is gone. ThreadLoop checks the recovered bytes and syncs the files
-and containing directories before admitting the gate. If a sync fails, inspect the captured result and retry with the
-same key. A completed request restores the files and returns its recorded reply.
+gate, repeat the original request. If a gate or setup working directory is missing, restore that directory in the bound
+subject and retry with the same key. One delivery can claim the launch. For a `captured` gate, the same request admits
+the result from the database even if its output directory is gone. ThreadLoop checks the recovered bytes and syncs the
+files and containing directories before admitting the gate. If a sync fails, inspect the captured result and retry with
+the same key. A completed request restores the files and returns its recorded reply.
 
 A `launch_claimed` gate with no captured result holds the run. The process may already have changed the subject. Inspect
 its retained output and independently reconcile any effect before taking further action. An older interrupted gate
@@ -246,6 +247,7 @@ threadloop workflow evidence collect pre-pr-review --run shipping --operation "$
 
 If the Qodo operation is still working, repeat the original request with the same operation and key after it finishes.
 The collector reads that operation's terminal result. It checks the base, current commit and Git tree, primary review,
-coverage and active finding inventory. Previously open findings can still block the run. Independent CI, human approval
-and merge observations use their signed sources. Request protocol 5 and check `workflow_gaap_execution_v1` before
-calling managed execution commands.
+coverage and finding inventory. Each listed finding needs one disposition, and each disposition needs a matching
+finding. Previously open findings can still block the run. Independent CI, human approval and merge observations use
+their signed sources. Request protocol 5 and check `workflow_gaap_execution_v1` before calling managed execution
+commands.
