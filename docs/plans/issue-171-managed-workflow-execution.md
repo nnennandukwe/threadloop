@@ -496,6 +496,20 @@ Use the public workflow commands for the missing-directory and malformed-review 
 collection state and admitted evidence before and after recovery. Retain exact replay and the existing post-launch
 interruption tests.
 
+### Measure every managed host argument
+
+Local review `ee3876f9-a380-48bd-95fa-92548adf5d8a` examined `b328851b5d9ad98dcf1458b2faa3705f251e338d`. It marked the
+preceding three fixes implemented and identified a gap in the script argument check. The signed fixture and both native
+Goose cases pass two protected absolute file paths to Node. A native producer can also receive its request on stdin with
+an empty argument list.
+
+At managed enrollment and again before dispatch, accept an empty argument list or an ordered list of absolute paths to
+protected regular files. Measure each file and preserve argument order in the bound host configuration. Producer-owned
+environment settings carry literal data. A public create test must refuse an inert relative argument before a run
+exists. A historical run with that argument must remain inspectable and refuse dispatch before it reserves an action.
+Verify accepted empty and absolute argument lists and the existing signed and native producers. Keep the standalone host
+interface and separately enrolled review reader available to their existing callers.
+
 ## Commit Plan
 
 1. Commit this plan at the verified predecessor and add the bounded selected-action reservation and registration with
