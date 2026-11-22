@@ -20,13 +20,15 @@ afterEach(async () => {
   await cleanupTemporaryState();
 });
 
-async function managedFixture(mode = 'success') {
+async function managedFixture(mode = 'success', maxAttempts = 1) {
   const run = 'session_wf_managed';
-  const { control, subject, producerRoot, host } = await managedWorkflowFixture(mode);
+  const { control, subject, producerRoot, host, adapter } = await managedWorkflowFixture(mode);
   temporaryProducers.push(producerRoot);
   const file = (name: string, value: unknown) => writeFile(path.join(control, name), JSON.stringify(value));
   host.environment.TEST_GAAP_COUNTER_DIRECTORY = control;
   await file('host.json', host);
+  adapter.execution_policy.max_attempts = maxAttempts;
+  await file('adapter.json', adapter);
   await git(control, 'init', '-b', 'main');
   await runCli(control, ['init']);
   const command = async <T>(...args: string[]) =>
@@ -93,6 +95,37 @@ it('executes a saved engineering request once and recovers its admission without
 
 const exec = promisify(execFile);
 const preload = fileURLToPath(new URL('../fixtures/workflow/execution-cut.mjs', import.meta.url));
+async function interruptAfterCommit(control: string, args: string[], cut: string, env?: NodeJS.ProcessEnv) {
+  const failure = await exec(process.execPath, ['--import', preload, cli, ...args], {
+    cwd: control,
+    timeout: 25_000,
+    env: { ...process.env, ...env, THREADLOOP_TEST_EXECUTION_CUT: cut },
+  }).then(
+    () => null,
+    (err: Error & { signal?: string; stderr?: string }) => err,
+  );
+  expect(failure?.signal).toBe('SIGKILL');
+  expect(failure?.stderr).toContain('managed-cut=' + cut);
+}
+function atDeadline(at: string) {
+  return {
+    NODE_OPTIONS: '--import=' + new URL('../fixtures/workflow/clock.mjs', import.meta.url).href,
+    NODE_NO_WARNINGS: '1',
+    THREADLOOP_TEST_CLOCK: at,
+  };
+}
+
+interface ClaimInspection {
+  state_version: number;
+  execution: {
+    valid_until: string;
+    child_revision: number;
+    observation: { status: string } | null;
+    correlation: { attempt_id: string };
+    recovery_argv: string[];
+  };
+}
+
 it.each([
   { cut: 'enroll', launches: 0, reported: 'enrolled' },
   { cut: 'start', launches: 0, reported: 'started' },
@@ -105,16 +138,7 @@ it.each([
     const { control, run, command, file } = await managedFixture();
     await file('expectation.json', await command('decide', run));
     const args = ['workflow', 'execute', run, '--decision', 'expectation.json', '--json'];
-    const failure = await exec(process.execPath, ['--import', preload, cli, ...args], {
-      cwd: control,
-      timeout: 25_000,
-      env: { ...process.env, THREADLOOP_TEST_EXECUTION_CUT: cut },
-    }).then(
-      () => null,
-      (err: Error & { signal?: string; stderr?: string }) => err,
-    );
-    expect(failure?.signal).toBe('SIGKILL');
-    expect(failure?.stderr).toContain('managed-cut=' + cut);
+    await interruptAfterCommit(control, args, cut);
     const readCount = () =>
       readFile(path.join(control, 'invocations.log'), 'utf8').then(
         (b) => b.trim().split('\n').length,
@@ -148,13 +172,34 @@ it.each([
       expect((await runCliError(control, recover)).error.details.reason).toBe('execution_outstanding');
       expect(await readCount()).toBe(0);
     } else {
+      let deadline: NodeJS.ProcessEnv | undefined;
       if (cut === 'admit') {
+        const retained = (await command<ClaimInspection>('inspect', run)).data.execution;
+        deadline = atDeadline(retained.valid_until);
+        expect(
+          (
+            await runCliError(
+              control,
+              [
+                'workflow',
+                'expire-claim',
+                run,
+                '--attempt',
+                retained.correlation.attempt_id,
+                '--expected-state-version',
+                '3',
+                '--json',
+              ],
+              deadline,
+            )
+          ).error.details.reason,
+        ).toBe('claim_closed');
         const child = (await readdir(path.join(control, '.threadloop'), { recursive: true })).find(
           (p) => path.basename(p) === 'executor.sqlite',
         )!;
         await rm(path.join(control, '.threadloop', path.dirname(child), 'outputs'), { recursive: true });
       }
-      const { stdout } = await runCli(control, cut === 'enroll' ? args : recover);
+      const { stdout } = await runCli(control, cut === 'enroll' ? args : recover, deadline);
       expect(parseJson<{ data: unknown }>(stdout).data).toMatchObject({ disposition: 'imported', state_version: 3 });
       expect(await readCount()).toBe(1);
     }
@@ -194,3 +239,161 @@ it('holds a lost subprocess effect across retries and refuses a changed request'
   expect((await command('inspect', run)).data).toEqual(inspect.data);
   expect((await readFile(path.join(control, 'invocations.log'), 'utf8')).trim().split('\n')).toHaveLength(1);
 }, 35_000);
+
+it.each([
+  { cut: 'observe', status: 'unknown_outcome', effect: 'unknown', launches: 1 },
+  { cut: 'enroll', status: 'interrupted', effect: 'not_started', launches: 0 },
+])(
+  'records expiry once for the real Attempt after $cut',
+  async ({ cut, status, effect, launches }) => {
+    const { control, run, command, file } = await managedFixture();
+    await file('decision.json', await command('decide', run));
+    const execute = ['workflow', 'execute', run, '--decision', 'decision.json', '--json'];
+    await interruptAfterCommit(control, execute, cut);
+    const inspect = ['workflow', 'inspect', run, '--json'];
+    const before = (await command<ClaimInspection>('inspect', run)).data.execution;
+    const attempt = before.correlation.attempt_id;
+    const expire = (id: string, version: number) => [
+      'workflow',
+      'expire-claim',
+      run,
+      '--attempt',
+      id,
+      '--expected-state-version',
+      String(version),
+      '--json',
+    ];
+    const deadline = atDeadline(before.valid_until);
+    await file('correlation.json', before.correlation);
+    const importArgs = [
+      'workflow',
+      'evidence',
+      'import',
+      'gaap',
+      '--run',
+      run,
+      '--source',
+      'correlation.json',
+      '--expected-state-version',
+      '3',
+      '--json',
+    ];
+    expect(
+      (
+        await runCliError(
+          control,
+          expire(attempt, 3),
+          atDeadline(new Date(Date.parse(before.valid_until) - 1).toISOString()),
+        )
+      ).error.details.reason,
+    ).toBe('claim_not_expired');
+    expect((await runCliError(control, expire('wrong-attempt', 3), deadline)).error.details.reason).toBe(
+      'attempt_mismatch',
+    );
+    expect((await runCliError(control, expire(attempt, 2), deadline)).error.details.reason).toBe('stale_version');
+    const overdue = parseJson<{ data: ClaimInspection }>((await runCli(control, inspect, deadline)).stdout).data
+      .execution;
+    expect(overdue.child_revision).toBe(before.child_revision);
+    expect(overdue.recovery_argv.slice(1)).toEqual(expire(attempt, 3));
+    if (cut === 'observe') {
+      expect(overdue.observation?.status).toBe('ok');
+      expect((await runCliError(control, importArgs, deadline)).error.details.reason).toBe(
+        'execution_authority_changed',
+      );
+    }
+    await interruptAfterCommit(control, expire(attempt, 3), 'expire', deadline);
+    const cutRead = parseJson<{ data: ClaimInspection }>((await runCli(control, inspect, deadline)).stdout).data;
+    expect(cutRead.execution).toMatchObject({
+      claim_status: 'expired',
+      attempt: status,
+      effect,
+      observation: before.observation,
+      recovery_argv: overdue.recovery_argv,
+    });
+    const record = async () =>
+      parseJson<{ data: { recovery_argv: string[]; recovery: string } }>(
+        (await runCli(control, expire(attempt, 3), deadline)).stdout,
+      ).data;
+    const first = await record();
+    expect(first).toMatchObject({
+      disposition: 'claim_expired',
+      state_version: 3,
+      closed_at: before.valid_until,
+      attempt_id: attempt,
+      attempt_status: status,
+      effect,
+      launch_count: launches,
+      attempts_used: 1,
+      max_attempts: 1,
+      attempts_remaining: 0,
+      retry_safety: 'reconciliation_required',
+    });
+    expect(await record()).toEqual(first);
+    expect(first.recovery).toMatch(cut === 'observe' ? /independent evidence/ : /exhausted its Attempt budget/);
+    const child = parseJson<{ data: unknown }>(
+      (await runCli(control, first.recovery_argv.slice(1), deadline)).stdout,
+    ).data;
+    expect(child).toMatchObject({
+      projection: { claims: [{ status: 'expired' }], attempts: [{ id: attempt, status, effect }] },
+      launch_count: launches,
+      admitted: [],
+      observations: cut === 'observe' ? [{ status: 'ok' }] : [],
+    });
+    const next = parseJson<{ data: DecisionReply }>(
+      (await runCli(control, ['workflow', 'decide', run, '--json'], deadline)).stdout,
+    ).data;
+    expect(next.controller_decision.decision.outcome).toBe('blocked');
+    expect((await runCliError(control, execute, deadline)).error.code).toBe('EXECUTOR_REJECTED');
+    const calls = await readFile(path.join(control, 'invocations.log'), 'utf8').catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error;
+        return '';
+      },
+    );
+    expect(calls.trim().split('\n').filter(Boolean)).toHaveLength(launches);
+    expect(parseJson<{ data: ClaimInspection }>((await runCli(control, inspect, deadline)).stdout).data).toMatchObject({
+      state_version: 3,
+      execution: { child_revision: cutRead.execution.child_revision, recovery_argv: first.recovery_argv },
+    });
+  },
+  35_000,
+);
+
+it('reports the original remaining policy budget after a prelaunch expiry', async () => {
+  const { control, run, command, file } = await managedFixture('success', 2);
+  await file('selected.json', await command('decide', run));
+  await interruptAfterCommit(control, ['workflow', 'execute', run, '--decision', 'selected.json', '--json'], 'enroll');
+  const { execution } = (await command<ClaimInspection>('inspect', run)).data;
+  const clock = atDeadline(execution.valid_until);
+  const expired = await runCli(
+    control,
+    [
+      'workflow',
+      'expire-claim',
+      run,
+      '--attempt',
+      execution.correlation.attempt_id,
+      '--expected-state-version',
+      '3',
+      '--json',
+    ],
+    clock,
+  );
+  const reply = parseJson<{ data: { recovery: string } }>(expired.stdout).data;
+  expect(reply.recovery).toMatch(/separately authorized replacement/);
+  expect(reply).toMatchObject({
+    attempt_status: 'interrupted',
+    effect: 'not_started',
+    launch_count: 0,
+    attempts_used: 1,
+    max_attempts: 2,
+    attempts_remaining: 1,
+  });
+  const inspect = await runCli(control, ['workflow', 'inspect', run, '--json'], clock);
+  expect(parseJson<{ data: unknown }>(inspect.stdout).data).toMatchObject({
+    execution: { attempts_remaining: 1, retry_safety: 'reconciliation_required' },
+  });
+  expect(
+    await readFile(path.join(control, 'invocations.log'), 'utf8').catch((error: NodeJS.ErrnoException) => error.code),
+  ).toBe('ENOENT');
+}, 30_000);

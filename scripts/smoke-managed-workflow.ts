@@ -3,7 +3,9 @@ import { execFile } from 'node:child_process';
 import { readdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import type { expireWorkflowClaim } from '../src/services/workflow-execution.js';
 import type { DecisionReply } from '../src/domain/workflow-run.js';
 import { managedWorkflowFixture } from '../tests/helpers/workflow-execution.js';
 import { cleanupTemporaryState, git } from '../tests/helpers/session.js';
@@ -61,7 +63,11 @@ async function run(mode: 'success' | 'signature') {
         assert.fail('The installed runtime accepted a result with an invalid fixture signature.');
       };
       await refused(submit, /^execution_outstanding$/);
-      const held = await json<{ execution: { correlation: unknown } }>('workflow', 'inspect', runId);
+      const held = await json<{ execution: { valid_until: string; correlation: { attempt_id: string } } }>(
+        'workflow',
+        'inspect',
+        runId,
+      );
       await writeFile(path.join(control, 'correlation.json'), JSON.stringify(held.execution.correlation));
       await refused(
         () =>
@@ -80,6 +86,47 @@ async function run(mode: 'success' | 'signature') {
         /^dsse\.signature$/,
       );
       await refused(submit, /^execution_outstanding$/);
+      const attempt = held.execution.correlation.attempt_id;
+      const clock = fileURLToPath(new URL('../tests/fixtures/workflow/clock.mjs', import.meta.url));
+      const env = {
+        ...process.env,
+        THREADLOOP_TEST_CLOCK: new Date(Date.parse(held.execution.valid_until) + 1).toISOString(),
+      };
+      const expiry = [
+        '--import',
+        clock,
+        cli!,
+        'workflow',
+        'expire-claim',
+        runId,
+        '--attempt',
+        attempt,
+        '--expected-state-version',
+        '3',
+      ];
+      const result = await execute(process.execPath, [...expiry, '--json'], { cwd: control, env });
+      const { data } = JSON.parse(result.stdout) as { data: Awaited<ReturnType<typeof expireWorkflowClaim>> };
+      assert.equal(data.disposition, 'claim_expired');
+      assert.equal(data.workflow_run_id, runId);
+      assert.equal(data.state_version, 3);
+      assert.equal(data.attempt_id, attempt);
+      assert.equal(data.claim_status, 'expired');
+      assert.equal(data.attempt_status, 'unknown_outcome');
+      assert.equal(data.effect, 'unknown');
+      assert.equal(data.launch_count, 1);
+      assert.equal(data.attempts_used, 1);
+      assert.ok(data.max_attempts >= data.attempts_used);
+      assert.ok(data.child_journal_revision > 0);
+      assert.equal(data.closed_at, env.THREADLOOP_TEST_CLOCK);
+      const replay = await execute(process.execPath, expiry, { cwd: control, env });
+      for (const field of [
+        attempt,
+        data.claim.id,
+        data.attempt_status,
+        data.recovery,
+        JSON.stringify(data.recovery_argv),
+      ])
+        assert.ok(replay.stdout.includes(field), 'Text output omitted ' + field);
     }
     const view = await json<{ state: string; state_version: number }>('workflow', 'inspect', runId);
     assert.equal(view.state, 'implementing');
@@ -104,5 +151,5 @@ async function run(mode: 'success' | 'signature') {
 await run('success');
 await run('signature');
 console.log(
-  'The installed managed Workflow Run verified the signed fixture result and refused its invalid signature after one launch each.',
+  'The installed managed Workflow Run verified the signed fixture result and refused its invalid signature after one launch each. Claim expiry retained the uncertain effect and replayed the recovery command.',
 );

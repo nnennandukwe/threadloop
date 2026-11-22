@@ -14,6 +14,7 @@ import {
   workflowDecideCommand,
   workflowApplyCommand,
   workflowExecuteCommand,
+  workflowExpireClaimCommand,
   workflowCollectCommand,
   workflowPrepareCommand,
   workflowImportCommand,
@@ -339,6 +340,14 @@ export function createThreadloopProgram() {
       .description('Execute a selected engineering action through the enrolled GAAP bridge')
       .requiredOption('--decision <file>', 'saved workflow decide JSON response'),
   ).action(action(workflowExecuteCommand));
+  withJsonOption(
+    workflow
+      .command('expire-claim')
+      .argument('<run>')
+      .description('Record an overdue claim for its enrolled Attempt')
+      .requiredOption('--attempt <id>', 'enrolled Attempt ID from workflow inspect')
+      .requiredOption('--expected-state-version <n>', 'expected lifecycle version', parseExpectedStateVersion),
+  ).action(action(workflowExpireClaimCommand));
   const evidence = workflow.command('evidence').description('Prepare and admit authenticated workflow evidence');
   withJsonOption(
     evidence

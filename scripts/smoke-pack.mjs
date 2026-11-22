@@ -146,8 +146,34 @@ async function verifyInstall(packDir, consumerRepo) {
       v5.capabilities.includes('workflow_runs_v1') &&
         v5.capabilities.includes('workflow_gaap_execution_v1') &&
         v5.commands['workflow apply'] &&
-        v5.commands['workflow execute'],
+        v5.commands['workflow execute'] &&
+        v5.capabilities.includes('workflow_claim_expiry_v1') &&
+        v5.commands['workflow expire-claim']?.includes('<run> --attempt <id> --expected-state-version <n> [--json]'),
       'The installed protocol must advertise workflow runs.',
+    );
+    const expiryHelp = await threadloop('workflow', 'expire-claim', '--help');
+    expect(
+      expiryHelp.stdout.includes('expire-claim [options] <run>') &&
+        expiryHelp.stdout.includes('--attempt <id>') &&
+        expiryHelp.stdout.includes('--expected-state-version <n>'),
+      'The installed command help must identify the run, Attempt and expected version.',
+    );
+    const missingAttempt = await threadloop(
+      'workflow',
+      'expire-claim',
+      'quote',
+      '--expected-state-version',
+      '1',
+      '--json',
+    ).then(
+      () => null,
+      (error) => error,
+    );
+    expect(
+      missingAttempt &&
+        JSON.parse(missingAttempt.stderr).error.code === 'INVALID_ARGUMENT' &&
+        missingAttempt.stderr.includes('--attempt'),
+      'A claim expiry request needs its Attempt ID.',
     );
     const oldStreams = [
       [[], '5ac51f9c27359b9f27e717adec58d4b85c3e78e4b721957ed534f2d9a7e40fcf'],

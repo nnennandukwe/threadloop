@@ -85,9 +85,9 @@ function operate(
   snapshot: ControllerInput,
   command: ExecutionOperation['command'],
   admissions: ReceiptAdmission[] = [],
+  actor: ExecutionContext['actor'] = { kind: 'executor', executor: root.binding.executor },
 ) {
   const projection = project(root, snapshot);
-  const actor: ExecutionContext['actor'] = { kind: 'executor', executor: root.binding.executor };
   const context: ExecutionContext = { snapshot, actor, recovery_evidence: [], receipt_admissions: admissions };
   const policy = root.binding.execution_policy;
   const operation: ExecutionOperation = {
@@ -754,6 +754,31 @@ function transportDigest(row: Record<string, unknown>) {
     }),
   );
 }
+/** Record a host-clock expiry while the owning Workflow Run holds its writer. */
+export function expireManagedGaapClaim(store: GaapState, child: ManagedGaapInspection, snapshot: ControllerInput) {
+  const actor = child.journal.execution.initial_context.actor;
+  if (
+    actor.kind !== 'threadloop' ||
+    !snapshot.policy.rules.authorities.some(
+      (entry) => entry.type === 'threadloop' && same(entry.identity, actor.identity),
+    )
+  )
+    throw new GaapEvidenceError(
+      'executor.authority',
+      'The current workflow policy must authorize the enrolled ThreadLoop authority.',
+    );
+  const { claim, attempt_id } = child.request.request;
+  store.mutate(
+    child.revision,
+    (root) => {
+      if (!same(root.request, child.request) || root.journal.execution_digest !== child.journal.execution_digest)
+        throw new GaapEvidenceError('state.fenced', 'Read the current enrolled child before recording expiry.');
+      operate(root, snapshot, { kind: 'expire', claim, attempt_id }, [], actor);
+    },
+    child.owner,
+  );
+}
+
 function checkManagedRegistration(retained: RetainedState, projection: ExecutionProjection, directory: string) {
   const { root } = retained;
   if (root.schema_version !== 'threadloop.gaap-state/2') return;

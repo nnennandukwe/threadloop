@@ -126,14 +126,17 @@ export function workflowControllerInput(
   const managed = snapshot.managed_execution;
   if (!managed)
     throw new ThreadloopError('STATE_CORRUPTED', 'The managed Workflow Run has no verified execution history.');
-  input.available_capabilities.push({
-    actor: 'executor',
-    capability: g.gaap.adapter.mapping_policy.policy.action_capability,
-  });
+  const child = managed.active?.child;
+  // The enrolled bridge has one Attempt. A prelaunch expiry used that slot without starting work.
+  if (!(child?.projection.claims[0]?.status === 'expired' && child.projection.attempts[0]?.started_at === null)) {
+    input.available_capabilities.push({
+      actor: 'executor',
+      capability: g.gaap.adapter.mapping_policy.policy.action_capability,
+    });
+  }
   if (previousExecution) return { ...input, ...previousExecution };
   input.existing_requests = [...managed.existing_requests];
   input.invalidated_claims = [...managed.invalidated_claims];
-  const child = managed.active?.child;
   if (!child) return input;
   const authority = new Set(child.authority);
   authority.add(

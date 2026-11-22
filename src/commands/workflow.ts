@@ -9,7 +9,7 @@ import {
   type WorkflowPrepareOptions,
 } from '../services/workflow-runtime.js';
 import { collectWorkflowEvidence, type CollectOptions } from '../services/workflow-collection.js';
-import { executeWorkflowRun, importWorkflowGaap } from '../services/workflow-execution.js';
+import { executeWorkflowRun, expireWorkflowClaim, importWorkflowGaap } from '../services/workflow-execution.js';
 import type { RunView } from '../domain/workflow-run.js';
 
 type ManagedInspection = Extract<Awaited<ReturnType<typeof inspectWorkflowRun>>, { collections: unknown }>;
@@ -165,6 +165,25 @@ export async function workflowExecuteCommand(context: CommandContext, run: strin
     process.removeListener('SIGINT', cancel);
     process.removeListener('SIGTERM', cancel);
   }
+}
+
+export async function workflowExpireClaimCommand(
+  context: CommandContext,
+  run: string,
+  options: { attempt: string; expectedStateVersion: number },
+) {
+  const data = await expireWorkflowClaim(context.cwd, run, options.attempt, options.expectedStateVersion);
+  writeCommandSuccess(context, {
+    data,
+    text: [
+      `Claim ${data.claim.id} (version ${data.claim.version}) expired at ${data.closed_at}.`,
+      `Workflow Run ${data.workflow_run_id} is at state version ${data.state_version}.`,
+      `Attempt ${data.attempt_id} is ${data.attempt_status} with effect ${data.effect}.`,
+      `Launch count ${data.launch_count}. Attempts used ${data.attempts_used} of ${data.max_attempts}. Child journal revision ${data.child_journal_revision}.`,
+      data.recovery,
+      JSON.stringify(data.recovery_argv),
+    ],
+  });
 }
 
 export async function workflowCollectCommand(context: CommandContext, kind: string, options: CollectOptions) {

@@ -58,6 +58,13 @@ export interface WorkflowExecutionStore {
     guard: WorkflowExecutionGuard,
   ): WorkflowReservation;
   observeExecution(run: string, reservationId: string, child: ManagedGaapInspection): WorkflowReservation;
+  withClaimExpiryFence<T>(
+    run: string,
+    expectedVersion: number,
+    attemptId: string,
+    child: ManagedGaapInspection,
+    record: (snapshot: RunSnapshot, at: string) => T,
+  ): T;
   withExecutionFence<T>(
     run: string,
     reservationId: string,

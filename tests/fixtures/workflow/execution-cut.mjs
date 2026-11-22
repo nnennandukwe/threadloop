@@ -8,12 +8,14 @@ DatabaseSync.prototype.prepare = function (sql) {
   const statement = prepare.call(this, sql);
   const childPhase = /^INSERT INTO (launch|observation|accepted)\b/.exec(sql)?.[1];
   const outer = sql.startsWith('INSERT INTO workflow_execution_events(');
-  if (!childPhase && !outer) return statement;
+  const expiry = point === 'expire' && sql.startsWith('INSERT OR REPLACE INTO root ');
+  if (!childPhase && !outer && !expiry) return statement;
   const run = statement.run.bind(statement);
   statement.run = (...args) => {
     const result = run(...args);
     const phase = outer ? args[5] : { launch: 'start', observation: 'observe', accepted: 'admit' }[childPhase];
-    if (phase === point) armed.add(this);
+    const expired = expiry && JSON.parse(args[0]).journal.execution.entries.at(-1)?.operation.command.kind === 'expire';
+    if (phase === point || expired) armed.add(this);
     return result;
   };
   return statement;

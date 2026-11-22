@@ -73,33 +73,37 @@ function verifyReservation(
   row: ExecutionRow,
   content: Extract<ExecutionContent, { kind: 'reserve' }>,
 ) {
-  const r = content.reservation,
-    s = journal.snapshot,
-    state = s.managed_execution!;
-  const selected = r.proposal.controller_decision.decision;
-  assertWorkflowObservation(s, r.observed);
+  const reservation = content.reservation,
+    snapshot = journal.snapshot,
+    state = snapshot.managed_execution!;
+  const selected = reservation.proposal.controller_decision.decision;
+  assertWorkflowObservation(snapshot, reservation.observed);
   demand(
     !state.active &&
       selected.outcome === 'engineering_action_required' &&
-      r.proposal.expectation.evaluation_time <= r.reserved_at &&
-      r.owner.workflow_run_id === row.run_id &&
-      /^[a-f0-9]{32}$/.test(r.owner.reservation_id) &&
-      r.child_directory === childDirectory(db, r.owner.reservation_id) &&
+      reservation.proposal.expectation.evaluation_time <= reservation.reserved_at &&
+      reservation.owner.workflow_run_id === row.run_id &&
+      /^[a-f0-9]{32}$/.test(reservation.owner.reservation_id) &&
+      reservation.child_directory === childDirectory(db, reservation.owner.reservation_id) &&
       !state.reservations.some(
-        (other) => other.request_key === row.request_key || other.owner.reservation_id === r.owner.reservation_id,
+        (other) =>
+          other.request_key === row.request_key || other.owner.reservation_id === reservation.owner.reservation_id,
       ) &&
-      r.request_key === row.request_key &&
-      r.request_key === selected.action_request.request.idempotency_key &&
-      r.owner.request_digest === selected.action_request.request_digest &&
-      equal(decideWorkflow(s, r.observed, r.proposal.expectation.evaluation_time), r.proposal),
+      reservation.request_key === row.request_key &&
+      reservation.request_key === selected.action_request.request.idempotency_key &&
+      reservation.owner.request_digest === selected.action_request.request_digest &&
+      equal(
+        decideWorkflow(snapshot, reservation.observed, reservation.proposal.expectation.evaluation_time),
+        reservation.proposal,
+      ),
     'invalid selected reservation',
   );
-  const input = workflowControllerInput(s, r.observed, r.reserved_at);
+  const input = workflowControllerInput(snapshot, reservation.observed, reservation.reserved_at);
   demand(
-    equal(workflowGaapBinding(s, input, selected.action_request), r.binding),
+    equal(workflowGaapBinding(snapshot, input, selected.action_request), reservation.binding),
     'reservation differs from its current authority',
   );
-  state.active = { ...r, child: null, imported: null };
+  state.active = { ...reservation, child: null, imported: null };
   state.reservations.push(state.active);
 }
 
@@ -108,26 +112,26 @@ function prefix<T>(before: T[], after: T[]) {
 }
 
 export function verifyChild(snapshot: RunSnapshot, reservation: WorkflowReservation, child: ManagedGaapInspection) {
-  const b = reservation.binding,
+  const binding = reservation.binding,
     envelope = child.request,
-    r = envelope.request;
+    request = envelope.request;
   const replay = replayExecutionJournal(child.journal, { isAdmitted: (digest) => child.authority.includes(digest) });
   demand(
     equal(child.owner, reservation.owner) &&
-      child.binding_digest === workflowDigest(b) &&
+      child.binding_digest === workflowDigest(binding) &&
       child.host_digest === snapshot.genesis.gaap?.host_digest &&
       validateExecutorRequest(envelope).ok &&
       child.authority.includes(executorRequestAdmissionDigest(envelope)) &&
-      equal(r.action_request, b.action_request) &&
-      equal(r.parameters, b.parameters) &&
-      equal(r.executor, b.executor) &&
-      r.mapping_policy.digest === b.mapping_policy.policy_digest &&
-      r.mapping_policy.id === b.mapping_policy.policy.id &&
-      equal(r.execution_policy, { id: b.execution_policy.id, digest: b.execution_policy.digest }) &&
-      equal(child.journal.execution.action_request, b.action_request) &&
-      equal(child.journal.execution.execution_policy, b.execution_policy) &&
+      equal(request.action_request, binding.action_request) &&
+      equal(request.parameters, binding.parameters) &&
+      equal(request.executor, binding.executor) &&
+      request.mapping_policy.digest === binding.mapping_policy.policy_digest &&
+      request.mapping_policy.id === binding.mapping_policy.policy.id &&
+      equal(request.execution_policy, { id: binding.execution_policy.id, digest: binding.execution_policy.digest }) &&
+      equal(child.journal.execution.action_request, binding.action_request) &&
+      equal(child.journal.execution.execution_policy, binding.execution_policy) &&
       equal(child.journal.execution.initial_context.snapshot, {
-        ...b.snapshot,
+        ...binding.snapshot,
         evaluation_time: child.journal.execution.initial_context.snapshot.evaluation_time,
       }) &&
       Number.isSafeInteger(child.revision) &&
@@ -141,16 +145,19 @@ export function verifyChild(snapshot: RunSnapshot, reservation: WorkflowReservat
   demand(
     child.projection.attempts.length === 1 &&
       child.projection.claims.length === 1 &&
-      attempt?.id === r.attempt_id &&
-      equal(attempt.claim, r.claim) &&
-      equal(attempt.executor, r.executor) &&
-      claim?.id === r.claim.id &&
-      claim.attempt_id === r.attempt_id &&
-      equal(claim.executor, r.executor) &&
+      attempt?.id === request.attempt_id &&
+      equal(attempt.claim, request.claim) &&
+      equal(attempt.executor, request.executor) &&
+      claim?.id === request.claim.id &&
+      claim.attempt_id === request.attempt_id &&
+      equal(claim.executor, request.executor) &&
       [0, 1].includes(child.launch_count) &&
       child.launch_count === Number(attempt.started_at !== null) &&
       child.observations.length <= child.launch_count &&
-      child.observations.every((o) => Number.isSafeInteger(o.id) && o.id > 0 && typeof o.status === 'string') &&
+      child.observations.every(
+        (observation) =>
+          Number.isSafeInteger(observation.id) && observation.id > 0 && typeof observation.status === 'string',
+      ) &&
       child.admitted.length === child.projection.receipts.length &&
       child.admitted.length <= child.observations.length,
     'child claim, Attempt or transport differs from its projection',
@@ -159,10 +166,14 @@ export function verifyChild(snapshot: RunSnapshot, reservation: WorkflowReservat
     const { admission, result } = fact;
     demand(
       validateExecutorResult(result, envelope).ok &&
-        child.observations.some((o) => o.id === fact.observation_id && o.status === 'ok') &&
+        child.observations.some(
+          (observation) => observation.id === fact.observation_id && observation.status === 'ok',
+        ) &&
         admission.admission_digest === workflowDigest(admission.admission) &&
-        child.journal.execution.entries.some((e) => e.context.receipt_admissions.some((a) => equal(a, admission))) &&
-        child.projection.receipts.some((a) => equal(a.envelope, result.result.attempt_receipt)) &&
+        child.journal.execution.entries.some((entry) =>
+          entry.context.receipt_admissions.some((recordedAdmission) => equal(recordedAdmission, admission)),
+        ) &&
+        child.projection.receipts.some((receipt) => equal(receipt.envelope, result.result.attempt_receipt)) &&
         fact.source_id === result.result.source_receipt.id &&
         fact.source_digest === result.result.source_receipt.digest,
       'import differs from the admitted child receipt or source',
@@ -186,11 +197,11 @@ export function verifyChild(snapshot: RunSnapshot, reservation: WorkflowReservat
 }
 
 function foldExecution(db: DatabaseSync, journal: Journal, row: ExecutionRow, content: ExecutionContent) {
-  const s = journal.snapshot,
-    state = s.managed_execution!;
+  const snapshot = journal.snapshot,
+    state = snapshot.managed_execution!;
   const { digest, ...fields } = row;
   demand(
-    row.run_id === s.genesis.run_id &&
+    row.run_id === snapshot.genesis.run_id &&
       row.revision === state.revision + 1 &&
       row.previous === state.digest &&
       row.lifecycle_ordinal === journal.head.ordinal &&
@@ -203,55 +214,61 @@ function foldExecution(db: DatabaseSync, journal: Journal, row: ExecutionRow, co
   );
   if (content.kind === 'reserve') verifyReservation(db, journal, row, content);
   else {
-    const r = state.active;
-    demand(r?.request_key === row.request_key && r && !r.imported, 'execution event requires an active reservation');
-    const c = content.child;
-    verifyChild(s, r, c);
+    const reservation = state.active;
+    demand(
+      reservation?.request_key === row.request_key && reservation && !reservation.imported,
+      'execution event requires an active reservation',
+    );
+    const child = content.child;
+    verifyChild(snapshot, reservation, child);
     if (content.kind === 'enroll') {
       demand(
-        !r.child && c.launch_count === 0 && c.projection.attempts[0]?.status === 'pending' && !c.admitted.length,
+        !reservation.child &&
+          child.launch_count === 0 &&
+          child.projection.attempts[0]?.status === 'pending' &&
+          !child.admitted.length,
         'enrollment requires the original pending child',
       );
-      state.existing_requests.push(requestReference(r.binding.action_request));
+      state.existing_requests.push(requestReference(reservation.binding.action_request));
     } else {
-      demand(r.child && c.revision > r.child.revision, 'child revision did not advance');
-      if (content.kind === 'observe') demand(!c.admitted.length, 'use import for admitted child evidence');
+      demand(reservation.child && child.revision > reservation.child.revision, 'child revision did not advance');
+      if (content.kind === 'observe') demand(!child.admitted.length, 'use import for admitted child evidence');
       else {
         const correlation = content.correlation;
-        const fact = c.admitted.find((item) => item.observation_id === correlation.observation_id);
+        const fact = child.admitted.find((item) => item.observation_id === correlation.observation_id);
         demand(
-          fact && equal(workflowCorrelation(r, correlation.observation_id), correlation),
+          fact && equal(workflowCorrelation(reservation, correlation.observation_id), correlation),
           'import identifies a different source or Attempt',
         );
-        r.imported = {
+        reservation.imported = {
           ...correlation,
           contract_version: 1,
-          state: s.view.state,
-          state_version: s.view.state_version,
-          evidence_revision: s.view.evidence_revision,
+          state: snapshot.view.state,
+          state_version: snapshot.view.state_version,
+          evidence_revision: snapshot.view.evidence_revision,
           execution_revision: row.revision,
           execution_digest: digest,
           source_id: fact.source_id,
           source_digest: fact.source_digest,
           admission_digest: fact.admission.admission_digest,
-          child_revision: c.revision,
-          claim: c.request.request.claim,
-          attempt_status: c.projection.attempts[0]!.status,
+          child_revision: child.revision,
+          claim: child.request.request.claim,
+          attempt_status: child.projection.attempts[0]!.status,
         };
         if (
-          c.projection.request_status === 'satisfied' &&
-          !c.projection.conflicts.some((conflict) => !conflict.resolved_by)
+          child.projection.request_status === 'satisfied' &&
+          !child.projection.conflicts.some((conflict) => !conflict.resolved_by)
         )
           state.active = null;
       }
     }
-    r.child = c;
-    for (const invalid of c.projection.invalidated_claims)
+    reservation.child = child;
+    for (const invalid of child.projection.invalidated_claims)
       if (!state.invalidated_claims.some((item) => equal(item, invalid))) state.invalidated_claims.push(invalid);
   }
   state.revision = row.revision;
   state.digest = digest;
-  s.view = { ...s.view, execution_revision: row.revision, execution_digest: digest };
+  snapshot.view = { ...snapshot.view, execution_revision: row.revision, execution_digest: digest };
 }
 
 export class ManagedLedgerSchemaError extends StateCorruptedError {
@@ -315,31 +332,31 @@ export function executionReader(db: DatabaseSync, run: string) {
   };
 }
 
-function checkExecutionHead(db: DatabaseSync, s: RunSnapshot) {
-  if (!s.managed_execution) return;
+function checkExecutionHead(db: DatabaseSync, snapshot: RunSnapshot) {
+  if (!snapshot.managed_execution) return;
   const actual = db
     .prepare('SELECT revision,digest,active_reservation FROM workflow_execution_heads WHERE run_id=?')
-    .get(s.genesis.run_id);
+    .get(snapshot.genesis.run_id);
   demand(
     equal(actual, {
-      revision: s.managed_execution.revision,
-      digest: s.managed_execution.digest,
-      active_reservation: s.managed_execution.active?.owner.reservation_id ?? null,
+      revision: snapshot.managed_execution.revision,
+      digest: snapshot.managed_execution.digest,
+      active_reservation: snapshot.managed_execution.active?.owner.reservation_id ?? null,
     }),
     'execution head differs from its journal',
   );
 }
 
 export function appendExecution(db: DatabaseSync, journal: Journal, key: string, content: ExecutionContent) {
-  const s = journal.snapshot,
-    state = s.managed_execution!,
-    h = journal.head;
+  const snapshot = journal.snapshot,
+    state = snapshot.managed_execution!,
+    lifecycleHead = journal.head;
   const active = state.active?.owner.reservation_id ?? null;
   const fields = {
-    run_id: s.genesis.run_id,
+    run_id: snapshot.genesis.run_id,
     revision: state.revision + 1,
-    lifecycle_ordinal: h.ordinal,
-    lifecycle_digest: h.digest,
+    lifecycle_ordinal: lifecycleHead.ordinal,
+    lifecycle_digest: lifecycleHead.digest,
     previous: state.digest,
     kind: content.kind,
     request_key: key,
@@ -377,10 +394,10 @@ export function appendExecution(db: DatabaseSync, journal: Journal, key: string,
       row.previous,
       active,
       row.run_id,
-      h.version,
-      h.revision,
-      h.ordinal,
-      h.digest,
+      lifecycleHead.version,
+      lifecycleHead.revision,
+      lifecycleHead.ordinal,
+      lifecycleHead.digest,
     );
   demand(changed.changes === 1, 'execution or lifecycle head changed during commit');
 }

@@ -20,6 +20,7 @@ import type { DecisionReply, RunSnapshot } from '../domain/workflow-run.js';
 import { workflowDigest } from '../domain/workflow-selection-types.js';
 import {
   admitManagedGaapOutput,
+  expireManagedGaapClaim,
   inspectManagedGaapExecutor,
   registerManagedGaapExecutor,
   runManagedGaapExecutor,
@@ -321,6 +322,76 @@ export async function importWorkflowGaap(cwd: string, run: string, filename: str
   return reportChildError(run, () => reconcile(store, reservation, version, digest, parsed.data, true));
 }
 
+function expiredClaimRecovery(reservation: WorkflowReservation, child: ManagedGaapInspection) {
+  const attempt = child.projection.attempts[0]!;
+  const { max_attempts, retry_safety } = reservation.binding.execution_policy.rules;
+  let recovery: string;
+  if (attempt.started_at !== null) {
+    recovery =
+      'Preserve the output and obtain independent evidence that this executor stopped. A current human authority can abandon the Attempt with stop evidence or confirm whether the effect occurred with corroborating evidence.';
+  } else if (child.projection.attempts.length >= max_attempts) {
+    recovery =
+      'This Attempt never started. Its request has exhausted its Attempt budget. Inspect the retained claim and seek a policy decision for the interrupted work.';
+  } else {
+    recovery =
+      'This Attempt never started. Inspect its remaining Attempt budget and seek a separately authorized replacement under the bound ' +
+      retry_safety +
+      ' policy. This bridge retains one Attempt per request.';
+  }
+  return {
+    attempts_used: child.projection.attempts.length,
+    attempts_remaining: max_attempts - child.projection.attempts.length,
+    max_attempts,
+    retry_safety,
+    recovery,
+    recovery_argv: ['threadloop', 'executor', 'inspect', '--state', reservation.child_directory, '--json'],
+  };
+}
+
+export async function expireWorkflowClaim(cwd: string, run: string, attemptId: string, expectedVersion: number) {
+  const { store } = await workflowStoreFor(cwd, run);
+  const snapshot = store.read(run);
+  const reservation = snapshot.managed_execution?.active;
+  if (!snapshot.genesis.gaap || !reservation?.child || reservation.child.request.request.attempt_id !== attemptId)
+    refused('attempt_mismatch', 'Expiry requires the exact enrolled outstanding Attempt.', run);
+  const hostDigest = snapshot.genesis.gaap.host_digest;
+  return reportChildError(run, async () => {
+    const state = new GaapState(reservation.child_directory);
+    let child = await childFact(reservation, state, hostDigest);
+    store.withClaimExpiryFence(run, expectedVersion, attemptId, child, (current, at) => {
+      const claim = child.projection.claims[0]!;
+      if (claim.status === 'expired') return;
+      if (claim.status !== 'active' || child.admitted.length)
+        refused('claim_closed', 'The child already closed this claim. Inspect its retained admission.', run);
+      if (at < claim.valid_until) refused('claim_not_expired', 'The enrolled claim is still within its lease.', run);
+      const managed = current.managed_execution!;
+      const verified = { ...current, managed_execution: { ...managed, active: { ...managed.active!, child } } };
+      const input = workflowControllerInput(verified, observeWorkflow(verified), at);
+      expireManagedGaapClaim(state, child, input);
+    });
+    child = await childFact(reservation, state, hostDigest);
+    const claim = child.projection.claims[0]!;
+    if (claim.status !== 'expired' || !claim.closed_at)
+      refused('expiry_unconfirmed', 'The child journal has no verified expiry for this claim.', run);
+    store.observeExecution(run, reservation.owner.reservation_id, child);
+    const attempt = child.projection.attempts[0]!;
+    return {
+      disposition: 'claim_expired' as const,
+      workflow_run_id: run,
+      state_version: expectedVersion,
+      claim: attempt.claim,
+      claim_status: claim.status,
+      closed_at: claim.closed_at,
+      attempt_id: attempt.id,
+      attempt_status: attempt.status,
+      effect: attempt.effect,
+      launch_count: child.launch_count,
+      child_journal_revision: child.projection.revision,
+      ...expiredClaimRecovery(reservation, child),
+    };
+  });
+}
+
 export async function observeWorkflowExecution(snapshot: RunSnapshot) {
   const managed = snapshot.managed_execution;
   const reservation = managed?.active ?? managed?.reservations.at(-1);
@@ -349,7 +420,29 @@ export async function observeWorkflowExecution(snapshot: RunSnapshot) {
     '--decision',
     '<original-decision.json>',
   ];
-  if (reservation.imported && !managed.active) {
+  const claim = child?.projection.claims[0];
+  const expiryRecorded = reservation.child?.projection.claims[0]?.status === 'expired';
+  if (!pending && child && claim?.status === 'expired' && expiryRecorded) {
+    ({ recovery, recovery_argv: recoveryArgv } = expiredClaimRecovery(reservation, child));
+  } else if (
+    !pending &&
+    child &&
+    claim &&
+    (claim.status === 'expired' || (claim.status === 'active' && new Date().toISOString() >= claim.valid_until))
+  ) {
+    recovery = 'Record the enrolled claim expiry and inspect the resulting Attempt.';
+    recoveryArgv = [
+      'threadloop',
+      'workflow',
+      'expire-claim',
+      snapshot.view.workflow_run_id,
+      '--attempt',
+      claim.attempt_id,
+      '--expected-state-version',
+      String(snapshot.view.state_version),
+      '--json',
+    ];
+  } else if (reservation.imported && !managed.active) {
     recovery = 'Run workflow decide to evaluate the authenticated result against current outer facts.';
     recoveryArgv = ['threadloop', 'workflow', 'decide', snapshot.view.workflow_run_id, '--json'];
   } else if (!pending && (reservation.imported || (child?.launch_count && observation?.status !== 'ok'))) {
@@ -379,14 +472,24 @@ export async function observeWorkflowExecution(snapshot: RunSnapshot) {
       correlation,
       disposition: reservation.imported
         ? 'imported'
-        : pending
-          ? 'reserved'
-          : child?.admitted.length
-            ? 'admitted'
-            : child?.launch_count
-              ? 'started'
-              : 'enrolled',
+        : claim?.status === 'expired'
+          ? 'expired'
+          : pending
+            ? 'reserved'
+            : child?.admitted.length
+              ? 'admitted'
+              : child?.launch_count
+                ? 'started'
+                : 'enrolled',
       child_revision: child?.revision ?? null,
+      claim_status: claim?.status ?? null,
+      attempts_used: child?.projection.attempts.length ?? 0,
+      max_attempts: reservation.binding.execution_policy.rules.max_attempts,
+      attempts_remaining:
+        reservation.binding.execution_policy.rules.max_attempts - (child?.projection.attempts.length ?? 0),
+      retry_safety: reservation.binding.execution_policy.rules.retry_safety,
+      valid_until: claim?.valid_until ?? null,
+      effect: child?.projection.attempts[0]?.effect ?? null,
       claim: child?.request.request.claim ?? null,
       attempt: child?.projection.attempts.at(-1)?.status ?? null,
       launch_count: child?.launch_count ?? 0,

@@ -162,6 +162,17 @@ export function workflowExecutionOperations(
         return r;
       });
     },
+    withClaimExpiryFence(run, expectedVersion, attemptId, child, record) {
+      return write((db) => {
+        const journal = readRun(db, run);
+        expectVersion(journal.snapshot.view.state_version, expectedVersion);
+        const reservation = current(journal, child.owner.reservation_id);
+        if (!reservation.child || reservation.child.request.request.attempt_id !== attemptId)
+          rejected('attempt_mismatch', 'The enrolled Attempt differs from the requested expiry.');
+        verifyChild(journal.snapshot, reservation, child);
+        return syncResult(record(journal.snapshot, now()));
+      });
+    },
     withExecutionFence(run, id, phase, guard, commit) {
       return write((db) => {
         const j = readRun(db, run),
