@@ -1,5 +1,7 @@
 import { ensureWorkflowCollectionSchema } from './workflow-collection-schema.js';
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 import { canonicalJson } from '../../domain/canonical-json.js';
 import type { AdmissionReply, HostSource, RunSnapshot } from '../../domain/workflow-run.js';
 import { ThreadloopError } from '../../contracts/errors.js';
@@ -113,8 +115,16 @@ export function openCollection(
           fail('The retained collector source has the wrong kind.');
         return { stage: 'captured' as const, source: verified };
       }
-      if (target.kind === 'local-gate')
-        fail('A local gate may already have run. Its retained attempt must be reconciled before another launch.');
+      if (target.kind === 'local-gate') {
+        // The gate's attempt directory is created before the gate launches. If it is absent, the gate never ran,
+        // so the attempt can be closed safely and no longer holds the run.
+        if (existsSync(path.join(root, '.threadloop', 'artifacts', 'workflow-collections', first.intent.attempt)))
+          fail('A local gate may already have run. Its retained attempt must be reconciled before another launch.');
+        const reason =
+          'The local gate never launched before the interruption. Its attempt was closed; retry with a new idempotency key.';
+        append(db, run, key, events.length, { phase: 'failed', reason });
+        return { stage: 'abandoned' as const, reason };
+      }
     } else if (outstanding(db, run).length) fail('Another collection holds this run.');
     expectVersion(snapshot.view.state_version, target.state_version);
     if (snapshot.managed_execution?.active) fail('An outstanding executor Attempt holds this run.');

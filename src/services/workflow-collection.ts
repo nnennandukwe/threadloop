@@ -257,6 +257,10 @@ export async function collectWorkflowEvidence(cwd: string, kind: string, o: Coll
     },
   );
   if (opened.stage === 'completed') return opened.reply;
+  if (opened.stage === 'abandoned')
+    throw new ThreadloopError('TRANSITION_GUARD_FAILED', opened.reason, {
+      details: { reason: 'collection_abandoned', hint: 'Retry the collection with a new idempotency key.' },
+    });
   let source: HostSource;
   if (opened.stage === 'captured') source = opened.source;
   else {
