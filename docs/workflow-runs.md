@@ -148,11 +148,12 @@ while the graph-bound run retained its original state.
 Create the run with `schema_version` set to `threadloop.workflow-setup/2` and `gaap` set to
 `{"adapter":"adapter.json","host":"host.json"}`. Keep the other setup fields from the example above. The
 `threadloop.gaap-host/1` file identifies the absolute executable, its invocation, the subject workspace, verification
-keys and limits. Choose a native Linux or macOS executable outside the subject. For a script, set `executable` to the
-absolute path of its native interpreter and pass the script's protected absolute path as an argument. ThreadLoop
-measures the entry executable and the regular files named by absolute arguments or environment values. Your account or
-root must own each file and protect its path from other writers. A private installation can sit under a sticky system
-temporary directory. ThreadLoop checks these permissions and digests at enrollment and before starting the host.
+keys and limits. Choose a native Linux or macOS executable outside the subject. Leave `arguments` empty for a producer
+that reads its request from stdin, or list the protected absolute file paths it takes in order. For a script, set
+`executable` to its native interpreter and pass the script's absolute path as an argument. ThreadLoop measures the entry
+executable and each regular file named by an argument or absolute environment value. Your account or root must own each
+file and protect its path from other writers. A private installation can sit under a sticky system temporary directory.
+ThreadLoop checks these permissions and digests at enrollment and before starting the host.
 
 An empty `environment` works. Supply adapter settings under `GAAP_` and your own producer settings under `PRODUCER_`.
 The signed test producer uses `TEST_GAAP_`. Use uppercase names, literal scalar or structured data, and absolute paths
