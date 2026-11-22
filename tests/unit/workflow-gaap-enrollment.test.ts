@@ -1,4 +1,4 @@
-import { chmod, readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { gaapVerificationPolicy, type GaapHost } from '../../src/domain/gaap-binding.js';
@@ -30,7 +30,7 @@ async function enrolled() {
   const hostRoot = await makeTempDir();
   const executable = path.join(hostRoot, 'producer');
   const script = path.join(hostRoot, 'task.mjs');
-  await writeFile(executable, '#!/bin/sh\nexit 0\n');
+  await copyFile('/bin/echo', executable);
   await chmod(executable, 0o755);
   await writeFile(script, 'original producer entry point\n');
   const fixture = await gaapFixture();
@@ -84,6 +84,58 @@ it('adopts the exact GAAP implementation, parameters and executable files before
   expect(() => validateWorkflowGenesis(genesis)).not.toThrow();
 });
 
+it('accepts producer data and rejects an unsupported environment or script entry at adoption', async () => {
+  const { control, subject, host, prepare } = await enrolled();
+  host.environment = {
+    PRODUCER_LABEL: 'ready',
+    GAAP_SETTINGS: '{"format":"report/v1"}',
+    PRODUCER_OUTPUT_DIRECTORY: control,
+  };
+  await writeFile(path.join(control, 'host.json'), JSON.stringify(host));
+  expect(prepare().build('2026-11-21T00:00:00.000Z').gaap?.host.environment).toEqual(host.environment);
+  for (const environment of [
+    { UNKNOWN_OPTION: 'example' },
+    { PATH: 'unused' },
+    { PRODUCER_CONFIG: './absent.json' },
+    { PRODUCER_INPUT_FILE: path.join(control, 'missing') },
+    { PRODUCER_OUTPUT_DIRECTORY: subject },
+    { PRODUCER_OUTPUT_DIRECTORY: 'relative' },
+  ]) {
+    await writeFile(path.join(control, 'host.json'), JSON.stringify({ ...host, environment }));
+    expect(prepare).toThrow(expect.objectContaining({ code: 'INVALID_ARGUMENT' }));
+  }
+  await writeFile(host.executable, '#!/bin/sh\n# Inert format sample.\n');
+  await writeFile(path.join(control, 'host.json'), JSON.stringify(host));
+  expect(prepare).toThrow(/native.*interpreter/i);
+});
+
+it('inspects an older stored host and refuses its unsupported environment before reserving an execution', async () => {
+  const { control, prepare } = await enrolled();
+  const at = '2026-11-21T00:00:00.000Z';
+  const retained = prepare().build(at);
+  retained.gaap!.host.environment.OLD_OPTION = 'retained data';
+  retained.gaap!.host_digest = workflowDigest(retained.gaap!.host);
+  await git(control, 'init', '-b', 'main');
+  await initThreadloop(control);
+  const store = createWorkflowStore(control, () => at);
+  store.create(retained.run_id, workflowCreateRequestJson(retained), () => retained);
+  const decisionFile = path.join(control, 'decision.json');
+  for (const edge of ['frame', 'bind_plan', 'begin_implementation']) {
+    const data = await decideWorkflowRun(control, retained.run_id);
+    await writeFile(decisionFile, JSON.stringify({ ok: true, command: 'workflow decide', data }));
+    await applyWorkflowRun(control, retained.run_id, decisionFile, edge);
+  }
+  const data = await decideWorkflowRun(control, retained.run_id);
+  await writeFile(decisionFile, JSON.stringify({ ok: true, command: 'workflow decide', data }));
+  const before = await inspectWorkflowRun(control, retained.run_id);
+  expect(store.read(retained.run_id).genesis.gaap).toEqual(retained.gaap);
+  await expect(executeWorkflowRun(control, retained.run_id, decisionFile)).rejects.toMatchObject({
+    code: 'TRANSITION_GUARD_FAILED',
+    details: { reason: 'managed_producer_changed' },
+  });
+  expect(await inspectWorkflowRun(control, retained.run_id)).toEqual(before);
+});
+
 it('keeps historical reads independent of files and refuses dispatch after a producer script changes', async () => {
   const { control, script, prepare } = await enrolled();
   const entry = prepare().build('2026-11-21T00:00:00.000Z');
@@ -99,8 +151,10 @@ it('requires protected executable, argument and environment files before enrolli
   const { control, host, script, prepare } = await enrolled();
   const configDirectory = await makeTempDir();
   const configFile = path.join(configDirectory, 'producer.json');
+  const outputDirectory = await makeTempDir();
   await writeFile(configFile, '{}');
   host.environment.PRODUCER_CONFIG = configFile;
+  host.environment.PRODUCER_OUTPUT_DIRECTORY = outputDirectory;
   await writeFile(path.join(control, 'host.json'), JSON.stringify(host));
   await git(control, 'init', '-b', 'main');
   await initThreadloop(control);
@@ -118,10 +172,10 @@ it('requires protected executable, argument and environment files before enrolli
   }
   expect(await saveDecision()).toBe('engineering_action_required');
   const previous = await inspectWorkflowRun(control, run);
-  for (const filename of [host.executable, script, configFile, configDirectory]) {
+  for (const filename of [host.executable, script, configFile, configDirectory, outputDirectory]) {
     const mode = (await stat(filename)).mode & 0o7777;
     await chmod(filename, mode | 0o020);
-    expect(prepare).toThrow(/only the current account and root/);
+    expect(prepare).toThrow(/only the current account and root|protected absolute directory/);
     await expect(executeWorkflowRun(control, run, decisionFile)).rejects.toMatchObject({
       code: 'TRANSITION_GUARD_FAILED',
       details: { reason: 'managed_producer_changed' },

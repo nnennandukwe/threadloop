@@ -15,7 +15,7 @@ import type {
   WorkflowReviewReader,
 } from '../domain/workflow-run.js';
 import { createInvalidArgumentError, ThreadloopError } from '../contracts/errors.js';
-import { hasProtectedHostFilePath } from '../adapters/fs/managed-host-file.js';
+import { hasProtectedHostFilePath, isNativeHostProgram } from '../adapters/fs/managed-host-file.js';
 
 const text = z.string().min(1).max(4096).regex(/\S/);
 function compileAdapterValidators() {
@@ -61,17 +61,21 @@ function invalid(message: string): never {
   });
 }
 
-function fileHash(filename: string, executable: boolean, remaining: number) {
+function fileHash(filename: string, role: 'native' | 'reader' | 'file', remaining: number) {
   if (!hasProtectedHostFilePath(filename))
     invalid(
       'Each enrolled host file needs an absolute real path where only the current account and root can change it.',
     );
-  if (executable) accessSync(filename, constants.X_OK);
+  if (role !== 'file') accessSync(filename, constants.X_OK);
   const fd = openSync(filename, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const before = fstatSync(fd, { bigint: true });
     if (!before.isFile() || before.size > BigInt(remaining))
       invalid('An enrolled file exceeds the managed host byte limit or has an unsupported type.');
+    if (role === 'native' && !isNativeHostProgram(fd, Number(before.size)))
+      invalid(
+        'Select a native host executable. To run a script, enroll its native interpreter and an absolute script argument.',
+      );
     const hash = createHash('sha256'),
       chunk = Buffer.allocUnsafe(64 * 1024);
     let consumed = 0;
@@ -104,6 +108,30 @@ function candidatePaths(host: WorkflowGaapEnrollment['host']) {
 }
 function contained(root: string, file: string) {
   return file === root || file.startsWith(root + path.sep);
+}
+function managedInputFiles(host: WorkflowGaapEnrollment['host'], subject: string) {
+  const files = new Set(host.arguments.filter((value) => path.isAbsolute(value)));
+  const relativePath = /^(?:\.{1,2}|~)(?:[/\\]|$)/;
+  if (host.arguments.some((value) => relativePath.test(value)))
+    invalid('Use absolute paths for managed producer file arguments.');
+  for (const [name, value] of Object.entries(host.environment)) {
+    if (!/^(?:GAAP_|PRODUCER_|TEST_GAAP_)[A-Z][A-Z0-9_]*$/.test(name))
+      invalid('Managed host settings must use GAAP_, PRODUCER_ or TEST_GAAP_ producer names.');
+    if (name.endsWith('_DIRECTORY')) {
+      if (!path.isAbsolute(value) || contained(subject, value) || !hasProtectedHostFilePath(value, 'directory'))
+        invalid('A producer directory must be an existing protected absolute directory outside the subject.');
+    } else if (path.isAbsolute(value)) {
+      files.add(value);
+    } else if (
+      relativePath.test(value) ||
+      name.endsWith('_FILE') ||
+      name.endsWith('_EXECUTABLE') ||
+      ['GAAP_NATIVE_CONFIG', 'GAAP_NATIVE_HOST', 'GAAP_NATIVE_ATTESTOR'].includes(name)
+    ) {
+      invalid('Use an absolute protected file path for a managed producer file setting.');
+    }
+  }
+  return [...files].sort();
 }
 function assertEnrollment(enrolled: WorkflowGaapEnrollment, subject: string, reader: WorkflowReviewReader | undefined) {
   const { adapter, host } = enrolled;
@@ -190,20 +218,16 @@ export function adoptWorkflowGaap(
     const adapter = adapterSchema.parse(adapterValue),
       host = parseGaapHost(hostValue);
     let remaining = maxHostBytes;
-    const measure = (filename: string, executable: boolean) => {
+    const measure = (filename: string, role: 'native' | 'reader' | 'file') => {
       if (contained(subject, filename) || contained(path.join(control, '.threadloop'), filename))
         invalid('The enrolled host files must be outside the subject and control state.');
-      const measured = fileHash(filename, executable, remaining);
+      const measured = fileHash(filename, role, remaining);
       remaining -= measured.bytes;
       return measured.sha256;
     };
-    const executable_sha256 = measure(host.executable, true);
-    const files = candidatePaths(host)
-      .filter((name) => {
-        const info = lstatSync(name, { throwIfNoEntry: false });
-        return info?.isFile() || info?.isSymbolicLink();
-      })
-      .map((name) => ({ path: name, sha256: measure(name, false) }));
+    const inputs = managedInputFiles(host, subject);
+    const executable_sha256 = measure(host.executable, 'native');
+    const files = inputs.map((name) => ({ path: name, sha256: measure(name, 'file') }));
     const entry = {
       adapter,
       adapter_digest: workflowDigest(adapter),
@@ -211,7 +235,7 @@ export function adoptWorkflowGaap(
       host_digest: workflowDigest(host),
       executable_sha256,
       files,
-      ...(reader ? { review_reader_sha256: measure(reader.executable, true) } : {}),
+      ...(reader ? { review_reader_sha256: measure(reader.executable, 'reader') } : {}),
     };
     assertEnrollment(entry, subject, reader);
     return entry;
@@ -221,26 +245,30 @@ export function adoptWorkflowGaap(
   }
 }
 function unavailable(cause: unknown): never {
-  throw new ThreadloopError('TRANSITION_GUARD_FAILED', 'The enrolled host files are unavailable or have changed.', {
-    cause,
-    details: {
-      reason: 'managed_producer_changed',
-      hint: 'Restore the enrolled host files and restrict write access to their installation before retrying.',
+  throw new ThreadloopError(
+    'TRANSITION_GUARD_FAILED',
+    'The host configuration is unsupported or its enrolled files are unavailable or have changed.',
+    {
+      cause,
+      details: {
+        reason: 'managed_producer_changed',
+        hint: 'Restore the protected files. If the binding needs new launch settings, create a run with a native executable, absolute file paths and producer-owned environment names.',
+      },
     },
-  });
+  );
 }
 export function assertWorkflowGaapExecutable(genesis: WorkflowGenesis): void {
   const entry = genesis.gaap;
   if (!entry) unavailable(undefined);
   try {
-    const primary = fileHash(entry.host.executable, true, maxHostBytes);
+    const inputs = managedInputFiles(entry.host, genesis.subject_root);
+    const primary = fileHash(entry.host.executable, 'native', maxHostBytes);
     let remaining = maxHostBytes - primary.bytes;
     if (primary.sha256 !== entry.executable_sha256) unavailable(undefined);
     const sealed = new Map(entry.files.map((f) => [f.path, f.sha256]));
-    for (const name of candidatePaths(entry.host)) {
-      const info = lstatSync(name, { throwIfNoEntry: false });
-      if (!sealed.has(name) && !info?.isFile() && !info?.isSymbolicLink()) continue;
-      const measured = fileHash(name, false, remaining);
+    if (inputs.length !== sealed.size) unavailable(undefined);
+    for (const name of inputs) {
+      const measured = fileHash(name, 'file', remaining);
       remaining -= measured.bytes;
       if (measured.sha256 !== sealed.get(name)) unavailable(undefined);
     }
@@ -254,7 +282,7 @@ export function assertWorkflowReviewReader(genesis: WorkflowGenesis): WorkflowRe
   if (!reader || !genesis.gaap?.review_reader_sha256) unavailable(undefined);
   let cause: unknown;
   try {
-    if (fileHash(reader.executable, true, maxHostBytes).sha256 === genesis.gaap.review_reader_sha256) return reader;
+    if (fileHash(reader.executable, 'reader', maxHostBytes).sha256 === genesis.gaap.review_reader_sha256) return reader;
   } catch (error) {
     cause = error;
   }
