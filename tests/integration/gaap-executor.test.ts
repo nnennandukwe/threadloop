@@ -73,18 +73,23 @@ describe('durable GAAP executor admission', () => {
 
   it("doesn't mistake its own uncommitted writes for durable admission when rollback also fails", async () => {
     const fixture = await setup();
-    let admitted = false;
+    let reachedAdmissionResult = false;
     const store = new GaapState(fixture.state, (point) => {
-      if (point === 'admission.result') admitted = true;
+      if (point === 'admission.result') reachedAdmissionResult = true;
     });
     registerGaapExecutor(store, fixture.binding, fixture.host);
-    const spy = loseCommitResponse('readable', () => admitted, 'uncommitted');
+    const spy = loseCommitResponse('readable', () => reachedAdmissionResult, 'uncommitted');
     const result = await runGaapExecutor(store);
     spy.mockRestore();
-    expect(result.status).toBe('uncertain');
     const reopened = new GaapState(fixture.state);
-    expect(reopened.inspect().accepted).toHaveLength(0);
-    expect(reopened.inspect().evaluations).toHaveLength(0);
+    const retained = reopened.inspect();
+    const observation = retained.observations[0];
+    expect(observation?.status, JSON.stringify({ result, metadata: observation?.metadata })).toBe('ok');
+    expect(reachedAdmissionResult).toBe(true);
+    expect(result.status).toBe('uncertain');
+    expect(result).toHaveProperty('reason', expect.stringContaining('injected COMMIT failure'));
+    expect(retained.accepted).toHaveLength(0);
+    expect(retained.evaluations).toHaveLength(0);
     expect(await admitGaapOutput(reopened, 1)).toMatchObject({ status: 'admitted' });
   });
 

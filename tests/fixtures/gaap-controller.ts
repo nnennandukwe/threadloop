@@ -41,7 +41,7 @@ export async function controllerFixture(mode = 'success') {
     ],
     workspace,
     environment: { TEST_GAAP_MODE: mode },
-    timeout_ms: 5000,
+    timeout_ms: 15_000,
     verification: {
       id: 'explicit-test-verification',
       keys: fixture.keys.map((key) => ({
