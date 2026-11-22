@@ -261,12 +261,11 @@ remains open.
 
 ## Test Plan
 
-**Native and external checks.** Use task-owned extracted upstream checkouts if their builds write files. Resolve
-absolute paths before invoking the commands below. `LAUNCHER` controls visibility of the measured child bundle and runs
-it as `NODE SUBJECT conformance`. `IDENTITY` belongs to the parent. `EVIDENCE` is a fresh proof directory. Capture
-actual exits, stdout and stderr independently. The reproducible parent command is
-`python3 scripts/controller-conformance/prove.py --harness HARNESS --contracts CONTRACTS --build BUILD --output NEW_JSON`.
-The measured path uses macOS Seatbelt. Report an unsupported host explicitly.
+**Native and external checks.** Use read-only pinned dependency checkouts for the measured run. Run upstream builds in
+disposable copies if they write compiled files. Set `CONTRACTS` and `HARNESS` to their absolute paths and `EVIDENCE` to
+a fresh directory outside the clean ThreadLoop checkout. The parent invokes RunInvariant, supplies the measured
+identity, starts each subject in its own scratch directory and retains the raw and public packets. The measured launcher
+requires macOS Seatbelt.
 
 ```bash
 npm ci
@@ -278,9 +277,9 @@ git diff --check origin/main...HEAD
 
 (cd "$CONTRACTS" && npm run spec:conformance:check && npm run check)
 (cd "$HARNESS" && npm test && THREADLOOP_CHECKOUT="$CONTRACTS" npm run test:threadloop)
-node "$HARNESS/bin/run-invariant.js" threadloop --checkout "$CONTRACTS" \
-  --subject "$IDENTITY" --subject-kind controller --json -- \
-  "$PYTHON" "$LAUNCHER" "$NODE" "$SUBJECT" conformance > "$EVIDENCE/controller-packet.json"
+npm run build:controller-subject -- --output "$EVIDENCE/build"
+python3 -B scripts/controller-conformance/prove.py --harness "$HARNESS" --contracts "$CONTRACTS" \
+  --build "$EVIDENCE/build" --output "$EVIDENCE/controller.json" --raw-output "$EVIDENCE/raw.json"
 ```
 
 Require exit 0 and packet schema `run-invariant.threadloop-packet/0.1` with `subject_kind: controller`. Check
