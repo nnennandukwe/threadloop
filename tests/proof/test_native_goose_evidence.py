@@ -1,7 +1,9 @@
 """Offline regression checks for the native Goose proof's retained evidence."""
 import hashlib
+import json
 import pathlib
 import runpy
+import subprocess
 import tempfile
 import unittest
 
@@ -30,6 +32,12 @@ class NativeProofEvidenceTest(unittest.TestCase):
     def verify(self, turns=None):
         """Run the proof verifier on the fixtures. The default checks only the binaries."""
         return proof['verify_native_evidence'](self.claim, self.host, self.attestor, turns)
+
+    def test_standalone_provenance_keeps_its_original_fields(self):
+        """Publish the standalone proof without package measurements."""
+        directory = self.host.parent
+        proof['write_native_provenance'](directory, directory, self.claim, None)
+        self.assertEqual(json.loads((directory / 'provenance.json').read_text()), self.claim)
 
     def test_requires_each_binary_to_match_after_execution(self):
         """Changing either fixture binary must fail the final digest check."""
@@ -66,6 +74,55 @@ class NativeProofEvidenceTest(unittest.TestCase):
                       [{**self.turn, 'messages': list(reversed(self.turn['messages']))}]):
             with self.assertRaisesRegex(RuntimeError, 'tool result'):
                 self.verify(turns)
+
+
+class PackagedSourceEvidenceTest(unittest.TestCase):
+    """Exercise the proof package with a small local npm project."""
+
+    def setUp(self):
+        """Create an offline npm package in a temporary Git repository."""
+        work = tempfile.TemporaryDirectory()
+        self.addCleanup(work.cleanup)
+        root = pathlib.Path(work.name)
+        self.project, self.output, self.scratch = (root / name for name in ('project', 'output', 'scratch'))
+        for directory in (self.project, self.output, self.scratch):
+            directory.mkdir()
+        (self.project / 'src').mkdir()
+        self.source = self.project / 'src' / 'cli.js'
+        self.source.write_text('#!/usr/bin/env node\n')
+        (self.project / 'scripts').mkdir()
+        self.build = self.project / 'scripts' / 'build.cjs'
+        self.build.write_text('')
+        (self.project / 'package.json').write_text(json.dumps({
+            'name': 'threadloop', 'version': '0.0.0', 'bin': {'threadloop': 'src/cli.js'},
+            'scripts': {'build': 'node scripts/build.cjs'}, 'files': ['src']
+        }))
+        subprocess.run(['git', 'init', '--quiet', str(self.project)], check=True)
+
+    def test_refuses_a_package_whose_build_changed_source_inputs(self):
+        """Stop before installing a package whose build modified its own source."""
+        self.build.write_text("require('node:fs').appendFileSync('src/cli.js', '// generated change\\n')")
+        with self.assertRaisesRegex(RuntimeError, 'source inputs changed'):
+            proof['install_workflow_cli'](self.project, self.output, self.scratch)
+        self.assertIn('// generated change', self.source.read_text())
+        self.assertFalse((self.output / 'installed-package.json').exists())
+        self.assertFalse((self.output / 'provenance.json').exists())
+
+    def test_checks_the_original_package_inputs_before_publishing_provenance(self):
+        """A final source change blocks publication until the measured files match again."""
+        _, package = proof['install_workflow_cli'](self.project, self.output, self.scratch)
+        original = self.source.read_bytes()
+        self.source.write_bytes(original + b'// change after installation\n')
+        with self.assertRaisesRegex(RuntimeError, 'source inputs changed'):
+            proof['write_native_provenance'](self.project, self.output, {'case': 'allow'}, package)
+        published = self.output / 'provenance.json'
+        self.assertFalse(published.exists())
+        self.source.write_bytes(original)
+        proof['write_native_provenance'](self.project, self.output, {'case': 'allow'}, package)
+        record = json.loads(published.read_text())
+        self.assertEqual(record['installed_package'], json.loads((self.output / 'installed-package.json').read_text()))
+        self.assertEqual(record['final_source_inputs_sha256'], package['source_inputs_sha256'])
+        self.assertEqual(record['final_source_inputs_sha256'], package['post_pack_inputs_sha256'])
 
 
 if __name__ == '__main__':

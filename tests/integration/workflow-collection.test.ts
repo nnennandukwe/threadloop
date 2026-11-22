@@ -428,7 +428,7 @@ it('retries an unfinished Qodo operation with its original collection key', asyn
   expect((await call('inspect', run)).data.collections).toEqual([]);
 }, 30_000);
 
-it('releases an expired Qodo operation while preserving retries for an outage or another operation’s error', async () => {
+it('releases an expired Qodo operation while preserving retries for an outage or an error for another operation', async () => {
   const next = '38503227-6954-40e9-8f3b-429a50cd86e1';
   const reader = `const [command, action, id, format] = process.argv.slice(2);
 if (command !== 'review' || action !== 'status' || ![${JSON.stringify(operation)}, ${JSON.stringify(next)}].includes(id) || format !== '--json') process.exit(3);
@@ -439,7 +439,7 @@ if (JSON.parse(response).error) process.exitCode = 1;`;
   const first = collect('pre-pr-review', 'original-review', '--operation', operation);
   const replacement = collect('pre-pr-review', 'replacement-review', '--operation', next);
   const message =
-    'no such review — the id may never have existed, may belong to another user, or may have expired (results are kept about 60 minutes after a review finishes, by default). The runtime does not distinguish these. Re-run the review.';
+    'no such review \u2014 the id may never have existed, may belong to another user, or may have expired (results are kept about 60 minutes after a review finishes, by default). The runtime does not distinguish these. Re-run the review.';
   const expired = { operation_id: operation, message, trace_id: 'review-status-trace' };
   for (const error of [
     { ...expired, message: 'Connection lost' },

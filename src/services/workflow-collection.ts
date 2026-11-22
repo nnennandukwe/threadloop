@@ -112,7 +112,7 @@ async function retainedReview(snapshot: RunSnapshot, producing: SourceBinding, o
       const missing = z.object({
         error: z.object({
           operation_id: z.literal(operation),
-          message: z.string().startsWith('no such review — '),
+          message: z.string().startsWith('no such review \u2014 '),
         }),
       });
       if (missing.safeParse(response).success) {

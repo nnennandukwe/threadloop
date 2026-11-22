@@ -32,17 +32,21 @@ def install_workflow_cli(project, output, scratch):
     subprocess.run(['npm', 'run', 'build'], cwd=project, env=environment, check=True, stdout=sys.stderr)
     packed = json.loads(subprocess.check_output(['npm', 'pack', '--offline', '--ignore-scripts',
                         '--json', '--pack-destination', str(output)], cwd=project, env=environment))[0]
+    packed_digest = input_digest(project)
+    if packed_digest != source_digest:
+        raise RuntimeError(f'ThreadLoop source inputs changed during build or pack. Expected {source_digest}, got {packed_digest}.')
     archive = output / packed['filename']
     prefix = scratch / 'installed'
     subprocess.run(['npm', 'install', '--offline', '--ignore-scripts', '--no-save', '--no-package-lock',
                     '--prefix', str(prefix), str(archive)], cwd=scratch, env=environment, check=True, stdout=sys.stderr)
     cli = prefix / 'node_modules' / '.bin' / 'threadloop'
-    (output / 'installed-package.json').write_text(json.dumps({
-        'source_inputs_sha256': source_digest, 'post_pack_inputs_sha256': input_digest(project),
+    package = {
+        'source_inputs_sha256': source_digest, 'post_pack_inputs_sha256': packed_digest,
         'filename': archive.name, 'package_sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
         'cli_sha256': hashlib.sha256(cli.read_bytes()).hexdigest(), 'npm_integrity': packed['integrity']
-    }, indent=2))
-    return str(cli)
+    }
+    (output / 'installed-package.json').write_text(json.dumps(package, indent=2))
+    return str(cli), package
 
 
 def observed_governed_result(turn):
@@ -84,6 +88,18 @@ def verify_native_evidence(provenance, binary, attestor, transcript=None):
             raise RuntimeError('The native ' + name + ' binary changed during the proof.')
     if transcript is not None and not any(observed_governed_result(turn) for turn in transcript):
         raise RuntimeError('The local Goose transcript lacks a tool result linked to a declared governed operation.')
+
+
+def write_native_provenance(project, output, provenance, package):
+    """Publish the native proof after its binary and provider checks pass."""
+    if package is not None:
+        final_digest = input_digest(project)
+        original, packed = package['source_inputs_sha256'], package['post_pack_inputs_sha256']
+        if final_digest != original or final_digest != packed:
+            raise RuntimeError('ThreadLoop source inputs changed during the native proof. '
+                               f'Before build {original}, after pack {packed}, before publication {final_digest}.')
+        provenance.update({'installed_package': package, 'final_source_inputs_sha256': final_digest})
+    (output / 'provenance.json').write_text(json.dumps(provenance, indent=2))
 
 
 def main():
@@ -135,12 +151,14 @@ def main():
     configuration = output / 'native-host.json'
     configuration.write_text(json.dumps({'agent': agent, 'proposal_server': ingress, 'python': str(python), 'server': str(reference / 'server.py'), 'socket': str(socket), 'token': token, 'output': str(output / 'unused.json'), 'case': args.case}))
     project = pathlib.Path(__file__).resolve().parent.parent
+    package = None
     try:
         with tempfile.TemporaryDirectory(prefix='threadloop-native-proof-') as scratch:
             candidate = pathlib.Path(scratch) / 'candidate-provenance.json'
             command = ['node', str(project / 'node_modules' / 'tsx' / 'dist' / 'cli.mjs'), str(project / 'scripts' / 'prove-gaap-goose.ts'), str(configuration), str(binary), str(attestor), str(output), str(candidate)]
             if args.workflow_run:
-                command.append(install_workflow_cli(project, output, pathlib.Path(scratch)))
+                cli, package = install_workflow_cli(project, output, pathlib.Path(scratch))
+                command.append(cli)
             subprocess.run(command, cwd=str(project), check=True, timeout=180)
             provenance = json.loads(candidate.read_text())
     finally:
@@ -150,12 +168,10 @@ def main():
         (output / 'provider-transcript.json').write_text(json.dumps(transcript, indent=2))
     verify_native_evidence(provenance, binary, attestor, transcript if args.workflow_run else None)
     if args.workflow_run:
-        package = json.loads((output / 'installed-package.json').read_text())
-        provenance.update({'installed_package': package, 'final_source_inputs_sha256': input_digest(project),
-                           'goose_sha256': upstream.file_hash(goose), 'goose_version': '1.54.0',
+        provenance.update({'goose_sha256': upstream.file_hash(goose), 'goose_version': '1.54.0',
                            'provider_requests': len(transcript),
                            'provider_transcript_sha256': hashlib.sha256((output / 'provider-transcript.json').read_bytes()).hexdigest()})
-    (output / 'provenance.json').write_text(json.dumps(provenance, indent=2))
+    write_native_provenance(project, output, provenance, package)
 
 
 if __name__ == '__main__':
