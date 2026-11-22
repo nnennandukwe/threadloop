@@ -510,6 +510,23 @@ exists. A historical run with that argument must remain inspectable and refuse d
 Verify accepted empty and absolute argument lists and the existing signed and native producers. Keep the standalone host
 interface and separately enrolled review reader available to their existing callers.
 
+### Collect local reviews in SHA-256 Git repositories
+
+Hosted review 2091688 checked `9b71c05a83bdb028d119c0171ff4d8f26c269546`. The local Qodo reader accepts a configured
+review base and verifies the returned commit and tree against the subject repository. Its base and retained-tree checks
+currently require 40 lowercase hexadecimal characters. A repository created with `git init --object-format=sha256` uses
+64 for each Git object ID.
+
+Exercise enrollment, collection and reopen through the public workflow interface in a real SHA-256 repository, using a
+local review-reader fixture and the actual Git base, head and tree. Keep the SHA-1 path covered. Validate full object
+IDs and check that the enrolled base and measured snapshot refer to the same repository history. Refuse malformed or
+mismatched values before admitting evidence. Label the fixture's producer so the test result makes its scope clear. Use
+descriptive names for the managed executor fixture and the Workflow Run view used to form a decision.
+
+The same review carried an earlier finding about managed script entry points and the inherited command search path.
+Trace both enrollment and dispatch through the native executable check and producer environment validation. Compare
+those paths with the installed CLI refusals and the signed native success before recording a disposition.
+
 ## Commit Plan
 
 1. Commit this plan at the verified predecessor and add the bounded selected-action reservation and registration with
