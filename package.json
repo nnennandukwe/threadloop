@@ -35,6 +35,7 @@
     "sensor:github-review:collect": "tsx scripts/collect-github-review-snapshot.ts",
     "sensor:github-review:sign": "tsx scripts/sign-github-review-receipt.ts",
     "prove:gaap:goose": "python3 scripts/prove-gaap-goose.py",
+    "build:controller-subject": "node scripts/controller-conformance/build.mjs",
     "test:controller": "vitest run tests/unit/controller-generated.test.ts tests/unit/controller-generated-mutants.test.ts tests/integration/controller-generated-process.test.ts tests/integration/controller-history-replay.test.ts",
     "test:controller:deep": "tsx scripts/controller-generated/deep.ts",
     "test:controller:replay": "tsx scripts/controller-generated/replay.ts"
