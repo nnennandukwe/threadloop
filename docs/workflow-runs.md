@@ -247,8 +247,9 @@ threadloop workflow evidence collect pre-pr-review --run shipping --operation "$
 ```
 
 If the Qodo operation is still working, repeat the original request with the same operation and key after it finishes.
-The collector reads that operation's terminal result. It checks the base, current commit and Git tree, primary review,
-coverage and finding inventory. Each listed finding needs one disposition, and each disposition needs a matching
-finding. Previously open findings can still block the run. Independent CI, human approval and merge observations use
-their signed sources. Request protocol 5 and check `workflow_gaap_execution_v1` before calling managed execution
-commands.
+Use the subject repository's full Git object IDs for the review base, head and tree. SHA-1 repositories use 40 lowercase
+hexadecimal characters. SHA-256 repositories use 64. The collector reads that operation's terminal result. It checks the
+base, current commit and Git tree, primary review, coverage and finding inventory. Each listed finding needs one
+disposition, and each disposition needs a matching finding. Previously open findings can still block the run.
+Independent CI, human approval and merge observations use their signed sources. Request protocol 5 and check
+`workflow_gaap_execution_v1` before calling managed execution commands.
