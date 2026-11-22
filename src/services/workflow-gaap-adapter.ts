@@ -110,10 +110,12 @@ function contained(root: string, file: string) {
   return file === root || file.startsWith(root + path.sep);
 }
 function managedInputFiles(host: WorkflowGaapEnrollment['host'], subject: string) {
-  const files = new Set(host.arguments.filter((value) => path.isAbsolute(value)));
+  if (!host.arguments.every((value) => path.isAbsolute(value)))
+    invalid(
+      'Use protected absolute file paths for managed host arguments. Pass literal settings in the producer environment.',
+    );
+  const files = new Set(host.arguments);
   const relativePath = /^(?:\.{1,2}|~)(?:[/\\]|$)/;
-  if (host.arguments.some((value) => relativePath.test(value)))
-    invalid('Use absolute paths for managed producer file arguments.');
   for (const [name, value] of Object.entries(host.environment)) {
     if (!/^(?:GAAP_|PRODUCER_|TEST_GAAP_)[A-Z][A-Z0-9_]*$/.test(name))
       invalid('Managed host settings must use GAAP_, PRODUCER_ or TEST_GAAP_ producer names.');

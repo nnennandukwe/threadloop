@@ -17,6 +17,7 @@ import {
   inspectWorkflowRun,
 } from '../../src/services/workflow-runtime.js';
 import { executeWorkflowRun } from '../../src/services/workflow-execution.js';
+import { assertWorkflowGaapExecutable } from '../../src/services/workflow-gaap-adapter.js';
 import type { WorkflowSetup, WorkflowSources } from '../../src/domain/workflow-run.js';
 import { controllerBinding } from '../fixtures/gaap-controller.js';
 import { gaapFixture } from '../fixtures/gaap.js';
@@ -84,6 +85,30 @@ it('adopts the exact GAAP implementation, parameters and executable files before
   expect(() => validateWorkflowGenesis(genesis)).not.toThrow();
 });
 
+it('creates managed runs with zero arguments or measured file arguments and rejects other tokens', async () => {
+  const { control, host, script } = await enrolled();
+  await git(control, 'init', '-b', 'main');
+  await initThreadloop(control);
+  const store = createWorkflowStore(control);
+  const create = async (run: string, args: string[]) => {
+    await writeFile(path.join(control, 'host.json'), JSON.stringify({ ...host, arguments: args }));
+    return createWorkflowRun(control, run, governedProfile, 'setup.json');
+  };
+  for (const args of [['sample.mjs'], ['assets/sample'], [script, '--label']]) {
+    await expect(create('session_wf_unsupported', args)).rejects.toMatchObject({
+      code: 'INVALID_ARGUMENT',
+      details: { reason: 'invalid_gaap_enrollment' },
+    });
+    expect(() => store.read('session_wf_unsupported')).toThrow(
+      expect.objectContaining({ code: 'WORKFLOW_RUN_NOT_FOUND' }),
+    );
+  }
+  await create('session_wf_native', []);
+  expect(store.read('session_wf_native').genesis.gaap?.files).toEqual([]);
+  await create('session_wf_script', [script]);
+  expect(store.read('session_wf_script').genesis.gaap?.files.map((file) => file.path)).toEqual([script]);
+});
+
 it('accepts producer data and rejects an unsupported environment or script entry at adoption', async () => {
   const { control, subject, host, prepare } = await enrolled();
   host.environment = {
@@ -109,37 +134,45 @@ it('accepts producer data and rejects an unsupported environment or script entry
   expect(prepare).toThrow(/native.*interpreter/i);
 });
 
-it('inspects an older stored host and refuses its unsupported environment before reserving an execution', async () => {
-  const { control, prepare } = await enrolled();
-  const at = '2026-11-21T00:00:00.000Z';
-  const retained = prepare().build(at);
-  retained.gaap!.host.environment.OLD_OPTION = 'retained data';
-  retained.gaap!.host_digest = workflowDigest(retained.gaap!.host);
-  await git(control, 'init', '-b', 'main');
-  await initThreadloop(control);
-  const store = createWorkflowStore(control, () => at);
-  store.create(retained.run_id, workflowCreateRequestJson(retained), () => retained);
-  const decisionFile = path.join(control, 'decision.json');
-  for (const edge of ['frame', 'bind_plan', 'begin_implementation']) {
+it.each(['environment', 'argument'])(
+  'inspects an older stored host and refuses its unsupported %s before reserving an execution',
+  async (setting) => {
+    const { control, prepare } = await enrolled();
+    const at = '2026-11-21T00:00:00.000Z';
+    const retained = prepare().build(at);
+    if (setting === 'argument') retained.gaap!.host.arguments.push('stored-label');
+    else retained.gaap!.host.environment.OLD_OPTION = 'retained data';
+    retained.gaap!.host_digest = workflowDigest(retained.gaap!.host);
+    await git(control, 'init', '-b', 'main');
+    await initThreadloop(control);
+    const store = createWorkflowStore(control, () => at);
+    store.create(retained.run_id, workflowCreateRequestJson(retained), () => retained);
+    const decisionFile = path.join(control, 'decision.json');
+    for (const edge of ['frame', 'bind_plan', 'begin_implementation']) {
+      const data = await decideWorkflowRun(control, retained.run_id);
+      await writeFile(decisionFile, JSON.stringify({ ok: true, command: 'workflow decide', data }));
+      await applyWorkflowRun(control, retained.run_id, decisionFile, edge);
+    }
     const data = await decideWorkflowRun(control, retained.run_id);
     await writeFile(decisionFile, JSON.stringify({ ok: true, command: 'workflow decide', data }));
-    await applyWorkflowRun(control, retained.run_id, decisionFile, edge);
-  }
-  const data = await decideWorkflowRun(control, retained.run_id);
-  await writeFile(decisionFile, JSON.stringify({ ok: true, command: 'workflow decide', data }));
-  const before = await inspectWorkflowRun(control, retained.run_id);
-  expect(store.read(retained.run_id).genesis.gaap).toEqual(retained.gaap);
-  await expect(executeWorkflowRun(control, retained.run_id, decisionFile)).rejects.toMatchObject({
-    code: 'TRANSITION_GUARD_FAILED',
-    details: { reason: 'managed_producer_changed' },
-  });
-  expect(await inspectWorkflowRun(control, retained.run_id)).toEqual(before);
-});
+    const before = await inspectWorkflowRun(control, retained.run_id);
+    const original = store.read(retained.run_id).genesis;
+    expect(original.gaap).toEqual(retained.gaap);
+    expect(() => assertWorkflowGaapExecutable(original)).toThrow(
+      expect.objectContaining({ code: 'TRANSITION_GUARD_FAILED' }),
+    );
+    await expect(executeWorkflowRun(control, retained.run_id, decisionFile)).rejects.toMatchObject({
+      code: 'TRANSITION_GUARD_FAILED',
+      details: { reason: 'managed_producer_changed' },
+    });
+    expect(await inspectWorkflowRun(control, retained.run_id)).toEqual(before);
+    expect(store.read(retained.run_id).managed_execution?.reservations).toEqual([]);
+  },
+);
 
 it('keeps historical reads independent of files and refuses dispatch after a producer script changes', async () => {
   const { control, script, prepare } = await enrolled();
   const entry = prepare().build('2026-11-21T00:00:00.000Z');
-  const { assertWorkflowGaapExecutable } = await import('../../src/services/workflow-gaap-adapter.js');
   expect(() => assertWorkflowGaapExecutable(entry)).not.toThrow();
   await writeFile(path.join(control, 'adapter.json'), '{}');
   await writeFile(script, 'different adapter bytes\n');
