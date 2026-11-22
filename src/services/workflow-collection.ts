@@ -276,7 +276,7 @@ export async function collectWorkflowEvidence(cwd: string, kind: string, o: Coll
           reason: 'The producer ended without admissible output. Inspect its attempt ' + opened.intent.attempt + '.',
         });
       if (error instanceof ThreadloopError) throw error;
-      reject('The enrolled producer didn’t return a verifiable result. Inspect its original operation.');
+      reject("The enrolled producer didn't return a verifiable result. Inspect its original operation.");
     }
     const replay = captureCollection(root, o.run, o.idempotencyKey, source);
     if (replay) return replay;

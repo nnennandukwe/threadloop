@@ -5,6 +5,7 @@ import {
   validateExecutorRequest,
   validateExecutorResult,
 } from 'threadloop-contracts/executor';
+import { StateCorruptedError } from '../../contracts/errors.js';
 import { canonicalJson } from '../../domain/canonical-json.js';
 import {
   workflowCorrelation,
@@ -253,18 +254,35 @@ function foldExecution(db: DatabaseSync, journal: Journal, row: ExecutionRow, co
   s.view = { ...s.view, execution_revision: row.revision, execution_digest: digest };
 }
 
+export class ManagedLedgerSchemaError extends StateCorruptedError {
+  readonly hint =
+    'Restore the control database and its matching managed child state from a verified backup. Recreating the shared journals could lose an outstanding execution or evidence collection.';
+}
+
+function requireManagedLedgers(db: DatabaseSync, installForFirstRun = false) {
+  try {
+    demand(workflowExecutionSchema(db, installForFirstRun), 'missing managed execution journal');
+    ensureWorkflowCollectionSchema(db, installForFirstRun);
+  } catch (cause) {
+    if (!(cause instanceof StateCorruptedError)) throw cause;
+    throw new ManagedLedgerSchemaError(
+      `ThreadLoop installs the shared journals with the first managed run. ${cause.message}`,
+      { cause },
+    );
+  }
+}
+
 export function persistInitialExecution(db: DatabaseSync, snapshot: RunSnapshot) {
   const state = snapshot.managed_execution;
   if (!state) return;
-  const earlier = db
+  const priorManagedRun = db
     .prepare(
       `SELECT 1 FROM workflow_runs WHERE run_id<>? AND
     CASE WHEN json_valid(genesis_json) THEN json_extract(genesis_json,'$.setup.schema_version') END='threadloop.workflow-setup/2' LIMIT 1`,
     )
     .get(snapshot.genesis.run_id);
-  // Once a managed run exists, recreating either journal could hide an outstanding effect.
-  demand(workflowExecutionSchema(db, !earlier), 'managed Workflow Run is missing the execution schema');
-  ensureWorkflowCollectionSchema(db, !earlier);
+  const isFirstManagedRun = priorManagedRun === undefined;
+  requireManagedLedgers(db, isFirstManagedRun);
   db.prepare('INSERT INTO workflow_execution_heads(run_id,revision,digest,active_reservation) VALUES (?,0,?,NULL)').run(
     snapshot.genesis.run_id,
     state.digest,
@@ -272,8 +290,7 @@ export function persistInitialExecution(db: DatabaseSync, snapshot: RunSnapshot)
 }
 
 export function executionReader(db: DatabaseSync, run: string) {
-  demand(workflowExecutionSchema(db), 'managed Workflow Run is missing the execution schema');
-  ensureWorkflowCollectionSchema(db);
+  requireManagedLedgers(db);
   const iterator = db
     .prepare(
       'SELECT run_id,revision,lifecycle_ordinal,lifecycle_digest,previous,kind,request_key,marker,body,digest FROM workflow_execution_events WHERE run_id=? ORDER BY revision',

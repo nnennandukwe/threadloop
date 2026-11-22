@@ -45,6 +45,38 @@ def install_workflow_cli(project, output, scratch):
     return str(cli)
 
 
+def observed_governed_result(turn):
+    tool = 'gaap-proposals__governed_operation'
+    if not any(item.get('type') == 'function' and item.get('function', {}).get('name') == tool
+               for item in turn.get('tools', [])):
+        return False
+    pending = set()
+    for message in turn.get('messages', []):
+        if message.get('role') == 'assistant':
+            pending.clear()
+            calls = message.get('tool_calls', [])
+            ids = [call.get('id') for call in calls]
+            for call in calls:
+                call_id = call.get('id')
+                if isinstance(call_id, str) and call_id and ids.count(call_id) == 1:
+                    if call.get('type') == 'function' and call.get('function', {}).get('name') == tool:
+                        pending.add(call_id)
+        elif message.get('role') == 'tool':
+            if message.get('tool_call_id') in pending and message.get('content'):
+                return True
+        else:
+            pending.clear()
+    return False
+
+
+def verify_native_evidence(provenance, binary, attestor, transcript=None):
+    for name, path, field in [('host', binary, 'implementation_digest'), ('attestor', attestor, 'attestor_digest')]:
+        if provenance[field] != 'sha256:' + hashlib.sha256(path.read_bytes()).hexdigest():
+            raise RuntimeError('The native ' + name + ' binary changed during the proof.')
+    if transcript is not None and not any(observed_governed_result(turn) for turn in transcript):
+        raise RuntimeError('The local Goose transcript lacks a tool result linked to a declared governed operation.')
+
+
 def main():
     """Own fixture resources through signing, admission and controller re-evaluation."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -96,29 +128,25 @@ def main():
     project = pathlib.Path(__file__).resolve().parent.parent
     try:
         with tempfile.TemporaryDirectory(prefix='threadloop-native-proof-') as scratch:
-            command = ['node', str(project / 'node_modules' / 'tsx' / 'dist' / 'cli.mjs'), str(project / 'scripts' / 'prove-gaap-goose.ts'), str(configuration), str(binary), str(attestor), str(output)]
+            candidate = pathlib.Path(scratch) / 'candidate-provenance.json'
+            command = ['node', str(project / 'node_modules' / 'tsx' / 'dist' / 'cli.mjs'), str(project / 'scripts' / 'prove-gaap-goose.ts'), str(configuration), str(binary), str(attestor), str(output), str(candidate)]
             if args.workflow_run:
                 command.append(install_workflow_cli(project, output, pathlib.Path(scratch)))
             subprocess.run(command, cwd=str(project), check=True, timeout=180)
+            provenance = json.loads(candidate.read_text())
     finally:
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
         (output / 'provider-transcript.json').write_text(json.dumps(transcript, indent=2))
+    verify_native_evidence(provenance, binary, attestor, transcript if args.workflow_run else None)
     if args.workflow_run:
-        tool = 'gaap-proposals__governed_operation'
-        tool_results = [message for turn in transcript for message in turn.get('messages', [])
-                        if message.get('role') == 'tool']
-        if not tool_results or not any(item.get('function', {}).get('name') == tool
-                                       for turn in transcript for item in turn.get('tools', [])):
-            raise RuntimeError('The local Goose transcript lacks the governed operation and its tool result.')
         package = json.loads((output / 'installed-package.json').read_text())
-        provenance = json.loads((output / 'provenance.json').read_text())
         provenance.update({'installed_package': package, 'final_source_inputs_sha256': input_digest(project),
                            'goose_sha256': upstream.file_hash(goose), 'goose_version': '1.54.0',
                            'provider_requests': len(transcript),
                            'provider_transcript_sha256': hashlib.sha256((output / 'provider-transcript.json').read_bytes()).hexdigest()})
-        (output / 'provenance.json').write_text(json.dumps(provenance, indent=2))
+    (output / 'provenance.json').write_text(json.dumps(provenance, indent=2))
 
 
 if __name__ == '__main__':

@@ -13,18 +13,19 @@ import { inspectGaapExecutor, registerGaapExecutor, runGaapExecutor } from '../s
 import type { GaapRequest } from 'threadloop-contracts/executor';
 import { proveWorkflowExecution } from './proof-workflow.js';
 
-const [configuration, binary, attestor, output, workflowCli] = process.argv.slice(2);
-if (!configuration || !binary || !attestor || !output)
-  throw new Error('Pass CONFIG HOST ATTESTOR NEW_OUTPUT_DIRECTORY.');
+const [configuration, binary, attestor, output, candidateProvenance, workflowCli] = process.argv.slice(2);
+if (!configuration || !binary || !attestor || !output || !candidateProvenance)
+  throw new Error('Pass CONFIG HOST ATTESTOR NEW_OUTPUT_DIRECTORY CANDIDATE_PROVENANCE.');
 const config = JSON.parse(readFileSync(configuration, 'utf8')) as {
   agent: { working_directory: string };
   case: string;
   python: string;
 };
 const workspace = config.agent.working_directory;
+const implementationDigest = 'sha256:' + createHash('sha256').update(readFileSync(binary)).digest('hex');
+const attestorDigest = 'sha256:' + createHash('sha256').update(readFileSync(attestor)).digest('hex');
 const template = parseGaapJson(execFileSync(binary, ['--describe', configuration], { timeout: 15000 })) as GaapRequest;
 const fixture = await gaapFixture();
-const implementationDigest = 'sha256:' + createHash('sha256').update(readFileSync(binary)).digest('hex');
 const host: GaapHost = {
   schema_version: 'threadloop.gaap-host/1',
   executable: process.execPath,
@@ -59,7 +60,7 @@ const provenance = {
   gaap_commit: git(path.dirname(binary), 'rev-parse', 'HEAD'),
   gaap_tree_dirty: git(path.dirname(binary), 'status', '--porcelain') !== '',
   implementation_digest: implementationDigest,
-  attestor_digest: 'sha256:' + createHash('sha256').update(readFileSync(attestor)).digest('hex'),
+  attestor_digest: attestorDigest,
   provider: 'Local deterministic fixture; no inference or external billing.',
   signer: 'Deliberately public fixture seed; explicit host trust only.',
 };
@@ -71,7 +72,7 @@ if (workflowCli) {
     ...result,
     verification_keys: host.verification.keys,
   };
-  writeFileSync(path.join(output, 'provenance.json'), JSON.stringify(document, null, 2));
+  writeFileSync(candidateProvenance, JSON.stringify(document, null, 2));
   process.stdout.write(JSON.stringify({ output, ...result }, null, 2) + '\n');
 } else {
   const binding = await controllerBinding(workspace, host, template);
@@ -86,10 +87,8 @@ if (workflowCli) {
   writeFileSync(path.join(output, 'result.json'), JSON.stringify(result, null, 2));
   const inspection = await inspectGaapExecutor(new GaapState(store.directory));
   writeFileSync(path.join(output, 'inspection.json'), JSON.stringify(inspection, null, 2));
-  if ('sha256:' + createHash('sha256').update(readFileSync(binary)).digest('hex') !== implementationDigest)
-    throw new Error('The native host binary changed during the proof.');
   writeFileSync(
-    path.join(output, 'provenance.json'),
+    candidateProvenance,
     JSON.stringify(
       {
         schema_version: 'threadloop.gaap-native-proof/1',

@@ -15,6 +15,7 @@ import { workflowSchema } from './workflow-schema.js';
 import { restoreSource, retainSource, signedRaw } from './workflow-stored-source.js';
 
 import type { WorkflowExecutionStore } from '../../domain/workflow-execution.js';
+import { ManagedLedgerSchemaError } from './workflow-execution-journal.js';
 import { workflowExecutionOperations } from './workflow-execution-store.js';
 
 function missing(run: string): never {
@@ -46,7 +47,10 @@ function access<T>(action: () => T): T {
         cause,
         details: {
           reason: 'invalid_workflow_storage',
-          hint: 'Check the storage generation and restore a verified copy if the run is damaged.',
+          hint:
+            cause instanceof ManagedLedgerSchemaError
+              ? cause.hint
+              : 'Check the storage generation and restore a verified copy if the run is damaged.',
         },
       });
     if (

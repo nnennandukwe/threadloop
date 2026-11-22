@@ -243,7 +243,43 @@ it('recovers the reservation across process loss and competing execute requests'
   }
 }, 30_000);
 
-it('refuses a second managed run after its collection schema disappeared', async () => {
+it('creates and reopens two managed runs in the same control database', async () => {
+  const { control, producerRoot } = await managedWorkflowFixture();
+  producerRoots.push(producerRoot);
+  await git(control, 'init', '-b', 'main');
+  await runCli(control, ['init']);
+  const created = new Map<string, string>();
+  for (const id of [run, 'session_wf_second']) {
+    const reply = await runCli(control, [
+      'workflow',
+      'create',
+      id,
+      '--profile',
+      governedProfile,
+      '--setup',
+      'setup.json',
+      '--json',
+    ]);
+    const { data } = parseJson<{ data: { execution_revision: number; execution_digest: string } }>(reply.stdout);
+    expect(data.execution_revision).toBe(0);
+    created.set(id, data.execution_digest);
+  }
+  expect(new Set(created.values()).size).toBe(2);
+  for (const [id, digest] of created) {
+    const reply = await runCli(control, ['workflow', 'inspect', id, '--json']);
+    expect(parseJson<{ data: unknown }>(reply.stdout).data).toMatchObject({
+      workflow_run_id: id,
+      state_version: 0,
+      execution_revision: 0,
+      execution_digest: digest,
+    });
+  }
+});
+
+it.each([
+  ['workflow_collection_events', 'DROP TABLE workflow_collection_events'],
+  ['workflow_execution_events_no_update', 'DROP TRIGGER workflow_execution_events_no_update'],
+])('preserves prior heads when a new managed run finds %s missing', async (name, damage) => {
   const { control, producerRoot } = await managedWorkflowFixture();
   producerRoots.push(producerRoot);
   await ensureStateDatabase(control);
@@ -255,10 +291,24 @@ it('refuses a second managed run after its collection schema disappeared', async
   create(run);
   const db = new DatabaseSync(threadloopPaths(control).stateDbPath);
   try {
-    db.exec('DROP TABLE workflow_collection_events');
+    const heads = () => [
+      db.prepare('SELECT * FROM workflow_heads ORDER BY run_id').all(),
+      db.prepare('SELECT * FROM workflow_execution_heads ORDER BY run_id').all(),
+    ];
+    const before = heads();
+    db.exec(damage);
     expect(() => store.read(run)).toThrowError(expect.objectContaining({ code: 'STATE_CORRUPTED' }));
-    expect(() => create('session_wf_second')).toThrowError(expect.objectContaining({ code: 'STATE_CORRUPTED' }));
-    expect(db.prepare("SELECT name FROM sqlite_schema WHERE name='workflow_collection_events'").get()).toBeUndefined();
+    expect(() => create('session_wf_second')).toThrowError(
+      expect.objectContaining({
+        code: 'STATE_CORRUPTED',
+        details: {
+          reason: 'invalid_workflow_storage',
+          hint: 'Restore the control database and its matching managed child state from a verified backup. Recreating the shared journals could lose an outstanding execution or evidence collection.',
+        },
+      }),
+    );
+    expect(heads()).toEqual(before);
+    expect(db.prepare('SELECT name FROM sqlite_schema WHERE name=?').get(name)).toBeUndefined();
     expect(db.prepare("SELECT run_id FROM workflow_runs WHERE run_id='session_wf_second'").get()).toBeUndefined();
   } finally {
     db.close();
