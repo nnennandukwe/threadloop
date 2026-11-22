@@ -1,5 +1,5 @@
 import { execFile, execFileSync } from 'node:child_process';
-import { lstat, mkdir } from 'node:fs/promises';
+import { lstatSync, mkdirSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { z } from 'zod';
@@ -20,7 +20,8 @@ import type { HostSource, RunSnapshot, SourceBinding } from '../domain/workflow-
 import { observeWorkflow } from './workflow-observation.js';
 import { projectWorkflowHostSource } from './workflow-host-source.js';
 import { assertWorkflowReviewReader } from './workflow-gaap-adapter.js';
-import { produceLocalGate } from './local-gate.js';
+import { produceLocalGate, resolveGateWorkingDirectories } from './local-gate.js';
+import { ProofValidationError } from '../domain/proof.js';
 import { workflowStoreFor } from './workflow-access.js';
 import { admitWorkflowHostSource } from './workflow-runtime.js';
 
@@ -176,35 +177,56 @@ async function retainedReview(snapshot: RunSnapshot, producing: SourceBinding, o
 function gateOutputDirectory(root: string, attempt: string) {
   return path.join(root, '.threadloop', 'artifacts', 'workflow-collections', attempt);
 }
-async function localGate(
-  root: string,
-  snapshot: RunSnapshot,
-  producing: SourceBinding,
-  gateId: string,
-  attempt: string,
-): Promise<HostSource> {
+function localGatePlan(snapshot: RunSnapshot, gateId: string) {
   const plan = snapshot.genesis.proof_plan;
   const gate = plan?.plan.gates.find((g) => g.id === gateId);
   if (!plan || !gate || !snapshot.genesis.policy.rules.local_gate_ids.includes(gateId))
     reject('The gate must be declared by the adopted local proof plan.');
+  try {
+    return { plan, gate, workingDirectories: resolveGateWorkingDirectories(snapshot.genesis.subject_root, gate) };
+  } catch (error) {
+    if (!(error instanceof ProofValidationError)) throw error;
+    const step = gate.setup?.find(
+      (item) => error.field === `proof_plan.gates.${gate.id}.setup.${item.id}.working_directory`,
+    );
+    const configuredDirectory = step?.working_directory ?? gate.working_directory;
+    throw new ThreadloopError('INVALID_ARGUMENT', `${error.message} Check ${JSON.stringify(configuredDirectory)}.`, {
+      cause: error,
+      details: {
+        field: error.field,
+        working_directory: configuredDirectory,
+        reason: 'invalid_gate_directory',
+        hint: 'Restore the declared working directory inside the bound subject and retry with the same collection key.',
+      },
+    });
+  }
+}
+function prepareLocalGate(root: string, snapshot: RunSnapshot, gateId: string, attempt: string) {
+  const { plan, gate, workingDirectories } = localGatePlan(snapshot, gateId);
+  const producing = sourceBinding(snapshot, 'local-gate');
   const baseline = producing.binding.subject;
   if (baseline.kind !== 'repository') reject('A local gate requires a repository subject.');
   const directory = gateOutputDirectory(root, attempt);
   let parent = path.join(root, '.threadloop');
   requireGaapDirectory(parent);
-  for (const segment of ['artifacts', 'workflow-collections']) {
+  for (const segment of ['artifacts', 'workflow-collections', attempt]) {
     parent = path.join(parent, segment);
     try {
-      await mkdir(parent, { mode: 0o700 });
+      mkdirSync(parent, { mode: 0o700 });
     } catch (error) {
       if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error;
     }
     requireGaapDirectory(parent);
-    const info = await lstat(parent);
+    const info = lstatSync(parent);
     if (info.uid !== process.getuid?.() || (info.mode & 0o022) !== 0)
       reject('Gate artifacts require an owned control directory.');
   }
-  await mkdir(directory, { mode: 0o700 });
+  // Preparation can create the directory before its SQLite transaction commits. A retry can reuse it while empty.
+  if (readdirSync(directory).length)
+    throw new ThreadloopError(
+      'INVALID_ARGUMENT',
+      'The reserved gate output directory must be empty before its first command.',
+    );
   const observe = () => {
     const observed = observeWorkflow(snapshot);
     if (!observed.physical || observed.subject.kind !== 'repository') return null;
@@ -219,6 +241,10 @@ async function localGate(
   const before = observe();
   if (!before?.clean) reject('The physical subject changed before starting the gate.');
   const receiptId = 'receipt_' + attempt;
+  return { snapshot, producing, plan, gate, workingDirectories, directory, observe, before, receiptId };
+}
+async function localGate(prepared: ReturnType<typeof prepareLocalGate>): Promise<HostSource> {
+  const { snapshot, producing, plan, gate, workingDirectories, directory, observe, before, receiptId } = prepared;
   const result = await produceLocalGate({
     repoRoot: snapshot.genesis.subject_root,
     artifactRoot: directory,
@@ -227,6 +253,7 @@ async function localGate(
     sessionId: snapshot.view.workflow_run_id,
     planSha256: plan.sha256,
     gate,
+    workingDirectories,
     before,
     observeLocal: () => Promise.resolve(observe()),
     limits: {
@@ -248,7 +275,7 @@ async function localGate(
       sequence: 1,
       id: receiptId,
       sessionId: payload.session_id,
-      gateId,
+      gateId: gate.id,
       planSha256: plan.sha256,
       headBefore: payload.head_before,
       headAfter: payload.head_after,
@@ -288,11 +315,7 @@ export async function collectWorkflowEvidence(cwd: string, kind: string, o: Coll
     { kind, target, state_version: o.expectedStateVersion },
     (snapshot) => {
       if (kind === 'pre-pr-review') assertWorkflowReviewReader(snapshot.genesis);
-      else if (
-        !snapshot.genesis.proof_plan?.plan.gates.some((g) => g.id === target) ||
-        !snapshot.genesis.policy.rules.local_gate_ids.includes(target)
-      )
-        reject('The local proof plan has no such gate.');
+      else localGatePlan(snapshot, target);
       return sourceBinding(snapshot, kind).binding.subject.content_digest;
     },
   );
@@ -302,16 +325,14 @@ export async function collectWorkflowEvidence(cwd: string, kind: string, o: Coll
   let completedReply = opened.stage === 'completed' ? opened.reply : undefined;
   if (opened.stage !== 'collect') source = opened.source;
   else {
+    let preparedGate: ReturnType<typeof prepareLocalGate> | undefined;
     if (kind === 'local-gate') {
       let claimed: boolean;
       try {
-        claimed = claimCollectionLaunch(
-          root,
-          o.run,
-          o.idempotencyKey,
-          attempt,
-          (snapshot) => sourceBinding(snapshot, kind).binding.subject.content_digest,
-        );
+        claimed = claimCollectionLaunch(root, o.run, o.idempotencyKey, attempt, (snapshot) => {
+          preparedGate = prepareLocalGate(root, snapshot, target, attempt);
+          return preparedGate.producing.binding.subject.content_digest;
+        });
       } catch (error) {
         if (
           error instanceof ThreadloopError &&
@@ -323,7 +344,7 @@ export async function collectWorkflowEvidence(cwd: string, kind: string, o: Coll
           });
         throw error;
       }
-      if (!claimed)
+      if (!claimed || !preparedGate)
         throw new ThreadloopError('TRANSITION_GUARD_FAILED', 'Another delivery already owns this gate launch.', {
           details: {
             ...coordinates,
@@ -333,13 +354,13 @@ export async function collectWorkflowEvidence(cwd: string, kind: string, o: Coll
         });
     }
     try {
-      const producing = sourceBinding(opened.snapshot, kind);
-      if (producing.binding.subject.content_digest !== opened.intent.subject_digest)
-        reject('The subject changed before collection.');
-      source =
-        kind === 'local-gate'
-          ? await localGate(root, opened.snapshot, producing, target, attempt)
-          : await retainedReview(opened.snapshot, producing, target);
+      if (preparedGate) source = await localGate(preparedGate);
+      else {
+        const producing = sourceBinding(opened.snapshot, kind);
+        if (producing.binding.subject.content_digest !== opened.intent.subject_digest)
+          reject('The subject changed before collection.');
+        source = await retainedReview(opened.snapshot, producing, target);
+      }
       projectWorkflowHostSource(source, opened.snapshot.genesis);
       completedReply = captureCollection(root, o.run, o.idempotencyKey, source);
     } catch (error) {

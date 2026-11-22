@@ -16,7 +16,11 @@ afterEach(async () => {
   await cleanupTemporaryState();
 });
 const operation = '125fe082-9417-45e2-b6c7-ab7a38e0c40e';
-async function collectionFixture(gateCommand?: (control: string) => string[], readerBody?: string) {
+async function collectionFixture(
+  gateCommand?: (control: string) => string[],
+  readerBody?: string,
+  scratchDirectoryFor?: 'gate' | 'setup',
+) {
   const { control, subject, producerRoot, setup } = await managedWorkflowFixture('success', [
     'local-gate',
     'pre-pr-review',
@@ -39,6 +43,18 @@ async function collectionFixture(gateCommand?: (control: string) => string[], re
         timeout_ms: 5_000,
       },
     ];
+    if (scratchDirectoryFor) {
+      await mkdir(path.join(subject, 'scratch'));
+      const gate = plan.gates[0]!;
+      const setup = gate.setup![0]!;
+      (scratchDirectoryFor === 'gate' ? gate : setup).working_directory = 'scratch';
+      setup.command = [
+        process.execPath,
+        '-e',
+        "require('fs').appendFileSync(process.argv[1], 'setup\\n')",
+        path.join(control, 'commands.log'),
+      ];
+    }
     await file('plan.json', plan);
   }
   const base = await git(subject, 'rev-parse', 'HEAD');
@@ -118,14 +134,18 @@ async function collectionFixture(gateCommand?: (control: string) => string[], re
   return { control, subject, run, file, status, call, collect, readerDir, reader };
 }
 
-async function countedCollection(waitForRelease = false) {
+async function countedCollection(waitForRelease = false, scratchDirectoryFor?: 'gate' | 'setup') {
   const gate = fileURLToPath(new URL('../fixtures/workflow/collection-gate.mjs', import.meta.url));
-  const fixture = await collectionFixture((control) => [
-    process.execPath,
-    gate,
-    path.join(control, 'gate-invocations'),
-    ...(waitForRelease ? [path.join(control, 'release-gate')] : []),
-  ]);
+  const fixture = await collectionFixture(
+    (control) => [
+      process.execPath,
+      gate,
+      path.join(control, 'gate-invocations'),
+      ...(waitForRelease ? [path.join(control, 'release-gate')] : []),
+    ],
+    undefined,
+    scratchDirectoryFor,
+  );
   const { control, run, collect } = fixture;
   const args = collect('local-gate', 'interrupted-gate', '--gate', 'check');
   const inspect = async () =>
@@ -162,12 +182,75 @@ async function countedCollection(waitForRelease = false) {
   return { ...fixture, args, count, inspect, interruptAt };
 }
 
+it.each(['gate', 'setup'] as const)(
+  'restores a missing %s working directory and collects once with the original key',
+  async (role) => {
+    const { control, subject, run, call, collect } = await collectionFixture(
+      (root) => [
+        process.execPath,
+        '-e',
+        "require('fs').appendFileSync(process.argv[1], 'gate\\n')",
+        path.join(root, 'commands.log'),
+      ],
+      undefined,
+      role,
+    );
+    const scratch = path.join(subject, 'scratch');
+    const counts = path.join(control, 'commands.log');
+    const request = collect('local-gate', 'restore-scratch', '--gate', 'check');
+    const field =
+      role === 'gate'
+        ? 'proof_plan.gates.check.working_directory'
+        : 'proof_plan.gates.check.setup.prepare.working_directory';
+    await rm(scratch, { recursive: true });
+    for (const state of ['missing', 'file']) {
+      if (state === 'file') await writeFile(scratch, 'ordinary file');
+      const { error } = await runCliError(control, request);
+      expect(error).toMatchObject({ code: 'INVALID_ARGUMENT', details: { field, reason: 'invalid_gate_directory' } });
+      expect(error.message).toContain('scratch');
+      expect(error.details.hint).toContain('same collection key');
+      expect((await call('inspect', run)).data).toMatchObject({ state_version: 3, collections: [] });
+      await expect(readFile(counts)).rejects.toMatchObject({ code: 'ENOENT' });
+    }
+    await rm(scratch);
+    await mkdir(scratch);
+    const completed = await runCli(control, request);
+    expect(parseJson<{ data: unknown }>(completed.stdout).data).toMatchObject({ state_version: 3 });
+    expect(await readFile(counts, 'utf8')).toBe('setup\ngate\n');
+    await rm(scratch, { recursive: true });
+    expect((await runCli(control, request)).stdout).toBe(completed.stdout);
+    expect(await readFile(counts, 'utf8')).toBe('setup\ngate\n');
+  },
+  30_000,
+);
+
 it('resumes a prelaunch intent once when two CLI processes retry the same gate', async () => {
-  const { control, run, args, count, inspect, interruptAt } = await countedCollection(true);
+  const { control, subject, run, args, count, inspect, interruptAt } = await countedCollection(true, 'setup');
   await interruptAt('intent');
   expect(await count()).toBe(0);
   const reserved = await inspect();
   expect(reserved).toMatchObject({ state_version: 3, collections: [{ key: 'interrupted-gate', phase: 'reserved' }] });
+  const scratch = path.join(subject, 'scratch');
+  await rm(scratch, { recursive: true });
+  expect((await runCliError(control, args)).error.details.reason).toBe('invalid_gate_directory');
+  expect(await inspect()).toEqual(reserved);
+  expect(await count()).toBe(0);
+  await mkdir(scratch);
+  const attemptDirectory = path.join(
+    control,
+    '.threadloop',
+    'artifacts',
+    'workflow-collections',
+    reserved.collections[0]!.attempt,
+  );
+  await mkdir(attemptDirectory, { recursive: true, mode: 0o700 });
+  const saved = path.join(attemptDirectory, 'saved-output');
+  await writeFile(saved, 'saved');
+  expect((await runCliError(control, args)).error.message).toContain('empty before its first command');
+  expect(await readFile(saved, 'utf8')).toBe('saved');
+  expect(await inspect()).toEqual(reserved);
+  expect(await count()).toBe(0);
+  await rm(saved);
   const collecting = runCli(control, args);
   try {
     await Promise.race([

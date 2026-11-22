@@ -524,7 +524,7 @@ async function prepareBoundProofPlan(repoRoot: string, value: unknown): Promise<
   }
 
   for (const gate of canonical.plan.gates) {
-    await resolveProofWorkingDirectory(repoRoot, gate.id, gate.working_directory);
+    resolveProofWorkingDirectory(repoRoot, gate.id, gate.working_directory);
   }
 
   return {

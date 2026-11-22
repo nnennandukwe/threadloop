@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { realpath } from 'node:fs/promises';
+import { realpathSync, statSync } from 'node:fs';
 import { sha256 } from '../adapters/crypto/sha256.js';
 import {
   classifyGateOutcome,
@@ -23,6 +23,7 @@ interface LocalGateInput {
   before: GateRepositoryObservation;
   observeLocal: () => Promise<GateRepositoryObservation | null>;
   limits?: Pick<GateProcessInput, 'env' | 'maxOutputBytes'>;
+  workingDirectories?: ReturnType<typeof resolveGateWorkingDirectories>;
 }
 
 export async function produceLocalGate({
@@ -36,8 +37,8 @@ export async function produceLocalGate({
   before,
   observeLocal,
   limits,
+  workingDirectories = resolveGateWorkingDirectories(repoRoot, gate),
 }: LocalGateInput) {
-  const workingDirectory = await resolveProofWorkingDirectory(repoRoot, gate.id, gate.working_directory);
   const stdoutPath = path.join(receiptDirectory, 'stdout.log');
   const stderrPath = path.join(receiptDirectory, 'stderr.log');
   const executionPath = path.join(receiptDirectory, 'execution.json');
@@ -46,9 +47,6 @@ export async function produceLocalGate({
   const relativeExecutionPath = relativeArtifactPath(artifactRoot, executionPath);
 
   const declaredSetup = gate.setup ?? [];
-  const setupDirectories = await Promise.all(
-    declaredSetup.map((step) => resolveProofWorkingDirectory(repoRoot, gate.id, step.working_directory, step.id)),
-  );
   const setupLogPaths = declaredSetup.map((step, index) => ({
     stdoutPath: path.join(receiptDirectory, `setup-${index}-${step.id}.stdout.log`),
     stderrPath: path.join(receiptDirectory, `setup-${index}-${step.id}.stderr.log`),
@@ -59,7 +57,7 @@ export async function produceLocalGate({
       id: step.id,
       command: step.command,
       workingDirectory: step.working_directory,
-      cwd: setupDirectories[index] as string,
+      cwd: workingDirectories.setup[index] as string,
       timeoutMs: step.timeout_ms,
       stdoutPath: (setupLogPaths[index] as { stdoutPath: string }).stdoutPath,
       stderrPath: (setupLogPaths[index] as { stderrPath: string }).stderrPath,
@@ -67,7 +65,7 @@ export async function produceLocalGate({
     gate: {
       ...limits,
       command: gate.command,
-      cwd: workingDirectory,
+      cwd: workingDirectories.gate,
       timeoutMs: gate.timeout_ms,
       stdoutPath,
       stderrPath,
@@ -159,11 +157,20 @@ export async function produceLocalGate({
   };
 }
 
+export function resolveGateWorkingDirectories(repoRoot: string, gate: ProofGate) {
+  return {
+    gate: resolveProofWorkingDirectory(repoRoot, gate.id, gate.working_directory),
+    setup: (gate.setup ?? []).map((step) =>
+      resolveProofWorkingDirectory(repoRoot, gate.id, step.working_directory, step.id),
+    ),
+  };
+}
+
 /**
  * `setupStepId` names a declared setup step when the directory being resolved belongs to one, so the error
  * points at the step the operator has to correct rather than at the gate.
  */
-export async function resolveProofWorkingDirectory(
+export function resolveProofWorkingDirectory(
   repoRoot: string,
   gateId: string,
   workingDirectory: string,
@@ -172,10 +179,10 @@ export async function resolveProofWorkingDirectory(
   const field = setupStepId
     ? `proof_plan.gates.${gateId}.setup.${setupStepId}.working_directory`
     : `proof_plan.gates.${gateId}.working_directory`;
-  const canonicalRepoRoot = await realpath(repoRoot);
+  const canonicalRepoRoot = realpathSync(repoRoot);
   let gateDirectory: string;
   try {
-    gateDirectory = await realpath(path.resolve(canonicalRepoRoot, workingDirectory));
+    gateDirectory = realpathSync(path.resolve(canonicalRepoRoot, workingDirectory));
   } catch {
     throw new ProofValidationError(field, `${field} must name an existing directory.`);
   }
@@ -183,6 +190,8 @@ export async function resolveProofWorkingDirectory(
   if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     throw new ProofValidationError(field, `${field} resolves outside the repository.`);
   }
+  if (!statSync(gateDirectory, { throwIfNoEntry: false })?.isDirectory())
+    throw new ProofValidationError(field, `${field} must name a directory.`);
   return gateDirectory;
 }
 
