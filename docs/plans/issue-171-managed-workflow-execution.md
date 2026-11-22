@@ -466,6 +466,36 @@ failures before admission, and a restoration failure on completed replay. Reopen
 captured bytes, original response when admission has committed, restored report and log hashes, and one physical
 invocation. Record injected faults separately from any observed power interruption.
 
+### Validate the gate launch and the review inventory
+
+Local review `38feb62c-bbeb-409b-974b-a39be86cd788` examined the full diff at
+`157338bfb51f63ae30ae122ea074b00f10ab29de`. Three findings concern an effect-free gate preflight, the review inventory
+and names used in the execution store.
+
+- **Gate collection.** Resolve the declared gate and setup working directories before claiming a launch that could run a
+  command. Check that each resolved path is an existing directory inside the bound subject. Return an actionable error
+  naming the failing declaration. A missing directory must leave the operator able to restore it and collect the gate
+  with one invocation. A previously captured or completed result must still replay from its recorded bytes if its
+  working directory has since disappeared.
+- **Review collection.** A completed full-review response supplies finding IDs and their dispositions. Check their
+  one-to-one membership against actual Qodo responses, including resolved and dismissed findings. Reject a malformed
+  response before it can supply a clean review receipt. An unavailable review stays retryable. A terminal malformed
+  response follows the existing failed-collection path.
+- **Execution store.** Name the run journal, reservation, genesis and run view where enrollment, observation, import or
+  controller evaluation uses them. Keep the SQLite writes and public JSON fields intact. Run the existing
+  execution-store and controller checks on the edited source.
+
+| Point in the operation                                                       | Expected retained state and recovery                                                                                                                                                      |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Gate or setup working directory is absent before the first command           | Neither setup nor gate has started. Inspection shows no claimed launch or collected receipt. After restoring the directory, the operator can use the same key.                            |
+| Two deliveries finish preflight, or the subject changes during preparation   | The transaction rechecks the active intent and current subject. Only the winner can run the first command. A stale delivery can't start work.                                             |
+| The process stops after it owns the launch                                   | An unconfirmed effect still holds the run. Recovery checks the capture and the original Attempt before any further execution.                                                             |
+| A review disposition refers to a finding missing from the required inventory | The collection returns its terminal validation error. Inspect the stored outcome and verify that no review evidence was admitted. A later valid operation can use a fresh collection key. |
+
+Use the public workflow commands for the missing-directory and malformed-review checks. Compare the command counter,
+collection state and admitted evidence before and after recovery. Retain exact replay and the existing post-launch
+interruption tests.
+
 ## Commit Plan
 
 1. Commit this plan at the verified predecessor and add the bounded selected-action reservation and registration with
