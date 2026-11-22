@@ -134,7 +134,7 @@ it('diagnoses a missing reservation even when an exact retry has a retained refu
     database.exec('DROP TRIGGER ' + trigger);
     database.prepare('DELETE FROM workflow_gate_launches WHERE run_id=?').run(run);
     database.exec(String(original.sql));
-    expect(open).toThrowError(expect.objectContaining({ code: 'STATE_CORRUPTED' }));
+    expect(open).toThrow('The managed gate launch reservation is missing or differs from its intent.');
   } finally {
     database.close();
   }
