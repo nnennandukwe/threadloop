@@ -90,17 +90,17 @@ export function verifiedQodoReview(stdout: Uint8Array, base: string, head: strin
     )
   )
     reject('The primary review has incomplete required checks.');
-  const ids = [...state.introduced, ...state.still_open];
-  const dispositions = [...ids, ...state.dismissed, ...state.resolved];
+  const activeIds = [...state.introduced, ...state.still_open];
+  const dispositions = [...activeIds, ...state.dismissed, ...state.resolved];
+  const findingsById = new Map(inventory.map((finding) => [finding.id, finding]));
   if (
     new Set(dispositions).size !== dispositions.length ||
-    new Set(inventory.map((f) => f.id)).size !== inventory.length ||
-    inventory.some((f) => !dispositions.includes(f.id))
+    findingsById.size !== inventory.length ||
+    dispositions.length !== inventory.length ||
+    dispositions.some((id) => !findingsById.has(id))
   )
-    reject('The review has conflicting or unclassified findings.');
-  const active = ids.map(
-    (id) => inventory.find((f) => f.id === id) ?? reject('The active finding inventory is incomplete.'),
-  );
+    reject('The review inventory and dispositions must contain the same finding IDs exactly once.');
+  const active = activeIds.map((id) => findingsById.get(id)!);
   const findings = active.map((f) => ({ id: f.id, blocking: f.action_level !== 'informational' }));
   const outcome: 'changes_required' | 'clean' = findings.some((f) => f.blocking) ? 'changes_required' : 'clean';
   const measured = new Date(meta.run.timing.finished_at).toISOString();
