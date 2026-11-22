@@ -475,8 +475,8 @@ and names used in the execution store.
 - **Gate collection.** Resolve the declared gate and setup working directories before claiming a launch that could run a
   command. Check that each resolved path is an existing directory inside the bound subject. Return an actionable error
   naming the failing declaration. A missing directory must leave the operator able to restore it and collect the gate
-  with one invocation. A previously captured or completed result must still replay from its recorded bytes if its
-  working directory has since disappeared.
+  with one invocation. A captured result restores its recorded bytes. Admission still checks the current subject. A
+  completed request returns its recorded reply even if the gate's working directory has since disappeared.
 - **Review collection.** A completed full-review response supplies finding IDs and their dispositions. Check their
   one-to-one membership against actual Qodo responses, including resolved and dismissed findings. Reject a malformed
   response before it can supply a clean review receipt. An unavailable review stays retryable. A terminal malformed
