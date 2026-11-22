@@ -23,28 +23,33 @@ CASE_LIMIT = 64 * 1024 * 1024
 
 
 def sha(data):
+    """Return the SHA-256 hex digest of the supplied bytes."""
     return sha256(data).hexdigest()
 
 
 def run(args, cwd, env, timeout=65):
+    """Run the command within its time limit and capture the exit status and both output streams."""
     return subprocess.run(
         [os.fspath(arg) for arg in args], cwd=cwd, env=env, capture_output=True, timeout=timeout
     )
 
 
 def success(args, cwd, env):
+    """Return stdout on success or report the failed command with its trailing stderr."""
     proc = run(args, cwd, env)
     require(proc.returncode == 0, f"{args[0]} {args[1:3]} exited {proc.returncode}: {proc.stderr[-1600:]!r}")
     return proc.stdout
 
 
 def cli(binary, cwd, env, args):
+    """Request JSON from the installed CLI and check the successful response envelope."""
     output = json.loads(success([binary, *args, "--json"], cwd, env))
     require(output["ok"] is True, f"Unsuccessful result for {args[:2]}")
     return output
 
 
 def refuse(binary, cwd, env, args, code, reason=None):
+    """Verify the refusal on stderr and return its exit status, error code and reason."""
     proc = run([binary, *args, "--json"], cwd, env)
     require(
         proc.returncode == 1 and not proc.stdout.strip(),
@@ -56,10 +61,12 @@ def refuse(binary, cwd, env, args, code, reason=None):
 
 
 def git(checkout, env, *args):
+    """Run Git against the requested checkout and return its trimmed output."""
     return success(["git", "-C", checkout, *args], checkout, env).decode().strip()
 
 
 def checkpoint(control):
+    """Check both databases, truncate their write-ahead logs and return their paths."""
     outer = control / ".threadloop/state/state.db"
     children = list((control / ".threadloop/state").glob("workflow-execution-*/executor.sqlite"))
     require(outer.is_file() and len(children) == 1, "Expected one outer and one child database")
@@ -80,12 +87,14 @@ def checkpoint(control):
 
 
 def offline(dbfile):
+    """Open an immutable, read-only SQLite connection with named columns."""
     db = sqlite3.connect(dbfile.as_uri() + "?mode=ro&immutable=1", uri=True)
     db.row_factory = sqlite3.Row
     return db
 
 
 def receipt_state(control):
+    """Verify the checkpointed database pair and collect execution, receipt and blob hashes."""
     outer, child = checkpoint(control)
     with offline(outer) as db:
         head = dict(
@@ -175,6 +184,7 @@ def receipt_state(control):
 
 
 def old_reads(previous, root, env, profile, child_relative):
+    """Check the prior CLI's managed-run and child refusals, then read the supported legacy run."""
     # The saved v1 proposal projection keeps the old parser's shape and reaches its store reader.
     operations = {
         "inspect": ["workflow", "inspect", RUN],
@@ -226,10 +236,12 @@ def old_reads(previous, root, env, profile, child_relative):
 
 
 def counter(log):
+    """Read the producer's invocation IDs in order, returning an empty list if the log is absent."""
     return log.read_text().splitlines() if log.exists() else []
 
 
 def measure_subject(subject, env):
+    """Read the physical checkout's HEAD, Git status and effect-file digest for comparison after recovery."""
     effect = subject / "source.txt"
     return {
         "head": git(subject, env, "rev-parse", "HEAD"),
@@ -239,6 +251,7 @@ def measure_subject(subject, env):
 
 
 def proof_case(case, current, previous, source, scratch, env):
+    """Restore a held or admitted execution snapshot and check its receipts, lifecycle and invocation count."""
     counter_dir = scratch / ("counter-" + case)
     counter_dir.mkdir()
     mode = "effect_response_lost" if case == "held" else "success"
@@ -265,6 +278,7 @@ def proof_case(case, current, previous, source, scratch, env):
         cli(current, control, env, ["workflow", "create", run_id, "--profile", profile, "--setup", setup])
 
     def saved(id, filename):
+        """Save the run's decision envelope in the control checkout and return it to the caller."""
         result = cli(current, control, env, ["workflow", "decide", id])
         (control / filename).write_text(json.dumps(result))
         return result
@@ -381,6 +395,7 @@ def proof_case(case, current, previous, source, scratch, env):
     )
 
     def recover_admitted():
+        """Import the retained receipt and verify its admission, Attempt and unchanged run version."""
         first = cli(current, control, env, recover)["data"]
         require(
             first["disposition"] == "imported"
@@ -469,6 +484,7 @@ def proof_case(case, current, previous, source, scratch, env):
 
 
 def main():
+    """Install both revisions, run both rollback cases and write their evidence to a fresh report."""
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("checkout", type=Path)
     p.add_argument("revision")

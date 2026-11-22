@@ -11,6 +11,7 @@ from proof_package import file_hash, git, offline_environment, require, source_i
 
 
 def pack(checkout, revision, output):
+    """Build the Git revision offline and write its npm tarball, CLI digest and source provenance."""
     record = source_identity(checkout, revision)
     require(
         git(checkout, "hash-object", "package-lock.json") == record["lock_blob"],

@@ -39,34 +39,41 @@ original = "750ae36b6b7b6ea34081a8c90236d8c95f71b086"
 
 
 def digest(value):
+    """Return the SHA-256 hex digest of the supplied bytes."""
     return sha256(value).hexdigest()
 
 
 def raw(*args, cwd=None):
+    """Run a command in the proof environment and return its stdout bytes on success."""
     return subprocess.check_output(args, cwd=cwd, env=env, stderr=subprocess.PIPE, timeout=60)
 
 
 def git_object(revision, name):
+    """Read the exact bytes of a tracked path at the specified revision."""
     return raw("git", "-C", opt.checkout.resolve(), "show", revision + ":" + name)
 
 
 def run(binary, cwd, *args):
+    """Capture an installed CLI command's exit status, stdout and stderr within 45 seconds."""
     return subprocess.run([binary, *args], cwd=cwd, env=env, capture_output=True, timeout=45)
 
 
 def ok(binary, cwd, *args):
+    """Return the CLI's stdout after checking for a zero exit status and empty stderr."""
     out = run(binary, cwd, *args)
     assert out.returncode == 0 and not out.stderr, (args, out.returncode, out.stderr[:900])
     return out.stdout
 
 
 def data(binary, cwd, *args):
+    """Request JSON output and return the data from a successful CLI response."""
     val = json.loads(ok(binary, cwd, *args, "--json"))
     assert val["ok"] is True
     return val["data"]
 
 
 def rejected(binary, cwd, args, code):
+    """Check the CLI's error code, output stream and exit status, then record the refusal."""
     out = run(binary, cwd, *args, "--json")
     assert out.returncode == 1 and not out.stdout, (args, out.returncode, out.stdout[:400])
     value = json.loads(out.stderr)
@@ -77,6 +84,7 @@ def rejected(binary, cwd, args, code):
 
 
 def git_repo(name):
+    """Create a disposable Git repository on main with one committed README."""
     path = temp / name
     path.mkdir()
     raw("git", "init", "-qb", "main", path)
@@ -93,15 +101,18 @@ def git_repo(name):
 
 
 def dbfile(repo):
+    """Return the path to the session database inside the fixture repository."""
     return repo / ".threadloop/state/state.db"
 
 
 def fingerprints(repo):
+    """Hash the state database and every state.db sidecar present in its directory."""
     db = dbfile(repo)
     return {p.name: digest(p.read_bytes()) for p in db.parent.glob("state.db*") if p.is_file()}
 
 
 def committed_files(files):
+    """Omit shared-memory indexes and empty write-ahead logs when comparing database fingerprints."""
     return {
         k: v
         for k, v in files.items()
@@ -110,6 +121,7 @@ def committed_files(files):
 
 
 def reads(binary, repo, session, label):
+    """Hash session and audit output and verify the reads preserve committed database bytes."""
     before = fingerprints(repo)
     args = ["--session", session, "--json"]
     checks = {
@@ -126,6 +138,7 @@ def reads(binary, repo, session, label):
 
 
 def fresh_protocol(binary, version):
+    """Hash both protocol outputs and collect the advertised commands, versions and capabilities."""
     view = ["--contract", version] if version else []
     enc = ok(binary, temp, "protocol", *view, "--json")
     plain = ok(binary, temp, "protocol", *view)
@@ -151,6 +164,7 @@ with TemporaryDirectory(prefix="threadloop-parity-") as owned:
     }
 
     def installed(label, directory, revision):
+        """Install the specified revision, record its package provenance and return the verified CLI path."""
         cli, record = install(opt.checkout.resolve(), directory.resolve(), revision, temp / label, env)
         report["packages"][label] = record
         return cli
@@ -232,6 +246,7 @@ with TemporaryDirectory(prefix="threadloop-parity-") as owned:
     assert len(data(candidate, repo, "session", "list")["sessions"]) == 2 and second != session
 
     def frame(key):
+        """Build the framed-transition arguments for a version-zero session using the supplied replay key."""
         return [
             "session",
             "transition",

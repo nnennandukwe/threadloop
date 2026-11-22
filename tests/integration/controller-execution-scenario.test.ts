@@ -169,6 +169,35 @@ function writer(filename: string, step: Step, admissions: Set<string>, cut?: str
   return { atLock, exit };
 }
 
+it('refuses a journal with a mismatched storage digest without changing its retained bytes', async () => {
+  const { filename, store, register, genesis, admissions, snapshot } = await storedFixture();
+  admissions.add(
+    executionAdmissionDigest({ kind: 'projection', execution_digest: genesis.execution_digest, snapshot }),
+  );
+  expect(store.project(snapshot)).toMatchObject({ ok: true, value: { projection: { revision: 0 } } });
+
+  const observer = new DatabaseSync(filename);
+  try {
+    const row = observer.prepare('SELECT CAST(body AS BLOB) AS body,digest FROM root WHERE id=1');
+    const original = row.get()!;
+    const otherDigest = sha256('different fixture journal');
+    expect(original.digest).not.toBe(otherDigest);
+    expect(observer.prepare('UPDATE root SET digest=? WHERE id=1').run(otherDigest).changes).toBe(1);
+    const dataVersion = observer.prepare('PRAGMA data_version');
+    const before = dataVersion.get();
+
+    expect(() => store.project(snapshot)).toThrowError(expect.objectContaining({ code: 'state.integrity' }));
+    expect(() => store.apply(register.context, register.operation)).toThrowError(
+      expect.objectContaining({ code: 'state.integrity' }),
+    );
+
+    expect(row.get()).toEqual({ body: original.body, digest: otherDigest });
+    expect(dataVersion.get()).toEqual(before);
+  } finally {
+    observer.close();
+  }
+});
+
 it('preserves the committed row on stale storage CAS and refuses an inner journal whose outer seal is valid', async () => {
   const { filename, store, genesis, register, registered, snapshot } = await storedFixture();
   const initial = readRow(filename);

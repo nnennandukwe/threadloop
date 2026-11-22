@@ -11,11 +11,13 @@ RUNS_V1 = "31388a07566350dfeddc30578d43b8926d5b4e22"
 
 
 def require(condition, message):
+    """Raise ValueError with the supplied explanation when a proof check fails."""
     if not condition:
         raise ValueError(message)
 
 
 def file_hash(path):
+    """Read the file in chunks and return its SHA-256 hex digest."""
     digest = sha256()
     with path.open("rb") as stream:
         for block in iter(lambda: stream.read(128 * 1024), b""):
@@ -24,16 +26,19 @@ def file_hash(path):
 
 
 def git_environment():
+    """Copy the environment without inherited GIT_ variables that could select a different repository."""
     return {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
 
 
 def git(checkout, *args):
+    """Run Git in the specified checkout and return its trimmed output on success."""
     return subprocess.check_output(
         ["git", "-C", checkout, *args], env=git_environment(), text=True, timeout=60
     ).strip()
 
 
 def source_identity(checkout, revision):
+    """Verify the full commit ID and return its tree ID and package-lock.json blob ID."""
     require(re.fullmatch("[0-9a-f]{40}", revision), "Supply a full commit SHA")
     require(git(checkout, "rev-parse", "--verify", revision + "^{commit}") == revision, "Expected a commit")
     return {
@@ -44,6 +49,7 @@ def source_identity(checkout, revision):
 
 
 def offline_environment(scratch):
+    """Create empty Git templates and configure offline npm installs with a scratch-local cache."""
     # Isolate disposable Git commits from the invoking checkout and its hooks or signing identity.
     templates = scratch / "empty-git-templates"
     templates.mkdir()
@@ -65,6 +71,7 @@ def offline_environment(scratch):
 
 
 def install(checkout, directory, revision, prefix, env):
+    """Verify the source and archive, install offline, and check the installed CLI's digest."""
     record = json.loads((directory / "provenance.json").read_bytes())
     expected = source_identity(checkout, revision)
     require(all(record.get(k) == v for k, v in expected.items()), "Package source identity mismatch")

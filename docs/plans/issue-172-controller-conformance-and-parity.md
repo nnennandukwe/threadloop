@@ -261,22 +261,23 @@ remains open.
 
 ## Test Plan
 
-**Native and external checks.** Use read-only pinned dependency checkouts for the measured run. Run upstream builds in
-disposable copies if they write compiled files. Set `CONTRACTS` and `HARNESS` to their absolute paths and `EVIDENCE` to
-a fresh directory outside the clean ThreadLoop checkout. The parent invokes RunInvariant, supplies the measured
-identity, starts each subject in its own scratch directory and retains the raw and public packets. The measured launcher
-requires macOS Seatbelt.
+**Native and external checks.** Use fresh disposable clones of the pinned dependencies. Install their locked packages
+and run upstream checks there, then supply those clean clones to the read-only external proof. Set `CONTRACTS` and
+`HARNESS` to their absolute paths and `EVIDENCE` to a fresh directory outside the clean ThreadLoop checkout. The parent
+invokes RunInvariant, supplies the measured identity, starts each subject in its own scratch directory and retains the
+raw and public packets. The measured launcher requires macOS Seatbelt.
 
 ```bash
 npm ci
 npm run test:controller
 npm run test:controller:deep
 VITEST_MAX_WORKERS=2 npm run check
+python3 -B -m unittest discover -s tests/proof -v
 npm run security:dependencies
 git diff --check origin/main...HEAD
 
-(cd "$CONTRACTS" && npm run spec:conformance:check && npm run check)
-(cd "$HARNESS" && npm test && THREADLOOP_CHECKOUT="$CONTRACTS" npm run test:threadloop)
+(cd "$CONTRACTS" && npm ci && npm run spec:conformance:check && npm run check)
+(cd "$HARNESS" && npm ci && npm test && THREADLOOP_CHECKOUT="$CONTRACTS" npm run test:threadloop)
 npm run build:controller-subject -- --output "$EVIDENCE/build"
 python3 -B scripts/controller-conformance/prove.py --harness "$HARNESS" --contracts "$CONTRACTS" \
   --build "$EVIDENCE/build" --output "$EVIDENCE/controller.json" --raw-output "$EVIDENCE/raw.json"
