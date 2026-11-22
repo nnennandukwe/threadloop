@@ -70,12 +70,15 @@ function parseWorkflowSetup(value: unknown, run: string): WorkflowSetup {
     );
   }
   const parsed = setupSchema.safeParse(value);
-  if (!parsed.success)
-    throw createInvalidArgumentError('The workflow setup must match threadloop.workflow-setup/1.', {
+  if (!parsed.success) {
+    const supported = setupSchema.options.map((schema) => schema.shape.schema_version.value);
+    const expected = supported.find((version) => version === declared) ?? supported.join(' or ');
+    throw createInvalidArgumentError(`The workflow setup must match ${expected}.`, {
       reason: 'invalid_workflow_setup',
       issues: parsed.error.issues,
       hint: 'Correct the setup fields or schema version and retry create.',
     });
+  }
   return parsed.data as WorkflowSetup;
 }
 
@@ -353,6 +356,14 @@ export function prepareWorkflowGenesis(
   return {
     requestJson,
     build(now: string): WorkflowGenesis {
+      if (
+        setup.schema_version === 'threadloop.workflow-setup/2' &&
+        sources?.host_producers.includes('pre-pr-review') &&
+        !setup.review_reader
+      )
+        fail(
+          'The declared pre-pr-review source requires a review_reader in setup/2. Enroll the reader or remove pre-pr-review from host_producers.',
+        );
       const physical = observeGaapWorkspace(subjectRoot);
       if (!physical.clean || !physical.branch) fail('The initial subject requires a clean, named branch.');
       if (

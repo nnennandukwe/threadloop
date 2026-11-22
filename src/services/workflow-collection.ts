@@ -77,18 +77,22 @@ function reviewTree(snapshot: RunSnapshot, base: string, head: string) {
   return git('rev-parse', '--verify', head + '^{tree}');
 }
 async function retainedReview(snapshot: RunSnapshot, producing: SourceBinding, operation: string): Promise<HostSource> {
-  const reader = assertWorkflowReviewReader(snapshot.genesis);
+  const reader =
+    snapshot.genesis.setup.schema_version === 'threadloop.workflow-setup/2' && snapshot.genesis.setup.review_reader;
+  if (!reader) reject('A pre-PR review requires an enrolled Qodo status reader.');
   const subject = producing.binding.subject;
   if (subject.kind !== 'repository') reject('A pre-PR review requires a repository subject.');
   if (observeWorkflow(snapshot).origin !== snapshot.genesis.setup.repository_id)
     reject('The checkout origin differs from the enrolled review repository.');
   const tree = reviewTree(snapshot, reader.base_commit, subject.revision);
-  const { stdout } = await readStatus(reader.executable, ['review', 'status', operation, '--json'], {
+  const executable = assertWorkflowReviewReader(snapshot.genesis).executable;
+  const { stdout } = await readStatus(executable, ['review', 'status', operation, '--json'], {
     cwd: snapshot.genesis.subject_root,
     timeout: 60_000,
     maxBuffer: 4 * 1024 * 1024,
     encoding: 'buffer',
   });
+  assertWorkflowReviewReader(snapshot.genesis);
   const {
     run_id,
     observed_at: measured,

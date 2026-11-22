@@ -2,18 +2,25 @@ import { chmod, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { gaapVerificationPolicy, type GaapHost } from '../../src/domain/gaap-binding.js';
-import { prepareWorkflowGenesis, validateWorkflowGenesis } from '../../src/services/workflow-genesis.js';
+import {
+  prepareWorkflowGenesis,
+  validateWorkflowGenesis,
+  workflowCreateRequestJson,
+} from '../../src/services/workflow-genesis.js';
 import { workflowDigest } from '../../src/domain/workflow-selection-types.js';
-import type { WorkflowSetup } from '../../src/domain/workflow-run.js';
+import { createWorkflowStore } from '../../src/adapters/fs/workflow-store.js';
+import { initThreadloop } from '../../src/services/session-service.js';
+import { createWorkflowRun, inspectWorkflowRun } from '../../src/services/workflow-runtime.js';
+import type { WorkflowSetup, WorkflowSources } from '../../src/domain/workflow-run.js';
 import { controllerBinding } from '../fixtures/gaap-controller.js';
 import { gaapFixture } from '../fixtures/gaap.js';
-import { cleanupTemporaryState, makeTempDir } from '../helpers/session.js';
+import { cleanupTemporaryState, git, makeTempDir } from '../helpers/session.js';
 import { governedProfile, governedWorkflowFixture } from '../helpers/workflow-run.js';
 
 afterEach(cleanupTemporaryState);
 
 async function enrolled() {
-  const { control, subject } = await governedWorkflowFixture();
+  const { control, subject } = await governedWorkflowFixture(['local-gate']);
   const hostRoot = await makeTempDir();
   const executable = path.join(hostRoot, 'producer');
   const script = path.join(hostRoot, 'task.mjs');
@@ -63,6 +70,7 @@ it('adopts the exact GAAP implementation, parameters and executable files before
   const { prepare, host, adapter } = await enrolled();
   const prepared = prepare();
   const genesis = prepared.build('2026-11-21T00:00:00.000Z');
+  expect(genesis.source_policies['pre-pr-review']).toBeUndefined();
   expect(genesis.gaap?.host).toEqual(host);
   expect(genesis.gaap?.adapter).toEqual(adapter);
   expect(genesis.policy.rules.evidence_policies).toContainEqual(gaapVerificationPolicy(host));
@@ -99,6 +107,11 @@ it('binds the Qodo status executable and base to the review producer at create',
     reviewer_id: 'reviewer',
   };
   await writeFile(path.join(control, 'setup.json'), JSON.stringify({ ...setup, review_reader: reader }));
+  expect(() => prepare().build('2026-11-21T00:00:00.000Z')).toThrow(/requires a declared pre-PR review source/);
+  const sourceFile = path.join(control, 'sources.json');
+  const sources = JSON.parse(await readFile(sourceFile, 'utf8')) as WorkflowSources;
+  sources.host_producers.push('pre-pr-review');
+  await writeFile(sourceFile, JSON.stringify(sources));
   const entry = prepare().build('2026-11-21T00:00:00.000Z');
   const { assertWorkflowReviewReader } = await import('../../src/services/workflow-gaap-adapter.js');
   expect(assertWorkflowReviewReader(entry)).toEqual(reader);
@@ -106,6 +119,29 @@ it('binds the Qodo status executable and base to the review producer at create',
   await writeFile(host.executable, 'changed reader bytes');
   expect(() => validateWorkflowGenesis(entry)).not.toThrow();
   expect(() => assertWorkflowReviewReader(entry)).toThrow(/changed/);
+});
+
+it('requires a reader for new review-enabled runs and preserves exact replay of an earlier v2 run', async () => {
+  const { control, prepare } = await enrolled();
+  const at = '2026-11-21T00:00:00.000Z';
+  const retained = prepare().build(at);
+  // Earlier v2 builds retained the declaration without adding a review policy.
+  retained.sources!.host_producers.push('pre-pr-review');
+  await writeFile(path.join(control, 'sources.json'), JSON.stringify(retained.sources));
+  await git(control, 'init', '-b', 'main');
+  await initThreadloop(control);
+  const store = createWorkflowStore(control, () => at);
+  const historical = store.create(retained.run_id, workflowCreateRequestJson(retained), () => retained);
+
+  await expect(createWorkflowRun(control, 'session_wf_new', governedProfile, 'setup.json')).rejects.toMatchObject({
+    code: 'INVALID_ARGUMENT',
+    details: { reason: 'workflow_setup_invalid' },
+    message: expect.stringMatching(/pre-pr-review.*review_reader/) as string,
+  });
+  expect(() => store.read('session_wf_new')).toThrow(expect.objectContaining({ code: 'WORKFLOW_RUN_NOT_FOUND' }));
+  expect(await createWorkflowRun(control, retained.run_id, governedProfile, 'setup.json')).toEqual(historical);
+  expect(await inspectWorkflowRun(control, retained.run_id)).toMatchObject(historical);
+  expect(store.read(retained.run_id).genesis.source_policies['pre-pr-review']).toBeUndefined();
 });
 
 it("refuses an adapter whose evidence mapping can't cover the configured action guard", async () => {

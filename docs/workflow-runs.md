@@ -191,9 +191,18 @@ gate interrupted after launch can leave an outstanding attempt.
 threadloop workflow evidence collect local-gate --run shipping --gate check --expected-state-version 4 --idempotency-key verify-local
 ```
 
-To collect a Qodo review, enroll an optional `review_reader` in setup/2. It has `provider` set to `qodo`, the absolute
-`executable` of the trusted Qodo status reader, an immutable `base_commit` and a `reviewer_id`. Preserve the operation
-ID when submitting the authorized full review of the subject.
+To collect a Qodo review, declare `pre-pr-review` in `host_producers` and enroll a `review_reader` in setup/2. Set its
+`provider` to `qodo` and supply the trusted status reader's absolute `executable`, an immutable `base_commit` and a
+`reviewer_id`. Omit both the review source and its reader when the run won't collect reviews. Setup/1 retains its
+existing host-produced review policy. An earlier setup/2 run that declared the source without a reader retains its
+original policy, which can't admit pre-PR review evidence. Start a new run to enroll a reader. Preserve the operation ID
+when submitting the authorized full review of the subject.
+
+Install the reader on Linux or macOS under its real path. Your account or root must own the executable and each
+directory on its path. Other accounts mustn't have write access. A private installation directory can sit under a sticky
+system temporary directory. ThreadLoop runs the measured executable in place so the Qodo launcher can find its package
+files. The host account is responsible for protecting the launcher's interpreter and dependencies. ThreadLoop checks the
+reader's digest and permissions before starting it and again before accepting its output.
 
 ```bash
 threadloop workflow evidence collect pre-pr-review --run shipping --operation "$operation_id" --expected-state-version 5 --idempotency-key collect-review

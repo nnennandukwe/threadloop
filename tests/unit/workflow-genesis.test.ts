@@ -93,7 +93,7 @@ describe('workflow genesis', () => {
     expect(genesis.source_policies['signed-review']).toBeDefined();
     expect(genesis.source_policies['signed-instruction']).toBeUndefined();
   });
-  it('identifies a future setup version per run while refusing malformed v1 data and damaged retained bytes', async () => {
+  it('identifies a future setup version per run while identifying malformed current setups and damaged retained bytes', async () => {
     const { control, setup } = await governedWorkflowFixture();
     const run = 'session_wf_compatibility';
     const prepare = () => prepareWorkflowGenesis(control, run, governedProfile, 'setup.json');
@@ -116,6 +116,14 @@ describe('workflow genesis', () => {
     expect(() => validateWorkflowGenesis(retained)).toThrowError(expect.objectContaining(diagnostic));
     retained.setup_sha256 = genesis.setup_sha256;
     expect(() => validateWorkflowGenesis(retained)).toThrowError(expect.objectContaining({ code: 'STATE_CORRUPTED' }));
+    for (const version of ['threadloop.workflow-setup/1', 'threadloop.workflow-setup/2']) {
+      await writeFile(path.join(control, 'setup.json'), JSON.stringify({ schema_version: version }));
+      expect(captureError(ThreadloopError, prepare)).toMatchObject({
+        code: 'INVALID_ARGUMENT',
+        message: 'The workflow setup must match ' + version + '.',
+        details: { reason: 'invalid_workflow_setup' },
+      });
+    }
     for (const invalid of [
       { ...setup, policy: null },
       { ...setup, schema_version: 'threadloop.workflow-setup/02' },

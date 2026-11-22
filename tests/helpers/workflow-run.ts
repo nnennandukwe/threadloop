@@ -1,3 +1,4 @@
+import type { WorkflowSources } from '../../src/domain/workflow-run.js';
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -7,7 +8,9 @@ export const governedProfile = createRequire(import.meta.url).resolve(
   'threadloop-contracts/assets/workflow-graph-v0.1/fixtures/valid/governed-pr.yaml',
 );
 
-export async function governedWorkflowFixture() {
+export async function governedWorkflowFixture(
+  hostProducers: WorkflowSources['host_producers'] = ['local-gate', 'pre-pr-review'],
+) {
   const control = await makeTempDir();
   const subject = await makeCommittedRepo();
   await writeFile(
@@ -16,7 +19,7 @@ export async function governedWorkflowFixture() {
   );
   const sources = {
     schema_version: 'threadloop.workflow-sources/1',
-    host_producers: ['local-gate', 'pre-pr-review'],
+    host_producers: hostProducers,
     github: { base_ref: 'main', human_node_id: 'github_user', preparation_ttl_ms: 60_000, evidence_ttl_ms: 600_000 },
   };
   await writeFile(path.join(control, 'sources.json'), JSON.stringify(sources));

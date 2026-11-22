@@ -1,10 +1,14 @@
+import type { WorkflowSources } from '../../src/domain/workflow-run.js';
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { controllerFixture } from '../fixtures/gaap-controller.js';
 import { governedWorkflowFixture } from './workflow-run.js';
 
-export async function managedWorkflowFixture(mode = 'success') {
-  const { control, subject, setup } = await governedWorkflowFixture();
+export async function managedWorkflowFixture(
+  mode = 'success',
+  hostProducers: WorkflowSources['host_producers'] = ['local-gate'],
+) {
+  const { control, subject, setup } = await governedWorkflowFixture(hostProducers);
   const { root: producerRoot, binding, host } = await controllerFixture(mode);
   const adapter = {
     schema_version: 'threadloop.workflow-gaap-adapter/1',

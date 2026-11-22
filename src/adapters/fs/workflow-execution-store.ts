@@ -39,39 +39,39 @@ function current(j: Journal, id: string) {
 }
 
 function inAuthority(
-  j: Journal,
-  id: string,
+  journal: Journal,
+  reservationId: string,
   guard: Parameters<WorkflowExecutionStore['enrollExecution']>[3],
   now: () => string,
 ) {
-  const r = current(j, id),
-    v = j.snapshot.view,
-    x = r.proposal.expectation;
+  const reservation = current(journal, reservationId),
+    runView = journal.snapshot.view,
+    reservedExpectation = reservation.proposal.expectation;
   if (
-    v.state_version !== x.state_version ||
-    v.history_digest !== x.history_digest ||
-    v.evidence_revision !== x.evidence_revision
+    runView.state_version !== reservedExpectation.state_version ||
+    runView.history_digest !== reservedExpectation.history_digest ||
+    runView.evidence_revision !== reservedExpectation.evidence_revision
   )
     rejected('execution_authority_changed', 'The run or evidence changed since the action was reserved.');
-  syncResult(guard(structuredClone(j.snapshot), structuredClone(r), now()));
-  const at = now();
-  const { execution, existing_requests, invalidated_claims } = r.binding.snapshot;
-  const input = workflowControllerInput(j.snapshot, r.observed, at, {
+  syncResult(guard(structuredClone(journal.snapshot), structuredClone(reservation), now()));
+  const evaluatedAt = now();
+  const { execution, existing_requests, invalidated_claims } = reservation.binding.snapshot;
+  const input = workflowControllerInput(journal.snapshot, reservation.observed, evaluatedAt, {
     execution,
     existing_requests,
     invalidated_claims,
   });
   const decision = selectWorkflowDecision(input);
-  const lease = r.child?.projection.claims[0]?.valid_until;
+  const leaseDeadline = reservation.child?.projection.claims[0]?.valid_until;
   if (
-    at < r.reserved_at ||
-    (lease && at >= lease) ||
+    evaluatedAt < reservation.reserved_at ||
+    (leaseDeadline && evaluatedAt >= leaseDeadline) ||
     !decision.ok ||
     decision.value.decision.outcome !== 'engineering_action_required' ||
-    !equal(decision.value.decision.action_request, r.binding.action_request)
+    !equal(decision.value.decision.action_request, reservation.binding.action_request)
   )
     rejected('execution_authority_changed', 'The selected request or its lease expired before the child write.');
-  return r;
+  return reservation;
 }
 
 function syncResult<T>(value: T): T {

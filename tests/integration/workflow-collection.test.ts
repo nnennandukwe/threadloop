@@ -1,4 +1,5 @@
-import { chmod, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { managedWorkflowFixture } from '../helpers/workflow-execution.js';
@@ -13,7 +14,10 @@ afterEach(async () => {
 });
 const operation = '125fe082-9417-45e2-b6c7-ab7a38e0c40e';
 async function collectionFixture() {
-  const { control, subject, producerRoot, setup } = await managedWorkflowFixture();
+  const { control, subject, producerRoot, setup } = await managedWorkflowFixture('success', [
+    'local-gate',
+    'pre-pr-review',
+  ]);
   roots.push(producerRoot);
   const file = (name: string, value: unknown) => writeFile(path.join(control, name), JSON.stringify(value));
   const base = await git(subject, 'rev-parse', 'HEAD');
@@ -45,8 +49,9 @@ async function collectionFixture() {
       },
     ],
   };
-  const reader = path.join(control, 'qodo-fixture'),
-    raw = path.join(control, 'status.json');
+  const readerDir = path.join(control, 'reader-bin');
+  await mkdir(readerDir, { mode: 0o700 });
+  const reader = path.join(readerDir, 'qodo-fixture');
   await writeFile(
     reader,
     '#!' +
@@ -55,9 +60,7 @@ async function collectionFixture() {
       'if(JSON.stringify(process.argv.slice(2))!==' +
       JSON.stringify(JSON.stringify(['review', 'status', operation, '--json'])) +
       ')process.exit(3);\n' +
-      "process.stdout.write(require('node:fs').readFileSync(" +
-      JSON.stringify(raw) +
-      '));\n',
+      "process.stdout.write(require('node:fs').readFileSync(require('node:path').join(__dirname, '../status.json')));\n",
   );
   await chmod(reader, 0o700);
   await file('status.json', status);
@@ -90,8 +93,42 @@ async function collectionFixture() {
     key,
     '--json',
   ];
-  return { control, subject, run, file, status, call, collect };
+  return { control, subject, run, file, status, call, collect, readerDir, reader };
 }
+it('requires a protected reader installation at enrollment and when collecting a review', async () => {
+  const { control, run, collect, call, readerDir, reader } = await collectionFixture();
+  const before = await call('inspect', run);
+  await chmod(readerDir, 0o775);
+  const refused = await runCliError(control, [
+    'workflow',
+    'create',
+    run + '_second',
+    '--profile',
+    governedProfile,
+    '--setup',
+    'setup.json',
+    '--json',
+  ]);
+  expect(refused.error).toMatchObject({ code: 'INVALID_ARGUMENT', details: { reason: 'invalid_gaap_enrollment' } });
+  const request = collect('pre-pr-review', 'protected-review', '--operation', operation);
+  const changed = { code: 'TRANSITION_GUARD_FAILED', details: { reason: 'managed_producer_changed' } };
+  expect((await runCliError(control, request)).error).toMatchObject(changed);
+  await chmod(readerDir, 0o700);
+  await chmod(reader, 0o775);
+  expect((await runCliError(control, request)).error).toMatchObject(changed);
+  await chmod(reader, 0o700);
+  if (process.platform === 'darwin') {
+    execFileSync('/bin/chmod', ['+a', 'everyone allow write', reader]);
+    expect((await runCliError(control, request)).error).toMatchObject(changed);
+    execFileSync('/bin/chmod', ['-N', reader]);
+    execFileSync('/bin/chmod', ['+a', 'everyone allow read', reader]);
+  }
+  expect(await call('inspect', run)).toEqual(before);
+  expect(parseJson<{ data: unknown }>((await runCli(control, request)).stdout).data).toMatchObject({
+    state_version: 3,
+  });
+}, 30_000);
+
 it('runs the declared gate once and collects only the retained review at its enrolled base, head and tree', async () => {
   const { control, run, status, file, call, collect } = await collectionFixture();
   const gate = collect('local-gate', 'first-gate', '--gate', 'check');

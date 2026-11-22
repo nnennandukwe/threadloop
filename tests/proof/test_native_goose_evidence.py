@@ -9,7 +9,10 @@ proof = runpy.run_path(str(pathlib.Path(__file__).resolve().parents[2] / 'script
 
 
 class NativeProofEvidenceTest(unittest.TestCase):
+    """Check the binary and transcript evidence required to publish native proof provenance."""
+
     def setUp(self):
+        """Create fixture binaries, their expected digests, and one matched tool call and result."""
         scratch = tempfile.TemporaryDirectory()
         self.addCleanup(scratch.cleanup)
         self.host = pathlib.Path(scratch.name) / 'host'
@@ -25,9 +28,11 @@ class NativeProofEvidenceTest(unittest.TestCase):
             {'role': 'tool', 'tool_call_id': 'proposal-1', 'content': 'Host executed the admitted effect.'}]}
 
     def verify(self, turns=None):
+        """Run the proof verifier on the fixtures. The default checks only the binaries."""
         return proof['verify_native_evidence'](self.claim, self.host, self.attestor, turns)
 
     def test_requires_each_binary_to_match_after_execution(self):
+        """Changing either fixture binary must fail the final digest check."""
         self.verify()
         for artifact in (self.host, self.attestor):
             with self.subTest(artifact=artifact.name):
@@ -38,6 +43,7 @@ class NativeProofEvidenceTest(unittest.TestCase):
                 artifact.write_bytes(original)
 
     def test_correlates_results_with_a_declared_governed_tool_call(self):
+        """A different result ID or tool name must break the link to the governed call."""
         self.verify([self.turn])
         self.turn['messages'][1]['tool_call_id'] = 'unrelated-result'
         with self.assertRaisesRegex(RuntimeError, 'tool result'):
@@ -49,11 +55,13 @@ class NativeProofEvidenceTest(unittest.TestCase):
             self.verify([self.turn])
 
     def test_keeps_tool_call_ids_in_their_original_turn(self):
+        """A call in one provider turn can't establish the origin of a result in another."""
         with self.assertRaisesRegex(RuntimeError, 'tool result'):
             self.verify([{**self.turn, 'messages': self.turn['messages'][:1]},
                          {**self.turn, 'messages': self.turn['messages'][1:]}])
 
     def test_requires_a_declaration_and_a_result_after_the_call(self):
+        """Reject a missing tool declaration or a result that precedes the call."""
         for turns in ([{**self.turn, 'tools': []}],
                       [{**self.turn, 'messages': list(reversed(self.turn['messages']))}]):
             with self.assertRaisesRegex(RuntimeError, 'tool result'):

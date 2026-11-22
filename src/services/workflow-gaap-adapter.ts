@@ -15,6 +15,7 @@ import type {
   WorkflowReviewReader,
 } from '../domain/workflow-run.js';
 import { createInvalidArgumentError, ThreadloopError } from '../contracts/errors.js';
+import { hasProtectedReviewReaderPath } from '../adapters/fs/review-reader.js';
 
 const text = z.string().min(1).max(4096).regex(/\S/);
 function compileAdapterValidators() {
@@ -195,6 +196,8 @@ export function adoptWorkflowGaap(
       return measured.sha256;
     };
     const executable_sha256 = measure(host.executable, true);
+    if (reader && !hasProtectedReviewReaderPath(reader.executable))
+      invalid('Install the Qodo status reader under a path where only the current account and root can change it.');
     const files = candidatePaths(host)
       .filter((name) => {
         const info = lstatSync(name, { throwIfNoEntry: false });
@@ -247,10 +250,18 @@ export function assertWorkflowReviewReader(genesis: WorkflowGenesis): WorkflowRe
     genesis.setup.schema_version === 'threadloop.workflow-setup/2' ? genesis.setup.review_reader : undefined;
   if (!reader || !genesis.gaap?.review_reader_sha256) unavailable(undefined);
   try {
-    if (fileHash(reader.executable, true, maxHostBytes).sha256 !== genesis.gaap.review_reader_sha256)
-      unavailable(undefined);
+    if (
+      hasProtectedReviewReaderPath(reader.executable) &&
+      fileHash(reader.executable, true, maxHostBytes).sha256 === genesis.gaap.review_reader_sha256
+    )
+      return reader;
   } catch (cause) {
     unavailable(cause);
   }
-  return reader;
+  throw new ThreadloopError('TRANSITION_GUARD_FAILED', 'The enrolled Qodo status reader or its permissions changed.', {
+    details: {
+      reason: 'managed_producer_changed',
+      hint: 'Restore the enrolled reader and restrict write access to its installation before collecting the review.',
+    },
+  });
 }

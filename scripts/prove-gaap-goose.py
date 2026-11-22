@@ -46,6 +46,10 @@ def install_workflow_cli(project, output, scratch):
 
 
 def observed_governed_result(turn):
+    """Return True if a declared governed operation has a matching tool result in this turn.
+
+    The result must have content and reference a unique call ID from the preceding assistant message.
+    """
     tool = 'gaap-proposals__governed_operation'
     if not any(item.get('type') == 'function' and item.get('function', {}).get('name') == tool
                for item in turn.get('tools', [])):
@@ -70,6 +74,11 @@ def observed_governed_result(turn):
 
 
 def verify_native_evidence(provenance, binary, attestor, transcript=None):
+    """Recheck the host and attestor digests after execution.
+
+    Standalone proofs pass transcript=None to check only the binaries. A managed proof must also
+    include a governed tool call with a matching result. A mismatch raises RuntimeError.
+    """
     for name, path, field in [('host', binary, 'implementation_digest'), ('attestor', attestor, 'attestor_digest')]:
         if provenance[field] != 'sha256:' + hashlib.sha256(path.read_bytes()).hexdigest():
             raise RuntimeError('The native ' + name + ' binary changed during the proof.')
