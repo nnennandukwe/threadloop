@@ -205,7 +205,10 @@ export async function proveWorkflowExecution(
   assert.equal(refused.status, 1);
   const refusal = JSON.parse(refused.stderr) as { error: { code: string; details: { reason: string } } };
   assert.equal(refusal.error.code, 'TRANSITION_GUARD_FAILED');
-  assert.equal(refusal.error.details.reason, 'transition_unavailable');
+  assert.equal(
+    refusal.error.details.reason,
+    scenario === 'bad_patch' ? 'execution_outstanding' : 'transition_unavailable',
+  );
   save('refused-apply.json', refusal);
   if (scenario === 'bad_patch') {
     assert.equal(child.projection.attempts[0]?.status, 'unknown_outcome');

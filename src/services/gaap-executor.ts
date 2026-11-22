@@ -431,6 +431,7 @@ async function run(store: GaapState, abortSignal?: AbortSignal, access?: Managed
       status: error instanceof GaapStateCommitUncertainError ? ('uncertain' as const) : ('rejected' as const),
       observation_id: observationId,
       reason: error instanceof Error ? error.message : String(error),
+      ...(access && error instanceof GaapEvidenceError ? { reason_code: error.code } : {}),
     };
   }
 }

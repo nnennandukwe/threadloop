@@ -169,7 +169,11 @@ it('holds a lost subprocess effect across retries and refuses a changed request'
   if (selected.outcome !== 'engineering_action_required') throw new Error('Expected selected engineering work');
   await file('effect.json', saved);
   const args = ['workflow', 'execute', run, '--decision', 'effect.json', '--json'];
-  expect((await runCliError(control, args)).error.details.reason).toBe('execution_outstanding');
+  expect((await runCliError(control, args)).error.details).toMatchObject({
+    reason: 'execution_outstanding',
+    phase: 'transport',
+    child_reason: 'exit_failed',
+  });
   expect(await readFile(path.join(subject, 'source.txt'), 'utf8')).toMatch(/effect occurred/);
   expect((await runCliError(control, args)).error.details.reason).toBe('execution_outstanding');
   const changed = structuredClone(saved);

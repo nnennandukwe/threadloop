@@ -46,11 +46,18 @@ const correlationSchema = z.strictObject({
   observation_id: z.number().int().positive().nullable(),
 });
 
-function refused(reason: string, message: string, run: string, correlation?: WorkflowCorrelation): never {
+function refused(
+  reason: string,
+  message: string,
+  run: string,
+  correlation?: WorkflowCorrelation,
+  childFailure?: { phase: 'start' | 'transport' | 'admission'; child_reason: string },
+): never {
   throw new ThreadloopError('EXECUTOR_REJECTED', message, {
     details: {
       reason,
       ...(correlation ? { correlation } : {}),
+      ...childFailure,
       hint: 'Run threadloop workflow inspect ' + run + ' to check the retained request and its recovery operation.',
     },
   });
@@ -158,6 +165,7 @@ async function reconcile(
   hostDigest: string,
   correlation: WorkflowCorrelation,
   allowAdmission: boolean,
+  admissionFailure?: string,
 ) {
   const run = reservation.owner.workflow_run_id;
   if (reservation.imported) {
@@ -192,6 +200,11 @@ async function reconcile(
       'The child has no verified admission. Inspect the retained Attempt before recovery.',
       run,
       workflowCorrelation(reservation, observation?.id),
+      !observation
+        ? { phase: 'start', child_reason: 'no_observation' }
+        : observation.status !== 'ok'
+          ? { phase: 'transport', child_reason: observation.status }
+          : { phase: 'admission', child_reason: admissionFailure ?? 'admission_unverified' },
     );
   }
   return importedReply(
@@ -272,8 +285,11 @@ export async function executeWorkflowRun(cwd: string, run: string, filename: str
       );
     }
     let child = await childFact(reservation, state, enrollment.host_digest);
+    let admissionFailure: string | undefined;
     if (!child.launch_count && child.projection.attempts.at(-1)?.status === 'pending') {
-      await runManagedGaapExecutor(state, reservation.owner, childFence(store, reservation), signal);
+      const attempted = await runManagedGaapExecutor(state, reservation.owner, childFence(store, reservation), signal);
+      if ('reason_code' in attempted && typeof attempted.reason_code === 'string')
+        admissionFailure = attempted.reason_code;
       child = await childFact(reservation, state, enrollment.host_digest);
     }
     return reconcile(
@@ -283,6 +299,7 @@ export async function executeWorkflowRun(cwd: string, run: string, filename: str
       enrollment.host_digest,
       workflowCorrelation(reservation, child.observations.at(-1)?.id),
       false,
+      admissionFailure,
     );
   });
 }
