@@ -373,6 +373,26 @@ dispatch must validate the resolved host executable and each retained file again
 permission checks. Tests exercise permission changes between enrollment and dispatch and verify the native host still
 runs with its original inputs.
 
+### Restore the captured report and retry a pending review
+
+Local review on `3e0e5a7` identified two operator-visible failures. An exact retry admitted a captured gate after a
+report write error yet left its report missing. A successful status read reporting an unfinished Qodo operation
+permanently failed its collection key.
+
+SQLite owns the verified execution report and all referenced gate output. Both the first collection and a retry restore
+the files before outer admission. Recreate missing directories beneath the owned control directory, validate every
+existing file against captured bytes, and publish outputs before the execution report. Write a private temporary
+sibling, finish its bytes and publish it without replacing an existing name. When another client publishes first, verify
+its file. Partial recovery can leave complete files for the next retry. A conflicting file stays available for
+investigation. Inspection must identify the run, attempt and key. A completed retry must never run the gate again to
+rebuild the report.
+
+Tests inject a report write or publication error, remove the loose directory, then recover the exact report and log
+bytes using competing CLI processes. A conflicting file or link must retain the captured database source and the
+original external count. The producer can complete a previously pending Qodo operation under the same key. Test the
+working and partial status responses, a completed review with a skipped conversion pass when it had no eligible
+findings, and a completed review of the wrong head. Only the completed, matching review can supply evidence.
+
 ## Commit Plan
 
 1. Commit this plan at the verified predecessor and add the bounded selected-action reservation and registration with
