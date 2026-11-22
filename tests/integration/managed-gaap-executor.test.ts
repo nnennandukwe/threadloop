@@ -110,6 +110,9 @@ it('rechecks the original launch, raw process observation and authenticated admi
   expect(original.admitted).toHaveLength(1);
   const db = new DatabaseSync(path.join(state, 'executor.sqlite'));
   try {
+    for (const table of ['launch', 'observation', 'accepted']) {
+      db.exec(`CREATE TEMP TABLE original_${table} AS SELECT * FROM ${table}`);
+    }
     for (const [table, field, replacement] of [
       ['launch', 'request_digest', 'replaced'],
       ['observation', 'stdout', Buffer.from('{}')],
@@ -118,10 +121,9 @@ it('rechecks the original launch, raw process observation and authenticated admi
       ['observation', 'status', 'timeout'],
       ['accepted', 'observation_id', 7],
     ] as const) {
-      const first = db.prepare(`SELECT ${field} AS value FROM ${table}`).get()!.value!;
       db.prepare(`UPDATE ${table} SET ${field}=?`).run(replacement);
       await expect(inspectManagedGaapExecutor(store, owner), field).rejects.toThrow();
-      db.prepare(`UPDATE ${table} SET ${field}=?`).run(first);
+      db.exec(`UPDATE ${table} SET ${field}=(SELECT ${field} FROM original_${table})`);
     }
   } finally {
     db.close();

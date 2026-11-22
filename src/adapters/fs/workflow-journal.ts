@@ -284,6 +284,7 @@ export function loadJournal(db: DatabaseSync, run: string): Journal | null {
       'workflow_execution_heads',
       'workflow_execution_events',
       'workflow_collection_events',
+      'workflow_gate_launches',
     ];
     for (const table of ledgers) {
       if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=? COLLATE NOCASE").get(table)) continue;

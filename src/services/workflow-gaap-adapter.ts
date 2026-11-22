@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { accessSync, constants, closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs';
+import { accessSync, constants, closeSync, fstatSync, lstatSync, openSync, readSync } from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { workflowGuardEvidenceFamily } from '../domain/workflow-action-request.js';
@@ -15,7 +15,7 @@ import type {
   WorkflowReviewReader,
 } from '../domain/workflow-run.js';
 import { createInvalidArgumentError, ThreadloopError } from '../contracts/errors.js';
-import { hasProtectedReviewReaderPath } from '../adapters/fs/review-reader.js';
+import { hasProtectedHostFilePath } from '../adapters/fs/managed-host-file.js';
 
 const text = z.string().min(1).max(4096).regex(/\S/);
 function compileAdapterValidators() {
@@ -62,8 +62,10 @@ function invalid(message: string): never {
 }
 
 function fileHash(filename: string, executable: boolean, remaining: number) {
-  if (!path.isAbsolute(filename) || realpathSync(filename) !== filename)
-    invalid('Each enrolled executable or file must use its absolute real path.');
+  if (!hasProtectedHostFilePath(filename))
+    invalid(
+      'Each enrolled host file needs an absolute real path where only the current account and root can change it.',
+    );
   if (executable) accessSync(filename, constants.X_OK);
   const fd = openSync(filename, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
@@ -196,8 +198,6 @@ export function adoptWorkflowGaap(
       return measured.sha256;
     };
     const executable_sha256 = measure(host.executable, true);
-    if (reader && !hasProtectedReviewReaderPath(reader.executable))
-      invalid('Install the Qodo status reader under a path where only the current account and root can change it.');
     const files = candidatePaths(host)
       .filter((name) => {
         const info = lstatSync(name, { throwIfNoEntry: false });
@@ -223,7 +223,10 @@ export function adoptWorkflowGaap(
 function unavailable(cause: unknown): never {
   throw new ThreadloopError('TRANSITION_GUARD_FAILED', 'The enrolled host files are unavailable or have changed.', {
     cause,
-    details: { reason: 'managed_producer_changed', hint: 'Restore the enrolled host implementation before retrying.' },
+    details: {
+      reason: 'managed_producer_changed',
+      hint: 'Restore the enrolled host files and restrict write access to their installation before retrying.',
+    },
   });
 }
 export function assertWorkflowGaapExecutable(genesis: WorkflowGenesis): void {
@@ -249,16 +252,14 @@ export function assertWorkflowReviewReader(genesis: WorkflowGenesis): WorkflowRe
   const reader =
     genesis.setup.schema_version === 'threadloop.workflow-setup/2' ? genesis.setup.review_reader : undefined;
   if (!reader || !genesis.gaap?.review_reader_sha256) unavailable(undefined);
+  let cause: unknown;
   try {
-    if (
-      hasProtectedReviewReaderPath(reader.executable) &&
-      fileHash(reader.executable, true, maxHostBytes).sha256 === genesis.gaap.review_reader_sha256
-    )
-      return reader;
-  } catch (cause) {
-    unavailable(cause);
+    if (fileHash(reader.executable, true, maxHostBytes).sha256 === genesis.gaap.review_reader_sha256) return reader;
+  } catch (error) {
+    cause = error;
   }
   throw new ThreadloopError('TRANSITION_GUARD_FAILED', 'The enrolled Qodo status reader or its permissions changed.', {
+    cause,
     details: {
       reason: 'managed_producer_changed',
       hint: 'Restore the enrolled reader and restrict write access to its installation before collecting the review.',

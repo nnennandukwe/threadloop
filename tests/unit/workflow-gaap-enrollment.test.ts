@@ -1,4 +1,4 @@
-import { chmod, readFile, writeFile } from 'node:fs/promises';
+import { chmod, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { gaapVerificationPolicy, type GaapHost } from '../../src/domain/gaap-binding.js';
@@ -10,7 +10,13 @@ import {
 import { workflowDigest } from '../../src/domain/workflow-selection-types.js';
 import { createWorkflowStore } from '../../src/adapters/fs/workflow-store.js';
 import { initThreadloop } from '../../src/services/session-service.js';
-import { createWorkflowRun, inspectWorkflowRun } from '../../src/services/workflow-runtime.js';
+import {
+  applyWorkflowRun,
+  createWorkflowRun,
+  decideWorkflowRun,
+  inspectWorkflowRun,
+} from '../../src/services/workflow-runtime.js';
+import { executeWorkflowRun } from '../../src/services/workflow-execution.js';
 import type { WorkflowSetup, WorkflowSources } from '../../src/domain/workflow-run.js';
 import { controllerBinding } from '../fixtures/gaap-controller.js';
 import { gaapFixture } from '../fixtures/gaap.js';
@@ -87,6 +93,45 @@ it('keeps historical reads independent of files and refuses dispatch after a pro
   await writeFile(script, 'different adapter bytes\n');
   expect(() => validateWorkflowGenesis(entry)).not.toThrow();
   expect(() => assertWorkflowGaapExecutable(entry)).toThrow(/changed/);
+});
+
+it('requires protected executable, argument and environment files before enrolling or starting the host', async () => {
+  const { control, host, script, prepare } = await enrolled();
+  const configDirectory = await makeTempDir();
+  const configFile = path.join(configDirectory, 'producer.json');
+  await writeFile(configFile, '{}');
+  host.environment.PRODUCER_CONFIG = configFile;
+  await writeFile(path.join(control, 'host.json'), JSON.stringify(host));
+  await git(control, 'init', '-b', 'main');
+  await initThreadloop(control);
+  const run = 'session_wf_protected';
+  await createWorkflowRun(control, run, governedProfile, 'setup.json');
+  const decisionFile = path.join(control, 'decision.json');
+  const saveDecision = async () => {
+    const data = await decideWorkflowRun(control, run);
+    await writeFile(decisionFile, JSON.stringify({ ok: true, command: 'workflow decide', data }));
+    return data.controller_decision.decision.outcome;
+  };
+  for (const edge of ['frame', 'bind_plan', 'begin_implementation']) {
+    await saveDecision();
+    await applyWorkflowRun(control, run, decisionFile, edge);
+  }
+  expect(await saveDecision()).toBe('engineering_action_required');
+  const previous = await inspectWorkflowRun(control, run);
+  for (const filename of [host.executable, script, configFile, configDirectory]) {
+    const mode = (await stat(filename)).mode & 0o7777;
+    await chmod(filename, mode | 0o020);
+    expect(prepare).toThrow(/only the current account and root/);
+    await expect(executeWorkflowRun(control, run, decisionFile)).rejects.toMatchObject({
+      code: 'TRANSITION_GUARD_FAILED',
+      details: { reason: 'managed_producer_changed' },
+    });
+    expect(await inspectWorkflowRun(control, run)).toEqual(previous);
+    await chmod(filename, mode);
+  }
+  expect(
+    (await readdir(path.join(control, '.threadloop'), { recursive: true })).map((name) => path.basename(name)),
+  ).not.toContain('executor.sqlite');
 });
 it('rejects unknown fields and a forged mapping digest during adoption', async () => {
   const { control, adapter, prepare } = await enrolled();

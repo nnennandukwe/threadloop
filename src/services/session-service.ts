@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { mkdir, readFile, realpath } from 'node:fs/promises';
+import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { sha256, sha256File } from '../adapters/crypto/sha256.js';
 import { ensureThreadloopStateIgnored } from '../adapters/fs/gitignore.js';
 import {
@@ -629,7 +629,7 @@ export async function runSessionGate(input: RunSessionGateInput) {
   const receiptId = createId('receipt');
   const receiptDirectory = path.join(repoRoot, '.threadloop', 'artifacts', 'receipts', input.sessionId, receiptId);
   await mkdir(receiptDirectory, { recursive: true });
-  const { receipt, receiptJson, diagnostic } = await produceLocalGate({
+  const { receipt, receiptJson, diagnostic, executionBytes } = await produceLocalGate({
     repoRoot,
     artifactRoot: repoRoot,
     receiptDirectory,
@@ -640,6 +640,7 @@ export async function runSessionGate(input: RunSessionGateInput) {
     before,
     observeLocal: () => observeProofRepository(repoRoot).catch(() => null),
   });
+  await writeFile(path.join(receiptDirectory, 'execution.json'), executionBytes, { flag: 'wx' });
   const relativeExecutionPath = receipt.artifact.path;
   let sequence: number;
   try {

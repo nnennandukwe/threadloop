@@ -33,9 +33,14 @@ function hasReadOnlyMacGrants(paths: string[]) {
   });
 }
 
-export function hasProtectedReviewReaderPath(filename: string): boolean {
+export function hasProtectedHostFilePath(filename: string): boolean {
   const uid = process.geteuid?.();
-  if (uid === undefined || !['linux', 'darwin'].includes(process.platform) || realpathSync(filename) !== filename)
+  if (
+    uid === undefined ||
+    !['linux', 'darwin'].includes(process.platform) ||
+    !path.isAbsolute(filename) ||
+    realpathSync(filename) !== filename
+  )
     return false;
   const paths = [filename];
   for (let parent = path.dirname(filename); ; parent = path.dirname(parent)) {

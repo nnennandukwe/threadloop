@@ -148,7 +148,10 @@ while the graph-bound run retained its original state.
 Create the run with `schema_version` set to `threadloop.workflow-setup/2` and `gaap` set to
 `{"adapter":"adapter.json","host":"host.json"}`. Keep the other setup fields from the example above. The
 `threadloop.gaap-host/1` file identifies the absolute executable, its invocation, the subject workspace, verification
-keys and limits. The host and its private environment belong outside the subject. The
+keys and limits. The host and its private environment belong outside the subject. ThreadLoop measures the executable and
+each regular file named by an absolute argument or environment value. On Linux and macOS, your account or root must own
+each file and protect its path from other writers. A private installation can sit under a sticky system temporary
+directory. ThreadLoop checks these permissions and digests at enrollment and again before starting the host. The
 `threadloop.workflow-gaap-adapter/1` file supplies the frozen `mapping_policy`, executor `parameters`, `executor`
 identity and `lease_ms`. Its `execution_policy` has an `id`, `retry_safety` and `max_attempts`. Enroll a mapping for an
 executor capability the graph declares. Check that its required evidence families cover the action's guards. The
@@ -184,8 +187,14 @@ the outer state database and its owned child directories when backing up or rest
 ## Collect gate or pre-PR review evidence
 
 For a local gate, use the ID from the immutable proof plan. ThreadLoop captures the gate's actual outputs in the control
-repository and admits them for its observed subject. Retry the same request key to recover a completed observation. A
-gate interrupted after launch can leave an outstanding attempt.
+repository and admits them for its observed subject. If the CLI stops, run
+`threadloop workflow inspect shipping --json`. The `collections` list identifies the key and attempt. For a `reserved`
+gate, repeat the original request. One delivery can claim the launch. For a `captured` gate, the same request admits the
+result from the database even if its output directory is gone. A completed request returns its recorded reply.
+
+A `launch_claimed` gate with no captured result holds the run. The process may already have changed the subject. Inspect
+its retained output and independently reconcile any effect before taking further action. An older interrupted gate
+without a launch record also has an unknown outcome. Creating a new key can't authorize another launch.
 
 ```bash
 threadloop workflow evidence collect local-gate --run shipping --gate check --expected-state-version 4 --idempotency-key verify-local

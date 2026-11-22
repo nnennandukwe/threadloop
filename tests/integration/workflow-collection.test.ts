@@ -1,11 +1,13 @@
-import { execFileSync } from 'node:child_process';
-import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFile, execFileSync } from 'node:child_process';
+import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { afterEach, expect, it } from 'vitest';
 import { managedWorkflowFixture } from '../helpers/workflow-execution.js';
 import { governedProfile } from '../helpers/workflow-run.js';
-import { cleanupTemporaryState, commitFiles, git } from '../helpers/session.js';
-import { parseJson, runCli, runCliError } from '../helpers/cli.js';
+import { cleanupTemporaryState, commitFiles, git, type proofPlan } from '../helpers/session.js';
+import { parseJson, resolveTestCliBundle, runCli, runCliError } from '../helpers/cli.js';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -13,13 +15,19 @@ afterEach(async () => {
   await cleanupTemporaryState();
 });
 const operation = '125fe082-9417-45e2-b6c7-ab7a38e0c40e';
-async function collectionFixture() {
+async function collectionFixture(gateCommand?: (control: string) => string[]) {
   const { control, subject, producerRoot, setup } = await managedWorkflowFixture('success', [
     'local-gate',
     'pre-pr-review',
   ]);
   roots.push(producerRoot);
   const file = (name: string, value: unknown) => writeFile(path.join(control, name), JSON.stringify(value));
+  if (gateCommand) {
+    const plan = JSON.parse(await readFile(path.join(control, 'plan.json'), 'utf8')) as ReturnType<typeof proofPlan>;
+    plan.gates[0]!.command = gateCommand(control);
+    plan.gates[0]!.timeout_ms = 12_000;
+    await file('plan.json', plan);
+  }
   const base = await git(subject, 'rev-parse', 'HEAD');
   await commitFiles(subject, 'Prepare an independent review head', { 'README.md': 'review fixture\n' });
   const head = await git(subject, 'rev-parse', 'HEAD');
@@ -95,6 +103,139 @@ async function collectionFixture() {
   ];
   return { control, subject, run, file, status, call, collect, readerDir, reader };
 }
+
+async function countedCollection(waitForRelease = false) {
+  const gate = fileURLToPath(new URL('../fixtures/workflow/collection-gate.mjs', import.meta.url));
+  const fixture = await collectionFixture((control) => [
+    process.execPath,
+    gate,
+    path.join(control, 'gate-invocations'),
+    ...(waitForRelease ? [path.join(control, 'release-gate')] : []),
+  ]);
+  const { control, run, collect } = fixture;
+  const args = collect('local-gate', 'interrupted-gate', '--gate', 'check');
+  const inspect = async () =>
+    parseJson<{
+      data: { state_version: number; collections: { key: string; attempt: string; phase: string }[] };
+    }>((await runCli(control, ['workflow', 'inspect', run, '--json'])).stdout).data;
+  const count = async () =>
+    readFile(path.join(control, 'gate-invocations'), 'utf8').then(
+      (bytes) => bytes.trim().split('\n').length,
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return 0;
+        throw error;
+      },
+    );
+  async function interruptAt(cut: 'intent' | 'captured' | 'after-invocation' | 'report-error') {
+    const preload = fileURLToPath(new URL('../fixtures/workflow/collection-cut.mjs', import.meta.url));
+    const failure = await promisify(execFile)(
+      process.execPath,
+      ['--import', preload, resolveTestCliBundle(), ...args],
+      {
+        cwd: control,
+        timeout: 20_000,
+        env: { ...process.env, THREADLOOP_TEST_COLLECTION_CUT: cut },
+      },
+    ).then(
+      () => null,
+      (e: Error & { signal?: string; code?: number; stderr?: string }) => e,
+    );
+    if (cut === 'report-error') expect(failure?.code).toBe(1);
+    else expect(failure?.signal).toBe('SIGKILL');
+    expect(failure?.stderr).toContain('collection-cut=' + cut);
+    return failure?.stderr;
+  }
+  return { ...fixture, args, count, inspect, interruptAt };
+}
+
+it('resumes a prelaunch intent once when two CLI processes retry the same gate', async () => {
+  const { control, run, args, count, inspect, interruptAt } = await countedCollection(true);
+  await interruptAt('intent');
+  expect(await count()).toBe(0);
+  const reserved = await inspect();
+  expect(reserved).toMatchObject({ state_version: 3, collections: [{ key: 'interrupted-gate', phase: 'reserved' }] });
+  const collecting = runCli(control, args);
+  try {
+    await Promise.race([
+      expect.poll(count, { timeout: 8000 }).toBe(1),
+      collecting.then(() => {
+        throw new Error('The gate returned before its release.');
+      }),
+    ]);
+    expect((await inspect()).collections).toMatchObject([
+      { attempt: reserved.collections[0]!.attempt, phase: 'launch_claimed' },
+    ]);
+    const competing = await runCliError(control, args);
+    expect(competing.error.details.reason).toBe('collection_outstanding');
+  } finally {
+    await writeFile(path.join(control, 'release-gate'), '');
+    await collecting.catch(() => undefined);
+  }
+  const completed = (await collecting).stdout;
+  expect(parseJson<{ data: unknown }>(completed).data).toMatchObject({ state_version: 3 });
+  expect((await runCli(control, args)).stdout).toBe(completed);
+  expect(await count()).toBe(1);
+  expect(await inspect()).toMatchObject({ state_version: 3, collections: [] });
+  const attempt = reserved.collections[0]!.attempt;
+  const artifact = path.join(control, '.threadloop', 'artifacts', 'workflow-collections', attempt, 'execution.json');
+  expect(parseJson<unknown>(await readFile(artifact, 'utf8'))).toMatchObject({
+    receipt_id: 'receipt_' + attempt,
+    session_id: run,
+    gate_id: 'check',
+    result: 'passed',
+  });
+}, 30_000);
+
+it.each(['captured', 'report-error'] as const)(
+  'recovers a captured local result after %s and loss of its output directory',
+  async (cut) => {
+    const { control, run, args, count, inspect, interruptAt } = await countedCollection();
+    const diagnostic = await interruptAt(cut);
+    expect(await count()).toBe(1);
+    const { collections } = await inspect();
+    expect(collections).toMatchObject([{ key: 'interrupted-gate', phase: 'captured' }]);
+    const attempt = collections[0]!.attempt;
+    if (cut === 'report-error') {
+      const reply = parseJson<{ error: unknown }>(diagnostic?.slice(diagnostic.indexOf('{')));
+      expect(reply.error).toMatchObject({
+        code: 'TRANSITION_GUARD_FAILED',
+        details: { reason: 'collection_result_captured', workflow_run_id: run, key: 'interrupted-gate', attempt },
+      });
+    }
+    const directory = path.join(control, '.threadloop', 'artifacts', 'workflow-collections', attempt);
+    expect(await readFile(path.join(directory, 'stdout.log'), 'utf8')).toBe('local gate counted\n');
+    await expect(stat(path.join(directory, 'execution.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await rm(directory, { recursive: true });
+    const admitted = (await runCli(control, args)).stdout;
+    expect((await runCli(control, args)).stdout).toBe(admitted);
+    expect(await count()).toBe(1);
+    expect(await inspect()).toMatchObject({ state_version: 3, collections: [] });
+    const { createWorkflowStore } = await import('../../src/adapters/fs/workflow-store.js');
+    const receipts = createWorkflowStore(control)
+      .read(run)
+      .observations.flatMap((item) => item.receipts);
+    expect(
+      receipts.filter((receipt) => receipt.payload.type === 'local_proof').map((receipt) => receipt.payload),
+    ).toEqual([{ type: 'local_proof', gate_id: 'check', result: 'passed', clean: true }]);
+  },
+  30_000,
+);
+
+it('holds a local gate that ran before the host could retain its result', async () => {
+  const { control, args, count, inspect, collect, interruptAt } = await countedCollection();
+  await interruptAt('after-invocation');
+  const outstanding = await inspect();
+  expect(outstanding).toMatchObject({
+    state_version: 3,
+    collections: [{ key: 'interrupted-gate', phase: 'launch_claimed' }],
+  });
+  for (const retry of [args, collect('local-gate', 'another-gate', '--gate', 'check')]) {
+    expect((await runCliError(control, retry)).error.details.reason).toBe('collection_outstanding');
+  }
+  expect(await inspect()).toEqual(outstanding);
+  expect(await count()).toBe(1);
+}, 30_000);
+
 it('requires a protected reader installation at enrollment and when collecting a review', async () => {
   const { control, run, collect, call, readerDir, reader } = await collectionFixture();
   const before = await call('inspect', run);

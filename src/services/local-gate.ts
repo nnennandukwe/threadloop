@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { realpath, writeFile } from 'node:fs/promises';
+import { realpath } from 'node:fs/promises';
 import { sha256 } from '../adapters/crypto/sha256.js';
 import {
   classifyGateOutcome,
@@ -138,7 +138,6 @@ export async function produceLocalGate({
     sensor,
   };
   const executionBytes = Buffer.from(`${canonicalJson(execution)}\n`, 'utf8');
-  await writeFile(executionPath, executionBytes, { flag: 'wx' });
   const receipt: GateReceiptPayload = {
     id: receiptId,
     ...identity,

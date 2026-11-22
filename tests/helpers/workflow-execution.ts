@@ -1,5 +1,6 @@
 import type { WorkflowSources } from '../../src/domain/workflow-run.js';
-import { writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { chmod, copyFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { controllerFixture } from '../fixtures/gaap-controller.js';
 import { governedWorkflowFixture } from './workflow-run.js';
@@ -10,6 +11,11 @@ export async function managedWorkflowFixture(
 ) {
   const { control, subject, setup } = await governedWorkflowFixture(hostProducers);
   const { root: producerRoot, binding, host } = await controllerFixture(mode);
+  // Hosted CI can keep Node in a shared writable tool cache. Give this managed producer its own executable.
+  const node = path.join(producerRoot, 'node');
+  await copyFile(process.execPath, node, constants.COPYFILE_FICLONE);
+  await chmod(node, 0o700);
+  host.executable = node;
   const adapter = {
     schema_version: 'threadloop.workflow-gaap-adapter/1',
     mapping_policy: binding.mapping_policy,

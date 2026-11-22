@@ -1,8 +1,8 @@
-import { ensureWorkflowCollectionSchema } from './workflow-collection-schema.js';
+import { ensureWorkflowCollectionSchema, requireGateLaunchSchema } from './workflow-collection-schema.js';
 import { randomUUID } from 'node:crypto';
 import { canonicalJson } from '../../domain/canonical-json.js';
 import type { AdmissionReply, HostSource, RunSnapshot } from '../../domain/workflow-run.js';
-import { ThreadloopError } from '../../contracts/errors.js';
+import { StateCorruptedError, ThreadloopError } from '../../contracts/errors.js';
 import { sha256 } from '../crypto/sha256.js';
 import { withExistingStateWrite, withReadSnapshot } from './sqlite-store.js';
 import type { DatabaseSync } from './sqlite-driver.js';
@@ -15,6 +15,7 @@ export interface CollectionTarget {
   state_version: number;
 }
 interface Intent extends CollectionTarget {
+  launch_protocol?: 1;
   attempt: string;
   subject_digest: string;
 }
@@ -32,8 +33,8 @@ function fail(message: string): never {
     },
   });
 }
-function history(db: DatabaseSync, run: string, key: string): Event[] {
-  return db
+function history(db: DatabaseSync, run: string, key: string) {
+  const events = db
     .prepare(
       'SELECT ordinal,phase,body,digest FROM workflow_collection_events WHERE run_id=? AND key=? ORDER BY ordinal',
     )
@@ -50,6 +51,14 @@ function history(db: DatabaseSync, run: string, key: string): Event[] {
         fail('The retained collection event has invalid bytes.');
       return event;
     });
+  const first = events[0];
+  const claimed =
+    first?.phase === 'intent' && first.intent.launch_protocol !== undefined
+      ? launchClaimed(db, run, key, first.intent)
+      : undefined;
+  if (claimed === false && events.some((event) => event.phase === 'captured' || event.phase === 'completed'))
+    throw new StateCorruptedError('The captured gate result has no committed launch claim.');
+  return { events, claimed };
 }
 function append(db: DatabaseSync, run: string, key: string, ordinal: number, event: Event) {
   const body = canonicalJson(event);
@@ -62,6 +71,50 @@ function append(db: DatabaseSync, run: string, key: string, ordinal: number, eve
     sha256(canonicalJson([run, key, ordinal, event.phase, body])),
   );
 }
+function intentDigest(run: string, key: string, intent: Intent) {
+  return sha256(canonicalJson([run, key, 0, 'intent', canonicalJson({ phase: 'intent', intent })]));
+}
+
+function launchClaimed(db: DatabaseSync, run: string, key: string, intent: Intent): boolean {
+  if (intent.launch_protocol !== 1 || intent.kind !== 'local-gate')
+    throw new StateCorruptedError('The collection has an unsupported gate launch protocol.');
+  requireGateLaunchSchema(db);
+  const row = db
+    .prepare('SELECT attempt,intent_digest,claimed FROM workflow_gate_launches WHERE run_id=? AND key=?')
+    .get(run, key);
+  if (
+    row?.attempt !== intent.attempt ||
+    row.intent_digest !== intentDigest(run, key, intent) ||
+    (row.claimed !== 0 && row.claimed !== 1)
+  )
+    throw new StateCorruptedError(
+      'The managed gate launch reservation is missing or differs from its intent. Restore the original control database before retrying.',
+    );
+  return row.claimed === 1;
+}
+
+function heldGate(run: string, key: string, attempt: string): never {
+  throw new ThreadloopError(
+    'TRANSITION_GUARD_FAILED',
+    'The gate may already have started. Its outcome is still unknown.',
+    {
+      details: {
+        reason: 'collection_outstanding',
+        workflow_run_id: run,
+        key,
+        attempt,
+        hint: `Inspect workflow run ${run} and retry the original collection key ${key} to recover captured output.`,
+      },
+    },
+  );
+}
+
+function ready(snapshot: RunSnapshot, target: CollectionTarget, preflight: (snapshot: RunSnapshot) => string) {
+  expectVersion(snapshot.view.state_version, target.state_version);
+  if (snapshot.managed_execution?.active) fail('An outstanding executor Attempt holds this run.');
+  return preflight(snapshot);
+}
+
 function outstanding(db: DatabaseSync, run: string) {
   ensureWorkflowCollectionSchema(db);
   return db
@@ -71,10 +124,12 @@ function outstanding(db: DatabaseSync, run: string) {
     .all(run)
     .map((row) => {
       const key = String(row.key);
-      const events = history(db, run, key);
+      const { events, claimed } = history(db, run, key);
       const first = events[0];
       if (first?.phase !== 'intent') fail('The retained producer attempt has no intent.');
-      return { key, ...first.intent, phase: events.at(-1)!.phase };
+      const last = events.at(-1)!.phase;
+      const phase = last === 'intent' && claimed !== undefined ? (claimed ? 'launch_claimed' : 'reserved') : last;
+      return { key, ...first.intent, phase };
     });
 }
 export function activeWorkflowCollections(root: string, run: string) {
@@ -94,8 +149,8 @@ export function openCollection(
     const snapshot = loadJournal(db, run)?.snapshot;
     if (!snapshot?.genesis.gaap) fail('Evidence collection requires a managed Workflow Run.');
     ensureWorkflowCollectionSchema(db);
-    const events = history(db, run, key),
-      first = events[0],
+    const { events, claimed } = history(db, run, key);
+    const first = events[0],
       last = events.at(-1);
     if (first) {
       if (
@@ -113,30 +168,87 @@ export function openCollection(
           fail('The retained collector source has the wrong kind.');
         return { stage: 'captured' as const, source: verified };
       }
-      if (target.kind === 'local-gate')
-        fail('A local gate may already have run. Its retained attempt must be reconciled before another launch.');
+      if (target.kind === 'local-gate') {
+        if (claimed !== false) heldGate(run, key, first.intent.attempt);
+        return { stage: 'collect' as const, intent: first.intent, snapshot };
+      }
     } else if (outstanding(db, run).length) fail('Another collection holds this run.');
-    expectVersion(snapshot.view.state_version, target.state_version);
-    if (snapshot.managed_execution?.active) fail('An outstanding executor Attempt holds this run.');
-    const subject = preflight(snapshot);
-    const intent =
-      first?.phase === 'intent' ? first.intent : { ...target, subject_digest: subject, attempt: randomUUID() };
-    if (subject !== intent.subject_digest) fail('The collector subject changed during recovery.');
-    if (!first) append(db, run, key, 0, { phase: 'intent', intent });
+    const digest = ready(snapshot, target, preflight);
+    const intent: Intent =
+      first?.phase === 'intent'
+        ? first.intent
+        : {
+            ...target,
+            subject_digest: digest,
+            attempt: randomUUID(),
+            ...(target.kind === 'local-gate' ? { launch_protocol: 1 } : {}),
+          };
+    if (digest !== intent.subject_digest) fail('The collector subject changed during recovery.');
+    if (!first) {
+      if (intent.launch_protocol) requireGateLaunchSchema(db, true);
+      append(db, run, key, 0, { phase: 'intent', intent });
+      if (intent.launch_protocol)
+        db.prepare(
+          'INSERT INTO workflow_gate_launches(run_id,key,attempt,intent_digest,claimed) VALUES(?,?,?,?,0)',
+        ).run(run, key, intent.attempt, intentDigest(run, key, intent));
+    }
     return { stage: 'collect' as const, intent, snapshot };
   });
 }
+
+export function claimCollectionLaunch(
+  root: string,
+  run: string,
+  key: string,
+  attempt: string,
+  preflight: (snapshot: RunSnapshot) => string,
+): boolean {
+  return withExistingStateWrite(root, (db) => {
+    const snapshot = loadJournal(db, run)?.snapshot;
+    if (!snapshot?.genesis.gaap) fail('Gate launch requires its managed Workflow Run.');
+    ensureWorkflowCollectionSchema(db);
+    const { events: rows, claimed } = history(db, run, key);
+    const first = rows[0];
+    if (first?.phase !== 'intent' || first.intent.kind !== 'local-gate' || first.intent.attempt !== attempt)
+      fail('The claim must identify the original gate and attempt.');
+    const intent = first.intent;
+    if (intent.launch_protocol === undefined) heldGate(run, key, attempt);
+    if (claimed || rows.at(-1)?.phase !== 'intent') return false;
+    if (ready(snapshot, intent, preflight) !== intent.subject_digest) fail('The gate subject changed before launch.');
+    const result = db
+      .prepare('UPDATE workflow_gate_launches SET claimed=1 WHERE run_id=? AND key=? AND attempt=? AND claimed=0')
+      .run(run, key, attempt);
+    return result.changes === 1;
+  });
+}
+
 export function captureCollection(root: string, run: string, key: string, source: HostSource) {
   return withExistingStateWrite(root, (db) => {
-    const rows = history(db, run, key);
-    const last = rows.at(-1);
-    if (last?.phase === 'completed') return last.reply;
-    if (last?.phase === 'captured') {
-      if (canonicalJson(last.record) !== canonicalJson(retainSource(source)))
+    const { events: rows, claimed } = history(db, run, key);
+    const first = rows[0],
+      last = rows.at(-1);
+    if (first?.phase !== 'intent') fail('The producer attempt has no intent.');
+    const intent = first.intent,
+      binding = source.producing.binding;
+    if (
+      source.kind !== intent.kind ||
+      binding.workflow_run_id !== run ||
+      binding.state_version !== intent.state_version ||
+      binding.subject.content_digest !== intent.subject_digest ||
+      (source.kind === 'local-gate' &&
+        (source.receipt.gateId !== intent.target || source.receipt.id !== 'receipt_' + intent.attempt))
+    )
+      fail('The captured producer output differs from its collection intent.');
+    const prior = rows.find((event) => event.phase === 'captured');
+    if (prior) {
+      if (canonicalJson(prior.record) !== canonicalJson(retainSource(source)))
         fail('Concurrent collectors observed different source bytes.');
-    } else if (last?.phase === 'intent')
+      if (last?.phase === 'completed') return last.reply;
+      if (last?.phase !== 'captured') fail('The producer attempt is already closed.');
+    } else if (last?.phase === 'intent') {
+      if (intent.kind === 'local-gate' && claimed !== true) fail('Only the claimed gate attempt can capture output.');
       append(db, run, key, rows.length, { phase: 'captured', record: retainSource(source) });
-    else fail('The producer attempt has no active intent.');
+    } else fail('The producer attempt has no active intent.');
     return undefined;
   });
 }
@@ -147,13 +259,15 @@ export function finishCollection(
   event: Extract<Event, { phase: 'completed' | 'failed' }>,
 ) {
   withExistingStateWrite(root, (db) => {
-    const rows = history(db, run, key),
-      last = rows.at(-1);
+    const { events: rows, claimed } = history(db, run, key);
+    const last = rows.at(-1);
     if (canonicalJson(last) === canonicalJson(event)) return;
     if (
       event.phase === 'completed' ? last?.phase !== 'captured' : last?.phase !== 'intent' && last?.phase !== 'captured'
     )
       fail('The collector completion conflicts with its retained events.');
+    if (event.phase === 'failed' && last?.phase === 'intent' && last.intent.kind === 'local-gate' && claimed !== false)
+      heldGate(run, key, last.intent.attempt);
     append(db, run, key, rows.length, event);
   });
 }

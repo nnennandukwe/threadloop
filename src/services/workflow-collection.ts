@@ -1,5 +1,5 @@
 import { execFile, execFileSync } from 'node:child_process';
-import { lstat, mkdir } from 'node:fs/promises';
+import { lstat, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { z } from 'zod';
@@ -10,6 +10,7 @@ import { sha256 } from '../adapters/crypto/sha256.js';
 import { readGaapFile, requireGaapDirectory } from '../adapters/fs/gaap-files.js';
 import {
   captureCollection,
+  claimCollectionLaunch,
   finishCollection,
   openCollection,
   type CollectionTarget,
@@ -136,6 +137,9 @@ async function retainedReview(snapshot: RunSnapshot, producing: SourceBinding, o
     },
   };
 }
+function gateOutputDirectory(root: string, attempt: string) {
+  return path.join(root, '.threadloop', 'artifacts', 'workflow-collections', attempt);
+}
 async function localGate(
   root: string,
   snapshot: RunSnapshot,
@@ -149,7 +153,7 @@ async function localGate(
     reject('The gate must be declared by the adopted local proof plan.');
   const baseline = producing.binding.subject;
   if (baseline.kind !== 'repository') reject('A local gate requires a repository subject.');
-  const directory = path.join(root, '.threadloop', 'artifacts', 'workflow-collections', attempt);
+  const directory = gateOutputDirectory(root, attempt);
   let parent = path.join(root, '.threadloop');
   requireGaapDirectory(parent);
   for (const segment of ['artifacts', 'workflow-collections']) {
@@ -260,30 +264,92 @@ export async function collectWorkflowEvidence(cwd: string, kind: string, o: Coll
   let source: HostSource;
   if (opened.stage === 'captured') source = opened.source;
   else {
+    const attempt = opened.intent.attempt;
+    const coordinates = { workflow_run_id: o.run, key: o.idempotencyKey, attempt };
+    if (kind === 'local-gate') {
+      let claimed: boolean;
+      try {
+        claimed = claimCollectionLaunch(
+          root,
+          o.run,
+          o.idempotencyKey,
+          attempt,
+          (snapshot) => sourceBinding(snapshot, kind).binding.subject.content_digest,
+        );
+      } catch (error) {
+        if (
+          error instanceof ThreadloopError &&
+          ['TRANSITION_GUARD_FAILED', 'STATE_VERSION_CONFLICT'].includes(error.code)
+        )
+          finishCollection(root, o.run, o.idempotencyKey, {
+            phase: 'failed',
+            reason: 'The reserved gate lost its launch authority. Inspect the current run and collect fresh evidence.',
+          });
+        throw error;
+      }
+      if (!claimed)
+        throw new ThreadloopError('TRANSITION_GUARD_FAILED', 'Another delivery already owns this gate launch.', {
+          details: {
+            ...coordinates,
+            reason: 'collection_outstanding',
+            hint: 'Inspect this attempt and repeat the original request to read its recorded result.',
+          },
+        });
+    }
     try {
       const producing = sourceBinding(opened.snapshot, kind);
       if (producing.binding.subject.content_digest !== opened.intent.subject_digest)
         reject('The subject changed before collection.');
       source =
         kind === 'local-gate'
-          ? await localGate(root, opened.snapshot, producing, target, opened.intent.attempt)
+          ? await localGate(root, opened.snapshot, producing, target, attempt)
           : await retainedReview(opened.snapshot, producing, target);
       projectWorkflowHostSource(source, opened.snapshot.genesis);
+      const replay = captureCollection(root, o.run, o.idempotencyKey, source);
+      if (replay) return replay;
     } catch (error) {
-      // Qodo status is read-only. The same operation can be collected again after an unavailable response.
-      if (
-        kind === 'local-gate' ||
-        (error instanceof ThreadloopError && error.details?.reason === 'invalid_terminal_review')
-      )
+      if (kind === 'local-gate')
+        throw new ThreadloopError(
+          'TRANSITION_GUARD_FAILED',
+          "The gate launch was claimed and its result couldn't be confirmed.",
+          {
+            cause: error,
+            details: {
+              ...coordinates,
+              reason: 'collection_outstanding',
+              hint: 'Inspect this attempt before reconciling the gate. Repeating the original request can read a committed result.',
+            },
+          },
+        );
+      // Reading the same Qodo operation again is safe after an unavailable response.
+      if (error instanceof ThreadloopError && error.details?.reason === 'invalid_terminal_review')
         finishCollection(root, o.run, o.idempotencyKey, {
           phase: 'failed',
-          reason: 'The producer ended without admissible output. Inspect its attempt ' + opened.intent.attempt + '.',
+          reason: 'The producer ended without admissible output. Inspect its attempt ' + attempt + '.',
         });
       if (error instanceof ThreadloopError) throw error;
       reject("The enrolled producer didn't return a verifiable result. Inspect its original operation.");
     }
-    const replay = captureCollection(root, o.run, o.idempotencyKey, source);
-    if (replay) return replay;
+    if (kind === 'local-gate') {
+      try {
+        await writeFile(path.join(gateOutputDirectory(root, attempt), 'execution.json'), source.artifact.bytes, {
+          flag: 'wx',
+        });
+      } catch (error) {
+        throw new ThreadloopError(
+          'TRANSITION_GUARD_FAILED',
+          "ThreadLoop captured the gate result but couldn't write its execution report.",
+          {
+            cause: error,
+            details: {
+              ...coordinates,
+              reason: 'collection_result_captured',
+              hint: 'Repeat the original collection request to admit the stored result.',
+            },
+          },
+        );
+      }
+    }
   }
   const reply = await admitWorkflowHostSource(cwd, o.run, o.expectedStateVersion, source).catch((error: unknown) => {
     if (error instanceof ThreadloopError && ['TRANSITION_GUARD_FAILED', 'STATE_VERSION_CONFLICT'].includes(error.code))
