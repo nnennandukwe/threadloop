@@ -25,6 +25,14 @@ async function main() {
   const packDir = await mkdtemp(path.join(os.tmpdir(), 'threadloop-smoke-pack-'));
   const consumerRepo = await makeRepo('threadloop-smoke-consumer-');
 
+  try {
+    await verifyInstall(packDir, consumerRepo);
+  } finally {
+    await Promise.all([packDir, consumerRepo].map((directory) => rm(directory, { recursive: true, force: true })));
+  }
+}
+
+async function verifyInstall(packDir, consumerRepo) {
   console.log(`Packing ThreadLoop from ${projectRoot}`);
   await run('npm', ['pack', '--pack-destination', packDir], projectRoot);
 
@@ -135,8 +143,37 @@ async function main() {
     );
     const v5 = await threadloopJson('protocol', '--contract', '5');
     expect(
-      v5.capabilities.includes('workflow_runs_v1') && v5.commands['workflow apply'],
+      v5.capabilities.includes('workflow_runs_v1') &&
+        v5.capabilities.includes('workflow_gaap_execution_v1') &&
+        v5.commands['workflow apply'] &&
+        v5.commands['workflow execute'] &&
+        v5.capabilities.includes('workflow_claim_expiry_v1') &&
+        v5.commands['workflow expire-claim']?.includes('<run> --attempt <id> --expected-state-version <n> [--json]'),
       'The installed protocol must advertise workflow runs.',
+    );
+    const expiryHelp = await threadloop('workflow', 'expire-claim', '--help');
+    expect(
+      expiryHelp.stdout.includes('expire-claim [options] <run>') &&
+        expiryHelp.stdout.includes('--attempt <id>') &&
+        expiryHelp.stdout.includes('--expected-state-version <n>'),
+      'The installed command help must identify the run, Attempt and expected version.',
+    );
+    const missingAttempt = await threadloop(
+      'workflow',
+      'expire-claim',
+      'quote',
+      '--expected-state-version',
+      '1',
+      '--json',
+    ).then(
+      () => null,
+      (error) => error,
+    );
+    expect(
+      missingAttempt &&
+        JSON.parse(missingAttempt.stderr).error.code === 'INVALID_ARGUMENT' &&
+        missingAttempt.stderr.includes('--attempt'),
+      'A claim expiry request needs its Attempt ID.',
     );
     const oldStreams = [
       [[], '5ac51f9c27359b9f27e717adec58d4b85c3e78e4b721957ed534f2d9a7e40fcf'],
@@ -163,6 +200,11 @@ async function main() {
     await rm(subject, { recursive: true, force: true });
   }
 
+  await run(
+    process.execPath,
+    ['--import', 'tsx', 'scripts/smoke-managed-workflow.ts', path.join(installedRoot, 'dist', 'cli.js')],
+    projectRoot,
+  );
   const { session_id: sessionId } = await threadloopJson(
     'session',
     'start',
@@ -250,7 +292,6 @@ async function main() {
   );
 
   console.log('Smoke pack verification passed.');
-  await Promise.all([packDir, consumerRepo].map((directory) => rm(directory, { recursive: true, force: true })));
 }
 
 main().catch((error) => {

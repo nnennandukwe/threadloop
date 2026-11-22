@@ -15,23 +15,28 @@ export function readGaapFile(filename: string, maximum: number): Buffer {
   requireGaapDirectory(path.dirname(path.resolve(filename)));
   const descriptor = openSync(filename, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
-    const before = fstatSync(descriptor);
-    if (!before.isFile() || before.size > maximum)
-      throw new GaapEvidenceError('file.limit', 'Evidence requires a bounded regular file.');
-    const bytes = Buffer.alloc(maximum + 1);
-    let count = 0;
-    while (count <= maximum) {
-      const received = readSync(descriptor, bytes, count, bytes.length - count, null);
-      if (received === 0) break;
-      count += received;
-    }
-    const after = fstatSync(descriptor);
-    if (count > maximum || before.ino !== after.ino || before.size !== after.size || before.mtimeMs !== after.mtimeMs)
-      throw new GaapEvidenceError('file.changed', 'Evidence changed during its bounded read.');
-    return bytes.subarray(0, count);
+    return readGaapFileDescriptor(descriptor, maximum);
   } finally {
     closeSync(descriptor);
   }
+}
+
+/** Read a bounded regular file from an open descriptor owned by the caller. */
+export function readGaapFileDescriptor(descriptor: number, maximum: number): Buffer {
+  const before = fstatSync(descriptor);
+  if (!before.isFile() || before.size > maximum)
+    throw new GaapEvidenceError('file.limit', 'Evidence requires a bounded regular file.');
+  const bytes = Buffer.alloc(maximum + 1);
+  let count = 0;
+  while (count <= maximum) {
+    const received = readSync(descriptor, bytes, count, bytes.length - count, null);
+    if (received === 0) break;
+    count += received;
+  }
+  const after = fstatSync(descriptor);
+  if (count > maximum || before.ino !== after.ino || before.size !== after.size || before.mtimeMs !== after.mtimeMs)
+    throw new GaapEvidenceError('file.changed', 'Evidence changed during its bounded read.');
+  return bytes.subarray(0, count);
 }
 
 export function requireGaapDirectory(directory: string): string {

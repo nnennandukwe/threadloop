@@ -46,12 +46,7 @@ import {
   refExists,
   snapshotRepo,
 } from '../adapters/git/client.js';
-import {
-  classifyGateOutcome,
-  gateExecutionWasInvalidated,
-  runGateWithSetup,
-  toRecordedSetupStep,
-} from '../adapters/process/gate-runner.js';
+import { produceLocalGate, resolveProofWorkingDirectory } from './local-gate.js';
 import { StateCorruptedError, ThreadloopError } from '../contracts/errors.js';
 import {
   canonicalizeTransitionRequest,
@@ -72,7 +67,6 @@ import {
   type ProofEvidence,
   type StoredGateReceipt,
 } from '../domain/proof.js';
-import type { GateReceiptPayload } from '../domain/proof.js';
 import { evaluateCiProofEvidence, type CiProofEvidence, type StoredSignedGateReceipt } from '../domain/attestation.js';
 import {
   evaluateReviewEvidence,
@@ -530,7 +524,7 @@ async function prepareBoundProofPlan(repoRoot: string, value: unknown): Promise<
   }
 
   for (const gate of canonical.plan.gates) {
-    await resolveProofWorkingDirectory(repoRoot, gate.id, gate.working_directory);
+    resolveProofWorkingDirectory(repoRoot, gate.id, gate.working_directory);
   }
 
   return {
@@ -632,121 +626,22 @@ export async function runSessionGate(input: RunSessionGateInput) {
       },
     });
   }
-  const workingDirectory = await resolveProofWorkingDirectory(repoRoot, gate.id, gate.working_directory);
   const receiptId = createId('receipt');
   const receiptDirectory = path.join(repoRoot, '.threadloop', 'artifacts', 'receipts', input.sessionId, receiptId);
   await mkdir(receiptDirectory, { recursive: true });
-  const stdoutPath = path.join(receiptDirectory, 'stdout.log');
-  const stderrPath = path.join(receiptDirectory, 'stderr.log');
-  const executionPath = path.join(receiptDirectory, 'execution.json');
-  const relativeStdoutPath = relativeArtifactPath(repoRoot, stdoutPath);
-  const relativeStderrPath = relativeArtifactPath(repoRoot, stderrPath);
-  const relativeExecutionPath = relativeArtifactPath(repoRoot, executionPath);
-
-  const declaredSetup = gate.setup ?? [];
-  const setupDirectories = await Promise.all(
-    declaredSetup.map((step) => resolveProofWorkingDirectory(repoRoot, gate.id, step.working_directory, step.id)),
-  );
-  // The local path's notion of an unchanged repository includes the branch bound to the proof plan, which the
-  // CI path replaces with the caller SHA. Everything downstream of this observer is shared with the sensor.
-  const observeLocal = () => observeProofRepository(repoRoot).catch(() => null);
-  const setupLogPaths = declaredSetup.map((step, index) => ({
-    stdoutPath: path.join(receiptDirectory, `setup-${index}-${step.id}.stdout.log`),
-    stderrPath: path.join(receiptDirectory, `setup-${index}-${step.id}.stderr.log`),
-  }));
-  const gateExecution = await runGateWithSetup({
-    setup: declaredSetup.map((step, index) => ({
-      id: step.id,
-      command: step.command,
-      workingDirectory: step.working_directory,
-      cwd: setupDirectories[index] as string,
-      timeoutMs: step.timeout_ms,
-      stdoutPath: (setupLogPaths[index] as { stdoutPath: string }).stdoutPath,
-      stderrPath: (setupLogPaths[index] as { stderrPath: string }).stderrPath,
-    })),
-    gate: {
-      command: gate.command,
-      cwd: workingDirectory,
-      timeoutMs: gate.timeout_ms,
-      stdoutPath,
-      stderrPath,
-    },
-    observedBefore: before,
-    observe: observeLocal,
+  const { receipt, receiptJson, diagnostic, executionBytes } = await produceLocalGate({
+    repoRoot,
+    artifactRoot: repoRoot,
+    receiptDirectory,
+    receiptId,
+    sessionId: input.sessionId,
+    planSha256: context.plan.sha256,
+    gate,
+    before,
+    observeLocal: () => observeProofRepository(repoRoot).catch(() => null),
   });
-  const after = await observeProofRepository(repoRoot).catch(() => null);
-  const invalidated =
-    !after ||
-    !after.clean ||
-    gateExecutionWasInvalidated(gateExecution, before) ||
-    after.headSha !== before.headSha ||
-    after.branch !== before.branch;
-  const recordedSetup = gateExecution.setup.map(toRecordedSetupStep);
-  // The local artifact additionally names each setup log on disk, so artifact validation can prove every
-  // referenced output exists. The receipt itself carries digests only, matching the signed receipt, which must
-  // not embed local paths.
-  const recordedSetupArtifacts = recordedSetup.map((step, index) => {
-    const logs = setupLogPaths[index] as { stdoutPath: string; stderrPath: string };
-    const execution = gateExecution.setup[index] as (typeof gateExecution.setup)[number];
-    return {
-      ...step,
-      stdout: {
-        path: relativeArtifactPath(repoRoot, logs.stdoutPath),
-        sha256: execution.process.stdout.sha256,
-        bytes: execution.process.stdout.bytes,
-      },
-      stderr: {
-        path: relativeArtifactPath(repoRoot, logs.stderrPath),
-        sha256: execution.process.stderr.sha256,
-        bytes: execution.process.stderr.bytes,
-      },
-    };
-  });
-  const result = classifyGateOutcome({ setup: gateExecution.setup, gate: gateExecution.gate, invalidated });
-  // The execution artifact and the receipt describe one run, so they share these fields verbatim.
-  const identity = { session_id: input.sessionId, gate_id: gate.id, plan_sha256: context.plan.sha256, result };
-  const run = {
-    command: gate.command,
-    working_directory: gate.working_directory,
-    timeout_ms: gate.timeout_ms,
-    started_at: gateExecution.window.startedAt,
-    ended_at: gateExecution.window.endedAt,
-    duration_ms: gateExecution.window.durationMs,
-    exit_status: gateExecution.gate?.exitStatus ?? null,
-    signal: gateExecution.gate?.signal ?? null,
-    head_before: before.headSha,
-    head_after: after?.headSha ?? before.headSha,
-    clean_before: before.clean,
-    clean_after: after?.clean ?? false,
-  };
-  const sensor = { name: 'threadloop-local-gate', contract_version: 2 } as const;
-  const execution = {
-    contract_version: 2,
-    receipt_id: receiptId,
-    ...identity,
-    setup: recordedSetupArtifacts,
-    ...run,
-    // Null when failing setup blocked the gate command, so no gate output exists to describe.
-    stdout: gateExecution.gate
-      ? { path: relativeStdoutPath, sha256: gateExecution.gate.stdout.sha256, bytes: gateExecution.gate.stdout.bytes }
-      : null,
-    stderr: gateExecution.gate
-      ? { path: relativeStderrPath, sha256: gateExecution.gate.stderr.sha256, bytes: gateExecution.gate.stderr.bytes }
-      : null,
-    error: gateExecution.gate?.error ?? null,
-    sensor,
-  };
-  const executionBytes = Buffer.from(`${canonicalJson(execution)}\n`, 'utf8');
-  await writeFile(executionPath, executionBytes, { flag: 'wx' });
-  const receipt: GateReceiptPayload = {
-    id: receiptId,
-    ...identity,
-    setup: recordedSetup,
-    ...run,
-    artifact: { path: relativeExecutionPath, sha256: sha256(executionBytes) },
-    sensor,
-  };
-  const receiptJson = canonicalJson(receipt);
+  await writeFile(path.join(receiptDirectory, 'execution.json'), executionBytes, { flag: 'wx' });
+  const relativeExecutionPath = receipt.artifact.path;
   let sequence: number;
   try {
     sequence = await appendGateReceipt(repoRoot, {
@@ -785,7 +680,7 @@ export async function runSessionGate(input: RunSessionGateInput) {
 
   return {
     receipt: { ...receipt, sequence },
-    diagnostic: gateExecution.diagnostic,
+    diagnostic,
     lifecycle: {
       state: context.state,
       state_version: context.stateVersion,
@@ -875,37 +770,6 @@ function assertSessionAuditVerified(repoRoot: string, sessionId: string) {
     }
     throw error;
   }
-}
-
-/**
- * `setupStepId` names a declared setup step when the directory being resolved belongs to one, so the error
- * points at the step the operator has to correct rather than at the gate.
- */
-async function resolveProofWorkingDirectory(
-  repoRoot: string,
-  gateId: string,
-  workingDirectory: string,
-  setupStepId?: string,
-) {
-  const field = setupStepId
-    ? `proof_plan.gates.${gateId}.setup.${setupStepId}.working_directory`
-    : `proof_plan.gates.${gateId}.working_directory`;
-  const canonicalRepoRoot = await realpath(repoRoot);
-  let gateDirectory: string;
-  try {
-    gateDirectory = await realpath(path.resolve(canonicalRepoRoot, workingDirectory));
-  } catch {
-    throw new ProofValidationError(field, `${field} must name an existing directory.`);
-  }
-  const relative = path.relative(canonicalRepoRoot, gateDirectory);
-  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-    throw new ProofValidationError(field, `${field} resolves outside the repository.`);
-  }
-  return gateDirectory;
-}
-
-function relativeArtifactPath(repoRoot: string, artifactPath: string) {
-  return path.relative(repoRoot, artifactPath).split(path.sep).join('/');
 }
 
 export interface SessionAuditInput {

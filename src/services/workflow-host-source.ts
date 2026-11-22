@@ -1,3 +1,4 @@
+import { reviewGitObjectIdSchema, verifiedQodoReview } from '../domain/workflow-qodo-review.js';
 import { sha256 } from '../adapters/crypto/sha256.js';
 import { ThreadloopError } from '../contracts/errors.js';
 import { canonicalJson, isPlainObject } from '../domain/canonical-json.js';
@@ -169,6 +170,35 @@ export function projectWorkflowHostSource(source: HostSource, genesis: WorkflowG
     !Array.isArray(artifact.findings)
   )
     invalid('The current-head review and its retained artifact differ.');
+  if (genesis.gaap) {
+    const reader =
+      genesis.setup.schema_version === 'threadloop.workflow-setup/2' ? genesis.setup.review_reader : undefined;
+    const treeId = reviewGitObjectIdSchema.safeParse(artifact.tree_sha);
+    if (
+      !reader ||
+      reader.reviewer_id !== source.reviewer_id ||
+      artifact.provider !== 'qodo' ||
+      artifact.repository_id !== genesis.setup.repository_id ||
+      artifact.base_sha !== reader.base_commit ||
+      !treeId.success ||
+      typeof artifact.status_base64 !== 'string' ||
+      typeof artifact.operation !== 'string' ||
+      review.evidenceRef !== 'qodo:' + artifact.operation
+    )
+      invalid('The retained review differs from the enrolled Qodo reader or repository.');
+    const raw = Buffer.from(artifact.status_base64, 'base64');
+    if (raw.toString('base64') !== artifact.status_base64 || sha256(raw) !== artifact.status_sha256)
+      invalid('The retained Qodo result differs from its original bytes.');
+    const checked = verifiedQodoReview(raw, reader.base_commit, review.headSha, treeId.data);
+    if (
+      checked.run_id !== artifact.run_id ||
+      checked.outcome !== review.outcome ||
+      checked.observed_at !== source.observed_at ||
+      !same(checked.findings, source.findings) ||
+      !same(checked.details, review.findings)
+    )
+      invalid('The retained review summary differs from the original Qodo assessment.');
+  }
   const findings = artifact.findings.map((item) => {
     if (!isPlainObject(item) || typeof item.id !== 'string' || !item.id || typeof item.blocking !== 'boolean')
       invalid('A review finding lacks its identity or blocking status.');

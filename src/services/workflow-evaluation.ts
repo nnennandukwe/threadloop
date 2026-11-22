@@ -1,4 +1,6 @@
-import type { ControllerInput } from 'threadloop-contracts/controller';
+import { validateRequestInSnapshot, type ActionRequest, type ControllerInput } from 'threadloop-contracts/controller';
+import { projectControllerExecution, executionAdmissionDigest, requestReference } from 'threadloop-contracts/execution';
+import type { GaapBinding } from '../domain/gaap-binding.js';
 import { ThreadloopError } from '../contracts/errors.js';
 import { gaapObjectDigest } from '../domain/gaap-content.js';
 import { workflowDigest } from '../domain/workflow-selection-types.js';
@@ -90,21 +92,26 @@ function humanCapabilities(snap: RunSnapshot): ControllerInput['available_capabi
   }
   return actions;
 }
-export function decideWorkflow(snapshot: RunSnapshot, observed: PhysicalObservation, at: string): DecisionReply {
-  const g = snapshot.genesis,
-    v = snapshot.view;
+type ExecutionInput = Pick<ControllerInput, 'execution' | 'existing_requests' | 'invalidated_claims'>;
+export function workflowControllerInput(
+  snapshot: RunSnapshot,
+  observed: PhysicalObservation,
+  at: string,
+  previousExecution?: ExecutionInput,
+): ControllerInput {
+  const { genesis, view } = snapshot;
   const input: ControllerInput = {
     schema_version: '0.1',
-    compiled_graph: g.compiled,
+    compiled_graph: genesis.compiled,
     binding: {
-      workflow_run_id: v.workflow_run_id,
-      graph_schema_version: v.graph_schema_version,
-      graph_digest: v.graph_digest,
-      source_state: v.state,
-      state_version: v.state_version,
+      workflow_run_id: view.workflow_run_id,
+      graph_schema_version: view.graph_schema_version,
+      graph_digest: view.graph_digest,
+      source_state: view.state,
+      state_version: view.state_version,
       subject: observed.subject,
     },
-    policy: g.policy,
+    policy: genesis.policy,
     history: snapshot.history,
     observation: observed.facts,
     available_capabilities: humanCapabilities(snapshot),
@@ -114,6 +121,92 @@ export function decideWorkflow(snapshot: RunSnapshot, observed: PhysicalObservat
     existing_requests: [],
     evaluation_time: at,
   };
+  if (!genesis.gaap) return input;
+  const managed = snapshot.managed_execution;
+  if (!managed)
+    throw new ThreadloopError('STATE_CORRUPTED', 'The managed Workflow Run has no verified execution history.');
+  const child = managed.active?.child;
+  // The enrolled bridge has one Attempt. A prelaunch expiry used that slot without starting work.
+  if (!(child?.projection.claims[0]?.status === 'expired' && child.projection.attempts[0]?.started_at === null)) {
+    input.available_capabilities.push({
+      actor: 'executor',
+      capability: genesis.gaap.adapter.mapping_policy.policy.action_capability,
+    });
+  }
+  if (previousExecution) return { ...input, ...previousExecution };
+  input.existing_requests = [...managed.existing_requests];
+  input.invalidated_claims = [...managed.invalidated_claims];
+  if (!child) return input;
+  const authority = new Set(child.authority);
+  authority.add(
+    executionAdmissionDigest({ kind: 'projection', execution_digest: child.journal.execution_digest, snapshot: input }),
+  );
+  const projected = projectControllerExecution(child.journal, input, { isAdmitted: (digest) => authority.has(digest) });
+  if (!projected.ok)
+    throw new ThreadloopError(
+      'TRANSITION_GUARD_FAILED',
+      "The runtime can't project its execution journal onto this observation.",
+      {
+        details: {
+          reason: 'execution_projection_unavailable',
+          diagnostics: projected.diagnostics,
+          hint: 'Inspect and reconcile the outstanding managed execution.',
+        },
+      },
+    );
+  return { ...input, ...projected.value };
+}
+export function workflowGaapBinding(
+  snapshot: RunSnapshot,
+  input: ControllerInput,
+  request: ActionRequest,
+): GaapBinding {
+  const { genesis } = snapshot;
+  const enrollment = genesis.gaap;
+  const current = selectWorkflowDecision(input);
+  if (
+    !enrollment ||
+    input.binding.workflow_run_id !== genesis.run_id ||
+    input.binding.graph_digest !== genesis.compiled.graph_digest ||
+    canonicalJson(input.policy) !== canonicalJson(genesis.policy) ||
+    !current.ok ||
+    current.value.decision.outcome !== 'engineering_action_required' ||
+    canonicalJson(current.value.decision.action_request) !== canonicalJson(request) ||
+    !validateRequestInSnapshot(input, request).ok ||
+    request.request.capability !== enrollment.adapter.mapping_policy.policy.action_capability
+  )
+    stale('managed_action_unavailable', 'The enrolled adapter requires its exact current engineering action.');
+  const { mapping_policy, parameters, executor, lease_ms, execution_policy } = enrollment.adapter;
+  if (parameters.approval_context.some((item) => item.subject_digest !== input.binding.subject.content_digest))
+    stale('managed_approval_mismatch', 'The enrolled executor approval context targets a different action subject.');
+  const families = new Set(request.request.evidence_requirements.map((item) => item.family));
+  const mappings = mapping_policy.policy.evidence_mapping.filter((item) => families.has(item.family));
+  const wanted = [...new Set(mappings.flatMap((item) => item.evidence_types))].sort();
+  if (
+    mappings.length !== families.size ||
+    canonicalJson(wanted) !== canonicalJson([...parameters.required_verification.evidence_types].sort())
+  )
+    stale('managed_mapping_mismatch', 'The enrolled verification mapping must cover every selected evidence family.');
+  const rules = {
+    request: requestReference(request),
+    workflow_policy: { id: genesis.policy.id, digest: genesis.policy.digest },
+    retry_safety: execution_policy.retry_safety,
+    max_attempts: execution_policy.max_attempts,
+  };
+  return {
+    schema_version: 'threadloop.gaap-binding/1',
+    snapshot: input,
+    action_request: request,
+    execution_policy: { id: execution_policy.id, rules, digest: workflowDigest(rules) },
+    mapping_policy,
+    parameters,
+    executor,
+    lease_ms,
+  };
+}
+export function decideWorkflow(snapshot: RunSnapshot, observed: PhysicalObservation, at: string): DecisionReply {
+  const { view } = snapshot;
+  const input = workflowControllerInput(snapshot, observed, at);
   const result = selectWorkflowDecision(input);
   if (!result.ok)
     throw new ThreadloopError('STATE_CORRUPTED', 'The Workflow Run input violates its controller contract.', {
@@ -127,14 +220,20 @@ export function decideWorkflow(snapshot: RunSnapshot, observed: PhysicalObservat
   return {
     controller_decision: decision,
     expectation: {
-      workflow_run_id: v.workflow_run_id,
-      graph_schema_version: v.graph_schema_version,
-      graph_digest: v.graph_digest,
-      policy: v.policy,
-      state: v.state,
-      state_version: v.state_version,
-      history_digest: v.history_digest,
-      evidence_revision: v.evidence_revision,
+      workflow_run_id: view.workflow_run_id,
+      graph_schema_version: view.graph_schema_version,
+      graph_digest: view.graph_digest,
+      policy: view.policy,
+      state: view.state,
+      state_version: view.state_version,
+      history_digest: view.history_digest,
+      ...(snapshot.managed_execution
+        ? {
+            execution_revision: snapshot.managed_execution.revision,
+            execution_digest: snapshot.managed_execution.digest,
+          }
+        : {}),
+      evidence_revision: view.evidence_revision,
       subject: observed.subject,
       evaluation_time: at,
       input_digest: decision.decision.input_digest,
@@ -195,12 +294,7 @@ export function applyWorkflow(snapshot: RunSnapshot, proposal: DecisionReply, no
   return evaluateApply(snapshot, proposal, now, () => observeWorkflow(snapshot));
 }
 
-export function applyObservedWorkflow(
-  snapshot: RunSnapshot,
-  proposal: DecisionReply,
-  observed: PhysicalObservation,
-  at: string,
-): AppliedTransition {
+export function assertWorkflowObservation(snapshot: RunSnapshot, observed: PhysicalObservation): void {
   const { id, ...facts } = observed.facts;
   const physical = observed.physical;
   if (
@@ -223,5 +317,14 @@ export function applyObservedWorkflow(
       'STATE_CORRUPTED',
       'The retained transition observation disagrees with the physical subject.',
     );
+}
+
+export function applyObservedWorkflow(
+  snapshot: RunSnapshot,
+  proposal: DecisionReply,
+  observed: PhysicalObservation,
+  at: string,
+): AppliedTransition {
+  assertWorkflowObservation(snapshot, observed);
   return evaluateApply(snapshot, proposal, at, () => observed);
 }

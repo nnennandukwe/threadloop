@@ -5,6 +5,9 @@ import type { PrePrReviewEvidence } from './session-transition.js';
 import type { ParsedSignedReceiptPackage } from './attestation.js';
 import type { ParsedSignedReviewReceiptPackage } from './review.js';
 import type { VerifiedSigstoreSigner } from '../adapters/crypto/sigstore.js';
+import type { ExecutionPolicy } from 'threadloop-contracts/execution';
+import type { GaapBinding, GaapHost } from './gaap-binding.js';
+import type { ManagedExecutionState } from './workflow-execution.js';
 import type { observeGaapWorkspace } from '../adapters/fs/gaap-files.js';
 
 export type Binding = ControllerInput['binding'];
@@ -17,8 +20,7 @@ export type History = Extract<ControllerInput['history'], { status: 'verified' }
 export type Physical = ReturnType<typeof observeGaapWorkspace>;
 export type Transition = Extract<ControllerDecision['decision'], { outcome: 'transition_available' }>;
 
-export interface WorkflowSetup {
-  schema_version: 'threadloop.workflow-setup/1';
+interface WorkflowSetupFields {
   subject_workspace: string;
   repository_id: string;
   policy: Pick<
@@ -28,6 +30,34 @@ export interface WorkflowSetup {
   proof_plan: string | null;
   trusted_sources: string | null;
   allowed_change_paths: string[];
+}
+export interface WorkflowReviewReader {
+  provider: 'qodo';
+  executable: string;
+  base_commit: string;
+  reviewer_id: string;
+}
+export type WorkflowSetup = WorkflowSetupFields &
+  (
+    | { schema_version: 'threadloop.workflow-setup/1' }
+    | {
+        schema_version: 'threadloop.workflow-setup/2';
+        gaap: { adapter: string; host: string };
+        review_reader?: WorkflowReviewReader;
+      }
+  );
+export type WorkflowGaapAdapter = Pick<GaapBinding, 'mapping_policy' | 'parameters' | 'executor' | 'lease_ms'> & {
+  schema_version: 'threadloop.workflow-gaap-adapter/1';
+  execution_policy: Pick<ExecutionPolicy['rules'], 'retry_safety' | 'max_attempts'> & { id: string };
+};
+export interface WorkflowGaapEnrollment {
+  adapter: WorkflowGaapAdapter;
+  adapter_digest: string;
+  host: GaapHost;
+  host_digest: string;
+  executable_sha256: string;
+  files: { path: string; sha256: string }[];
+  review_reader_sha256?: string;
 }
 export interface WorkflowSources {
   schema_version: 'threadloop.workflow-sources/1';
@@ -40,6 +70,7 @@ export interface WorkflowGenesis {
   graph_json: string;
   setup: WorkflowSetup;
   setup_sha256: string;
+  gaap?: WorkflowGaapEnrollment;
   change_scope_digest: string;
   subject_root: string;
   baseline: RepositorySubject;
@@ -67,6 +98,8 @@ export interface RunView {
   state_version: number;
   history_digest: string;
   evidence_revision: number;
+  execution_revision?: number;
+  execution_digest?: string;
 }
 export type Expectation = Omit<RunView, 'contract_version'> & {
   subject: Subject;
@@ -149,6 +182,7 @@ export interface AdmittedObservation extends SourceBinding {
 }
 export interface RunSnapshot {
   genesis: WorkflowGenesis;
+  managed_execution?: ManagedExecutionState;
   view: RunView;
   history: History;
   last_subject: Subject;

@@ -4,6 +4,12 @@ The optional `threadloop executor` commands run one frozen Controller Contract a
 verify its signed evidence. They use the TypeScript reference implementation and a separate state database. Existing
 fixed-lifecycle sessions and their schema-8 database remain supported.
 
+For a graph-bound Workflow Run, enroll the host and adapter at creation. The owning control store reserves a selected
+request, allocates its child database and fences launch and admission. The managed child uses executor SQLite
+generation 2. Standalone operators can inspect it. Writes go through the owning run so they can check current outer
+authority. Existing standalone state uses generation 1.
+[Managed execution](workflow-runs.md#execute-a-selected-engineering-action)
+
 ## Host adoption
 
 A trusted host supplies two JSON files before the executor starts:

@@ -11,7 +11,13 @@ host-adopted action in separate storage. [Architecture](architecture.md) · [GAA
 Use `create <run-id> --profile <yaml> --setup <json>` to start a run. `inspect <run-id>` reads its durable state.
 `decide <run-id>` evaluates fresh facts. To apply its selected transition, save the JSON response and use
 `apply <run-id> --decision <file> --idempotency-key <key>`. Use `evidence prepare` and `evidence import` for prepared
-signed gates, reviews and human instructions. [Setup, examples and evidence requirements](workflow-runs.md)
+signed gates, reviews and human instructions. A managed run also accepts `execute <run-id> --decision <file>` for a
+selected engineering action. Save the returned correlation to recover its evidence with `evidence import gaap`. Use
+`evidence collect` for a declared local gate or a retained pre-PR review. When inspection reports an overdue claim, run
+`threadloop workflow expire-claim <run> --attempt <id> --expected-state-version <n> [--json]` with the reported Attempt
+ID and current state version. The result records when the claim closed, the Attempt’s effect and the next recovery
+command. A started Attempt with an unknown effect needs independent reconciliation.
+[Setup, commands and recovery](workflow-runs.md)
 
 ### `threadloop executor <command> --state <directory> [--json]`
 
@@ -303,7 +309,8 @@ Options:
 ### `threadloop protocol [--contract <version>] [--json]`
 
 Prints the supported v4 session-runner view by default. Request `--contract 5` to discover Workflow Run commands, the
-`workflowRun` component and the `workflow_runs_v1` capability.
+`workflowRun` component and the `workflow_runs_v1` capability. Managed execution advertises
+`workflow_gaap_execution_v1`. Check for `workflow_claim_expiry_v1` before invoking `workflow expire-claim`.
 
 The JSON payload includes:
 

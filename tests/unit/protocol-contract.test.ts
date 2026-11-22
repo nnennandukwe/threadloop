@@ -12,6 +12,15 @@ describe('protocol contract', () => {
     expect(buildProtocolContract(program, 4).commands).not.toHaveProperty('workflow create');
   });
 
+  it('advertises overdue claim expiry and its required inputs only in v5', () => {
+    const program = createThreadloopProgram();
+    const current = buildProtocolContract(program, 5);
+    const usage = 'threadloop workflow expire-claim <run> --attempt <id> --expected-state-version <n> [--json]';
+    expect(current.commands['workflow expire-claim']).toContain(usage);
+    expect(current.capabilities).toContain('workflow_claim_expiry_v1');
+    expect(buildProtocolContract(program, 4).commands).not.toHaveProperty('workflow expire-claim');
+  });
+
   it('keeps the installed v4 command set and reflects its JSON support', () => {
     const program = createThreadloopProgram();
     const contract = buildProtocolContract(program);

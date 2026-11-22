@@ -1,0 +1,402 @@
+import { execFile, execFileSync } from 'node:child_process';
+import { lstatSync, mkdirSync, readdirSync } from 'node:fs';
+import path from 'node:path';
+import { promisify } from 'node:util';
+import { z } from 'zod';
+import { ThreadloopError } from '../contracts/errors.js';
+import { canonicalJson } from '../domain/canonical-json.js';
+import { pendingQodoReview, verifiedQodoReview } from '../domain/workflow-qodo-review.js';
+import { sha256 } from '../adapters/crypto/sha256.js';
+import { restoreWorkflowGateArtifacts } from '../adapters/fs/workflow-gate-artifacts.js';
+import { readGaapFile, requireGaapDirectory } from '../adapters/fs/gaap-files.js';
+import {
+  captureCollection,
+  claimCollectionLaunch,
+  finishCollection,
+  openCollection,
+  type CollectionTarget,
+} from '../adapters/fs/workflow-collection-store.js';
+import type { HostSource, RunSnapshot, SourceBinding } from '../domain/workflow-run.js';
+import { observeWorkflow } from './workflow-observation.js';
+import { projectWorkflowHostSource } from './workflow-host-source.js';
+import { assertWorkflowReviewReader } from './workflow-gaap-adapter.js';
+import { produceLocalGate, resolveGateWorkingDirectories } from './local-gate.js';
+import { ProofValidationError } from '../domain/proof.js';
+import { workflowStoreFor } from './workflow-access.js';
+import { admitWorkflowHostSource } from './workflow-runtime.js';
+
+const readStatus = promisify(execFile);
+function reject(message: string): never {
+  throw new ThreadloopError('TRANSITION_GUARD_FAILED', message, {
+    details: { reason: 'invalid_producer', hint: 'Inspect the enrolled source, current subject and producer output.' },
+  });
+}
+function bytes(content: Uint8Array) {
+  return { bytes: content, sha256: sha256(content) };
+}
+function sourceBinding(snapshot: RunSnapshot, kind: CollectionTarget['kind']): SourceBinding {
+  const observed = observeWorkflow(snapshot),
+    v = snapshot.view;
+  const policy = snapshot.genesis.source_policies[kind];
+  if (
+    !policy ||
+    !snapshot.history.proof_plan_bound ||
+    !observed.physical?.clean ||
+    observed.facts.status !== 'verified' ||
+    observed.physical.branch !== snapshot.genesis.baseline_branch
+  )
+    reject('The producer requires an enrolled source, bound plan and clean subject on the adopted branch.');
+  return {
+    binding: {
+      workflow_run_id: v.workflow_run_id,
+      graph_schema_version: v.graph_schema_version,
+      graph_digest: v.graph_digest,
+      source_state: v.state,
+      state_version: v.state_version,
+      subject: observed.subject,
+    },
+    branch: observed.physical.branch,
+    workflow_policy: v.policy,
+    evidence_policy: policy,
+  };
+}
+function reviewTree(snapshot: RunSnapshot, base: string, head: string) {
+  const git = (...args: string[]) =>
+    execFileSync('git', ['--no-replace-objects', '--no-optional-locks', '-C', snapshot.genesis.subject_root, ...args], {
+      encoding: 'utf8',
+      timeout: 5000,
+      maxBuffer: 8192,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        PATH: process.env.PATH,
+        GIT_CONFIG_NOSYSTEM: '1',
+        GIT_CONFIG_GLOBAL: '/dev/null',
+        GIT_NO_LAZY_FETCH: '1',
+        GIT_ALLOW_PROTOCOL: '',
+      },
+    }).trim();
+  if (git('merge-base', base, head) !== base || base === head)
+    reject('The enrolled review base must be an ancestor of the current head.');
+  return git('rev-parse', '--verify', head + '^{tree}');
+}
+async function retainedReview(snapshot: RunSnapshot, producing: SourceBinding, operation: string): Promise<HostSource> {
+  const reader =
+    snapshot.genesis.setup.schema_version === 'threadloop.workflow-setup/2' && snapshot.genesis.setup.review_reader;
+  if (!reader) reject('A pre-PR review requires an enrolled Qodo status reader.');
+  const subject = producing.binding.subject;
+  if (subject.kind !== 'repository') reject('A pre-PR review requires a repository subject.');
+  if (observeWorkflow(snapshot).origin !== snapshot.genesis.setup.repository_id)
+    reject('The checkout origin differs from the enrolled review repository.');
+  const tree = reviewTree(snapshot, reader.base_commit, subject.revision);
+  const executable = assertWorkflowReviewReader(snapshot.genesis).executable;
+  const { stdout } = await readStatus(executable, ['review', 'status', operation, '--json'], {
+    cwd: snapshot.genesis.subject_root,
+    timeout: 60_000,
+    maxBuffer: 4 * 1024 * 1024,
+    encoding: 'buffer',
+  }).catch((error: unknown) => {
+    // The Qodo status command exits with 2 while the submitted operation is still working.
+    if (error instanceof Error && 'code' in error && error.code === 2) pendingQodoReview();
+    if (
+      error instanceof Error &&
+      'code' in error &&
+      error.code === 1 &&
+      'stdout' in error &&
+      Buffer.isBuffer(error.stdout)
+    ) {
+      let response: unknown;
+      try {
+        response = JSON.parse(error.stdout.toString('utf8'));
+      } catch {
+        throw error;
+      }
+      const missing = z.object({
+        error: z.object({
+          operation_id: z.literal(operation),
+          // Qodo's wire message uses U+2014 between the missing-review marker and its explanation.
+          message: z.string().startsWith('no such review \u2014 '),
+        }),
+      });
+      if (missing.safeParse(response).success) {
+        assertWorkflowReviewReader(snapshot.genesis);
+        throw new ThreadloopError('TRANSITION_GUARD_FAILED', "Qodo can't find this review operation.", {
+          details: {
+            reason: 'invalid_terminal_review',
+            operation_id: operation,
+            hint: 'Collect an available review with its own operation ID and collection key.',
+          },
+        });
+      }
+    }
+    throw error;
+  });
+  assertWorkflowReviewReader(snapshot.genesis);
+  const {
+    run_id,
+    observed_at: measured,
+    outcome,
+    findings,
+    details,
+  } = verifiedQodoReview(stdout, reader.base_commit, subject.revision, tree);
+  const artifact = bytes(
+    Buffer.from(
+      canonicalJson({
+        provider: 'qodo',
+        operation,
+        run_id,
+        repository_id: snapshot.genesis.setup.repository_id,
+        reviewer_id: reader.reviewer_id,
+        head_sha: subject.revision,
+        base_sha: reader.base_commit,
+        tree_sha: tree,
+        observed_at: measured,
+        outcome,
+        findings,
+        status_base64: stdout.toString('base64'),
+        status_sha256: sha256(stdout),
+      }),
+    ),
+  );
+  return {
+    kind: 'pre-pr-review',
+    producing,
+    producer_id: producing.evidence_policy,
+    reviewer_id: reader.reviewer_id,
+    observed_at: measured,
+    artifact,
+    findings,
+    review: {
+      outcome,
+      headSha: subject.revision,
+      evidenceRef: 'qodo:' + operation,
+      evidenceSha256: artifact.sha256,
+      findings: details,
+    },
+  };
+}
+function gateOutputDirectory(root: string, attempt: string) {
+  return path.join(root, '.threadloop', 'artifacts', 'workflow-collections', attempt);
+}
+function localGatePlan(snapshot: RunSnapshot, gateId: string) {
+  const plan = snapshot.genesis.proof_plan;
+  const gate = plan?.plan.gates.find((g) => g.id === gateId);
+  if (!plan || !gate || !snapshot.genesis.policy.rules.local_gate_ids.includes(gateId))
+    reject('The gate must be declared by the adopted local proof plan.');
+  try {
+    return { plan, gate, workingDirectories: resolveGateWorkingDirectories(snapshot.genesis.subject_root, gate) };
+  } catch (error) {
+    if (!(error instanceof ProofValidationError)) throw error;
+    const step = gate.setup?.find(
+      (item) => error.field === `proof_plan.gates.${gate.id}.setup.${item.id}.working_directory`,
+    );
+    const configuredDirectory = step?.working_directory ?? gate.working_directory;
+    throw new ThreadloopError('INVALID_ARGUMENT', `${error.message} Check ${JSON.stringify(configuredDirectory)}.`, {
+      cause: error,
+      details: {
+        field: error.field,
+        working_directory: configuredDirectory,
+        reason: 'invalid_gate_directory',
+        hint: 'Restore the declared working directory inside the bound subject and retry with the same collection key.',
+      },
+    });
+  }
+}
+function prepareLocalGate(root: string, snapshot: RunSnapshot, gateId: string, attempt: string) {
+  const { plan, gate, workingDirectories } = localGatePlan(snapshot, gateId);
+  const producing = sourceBinding(snapshot, 'local-gate');
+  const baseline = producing.binding.subject;
+  if (baseline.kind !== 'repository') reject('A local gate requires a repository subject.');
+  const directory = gateOutputDirectory(root, attempt);
+  let parent = path.join(root, '.threadloop');
+  requireGaapDirectory(parent);
+  for (const segment of ['artifacts', 'workflow-collections', attempt]) {
+    parent = path.join(parent, segment);
+    try {
+      mkdirSync(parent, { mode: 0o700 });
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error;
+    }
+    requireGaapDirectory(parent);
+    const info = lstatSync(parent);
+    if (info.uid !== process.getuid?.() || (info.mode & 0o022) !== 0)
+      reject('Gate artifacts require an owned control directory.');
+  }
+  // Preparation can create the directory before its SQLite transaction commits. A retry can reuse it while empty.
+  if (readdirSync(directory).length)
+    throw new ThreadloopError(
+      'INVALID_ARGUMENT',
+      'The reserved gate output directory must be empty before its first command.',
+    );
+  const observe = () => {
+    const observed = observeWorkflow(snapshot);
+    if (!observed.physical || observed.subject.kind !== 'repository') return null;
+    const same = canonicalJson(baseline) === canonicalJson(observed.subject);
+    return {
+      headSha: observed.subject.revision,
+      clean: observed.physical.clean && same,
+      branch: observed.physical.branch,
+      changedFiles: [],
+    };
+  };
+  const before = observe();
+  if (!before?.clean) reject('The physical subject changed before starting the gate.');
+  const receiptId = 'receipt_' + attempt;
+  return { snapshot, producing, plan, gate, workingDirectories, directory, observe, before, receiptId };
+}
+async function localGate(prepared: ReturnType<typeof prepareLocalGate>): Promise<HostSource> {
+  const { snapshot, producing, plan, gate, workingDirectories, directory, observe, before, receiptId } = prepared;
+  const result = await produceLocalGate({
+    repoRoot: snapshot.genesis.subject_root,
+    artifactRoot: directory,
+    receiptDirectory: directory,
+    receiptId,
+    sessionId: snapshot.view.workflow_run_id,
+    planSha256: plan.sha256,
+    gate,
+    workingDirectories,
+    before,
+    observeLocal: () => Promise.resolve(observe()),
+    limits: {
+      env: { PATH: process.env.PATH, LANG: 'C' },
+      maxOutputBytes: Math.floor((8 * 1024 * 1024) / (2 + 2 * (gate.setup?.length ?? 0))),
+    },
+  });
+  const payload = result.receipt;
+  return {
+    kind: 'local-gate',
+    producing,
+    producer_id: producing.evidence_policy,
+    artifact: bytes(result.executionBytes),
+    outputs: result.outputs.map((output) => ({
+      path: output.path,
+      content: bytes(readGaapFile(path.join(directory, output.path), output.bytes)),
+    })),
+    receipt: {
+      sequence: 1,
+      id: receiptId,
+      sessionId: payload.session_id,
+      gateId: gate.id,
+      planSha256: plan.sha256,
+      headBefore: payload.head_before,
+      headAfter: payload.head_after,
+      result: payload.result,
+      artifactPath: payload.artifact.path,
+      artifactSha256: payload.artifact.sha256,
+      receiptJson: result.receiptJson,
+      receiptSha256: sha256(result.receiptJson),
+      stateVersion: snapshot.view.state_version,
+      createdAt: payload.ended_at,
+    },
+  };
+}
+export interface CollectOptions {
+  run: string;
+  gate?: string;
+  operation?: string;
+  expectedStateVersion: number;
+  idempotencyKey: string;
+}
+export async function collectWorkflowEvidence(cwd: string, kind: string, o: CollectOptions) {
+  if (kind !== 'local-gate' && kind !== 'pre-pr-review') reject('Choose local-gate or pre-pr-review.');
+  const target =
+    kind === 'local-gate' && o.operation === undefined
+      ? o.gate
+      : kind === 'pre-pr-review' && o.gate === undefined
+        ? o.operation
+        : undefined;
+  if (!target || (kind === 'pre-pr-review' && !z.uuid().safeParse(target).success))
+    reject('Supply the declared gate ID or the Qodo review operation UUID.');
+  const { root, store } = await workflowStoreFor(cwd, o.run);
+  store.read(o.run);
+  const opened = openCollection(
+    root,
+    o.run,
+    o.idempotencyKey,
+    { kind, target, state_version: o.expectedStateVersion },
+    (snapshot) => {
+      if (kind === 'pre-pr-review') assertWorkflowReviewReader(snapshot.genesis);
+      else localGatePlan(snapshot, target);
+      return sourceBinding(snapshot, kind).binding.subject.content_digest;
+    },
+  );
+  const attempt = opened.intent.attempt;
+  const coordinates = { workflow_run_id: o.run, key: o.idempotencyKey, attempt };
+  let source: HostSource;
+  let completedReply = opened.stage === 'completed' ? opened.reply : undefined;
+  if (opened.stage !== 'collect') source = opened.source;
+  else {
+    let preparedGate: ReturnType<typeof prepareLocalGate> | undefined;
+    if (kind === 'local-gate') {
+      let claimed: boolean;
+      try {
+        claimed = claimCollectionLaunch(root, o.run, o.idempotencyKey, attempt, (snapshot) => {
+          preparedGate = prepareLocalGate(root, snapshot, target, attempt);
+          return preparedGate.producing.binding.subject.content_digest;
+        });
+      } catch (error) {
+        if (
+          error instanceof ThreadloopError &&
+          ['TRANSITION_GUARD_FAILED', 'STATE_VERSION_CONFLICT'].includes(error.code)
+        )
+          finishCollection(root, o.run, o.idempotencyKey, {
+            phase: 'failed',
+            reason: 'The reserved gate lost its launch authority. Inspect the current run and collect fresh evidence.',
+          });
+        throw error;
+      }
+      if (!claimed || !preparedGate)
+        throw new ThreadloopError('TRANSITION_GUARD_FAILED', 'Another delivery already owns this gate launch.', {
+          details: {
+            ...coordinates,
+            reason: 'collection_outstanding',
+            hint: 'Inspect this attempt and repeat the original request to read its recorded result.',
+          },
+        });
+    }
+    try {
+      if (preparedGate) source = await localGate(preparedGate);
+      else {
+        const producing = sourceBinding(opened.snapshot, kind);
+        if (producing.binding.subject.content_digest !== opened.intent.subject_digest)
+          reject('The subject changed before collection.');
+        source = await retainedReview(opened.snapshot, producing, target);
+      }
+      projectWorkflowHostSource(source, opened.snapshot.genesis);
+      completedReply = captureCollection(root, o.run, o.idempotencyKey, source);
+    } catch (error) {
+      if (kind === 'local-gate')
+        throw new ThreadloopError(
+          'TRANSITION_GUARD_FAILED',
+          "The gate launch was claimed and its result couldn't be confirmed.",
+          {
+            cause: error,
+            details: {
+              ...coordinates,
+              reason: 'collection_outstanding',
+              hint: 'Inspect this attempt before reconciling the gate. Repeating the original request can read a committed result.',
+            },
+          },
+        );
+      // Reading the same Qodo operation again is safe after an unavailable response.
+      if (error instanceof ThreadloopError && error.details?.reason === 'invalid_terminal_review')
+        finishCollection(root, o.run, o.idempotencyKey, {
+          phase: 'failed',
+          reason: 'The producer ended without admissible output. Inspect its attempt ' + attempt + '.',
+        });
+      if (error instanceof ThreadloopError) throw error;
+      reject("The enrolled producer didn't return a verifiable result. Inspect its original operation.");
+    }
+  }
+  if (source.kind === 'local-gate') await restoreWorkflowGateArtifacts(root, coordinates, source);
+  if (completedReply) return completedReply;
+  const reply = await admitWorkflowHostSource(cwd, o.run, o.expectedStateVersion, source).catch((error: unknown) => {
+    if (error instanceof ThreadloopError && ['TRANSITION_GUARD_FAILED', 'STATE_VERSION_CONFLICT'].includes(error.code))
+      finishCollection(root, o.run, o.idempotencyKey, {
+        phase: 'failed',
+        reason: 'The captured source no longer matches the run. Collect new evidence at the current subject.',
+      });
+    throw error;
+  });
+  finishCollection(root, o.run, o.idempotencyKey, { phase: 'completed', reply });
+  return JSON.parse(canonicalJson(reply)) as typeof reply;
+}

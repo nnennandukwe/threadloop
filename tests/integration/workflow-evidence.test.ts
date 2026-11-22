@@ -454,7 +454,19 @@ it('rechecks native local gate output and a host review before committing the go
     false,
   );
   expect(await advance('handoff')).toBe('ready_for_human');
-  expect((await decideWorkflowRun(control, run)).controller_decision.decision.outcome).toBe('human_action_required');
+  const handoff = await decideWorkflowRun(control, run);
+  expect(handoff.controller_decision.decision.outcome).toBe('human_action_required');
+  const handoffFile = path.join(control, 'handoff.json');
+  await writeFile(handoffFile, JSON.stringify({ ok: true, command: 'workflow decide', data: handoff }));
+  const handed = parseJson<{ data: unknown }>(
+    (await runCli(control, ['workflow', 'execute', run, '--decision', handoffFile, '--json'])).stdout,
+  );
+  expect(handed.data).toMatchObject({
+    disposition: 'human_handoff',
+    state_version: 7,
+    action_request: { request: { actor: 'human' } },
+  });
+  expect(createWorkflowStore(control).read(run).view).toMatchObject({ state: 'ready_for_human', state_version: 7 });
   await observeReview(
     fixture,
     await fixture.prepare('signed-review', 7, 'finish-review', '--pr', '42'),

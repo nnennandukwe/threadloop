@@ -142,3 +142,114 @@ The previous CLI at `0694d0c50143aa4dd2799586456aa5a18008514f` returned identica
 24.20.0 and 26.8.2. Both versions read the same legacy audit exports. An older session writer could commit a transition
 while the graph-bound run retained its original state.
 [Compatibility checks](plans/issue-170-durable-workflow-runs.md#verification-at-the-implementation-checkpoint)
+
+## Execute a selected engineering action
+
+Create the run with `schema_version` set to `threadloop.workflow-setup/2` and `gaap` set to
+`{"adapter":"adapter.json","host":"host.json"}`. Keep the other setup fields from the example above. The
+`threadloop.gaap-host/1` file identifies the absolute executable, its invocation, the subject workspace, verification
+keys and limits. Choose a native Linux or macOS executable outside the subject. Leave `arguments` empty for a producer
+that reads its request from stdin, or list the protected absolute file paths it takes in order. For a script, set
+`executable` to its native interpreter and pass the script's absolute path as an argument. ThreadLoop measures the entry
+executable and each regular file named by an argument or absolute environment value. Your account or root must own each
+file and protect its path from other writers. A private installation can sit under a sticky system temporary directory.
+ThreadLoop checks these permissions and digests at enrollment and before starting the host.
+
+An empty `environment` works. Supply adapter settings under `GAAP_` and your own producer settings under `PRODUCER_`.
+The signed test producer uses `TEST_GAAP_`. Use uppercase names, literal scalar or structured data, and absolute paths
+for file inputs. A directory setting ends in `_DIRECTORY` and points to an existing protected directory outside the
+subject. The host installation owns the libraries, modules and other dependencies its producer uses. Run inspection can
+still read an older binding. An unsupported launch configuration needs a new run with an eligible host.
+
+The `threadloop.workflow-gaap-adapter/1` file supplies the frozen `mapping_policy`, executor `parameters`, `executor`
+identity and `lease_ms`. Its `execution_policy` has an `id`, `retry_safety` and `max_attempts`. Enroll a mapping for an
+executor capability the graph declares. Check that its required evidence families cover the action's guards. The
+existing native proof shows how to construct these files for the governed profile.
+[Executor formats and limits](gaap-executor.md)
+
+Save the decision in the control repository. A managed run derives its Action Request from current evidence and checks
+it again when the Attempt starts. A selected human action returns its handoff.
+
+```bash
+threadloop workflow decide shipping --json > decision.json
+threadloop workflow execute shipping --decision decision.json --json > execution.json
+threadloop workflow inspect shipping --json
+```
+
+A successful execute records the authenticated child admission in the outer execution history. Its JSON result includes
+`data.correlation`. Save that object as `correlation.json`. After a lost response, the inspector also exposes
+`data.execution.correlation`. For a reservation that hasn't enrolled yet, retry the original execute. For a started
+Attempt, inspect its child and import its evidence. The inspector counts durable start records. A crash between the
+start commit and process creation can leave one start and zero invocations. The import can verify an observed result or
+recover a committed receipt, including after the original output directory disappeared. A start without a confirmed
+outcome remains held for reconciliation.
+
+```bash
+threadloop workflow evidence import gaap --run shipping --source correlation.json --expected-state-version 3 --json
+threadloop workflow decide shipping --json
+```
+
+If an enrolled claim has passed its deadline, inspect the run for its Attempt ID and current state version. When
+inspection recommends `expire-claim`, copy its `recovery_argv`. For example, if the state version is 3:
+
+```bash
+threadloop workflow expire-claim shipping --attempt "$attempt_id" --expected-state-version 3 --json
+```
+
+ThreadLoop records the expired claim and its Attempt status. If expiry commits as the producer returns, the child can
+still save its bounded stdout, stderr and available envelope for that launch. Only a current claim can admit new
+evidence. If one CLI process reports an older observation after another process has reported a newer one, ThreadLoop
+checks the child database before accepting the newer record. If the ThreadLoop process stops before it commits the
+output, the stored launch may have no output. A started Attempt retains its unknown effect. Preserve its transport
+evidence for independent verification of the stop and effect, followed by the human disposition required by the bound
+policy. A pending Attempt records that execution never started. Inspect its retry policy and remaining Attempt budget.
+An admission that committed while the claim was valid can still be imported after expiry. Clients can discover the
+expiry command through protocol v5 capability `workflow_claim_expiry_v1`.
+
+The lifecycle advances when you deliberately apply a fresh transition. If the action changed the workspace, the next
+guard can require a scoped commit or independent proof. Use the run's current state version in each request. Keep both
+the outer state database and its owned child directories when backing up or restoring a managed run.
+
+## Collect gate or pre-PR review evidence
+
+For a local gate, use the ID from the immutable proof plan. ThreadLoop captures the gate's actual outputs in the control
+repository and admits them for its observed subject. If the CLI stops, run
+`threadloop workflow inspect shipping --json`. The `collections` list identifies the key and attempt. For a `reserved`
+gate, repeat the original request. If a gate or setup working directory is missing, restore that directory in the bound
+subject and retry with the same key. One delivery can claim the launch. For a `captured` gate, the same request admits
+the result from the database even if its output directory is gone. ThreadLoop checks the recovered bytes and syncs the
+files and containing directories before admitting the gate. If a sync fails, inspect the captured result and retry with
+the same key. A completed request restores the files and returns its recorded reply.
+
+A `launch_claimed` gate with no captured result holds the run. The process may already have changed the subject. Inspect
+its retained output and independently reconcile any effect before taking further action. An older interrupted gate
+without a launch record also has an unknown outcome. Creating a new key can't authorize another launch.
+
+```bash
+threadloop workflow evidence collect local-gate --run shipping --gate check --expected-state-version 4 --idempotency-key verify-local
+```
+
+To collect a Qodo review, declare `pre-pr-review` in `host_producers` and enroll a `review_reader` in setup/2. Set its
+`provider` to `qodo` and supply the trusted status reader's absolute `executable`, an immutable `base_commit` and a
+`reviewer_id`. Omit both the review source and its reader when the run won't collect reviews. Setup/1 retains its
+existing host-produced review policy. An earlier setup/2 run that declared the source without a reader retains its
+original policy, which can't admit pre-PR review evidence. Start a new run to enroll a reader. Preserve the operation ID
+when submitting the authorized full review of the subject.
+
+Install the reader on Linux or macOS under its real path. Your account or root must own the executable and each
+directory on its path. Other accounts mustn't have write access. A private installation directory can sit under a sticky
+system temporary directory. ThreadLoop runs the measured executable in place so the Qodo launcher can find its package
+files. The host account is responsible for protecting the launcher's interpreter and dependencies. ThreadLoop checks the
+reader's digest and permissions before starting it and again before accepting its output.
+
+```bash
+threadloop workflow evidence collect pre-pr-review --run shipping --operation "$operation_id" --expected-state-version 5 --idempotency-key collect-review
+```
+
+If the Qodo operation is still working, repeat the original request with the same operation and key after it finishes.
+Use the subject repository's full Git object IDs for the review base, head and tree. SHA-1 repositories use 40 lowercase
+hexadecimal characters. SHA-256 repositories use 64. The collector reads that operation's terminal result. It checks the
+base, current commit and Git tree, primary review, coverage and finding inventory. Each listed finding needs one
+disposition, and each disposition needs a matching finding. Previously open findings can still block the run.
+Independent CI, human approval and merge observations use their signed sources. Request protocol 5 and check
+`workflow_gaap_execution_v1` before calling managed execution commands.

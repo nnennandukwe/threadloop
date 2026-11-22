@@ -9,9 +9,14 @@ import {
   withReadSnapshot,
 } from './sqlite-store.js';
 import type { DatabaseSync } from './sqlite-driver.js';
-import { appendEntry, conflict, createJournal, demand, equal, expectVersion, loadJournal } from './workflow-journal.js';
+import { appendEntry, createJournal, loadJournal } from './workflow-journal.js';
+import { conflict, demand, equal, expectVersion } from './workflow-storage-checks.js';
 import { workflowSchema } from './workflow-schema.js';
 import { restoreSource, retainSource, signedRaw } from './workflow-stored-source.js';
+
+import type { WorkflowExecutionStore } from '../../domain/workflow-execution.js';
+import { ManagedLedgerSchemaError } from './workflow-execution-journal.js';
+import { workflowExecutionOperations } from './workflow-execution-store.js';
 
 function missing(run: string): never {
   throw new ThreadloopError('WORKFLOW_RUN_NOT_FOUND', `Workflow Run ${run} doesn't exist.`, {
@@ -42,7 +47,10 @@ function access<T>(action: () => T): T {
         cause,
         details: {
           reason: 'invalid_workflow_storage',
-          hint: 'Check the storage generation and restore a verified copy if the run is damaged.',
+          hint:
+            cause instanceof ManagedLedgerSchemaError
+              ? cause.hint
+              : 'Check the storage generation and restore a verified copy if the run is damaged.',
         },
       });
     if (
@@ -70,7 +78,10 @@ function refuse(reason: string, message: string): never {
   });
 }
 
-export function createWorkflowStore(root: string, now: () => string = () => new Date().toISOString()): WorkflowStore {
+export function createWorkflowStore(
+  root: string,
+  now: () => string = () => new Date().toISOString(),
+): WorkflowStore & WorkflowExecutionStore {
   const write = <T>(action: (db: DatabaseSync) => T) => access(() => withExistingStateWrite(root, action));
   const read = <T>(action: (db: DatabaseSync) => T) =>
     access(() =>
@@ -80,6 +91,7 @@ export function createWorkflowStore(root: string, now: () => string = () => new 
       }),
     );
   return {
+    ...workflowExecutionOperations(now, write, readRun),
     read(run) {
       return read((db) => readRun(db, run).snapshot);
     },
@@ -174,6 +186,24 @@ export function createWorkflowStore(root: string, now: () => string = () => new 
           return replay.reply;
         }
         const { snapshot } = journal;
+        const exec = snapshot.managed_execution;
+        if (exec?.active)
+          throw new ThreadloopError(
+            'TRANSITION_GUARD_FAILED',
+            'An outstanding managed execution holds this Workflow Run.',
+            {
+              details: {
+                reason: 'execution_outstanding',
+                hint: 'Inspect the run and reconcile the selected execution before applying a transition.',
+              },
+            },
+          );
+        if (
+          exec &&
+          (exec.revision !== proposal.expectation.execution_revision ||
+            exec.digest !== proposal.expectation.execution_digest)
+        )
+          stale('stale_execution_revision');
         expectVersion(snapshot.view.state_version, proposal.expectation.state_version);
         if (snapshot.view.evidence_revision !== proposal.expectation.evidence_revision)
           stale('stale_evidence_revision');

@@ -1,23 +1,20 @@
 import path from 'node:path';
-import { z } from 'zod';
+import { activeWorkflowCollections, guardWorkflowCollections } from '../adapters/fs/workflow-collection-store.js';
+import { workflowStoreFor, readWorkflowDecision } from './workflow-access.js';
+import { observeWorkflowExecution } from './workflow-execution.js';
 import { verifySigstoreReceipt } from '../adapters/crypto/sigstore.js';
-import { readGaapFile } from '../adapters/fs/gaap-files.js';
-import { createWorkflowStore } from '../adapters/fs/workflow-store.js';
 import { ThreadloopError } from '../contracts/errors.js';
-import { canonicalJson, isPlainObject } from '../domain/canonical-json.js';
-import { parseGaapJson } from '../domain/gaap-json.js';
+import { canonicalJson } from '../domain/canonical-json.js';
 import type {
   Batch,
-  DecisionReply,
   HostSource,
   PrepareTarget,
   RunSnapshot,
   SignedKind,
   SourceBinding,
 } from '../domain/workflow-run.js';
-import { assertInitializedReadOnly, resolveRepositoryRoot } from './preconditions.js';
 import { applyWorkflow, decideWorkflow, observeWorkflow } from './workflow-evaluation.js';
-import { prepareWorkflowGenesis, validateWorkflowRunId } from './workflow-genesis.js';
+import { prepareWorkflowGenesis } from './workflow-genesis.js';
 import { prepareSensorObservation, readWorkflowInstruction } from './workflow-preparation.js';
 import { projectWorkflowSignedSource, readSignedSource, verifyWorkflowSignedSource } from './workflow-signed-source.js';
 import { projectWorkflowHostSource } from './workflow-host-source.js';
@@ -31,86 +28,35 @@ export interface WorkflowPrepareOptions {
   idempotencyKey: string;
 }
 
-async function storeFor(cwd: string, run: string) {
-  validateWorkflowRunId(run);
-  const root = await resolveRepositoryRoot(cwd);
-  await assertInitializedReadOnly(root);
-  return { root, store: createWorkflowStore(root) };
-}
-
 export async function createWorkflowRun(cwd: string, run: string, profile: string, setup: string) {
-  const { root, store } = await storeFor(cwd, run);
+  const { root, store } = await workflowStoreFor(cwd, run);
   const genesis = prepareWorkflowGenesis(cwd, run, profile, setup, root);
   return store.create(run, genesis.requestJson, (now) => genesis.build(now));
 }
 
 export async function inspectWorkflowRun(cwd: string, run: string) {
-  const { store } = await storeFor(cwd, run);
-  return store.read(run).view;
+  const { root, store } = await workflowStoreFor(cwd, run);
+  const snapshot = store.read(run);
+  if (!snapshot.genesis.gaap) return snapshot.view;
+  const { inspection } = await observeWorkflowExecution(snapshot);
+  return { ...snapshot.view, execution: inspection, collections: activeWorkflowCollections(root, run) };
 }
 
 export async function decideWorkflowRun(cwd: string, run: string) {
-  const { store } = await storeFor(cwd, run);
+  const { root, store } = await workflowStoreFor(cwd, run);
   const snapshot = store.read(run);
-  return decideWorkflow(snapshot, observeWorkflow(snapshot), new Date().toISOString());
-}
-
-const digest = z.string().regex(/^[0-9a-f]{64}$/);
-const identity = z.strictObject({ id: z.string().min(1), digest });
-const expected = z.strictObject({
-  workflow_run_id: z.string().min(1),
-  graph_schema_version: z.literal('0.1'),
-  graph_digest: digest,
-  policy: identity,
-  state: z.string().min(1),
-  state_version: z.number().int().nonnegative(),
-  history_digest: digest,
-  evidence_revision: z.number().int().nonnegative(),
-  subject: z.discriminatedUnion('kind', [
-    z.strictObject({
-      kind: z.literal('repository'),
-      repository_id: z.string().min(1),
-      revision: z.string().min(1),
-      content_digest: digest,
-    }),
-    z.strictObject({ kind: z.literal('artifact'), artifact_id: z.string().min(1), content_digest: digest }),
-  ]),
-  evaluation_time: z.iso.datetime({ precision: 3 }),
-  input_digest: digest,
-  decision_digest: digest,
-});
-
-function readDecision(filename: string, run: string): DecisionReply {
-  const raw = parseGaapJson(readGaapFile(filename, 4 * 1024 * 1024));
-  const result = z
-    .strictObject({
-      ok: z.literal(true),
-      command: z.literal('workflow decide'),
-      data: z.strictObject({
-        controller_decision: z.strictObject({ decision: z.record(z.string(), z.unknown()), decision_digest: digest }),
-        expectation: expected,
-      }),
-    })
-    .safeParse(raw);
-  if (
-    !result.success ||
-    result.data.data.expectation.workflow_run_id !== run ||
-    !isPlainObject(result.data.data.controller_decision.decision.binding)
-  )
-    throw new ThreadloopError('INVALID_ARGUMENT', 'Supply a successful workflow decide response for this run.', {
-      details: {
-        reason: 'invalid_decision',
-        hint: 'Run threadloop workflow decide for this run and save its JSON response.',
-      },
-    });
-  // Every field is compared with the full decision reconstructed by the selector under the writer lock.
-  return result.data.data as DecisionReply;
+  if (snapshot.genesis.gaap) guardWorkflowCollections(root, run);
+  const current = snapshot.managed_execution?.active ? (await observeWorkflowExecution(snapshot)).snapshot : snapshot;
+  return decideWorkflow(current, observeWorkflow(current), new Date().toISOString());
 }
 
 export async function applyWorkflowRun(cwd: string, run: string, filename: string, key: string) {
-  const { store } = await storeFor(cwd, run);
-  const proposal = readDecision(path.resolve(cwd, filename), run);
-  return store.apply(run, key, proposal, (snapshot, now) => applyWorkflow(snapshot, proposal, now));
+  const { root, store } = await workflowStoreFor(cwd, run);
+  const proposal = readWorkflowDecision(path.resolve(cwd, filename), run);
+  return store.apply(run, key, proposal, (snapshot, now) => {
+    if (snapshot.genesis.gaap) guardWorkflowCollections(root, run);
+    return applyWorkflow(snapshot, proposal, now);
+  });
 }
 
 function parseKind(kind: string): SignedKind {
@@ -133,7 +79,7 @@ function targetFor(cwd: string, name: string, options: WorkflowPrepareOptions): 
 }
 
 export async function prepareWorkflowEvidence(cwd: string, kind: string, options: WorkflowPrepareOptions) {
-  const { store } = await storeFor(cwd, options.run);
+  const { store } = await workflowStoreFor(cwd, options.run);
   const target = targetFor(cwd, kind, options);
   return store.prepare(options.run, options.idempotencyKey, options.expectedStateVersion, target, (snapshot, id, now) =>
     prepareSensorObservation(snapshot, observeWorkflow(snapshot), target, id, now),
@@ -178,7 +124,7 @@ export async function importWorkflowEvidence(
   options: { run: string; source: string; expectedStateVersion: number },
   verifier: typeof verifySigstoreReceipt = verifySigstoreReceipt,
 ) {
-  const { store } = await storeFor(cwd, options.run);
+  const { store } = await workflowStoreFor(cwd, options.run);
   const kind = parseKind(name);
   const { raw, preparedId } = await readSignedSource(path.resolve(cwd, options.source), kind);
   const lookup = store.lookupSigned(options.run, kind, raw, preparedId);
@@ -210,7 +156,7 @@ export async function importWorkflowEvidence(
 
 /** Trusted producer entry point. CLI uploads must go through the signed sensor operation. */
 export async function admitWorkflowHostSource(cwd: string, run: string, version: number, source: HostSource) {
-  const { store } = await storeFor(cwd, run);
+  const { store } = await workflowStoreFor(cwd, run);
   return store.admit(run, version, source, (snapshot, _prepared, now) => {
     checkSourceBinding(snapshot, source.producing);
     const batch = projectWorkflowHostSource(source, snapshot.genesis);

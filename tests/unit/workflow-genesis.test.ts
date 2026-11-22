@@ -93,12 +93,12 @@ describe('workflow genesis', () => {
     expect(genesis.source_policies['signed-review']).toBeDefined();
     expect(genesis.source_policies['signed-instruction']).toBeUndefined();
   });
-  it('identifies a future setup version per run while refusing malformed v1 data and damaged retained bytes', async () => {
+  it('identifies a future setup version per run while identifying malformed current setups and damaged retained bytes', async () => {
     const { control, setup } = await governedWorkflowFixture();
     const run = 'session_wf_compatibility';
     const prepare = () => prepareWorkflowGenesis(control, run, governedProfile, 'setup.json');
     const genesis = prepare().build(now);
-    const future = { schema_version: 'threadloop.workflow-setup/2', future_specific: 'opaque' };
+    const future = { schema_version: 'threadloop.workflow-setup/3', future_specific: 'opaque' };
     await writeFile(path.join(control, 'setup.json'), JSON.stringify(future));
     const diagnostic = {
       code: 'WORKFLOW_RUNTIME_UNSUPPORTED',
@@ -106,7 +106,7 @@ describe('workflow genesis', () => {
         workflow_run_id: run,
         schema_version: future.schema_version,
         reason: 'unsupported_workflow_setup',
-        supported_schema_version: 'threadloop.workflow-setup/1',
+        supported_schema_version: 'threadloop.workflow-setup/2',
         hint: expect.stringContaining('runtime') as string,
       },
     };
@@ -116,6 +116,14 @@ describe('workflow genesis', () => {
     expect(() => validateWorkflowGenesis(retained)).toThrowError(expect.objectContaining(diagnostic));
     retained.setup_sha256 = genesis.setup_sha256;
     expect(() => validateWorkflowGenesis(retained)).toThrowError(expect.objectContaining({ code: 'STATE_CORRUPTED' }));
+    for (const version of ['threadloop.workflow-setup/1', 'threadloop.workflow-setup/2']) {
+      await writeFile(path.join(control, 'setup.json'), JSON.stringify({ schema_version: version }));
+      expect(captureError(ThreadloopError, prepare)).toMatchObject({
+        code: 'INVALID_ARGUMENT',
+        message: 'The workflow setup must match ' + version + '.',
+        details: { reason: 'invalid_workflow_setup' },
+      });
+    }
     for (const invalid of [
       { ...setup, policy: null },
       { ...setup, schema_version: 'threadloop.workflow-setup/02' },

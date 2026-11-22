@@ -14,6 +14,8 @@ import { workflowDigest } from '../domain/workflow-selection-types.js';
 import { createInvalidArgumentError, ThreadloopError } from '../contracts/errors.js';
 import type { Policy, WorkflowGenesis, WorkflowSetup, WorkflowSources } from '../domain/workflow-run.js';
 import { workflowGithubOrigin } from './workflow-observation.js';
+import { gaapVerificationPolicy } from '../domain/gaap-binding.js';
+import { adoptWorkflowGaap, reviewReaderSchema, validateWorkflowGaapEnrollment } from './workflow-gaap-adapter.js';
 import { initialWorkflowHistory } from './workflow-history.js';
 
 const text = z.string().min(1).max(4096);
@@ -29,7 +31,7 @@ const relativePath = text.refine(
     value.split('/').every((segment) => segment !== '' && segment !== '.' && segment !== '..' && segment !== '.git'),
   'Expected a normalized repository-relative path.',
 );
-const setupSchema: z.ZodType<WorkflowSetup> = z.strictObject({
+const legacySetup = z.strictObject({
   schema_version: z.literal('threadloop.workflow-setup/1'),
   subject_workspace: text,
   repository_id: text,
@@ -44,9 +46,15 @@ const setupSchema: z.ZodType<WorkflowSetup> = z.strictObject({
   trusted_sources: text.nullable(),
   allowed_change_paths: unique(relativePath),
 });
+const managedSetup = legacySetup.extend({
+  schema_version: z.literal('threadloop.workflow-setup/2'),
+  gaap: z.strictObject({ adapter: text, host: text }),
+  review_reader: reviewReaderSchema.optional(),
+});
+const setupSchema = z.discriminatedUnion('schema_version', [legacySetup, managedSetup]);
 function parseWorkflowSetup(value: unknown, run: string): WorkflowSetup {
   const declared = isPlainObject(value) ? value.schema_version : undefined;
-  if (typeof declared === 'string' && /^threadloop\.workflow-setup\/(?:[2-9]|[1-9][0-9]+)$/.test(declared)) {
+  if (typeof declared === 'string' && /^threadloop\.workflow-setup\/(?:[3-9]|[1-9][0-9]+)$/.test(declared)) {
     throw new ThreadloopError(
       'WORKFLOW_RUNTIME_UNSUPPORTED',
       `Workflow Run ${run} requires setup version ${declared}.`,
@@ -55,20 +63,23 @@ function parseWorkflowSetup(value: unknown, run: string): WorkflowSetup {
           reason: 'unsupported_workflow_setup',
           workflow_run_id: run,
           schema_version: declared,
-          supported_schema_version: 'threadloop.workflow-setup/1',
+          supported_schema_version: 'threadloop.workflow-setup/2',
           hint: 'Use a ThreadLoop runtime that supports the declared Workflow Run setup version.',
         },
       },
     );
   }
   const parsed = setupSchema.safeParse(value);
-  if (!parsed.success)
-    throw createInvalidArgumentError('The workflow setup must match threadloop.workflow-setup/1.', {
+  if (!parsed.success) {
+    const supported = setupSchema.options.map((schema) => schema.shape.schema_version.value);
+    const expected = supported.find((version) => version === declared) ?? supported.join(' or ');
+    throw createInvalidArgumentError(`The workflow setup must match ${expected}.`, {
       reason: 'invalid_workflow_setup',
       issues: parsed.error.issues,
       hint: 'Correct the setup fields or schema version and retry create.',
     });
-  return parsed.data;
+  }
+  return parsed.data as WorkflowSetup;
 }
 
 const sourceSchema: z.ZodType<WorkflowSources> = z.strictObject({
@@ -99,7 +110,9 @@ function inside(root: string, dir: string) {
   const name = path.relative(root, dir);
   return name !== '..' && !name.startsWith('..' + path.sep) && !path.isAbsolute(name);
 }
-function derivePolicy(g: Pick<WorkflowGenesis, 'setup' | 'proof_plan' | 'sources' | 'baseline' | 'baseline_branch'>) {
+function derivePolicy(
+  g: Pick<WorkflowGenesis, 'setup' | 'proof_plan' | 'sources' | 'baseline' | 'baseline_branch' | 'gaap'>,
+) {
   const { setup, proof_plan: plan, sources, baseline, baseline_branch: branch } = g;
   const { id: policyId, ...declared } = setup.policy;
   const sourcePolicies: WorkflowGenesis['source_policies'] = {};
@@ -108,7 +121,16 @@ function derivePolicy(g: Pick<WorkflowGenesis, 'setup' | 'proof_plan' | 'sources
   }
   if (plan) enroll('host-plan', plan.sha256);
   for (const kind of sources?.host_producers ?? [])
-    enroll(kind, { producer: kind, version: 1, plan: plan?.sha256 ?? null });
+    if (kind === 'pre-pr-review' && setup.schema_version === 'threadloop.workflow-setup/2') {
+      if (setup.review_reader && g.gaap?.review_reader_sha256)
+        enroll(kind, {
+          producer: kind,
+          version: 2,
+          reader: setup.review_reader,
+          executable_sha256: g.gaap.review_reader_sha256,
+          plan: plan?.sha256 ?? null,
+        });
+    } else enroll(kind, { producer: kind, version: 1, plan: plan?.sha256 ?? null });
   const authorities: Policy['rules']['authorities'] = [
     { type: 'threadloop', identity: { id: 'threadloop', digest: workflowDigest('threadloop') } },
   ];
@@ -142,7 +164,7 @@ function derivePolicy(g: Pick<WorkflowGenesis, 'setup' | 'proof_plan' | 'sources
     selection: 'threadloop.remedies/0.1',
     proof_plan: plan ? { id: 'proof_plan', digest: plan.sha256 } : null,
     repository_binding: { branch, baseline },
-    evidence_policies: Object.values(sourcePolicies),
+    evidence_policies: [...Object.values(sourcePolicies), ...(g.gaap ? [gaapVerificationPolicy(g.gaap.host)] : [])],
     authorities,
   };
   return { source_policies: sourcePolicies, policy: { id: policyId, digest: workflowDigest(rules), rules } };
@@ -200,6 +222,13 @@ function assertGenesis(g: WorkflowGenesis) {
     )
       fail('The adopted proof plan disagrees with its baseline or canonical bytes.');
   }
+  validateWorkflowGaapEnrollment(g);
+  if (
+    g.setup.schema_version === 'threadloop.workflow-setup/2' &&
+    g.setup.review_reader &&
+    !g.sources?.host_producers.includes('pre-pr-review')
+  )
+    fail('The managed review reader requires a declared pre-PR review source.');
   const derived = derivePolicy(g);
   if (
     canonicalJson(derived.policy) !== canonicalJson(g.policy) ||
@@ -262,7 +291,7 @@ export function validateWorkflowGenesis(genesis: WorkflowGenesis): void {
   }
 }
 export function workflowCreateRequestJson(
-  input: Pick<WorkflowGenesis, 'run_id' | 'compiled' | 'setup' | 'subject_root' | 'sources'> & {
+  input: Pick<WorkflowGenesis, 'run_id' | 'compiled' | 'setup' | 'subject_root' | 'sources' | 'gaap'> & {
     proof_plan: { json: string } | null;
   },
 ): string {
@@ -273,6 +302,7 @@ export function workflowCreateRequestJson(
     subject_root: input.subject_root,
     proof_plan: input.proof_plan?.json ?? null,
     sources: input.sources,
+    ...(input.gaap ? { gaap: input.gaap } : {}),
   });
 }
 
@@ -302,18 +332,38 @@ export function prepareWorkflowGenesis(
         requireCiPolicy: Boolean(sources?.github),
       })
     : null;
+  const gaap =
+    setup.schema_version === 'threadloop.workflow-setup/2'
+      ? adoptWorkflowGaap(
+          readJson(resolveInput(setup.gaap.adapter)),
+          readJson(resolveInput(setup.gaap.host)),
+          subjectRoot,
+          control,
+          setup.review_reader,
+        )
+      : undefined;
+  const enrollment = gaap ? { gaap } : {};
   const graphJson = canonicalJson(compiled.graph);
   const requestJson = workflowCreateRequestJson({
     run_id: run,
     compiled,
     setup,
     subject_root: subjectRoot,
+    ...enrollment,
     proof_plan: plan,
     sources,
   });
   return {
     requestJson,
     build(now: string): WorkflowGenesis {
+      if (
+        setup.schema_version === 'threadloop.workflow-setup/2' &&
+        sources?.host_producers.includes('pre-pr-review') &&
+        !setup.review_reader
+      )
+        fail(
+          'The declared pre-pr-review source requires a review_reader in setup/2. Enroll the reader or remove pre-pr-review from host_producers.',
+        );
       const physical = observeGaapWorkspace(subjectRoot);
       if (!physical.clean || !physical.branch) fail('The initial subject requires a clean, named branch.');
       if (
@@ -338,6 +388,7 @@ export function prepareWorkflowGenesis(
         run_id: run,
         compiled,
         graph_json: graphJson,
+        ...enrollment,
         setup,
         setup_sha256: workflowDigest(setup),
         change_scope_digest: workflowDigest(setup.allowed_change_paths),
