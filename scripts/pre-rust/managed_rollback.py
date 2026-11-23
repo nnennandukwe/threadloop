@@ -14,7 +14,7 @@ import subprocess
 import tempfile
 
 from hashlib import sha256
-from proof_package import RUNS_V1, file_hash, install, require, offline_environment
+from proof_package import RUNS_V1, file_hash, install_packages, require, offline_environment, write_report
 
 OLD_MERGE = "bdf68cc2d3ad915d085aecff47c9181f65fb5205"
 RUN = "session_wf_rollback"
@@ -540,12 +540,17 @@ def main():
             "Installed fixture dependency lock differs from the candidate",
         )
         (source / "node_modules").symlink_to(checkout / "node_modules", target_is_directory=True)
-        current, csource = install(
-            checkout, args.candidate_package.resolve(), args.revision, scratch / "current", env
+        packages = install_packages(
+            checkout,
+            {
+                "current": (args.candidate_package.resolve(), args.revision),
+                "previous": (args.prior_package.resolve(), RUNS_V1),
+            },
+            scratch,
+            env,
         )
-        previous, psource = install(
-            checkout, args.prior_package.resolve(), RUNS_V1, scratch / "previous", env
-        )
+        current, csource = packages["current"]
+        previous, psource = packages["previous"]
         cases = [proof_case(case, current, previous, source, scratch, env) for case in ["held", "admitted"]]
         packet = {
             "format": "threadloop.managed-rollback-proof/1",
@@ -570,9 +575,7 @@ def main():
         }
     require(not scratch.exists(), "Temporary proof files remain")
     packet["scratch_removed"] = True
-    with report.open("x") as output:
-        json.dump(packet, output, indent=2, sort_keys=True)
-        output.write("\n")
+    write_report(report, packet, sort_keys=True)
     print(f"{report.name} SHA-256 {file_hash(report)}")
 
 

@@ -10,7 +10,7 @@ import argparse
 import json
 import platform
 import re
-from proof_package import PRE_RUNS, RUNS_V1, install, offline_environment
+from proof_package import PRE_RUNS, RUNS_V1, install_packages, offline_environment, write_report
 import shutil
 import sqlite3
 import subprocess
@@ -163,15 +163,21 @@ with TemporaryDirectory(prefix="threadloop-parity-") as owned:
         "TZ": "UTC",
     }
 
-    def installed(label, directory, revision):
-        """Install the specified revision, record its package provenance and return the verified CLI path."""
-        cli, record = install(opt.checkout.resolve(), directory.resolve(), revision, temp / label, env)
-        report["packages"][label] = record
-        return cli
-
     report["node"] = raw("node", "--version").decode().strip()
-    candidate = installed("candidate", opt.candidate, opt.revision)
-    old = installed("rollback", opt.rollback, RUNS_V1)
+    packages = install_packages(
+        opt.checkout.resolve(),
+        {
+            "candidate": (opt.candidate.resolve(), opt.revision),
+            "rollback": (opt.rollback.resolve(), RUNS_V1),
+            "pre_adoption": (opt.pre_adoption.resolve(), PRE_RUNS),
+        },
+        temp,
+        env,
+    )
+    report["packages"] = {label: record for label, (_, record) in packages.items()}
+    candidate = packages["candidate"][0]
+    old = packages["rollback"][0]
+    historic = packages["pre_adoption"][0]
     report["versions"] = {
         name: ok(binary, temp, "--version").decode().strip()
         for name, binary in [("candidate", candidate), ("rollback", old)]
@@ -420,7 +426,6 @@ with TemporaryDirectory(prefix="threadloop-parity-") as owned:
         generation_one_ddl_sha256=digest(ddl.encode()),
         rejected_read_preserved_files=bad_before,
     )
-    historic = installed("pre_adoption", opt.pre_adoption, PRE_RUNS)
     untouched = git_repo("pre-adoption")
     hist_session = data(
         historic, untouched, "session", "start", "Historical receipts", "--goal", "Retain the audit root"
@@ -470,9 +475,8 @@ with TemporaryDirectory(prefix="threadloop-parity-") as owned:
             "7c54c2bb8055f00736e3b5f6631e9aecbe0fd212",
         ]
     }
-    with opt.new_report.open("x") as summary:
-        json.dump(report, summary, indent=2)
-        summary.write("\n")
-    print(
-        f"{len(report['help']) - 1} command help entries verified. Rollback restored the original database and audit export."
-    )
+
+write_report(opt.new_report, report)
+print(
+    f"{len(report['help']) - 1} command help entries verified. Rollback restored the original database and audit export."
+)

@@ -4,6 +4,11 @@ These commands build local tarballs, install them offline and exercise the insta
 repositories. Use a clone with full Git history and its matching `npm ci` installation. The package version is `0.1.0`
 across these revisions. Git and SHA-256 identify the builds.
 
+Each comparison uses the named Git revisions and the checkout's installed build tools to rebuild the requested archives
+offline. It checks every supplied archive and its CLI against those builds before installing any of them. The dependency
+installation in the checkout is a trusted input. An adjacent provenance file alone can't authenticate an archive. Use
+the recorded Node and npm build versions to reproduce the exact tarball bytes.
+
 ## CLI and storage
 
 Choose a new evidence directory outside the checkout. Each script refuses an existing output. The historic inputs share
