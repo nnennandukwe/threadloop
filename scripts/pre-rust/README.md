@@ -44,8 +44,8 @@ WAL or SHM files separately. WAL is SQLite's write-ahead log. SHM is its shared-
 
 Keep the controlling repository, its immutable graph and its enrolled `executor.sqlite` together. Quiesce writers and
 verify both databases before copying them. The managed proof runs a full checkpoint, compares file hashes and keeps the
-external subject and an invocation counter outside the backup. It restores only fixtures it created, at their original
-paths.
+external subject and an invocation counter outside the backup. It compares the retained executor output paths and file
+bytes before and after restoration. It restores only fixtures it created, at their original paths.
 
 1. In the lost-response case, the producer changed the subject and stopped before it reported the effect. Both the
    restored CLI and a repeated delivery hold the Attempt for reconciliation. The independent counter records one

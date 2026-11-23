@@ -343,6 +343,10 @@ with matching caller-supplied hashes, fails before use. Repeat the final archive
 installed, lockfile-verified dependencies. Check that the installed README's new documentation links open from a package
 installation. [Hosted review](https://github.com/nnennandukwe/threadloop/pull/179/files)
 
+The managed backup covers the physical executor output tree alongside the outer and child databases. Compare the
+relative output paths and bytes before copying, in the backup and after restoration. A missing, changed or extra file
+must fail the comparison even when SQLite still reports the same heads and admitted blobs.
+
 **Parity and rollback.** Measure a fresh exact-head TypeScript package and its runtime files, locked dependency blob, OS
 and Node. Reconcile each of M003's original 15 command names and generation-1 expectations at
 `750ae36b6b7b6ea34081a8c90236d8c95f71b086` with the actual installed interface. Nine names remained at #170. Default v4

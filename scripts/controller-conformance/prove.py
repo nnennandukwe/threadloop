@@ -200,7 +200,8 @@ def build_contracts_dependency(node, implementation, contracts, env):
         check=True,
         timeout=BUILD_SECONDS,
     )
-    # Only the generated exports move. npm owns the nested dependency versions in the ThreadLoop install.
+    # package.json maps ./assets/* to ./dist/docs/contracts/* alongside the generated JavaScript.
+    # npm owns the nested dependency versions in the ThreadLoop install.
     (contracts / "dist").rename(package / "dist")
 
 

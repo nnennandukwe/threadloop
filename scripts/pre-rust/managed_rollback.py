@@ -10,6 +10,7 @@ import re
 import shutil
 import signal
 import sqlite3
+import stat
 import subprocess
 import tempfile
 
@@ -93,8 +94,59 @@ def offline(dbfile):
     return db
 
 
+def retained_outputs(root):
+    """Measure regular files and directories under a quiescent child outputs directory."""
+    paths = {}
+    total_bytes = 0
+
+    def visit(name, parent_fd, relative, depth):
+        """Read one entry relative to its open parent without following links."""
+        nonlocal total_bytes
+        require(
+            len(paths) < 4096 and depth <= 64, "Retained outputs exceed the fixture's entry or depth limit"
+        )
+        info = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        if stat.S_ISDIR(info.st_mode):
+            paths[relative] = {"kind": "directory"}
+            directory = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
+            try:
+                with os.scandir(directory) as entries:
+                    for entry in entries:
+                        child_path = entry.name if relative == "." else f"{relative}/{entry.name}"
+                        visit(entry.name, directory, child_path, depth + 1)
+            finally:
+                os.close(directory)
+        else:
+            require(
+                relative != "." and stat.S_ISREG(info.st_mode),
+                f"Unsupported retained output kind at {relative}",
+            )
+            total_bytes += info.st_size
+            require(total_bytes < CASE_LIMIT, "Retained outputs exceed the fixture's byte limit")
+            flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+            with os.fdopen(os.open(name, flags, dir_fd=parent_fd), "rb") as handle:
+                require(
+                    stat.S_ISREG(os.fstat(handle.fileno()).st_mode),
+                    f"Unsupported retained output kind at {relative}",
+                )
+                contents = handle.read(info.st_size + 1)
+            require(
+                len(contents) == info.st_size, f"Retained output changed during measurement at {relative}"
+            )
+            paths[relative] = {"kind": "file", "bytes": len(contents), "sha256": sha(contents)}
+
+    visit(root, None, ".", 0)
+    summary = {
+        "entries": len(paths),
+        "files": sum(entry["kind"] == "file" for entry in paths.values()),
+        "bytes": total_bytes,
+        "sha256": sha(json.dumps(paths, sort_keys=True, separators=(",", ":")).encode()),
+    }
+    return paths, summary
+
+
 def receipt_state(control):
-    """Verify the checkpointed database pair and collect execution, receipt and blob hashes."""
+    """Verify the checkpointed database pair and measure retained child files, receipts and blobs."""
     outer, child = checkpoint(control)
     with offline(outer) as db:
         head = dict(
@@ -122,7 +174,9 @@ def receipt_state(control):
         body, retained_hash = db.execute("SELECT body,digest FROM root").fetchone()
         require(sha(body.encode()) == retained_hash, "Child root bytes differ from its digest")
         root = json.loads(body)
-        launches = [dict(row) for row in db.execute("SELECT attempt,request_digest FROM launch")]
+        launches = [
+            dict(row) for row in db.execute("SELECT attempt,request_digest,output_directory FROM launch")
+        ]
         observed = [
             {
                 "id": row["id"],
@@ -164,6 +218,7 @@ def receipt_state(control):
         outer_integrity == 0 and generation == 2 and root["owner"]["workflow_run_id"] == RUN,
         "Wrong managed database pair",
     )
+    output_paths, outputs = retained_outputs(child.parent / "outputs")
     return {
         "files": {str(p.relative_to(control)): file_hash(p) for p in [outer, child]},
         "outer": head,
@@ -177,6 +232,8 @@ def receipt_state(control):
             "owner": root["owner"],
             "launches": launches,
             "observations": observed,
+            "output_paths": output_paths,
+            "outputs": outputs,
             "accepted": receipts,
             "blobs": blobs,
         },
@@ -366,12 +423,36 @@ def proof_case(case, current, previous, source, scratch, env):
         "Invalid initial correlated state",
     )
     require(len(facts["accepted"]) == int(case == "admitted"), "Unexpected signed receipt count")
-    if case == "admitted":
+    # The enrolled launch retains its original absolute path when the control checkout is copied.
+    attempt_output = Path(facts["launches"][0]["output_directory"])
+    require(
+        attempt_output.parent == control / child_relative / "outputs",
+        "Launch points outside the child outputs",
+    )
+    paths = facts["output_paths"]
+    if case == "held":
+        marker = b"synthetic producer reached its effect"
+        require(
+            paths.get(f"{attempt_output.name}/effect-observation.txt")
+            == {"kind": "file", "bytes": len(marker), "sha256": sha(marker)},
+            "Missing the held Attempt's physical effect observation",
+        )
+    else:
         require(
             bool(facts["blobs"])
             and facts["accepted"][0]["signature_count"] > 0
             and facts["observations"][0]["envelope_sha256"] == facts["accepted"][0]["envelope_sha256"],
             "Missing admitted signed bytes",
+        )
+        envelope = paths.get(f"{attempt_output.name}/envelope.json", {})
+        require(
+            envelope.get("sha256") == facts["accepted"][0]["envelope_sha256"]
+            and all(
+                paths.get(f"{attempt_output.name}/blobs/{blob['sha256']}")
+                == {"kind": "file", "bytes": blob["bytes"], "sha256": blob["sha256"]}
+                for blob in facts["blobs"]
+            ),
+            "Physical Attempt outputs differ from the admitted envelope or blobs",
         )
     old_live = old_reads(previous, control, env, profile, child_relative)
     require(receipt_state(control) == before, "Old reader or writer changed the live pair")
@@ -413,6 +494,7 @@ def proof_case(case, current, previous, source, scratch, env):
         later["legacy_version"] == 1 and later["counts"].get("import", 0) == int(case == "admitted"),
         "Expected post-backup writes",
     )
+    require(later["child"]["outputs"] == facts["outputs"], "Post-backup operations changed child outputs")
     # Only temporary paths created by this driver can reach the restore operation.
     require(
         control.parent == Path(env["TMPDIR"]) and backup.parent == scratch and backup != control,
@@ -434,6 +516,7 @@ def proof_case(case, current, previous, source, scratch, env):
         verified_child["launch_count"] == 1 and verified_child["revision"] == facts["revision"],
         "Verified child belongs to another generation",
     )
+    require(receipt_state(control) == restored, "Installed inspectors changed the restored snapshot")
     if case == "held":
         recovered = refuse(current, control, env, recover, "EXECUTOR_REJECTED", "execution_outstanding")
         replay = refuse(current, control, env, execute, "EXECUTOR_REJECTED", "execution_outstanding")
@@ -460,6 +543,8 @@ def proof_case(case, current, previous, source, scratch, env):
         "snapshot_bytes": total,
         "file_hashes_before": before["files"],
         "file_hashes_restored": restored["files"],
+        "outputs_before": facts["outputs"],
+        "outputs_restored": restored["child"]["outputs"],
         "outer_state_version": info["state_version"],
         "child_root_digest": facts["root_sha256"],
         "child_revision": facts["revision"],
