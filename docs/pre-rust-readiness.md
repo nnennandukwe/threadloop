@@ -78,6 +78,11 @@ the merge at that approved head. [Live acceptance](https://github.com/nnennanduk
 
 ## Installed command and storage baseline
 
+The original package comparison checked archive bytes against their accompanying provenance files and exercised the
+installed commands. Those checks needed an independent source build to establish that each supplied archive came from
+its claimed Git revision. PR #179 records the revised archive check and its results.
+[Package verification](https://github.com/nnennandukwe/threadloop/pull/179)
+
 The Rust milestone originally pinned 15 commands and storage generation 1 at `750ae36`. Its description says ten error
 codes. The source declares nine. The installed comparison exercises all nine through current error paths and records the
 current declared set. Successful JSON commands write to stdout. JSON failures write an error envelope to stderr and

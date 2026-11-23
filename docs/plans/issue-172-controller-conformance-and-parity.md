@@ -335,6 +335,14 @@ values are `fa969d1079b1d4648f0f1782aa303d554973ac63bf2bc9759f77cff396bc5f3a` an
 `ac21568e1a6cf97cd5857d568fc2d3e5be6ba51a19a0b859ab000db483e7a440`. The locally deterministic cases use fixture trust
 and don't supply live human evidence.
 
+**Installed package identity.** PR #179's second hosted review found that each package and its adjacent provenance file
+could agree on changed bytes. Both public comparison commands must verify every supplied archive against a build from
+the named Git objects before executing the CLI. Include the candidate, v1 Workflow Run and pre-adoption packages. Read
+their build inputs from the trusted checkout with its matching npm installation. Verify that a harmless archive change,
+with matching caller-supplied hashes, fails before use. Repeat the final archive comparison with independently
+installed, lockfile-verified dependencies. Check that the installed README's new documentation links open from a package
+installation. [Hosted review](https://github.com/nnennandukwe/threadloop/pull/179/files)
+
 **Parity and rollback.** Measure a fresh exact-head TypeScript package and its runtime files, locked dependency blob, OS
 and Node. Reconcile each of M003's original 15 command names and generation-1 expectations at
 `750ae36b6b7b6ea34081a8c90236d8c95f71b086` with the actual installed interface. Nine names remained at #170. Default v4
