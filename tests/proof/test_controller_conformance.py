@@ -19,6 +19,83 @@ PROOF = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PROOF)
 
 
+class LockedDependencyTest(unittest.TestCase):
+    """Verify the dependency bytes available to the controller build and the harness."""
+
+    def test_staged_resolution_ignores_same_version_change_in_ambient_install(self):
+        """Read the locked metadata from a fresh checkout while preserving the caller's local edit."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            source = root / "source"
+            package = root / "data-package"
+            source.mkdir()
+            package.mkdir()
+            manifest = {"name": "proof-data", "version": "1.0.0", "description": "locked metadata"}
+            (package / "package.json").write_text(json.dumps(manifest))
+            (source / ".gitignore").write_text("node_modules/\n")
+            (source / ".npmrc").write_text("offline=true\naudit=false\nfund=false\nupdate-notifier=false\n")
+            (source / "package.json").write_text(
+                json.dumps(
+                    {
+                        "name": "proof-fixture",
+                        "version": "1.0.0",
+                        "dependencies": {"proof-data": "file:proof-data-1.0.0.tgz"},
+                    }
+                )
+            )
+            env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+            env.update(
+                GIT_CONFIG_GLOBAL=os.devnull,
+                GIT_CONFIG_NOSYSTEM="1",
+                npm_config_cache=str(root / "cache"),
+                npm_config_offline="true",
+                npm_config_userconfig=os.devnull,
+                npm_config_update_notifier="false",
+                npm_config_audit="false",
+            )
+            with patch.dict(os.environ, env, clear=True):
+
+                def command(cwd, *argv):
+                    """Run a fixture command and return its trimmed stdout on success."""
+                    return subprocess.run(
+                        argv, cwd=cwd, capture_output=True, text=True, check=True, timeout=60
+                    ).stdout.strip()
+
+                command(package, "npm", "pack", "--offline", "--ignore-scripts", "--pack-destination", source)
+                command(source, "npm", "install", "--offline", "--ignore-scripts")
+                command(source, "git", "init", "-q")
+                command(source, "git", "add", ".")
+                command(
+                    source,
+                    "git",
+                    "-c",
+                    "user.name=Proof Fixture",
+                    "-c",
+                    "user.email=proof@example.invalid",
+                    "commit",
+                    "--no-gpg-sign",
+                    "-qm",
+                    "Pin the data package",
+                )
+                revision = command(source, "git", "rev-parse", "HEAD")
+                original_checkout = PROOF.checkout(source, revision)
+                ambient_file = source / "node_modules/proof-data/package.json"
+                self.assertEqual(json.loads(ambient_file.read_bytes()), manifest)
+                ambient_file.write_text(json.dumps({**manifest, "description": "local metadata"}))
+                self.assertEqual(PROOF.checkout(source, revision), original_checkout)
+                read_metadata = ("node", "-p", "require('proof-data/package.json').description")
+                self.assertEqual(command(source, *read_metadata), "local metadata")
+
+                staged = PROOF.stage_locked_checkout(source, revision, root / "staged")
+
+                self.assertEqual(command(staged, "git", "rev-parse", "HEAD"), revision)
+                self.assertEqual(
+                    (staged / "package-lock.json").read_bytes(), (source / "package-lock.json").read_bytes()
+                )
+                self.assertEqual(command(staged, *read_metadata), "locked metadata")
+                self.assertEqual(command(source, *read_metadata), "local metadata")
+
+
 class PublicPacketTest(unittest.TestCase):
     """Check what a researcher can recover from a public packet when the subject fails."""
 

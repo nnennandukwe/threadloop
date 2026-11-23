@@ -38,6 +38,11 @@ writes. The #86 run identity and #88 read-only audit exports retain their origin
 
 ## External controller and native execution
 
+The original measurement below used the installed dependencies in the clean implementation and harness checkouts. Git
+verified tracked source and lockfiles. The first proof driver reused those installations for its rebuild and harness
+execution. The PR tracks the follow-up measurement against independently installed dependencies.
+[Review and follow-up evidence](https://github.com/nnennandukwe/threadloop/pull/179)
+
 RunInvariant `54be0d2240c44ee11b65d5e278a2cb667ee523b4` ran the frozen corpus against the three-file runtime with
 artifact digest `d416ec2bbf6fec50c1408c11acd96014bf7ac24f92e88416d9af1feb34c9cfaf`. All three graph compilations, 25
 decisions and ten execution scenarios passed. Case 024 returned `blocked` with `AMBIGUOUS_REMEDY`. The parent reproduced

@@ -125,6 +125,16 @@ published execution-scenario wire schema in the bundle. Dispatch only the operat
 case label must preserve the domain result. If bundling exposes another runtime file, identify it, measure it and review
 the closure before execution.
 
+PR #179's first hosted review identified two installations outside Git's clean-tree check. A local rebuild could use the
+same installed packages as the submitted build, and the parent could load the harness's existing dependencies. The
+independent proof must stage the exact source revisions, install their lockfiles into fresh directories and use that
+harness for inventory, execution and controls. The pinned contracts Git package needs its generated distribution. Build
+it from the exact contracts checkout with the contracts lockfile and its tracked build script. Use that output in the
+isolated ThreadLoop install. Compare the submitted runtime to the independently built artifact before scoring. Record
+all three source revisions, lock identities and the contracts build step. Test this through the proof command with an
+inert difference in a disposable installation.
+[Hosted finding](https://github.com/nnennandukwe/threadloop/pull/179#discussion_r4658087972)
+
 Use the tested macOS isolated launcher with a fresh per-case scratch directory, explicit runtime reads, restricted
 environment, closed inherited file descriptors, confined writes and disabled network. The parent retains the checkouts,
 fixtures, shared values, golden vectors, synthetic subject, operator identity and output packet. Recheck the three
@@ -267,7 +277,9 @@ and run upstream checks there, then supply those clean clones to the read-only e
 invokes RunInvariant, supplies the measured identity, starts each subject in its own scratch directory and retains the
 raw and public packets. The measured launcher requires macOS Seatbelt. Its parent has separate deadlines for inventory,
 the complete suite and negative controls. After a parent timeout, the launcher reaps its case process before the driver
-removes scratch.
+removes scratch. The proof uses a private npm cache for public registry reads while installing the three locks. An
+operator running the proof needs network access to those public dependencies and space for the disposable installs. The
+three installs and rebuild fit on a 512 MiB temporary volume on the measured macOS arm64 host.
 
 ```bash
 npm ci

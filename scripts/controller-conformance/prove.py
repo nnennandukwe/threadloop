@@ -57,6 +57,8 @@ LIMITS = {
 PARENT_SETUP_SECONDS = 30
 GIT_SECONDS = 60
 BUILD_SECONDS = 180
+INSTALL_SECONDS = 300
+INSTALL_FLAGS = ["--ignore-scripts", "--include=dev", "--include=optional", "--no-audit", "--no-fund"]
 # RunInvariant allows one second for each process group to close its inherited pipes.
 SECONDS_PER_CASE_WITH_CLEANUP = LIMITS["timeout_ms"] // 1000 + 1
 HARNESS_PARENT_SECONDS = PARENT_SETUP_SECONDS + 38 * SECONDS_PER_CASE_WITH_CLEANUP
@@ -109,6 +111,97 @@ def checkout(repo, revision):
         "tree": git(repo, "rev-parse", "HEAD^{tree}"),
         "lock_sha256": file_hash(repo / "package-lock.json"),
     }
+
+
+def proof_environment(scratch):
+    """Give the proof tools a private home and npm cache for public, noninteractive package reads."""
+    tools = [shutil.which(name) for name in ("node", "npm", "git")]
+    require(all(tools), "Install Node.js, npm and Git before running the proof.")
+    tool_dirs = [str(Path(tool).parent) for tool in tools]
+    env = {
+        "HOME": str(scratch),
+        "TMPDIR": str(scratch),
+        "PATH": os.pathsep.join(dict.fromkeys([*tool_dirs, *os.defpath.split(os.pathsep)])),
+        "LC_ALL": "C",
+        "TZ": "UTC",
+        "NODE_OPTIONS": "--no-global-search-paths",
+        "npm_config_cache": str(scratch / "npm-cache"),
+        "npm_config_userconfig": str(scratch / "user.npmrc"),
+        "npm_config_globalconfig": str(scratch / "global.npmrc"),
+        "npm_config_update_notifier": "false",
+        "npm_config_fetch_retries": "1",
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_ALLOW_PROTOCOL": "file:https",
+        "GIT_CONFIG_COUNT": "2",
+        "GIT_CONFIG_KEY_0": "url.https://github.com/.insteadOf",
+        "GIT_CONFIG_VALUE_0": "ssh://git@github.com/",
+        "GIT_CONFIG_KEY_1": "url.https://github.com/.insteadOf",
+        "GIT_CONFIG_VALUE_1": "git@github.com:",
+    }
+    if os.environ.get("npm_config_offline") == "true":
+        env["npm_config_offline"] = "true"
+    return env
+
+
+def stage_locked_checkout(source, revision, destination):
+    """Install the committed lockfile in a fresh local clone without running package lifecycle scripts."""
+    expected = checkout(source, revision)
+    env = proof_environment(destination.parent)
+    require(not destination.exists(), "Choose a fresh checkout destination.")
+    subprocess.run(
+        ["git", "clone", "--quiet", "--local", "--shared", "--no-checkout", "--", source, destination],
+        env=env,
+        check=True,
+        timeout=GIT_SECONDS,
+    )
+    subprocess.run(
+        ["git", "-c", "core.hooksPath=" + os.devnull, "checkout", "--quiet", "--detach", revision],
+        cwd=destination,
+        env=env,
+        check=True,
+        timeout=GIT_SECONDS,
+    )
+    subprocess.run(
+        ["npm", "ci", *INSTALL_FLAGS],
+        cwd=destination,
+        env=env,
+        check=True,
+        timeout=INSTALL_SECONDS,
+    )
+    require(checkout(destination, revision) == expected, "The staged source or lockfile changed.")
+    return destination
+
+
+def build_contracts_dependency(node, implementation, contracts, env):
+    """Verify the Git dependency's installed metadata and build its exports with its own locked compiler."""
+    package = implementation / "node_modules/threadloop-contracts"
+    metadata = {"LICENSE", "README.md", "package.json"}
+    require(
+        package.is_dir()
+        and not package.is_symlink()
+        and {p.name for p in package.iterdir()} - {"node_modules"} == metadata,
+        "The fresh contracts install must contain only the pinned package metadata and its dependencies.",
+    )
+    for name in sorted(metadata):
+        item = package / name
+        require(
+            item.is_file()
+            and not item.is_symlink()
+            and git(contracts, "hash-object", "--no-filters", str(item))
+            == git(contracts, "rev-parse", CONTRACTS + ":" + name),
+            "The installed contracts package differs from its pinned Git source: " + name,
+        )
+    subprocess.run(
+        [node, contracts / "scripts/build-package.mjs"],
+        cwd=contracts,
+        env=env,
+        check=True,
+        timeout=BUILD_SECONDS,
+    )
+    # Only the generated exports move. npm owns the nested dependency versions in the ThreadLoop install.
+    (contracts / "dist").rename(package / "dist")
 
 
 def pinned_inputs(harness, contracts):
@@ -306,23 +399,24 @@ def await_case_teardown(roots, label):
             os.close(descriptor)
 
 
-def bounded_parent(label, command, *, seconds, cwd, case_roots=(), data=None):
+def bounded_parent(label, command, *, seconds, cwd, case_roots=(), data=None, env=None):
     """Bound the Node parent separately from the frozen harness's own per-case process deadlines."""
     try:
-        return subprocess.run(command, input=data, capture_output=True, cwd=cwd, timeout=seconds)
+        return subprocess.run(command, input=data, capture_output=True, cwd=cwd, env=env, timeout=seconds)
     except subprocess.TimeoutExpired as error:
         # subprocess.run has killed and reaped its direct child. Each detached launcher observes reparenting.
         await_case_teardown(case_roots, label)
         raise ValueError(f"{label} exceeded its {seconds:g}-second deadline.") from error
 
 
-def external_checks(node, arguments, case_roots=()):
+def external_checks(node, arguments, case_roots=(), *, scripts=None, env=None):
     """Read pinned harness metadata or run its independent negative controls in a separate parent process."""
     inventory = arguments.get("inventoryOnly", False)
     result = bounded_parent(
         "conformance inventory" if inventory else "conformance controls",
-        [node, SCRIPTS / "check-controls.cjs"],
-        cwd=REPO,
+        [node, (scripts or SCRIPTS) / "check-controls.cjs"],
+        cwd=scripts or SCRIPTS,
+        env=env,
         seconds=PARENT_SETUP_SECONDS if inventory else CONTROL_PARENT_SECONDS,
         case_roots=case_roots,
         data=json.dumps(arguments).encode(),
@@ -369,19 +463,29 @@ def measure(args):
     node_hash = file_hash(node)
     with tempfile.TemporaryDirectory(prefix="threadloop-controller-proof-") as directory:
         scratch = Path(directory).resolve()
+        env = proof_environment(scratch)
+        implementation = stage_locked_checkout(REPO, head, scratch / "threadloop")
+        staged_contracts = stage_locked_checkout(contracts, CONTRACTS, scratch / "contracts")
+        build_contracts_dependency(node, implementation, staged_contracts, env)
+        scripts = implementation / "scripts/controller-conformance"
         rebuilt = scratch / "build"
         subprocess.run(
-            [node, SCRIPTS / "build.mjs", "--output", rebuilt], cwd=REPO, check=True, timeout=BUILD_SECONDS
+            [node, scripts / "build.mjs", "--output", rebuilt],
+            cwd=implementation,
+            env=env,
+            check=True,
+            timeout=BUILD_SECONDS,
         )
         require(
             measure_build(rebuilt, contracts, head) == (identity, manifest),
-            "Clean source rebuild produced different bytes.",
+            "The submitted controller differs from the lockfile-based rebuild. Run npm ci and rebuild it.",
         )
         original_inputs = read_json(build / "build-metafile.json")["inputs"]
         require(
             original_inputs == read_json(rebuilt / "build-metafile.json")["inputs"],
             "The clean rebuild used a different input closure.",
         )
+        staged_harness = stage_locked_checkout(harness, HARNESS, scratch / "harness")
         runtime = rebuilt / "runtime"
         cases = scratch / "cases"
         cases.mkdir()
@@ -389,7 +493,7 @@ def measure(args):
         controls_root.mkdir()
         launcher = [
             sys.executable,
-            str(SCRIPTS / "launch.py"),
+            str(scripts / "launch.py"),
             str(cases),
             str(node),
             str(runtime / SUBJECT),
@@ -397,24 +501,24 @@ def measure(args):
         ]
         command = launcher + ["conformance"]
         control = launcher.copy()
-        control[2], control[4] = str(controls_root), str(CONTROL)
+        control[2], control[4] = str(controls_root), str(implementation / CONTROL.relative_to(REPO))
         settings = {
-            "harness": str(harness),
-            "contracts": str(contracts),
+            "harness": str(staged_harness),
+            "contracts": str(staged_contracts),
             "identity": identity,
             "command": command,
             "control": control,
             "controlRoot": str(controls_root),
         }
-        inventory = external_checks(node, {**settings, "inventoryOnly": True})
+        inventory = external_checks(node, {**settings, "inventoryOnly": True}, scripts=scripts, env=env)
         run = bounded_parent(
             "RunInvariant harness",
             [
                 node,
-                harness / "bin/run-invariant.js",
+                staged_harness / "bin/run-invariant.js",
                 "threadloop",
                 "--checkout",
-                contracts,
+                staged_contracts,
                 "--subject",
                 rebuilt / "identity.json",
                 "--subject-kind",
@@ -424,6 +528,7 @@ def measure(args):
                 *command,
             ],
             cwd=scratch,
+            env=env,
             seconds=HARNESS_PARENT_SECONDS,
             case_roots=(cases,),
         )
@@ -455,15 +560,17 @@ def measure(args):
         proof = {"status": "suite_failed"}
         if not results["failed"]:
             private_files = {
-                "case": contracts / CORPUS_DIR / "fixtures/case_024.json",
-                "shared_values": contracts / CORPUS_DIR / "shared.json",
-                "golden": contracts / CORPUS_DIR / "vectors/golden.json",
-                "synthetic_subject": harness / "test/fixtures/threadloop-subject.js",
+                "case": staged_contracts / CORPUS_DIR / "fixtures/case_024.json",
+                "shared_values": staged_contracts / CORPUS_DIR / "shared.json",
+                "golden": staged_contracts / CORPUS_DIR / "vectors/golden.json",
+                "synthetic_subject": staged_harness / "test/fixtures/threadloop-subject.js",
                 "build_inputs": rebuilt / "build-metafile.json",
                 "parent_identity": rebuilt / "identity.json",
             }
             settings["canaries"] = {name: str(path) for name, path in private_files.items()}
-            proof = external_checks(node, settings, (cases, controls_root))["controls"]
+            proof = external_checks(node, settings, (cases, controls_root), scripts=scripts, env=env)[
+                "controls"
+            ]
             for index in (0, 23):
                 row = results["cases"][index]
                 repeated = proof[row["id"]]
@@ -479,6 +586,18 @@ def measure(args):
             measure_build(rebuilt, contracts, head) == (identity, manifest),
             "The measured runtime changed.",
         )
+        require(
+            checkout(implementation, head) == tree
+            and checkout(staged_harness, HARNESS) == upstream["harness"]
+            and checkout(staged_contracts, CONTRACTS) == upstream["contracts"],
+            "A staged checkout or its lockfile changed during the proof.",
+        )
+        node_version = subprocess.check_output(
+            [node, "--version"], env=env, text=True, timeout=PARENT_SETUP_SECONDS
+        ).strip()
+        npm_version = subprocess.check_output(
+            ["npm", "--version"], env=env, text=True, timeout=PARENT_SETUP_SECONDS
+        ).strip()
         if not results["failed"]:
             require(not any(cases.iterdir()), "A completed case retained scratch.")
     require(not scratch.exists(), "The parent retained case scratch after the suite.")
@@ -504,7 +623,14 @@ def measure(args):
             "subject_kind": raw["subject_kind"],
             "raw_packet_sha256": digest(run.stdout),
             "limits": raw["runner"]["limits"],
+            "dependency_install": {
+                "install_method": "npm ci " + " ".join(INSTALL_FLAGS),
+                "npm_version": npm_version,
+                "sources": ["implementation", "upstream.contracts", "upstream.harness"],
+                "contracts_build": "node scripts/build-package.mjs",
+            },
             "parent_deadlines_seconds": {
+                "install_per_checkout": INSTALL_SECONDS,
                 "git": GIT_SECONDS,
                 "build": BUILD_SECONDS,
                 "node_version": PARENT_SETUP_SECONDS,
@@ -518,9 +644,7 @@ def measure(args):
             "claim_boundary": raw["claim_boundary"],
             "platform": platform.mac_ver()[0],
             "architecture": platform.machine(),
-            "node_version": subprocess.check_output(
-                [node, "--version"], text=True, timeout=PARENT_SETUP_SECONDS
-            ).strip(),
+            "node_version": node_version,
             "node_sha256": node_hash,
             "launcher_sha256": file_hash(SCRIPTS / "launch.py"),
             "policy_sha256": file_hash(SCRIPTS / "subject.sb"),
