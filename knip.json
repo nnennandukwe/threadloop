@@ -9,6 +9,8 @@
   "entry": [
     "scripts/prove-gaap-goose.ts",
     "scripts/smoke-managed-workflow.ts",
+    "scripts/pre-rust/rollback-fixture.ts",
+    "scripts/controller-conformance/subject.ts",
     "tests/fixtures/gaap-native-producer.ts",
     "scripts/controller-generated/*.ts"
   ]

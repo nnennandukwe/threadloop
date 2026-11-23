@@ -2,6 +2,7 @@ import { closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, unlin
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from './sqlite-driver.js';
+import { readSealedRoot, writeSealedRoot, sealedRootTable } from './sealed-root.js';
 import { requireGaapDirectory } from './gaap-files.js';
 import { canonicalJson } from '../../domain/canonical-json.js';
 import { sha256 } from '../crypto/sha256.js';
@@ -129,14 +130,14 @@ export class GaapState {
       database.exec('PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; BEGIN IMMEDIATE');
       database.exec(`
         PRAGMA user_version=${root.schema_version === 'threadloop.gaap-state/2' ? 2 : 1};
-        CREATE TABLE root (id INTEGER PRIMARY KEY CHECK(id=1), body TEXT NOT NULL, digest TEXT NOT NULL);
+        ${sealedRootTable};
         CREATE TABLE launch (attempt TEXT PRIMARY KEY, request_digest TEXT NOT NULL, output_directory TEXT NOT NULL);
         CREATE TABLE observation (id INTEGER PRIMARY KEY, status TEXT NOT NULL, stdout BLOB NOT NULL, stderr BLOB NOT NULL, envelope BLOB, metadata TEXT NOT NULL);
         CREATE TABLE accepted (source_id TEXT PRIMARY KEY, source_digest TEXT NOT NULL, envelope BLOB NOT NULL, predicate BLOB NOT NULL, result TEXT NOT NULL, admission TEXT NOT NULL, observation_id INTEGER NOT NULL);
         CREATE TABLE blob (digest TEXT PRIMARY KEY, bytes BLOB NOT NULL);
         CREATE TABLE evaluation (id INTEGER PRIMARY KEY, body TEXT NOT NULL);
       `);
-      this.writeRoot(database, root);
+      writeSealedRoot(database, root);
       this.writeGeneration(database, generation);
       this.fault('register.before_commit');
       commitAttempted = true;
@@ -187,16 +188,14 @@ export class GaapState {
         'Executor state requires a host-owned directory without group or other write permission.',
       );
   }
-  private readRoot(database: DatabaseSync, owner?: ManagedGaapOwner, publicInspection = false): GaapRoot {
-    const row = database.prepare('SELECT body,digest FROM root WHERE id=1').get();
-    if (!row || typeof row.body !== 'string' || sha256(row.body) !== row.digest)
-      throw new GaapEvidenceError('state.integrity', 'Executor root is missing or differs from its retained identity.');
-    const root = JSON.parse(row.body) as GaapRoot;
+  private readRoot(database: DatabaseSync, owner?: ManagedGaapOwner, publicInspection = false) {
+    const { value, digest } = readSealedRoot(database);
+    const root = value as GaapRoot;
     if (
+      !root ||
       !['threadloop.gaap-state/1', 'threadloop.gaap-state/2'].includes(root.schema_version) ||
       !Number.isSafeInteger(root.revision) ||
-      root.revision < 0 ||
-      canonicalJson(root) !== row.body
+      root.revision < 0
     )
       throw new GaapEvidenceError('state.integrity', 'Executor root has an unsupported or noncanonical shape.');
     const managed = root.schema_version === 'threadloop.gaap-state/2';
@@ -222,11 +221,7 @@ export class GaapState {
     }
     if (!managed && owner)
       throw new GaapEvidenceError('state.owner', 'A standalone executor has no owning Workflow Run.');
-    return root;
-  }
-  private writeRoot(database: DatabaseSync, root: GaapRoot) {
-    const bytes = canonicalJson(root);
-    database.prepare('INSERT OR REPLACE INTO root VALUES (1,?,?)').run(bytes, sha256(bytes));
+    return { root, digest };
   }
   private writeGeneration(database: DatabaseSync, generation: string): void {
     // Additive metadata also supports state-1 databases created before this marker existed.
@@ -241,7 +236,7 @@ export class GaapState {
     const database = this.open();
     try {
       const marker = database.prepare('SELECT token FROM commit_generation WHERE id=1').get();
-      return marker?.token === generation && canonicalJson(this.readRoot(database, owner)) === expectedRoot;
+      return marker?.token === generation && canonicalJson(this.readRoot(database, owner).root) === expectedRoot;
     } finally {
       database.close();
     }
@@ -249,7 +244,7 @@ export class GaapState {
   read(owner?: ManagedGaapOwner): GaapRoot {
     const database = this.open();
     try {
-      return this.readRoot(database, owner);
+      return this.readRoot(database, owner).root;
     } finally {
       database.close();
     }
@@ -325,10 +320,10 @@ export class GaapState {
     let outcome: { ok: true; value: T } | { ok: false; error: unknown };
     try {
       database.exec('PRAGMA synchronous=FULL; BEGIN IMMEDIATE');
-      const root = this.readRoot(database, owner);
+      const { root, digest } = this.readRoot(database, owner);
       const value = operation(root, database);
       root.revision += 1;
-      this.writeRoot(database, root);
+      writeSealedRoot(database, root, digest);
       this.writeGeneration(database, generation);
       proposedRoot = canonicalJson(root);
       this.fault('state.before_commit');
@@ -376,7 +371,7 @@ export class GaapState {
     const database = this.open();
     try {
       database.exec('BEGIN');
-      const root = this.readRoot(database, owner, publicInspection);
+      const { root } = this.readRoot(database, owner, publicInspection);
       const launches = database.prepare('SELECT * FROM launch').all();
       const observations = database.prepare('SELECT * FROM observation ORDER BY id').all();
       const accepted = database.prepare('SELECT * FROM accepted').all();

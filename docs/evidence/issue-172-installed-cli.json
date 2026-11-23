@@ -1,0 +1,651 @@
+{
+  "source": {
+    "revision": "80e091c9f6412195a8444f048add977d648c4115",
+    "tree": "987ef4aeda6bb371b0c2f476a3dbeae9467d89ec",
+    "lock_blob": "b35af44702d348558f848767c6eae50a40b7ca18",
+    "node": "v26.8.2",
+    "npm": "11.19.1",
+    "tarball": "threadloop-0.1.0.tgz",
+    "sha256": "36f1a69c52e0ae4cc4c4fb7e03c207f30c6391efec12f123581b896df5c6fa51",
+    "cli_sha256": "610e586afd19fd85e0b2adade639b88a98213a039cb980772f72a65ded4cdc22",
+    "integrity": "sha512-thLVEkgwnuv9EMxiNyy9Ddm2Z+mGuirfETwpkGV/7kXXomgZQ134Mq5IuJnwNyNNPyB3TtqwsgfHqAljpMLAxA==",
+    "bundled_dependencies": 55
+  },
+  "packages": {
+    "candidate": {
+      "revision": "80e091c9f6412195a8444f048add977d648c4115",
+      "tree": "987ef4aeda6bb371b0c2f476a3dbeae9467d89ec",
+      "lock_blob": "b35af44702d348558f848767c6eae50a40b7ca18",
+      "node": "v26.8.2",
+      "npm": "11.19.1",
+      "tarball": "threadloop-0.1.0.tgz",
+      "sha256": "36f1a69c52e0ae4cc4c4fb7e03c207f30c6391efec12f123581b896df5c6fa51",
+      "cli_sha256": "610e586afd19fd85e0b2adade639b88a98213a039cb980772f72a65ded4cdc22",
+      "integrity": "sha512-thLVEkgwnuv9EMxiNyy9Ddm2Z+mGuirfETwpkGV/7kXXomgZQ134Mq5IuJnwNyNNPyB3TtqwsgfHqAljpMLAxA==",
+      "bundled_dependencies": 55
+    },
+    "rollback": {
+      "revision": "31388a07566350dfeddc30578d43b8926d5b4e22",
+      "tree": "17124dd8949059d40c25807e297659817f2c5b11",
+      "lock_blob": "b35af44702d348558f848767c6eae50a40b7ca18",
+      "node": "v26.8.2",
+      "npm": "11.19.1",
+      "sha256": "c8c96f8229ee141bfe31b1509440e548aa2fb64b089bd6f44b41016e7e0fe078",
+      "cli_sha256": "0859b3f5c9a0cac969bbe0c744ade31080d81910d53ae04970ea654d3ce94571",
+      "integrity": "sha512-lpV4S8nRXKjCYr5Qarg7x95EY1bBDXsVmC5NrTyvYxFM1iLjY2MiNU9zWOWejexEAJo3HXjJkDa8x/ueNmLpqg==",
+      "tarball": "threadloop-0.1.0.tgz",
+      "bundled_dependencies": 55
+    },
+    "pre_adoption": {
+      "revision": "7c54c2bb8055f00736e3b5f6631e9aecbe0fd212",
+      "tree": "41cc922588c519f3cd2ad24d4487c4af37f4ccb0",
+      "lock_blob": "b35af44702d348558f848767c6eae50a40b7ca18",
+      "node": "v26.8.2",
+      "npm": "11.19.1",
+      "sha256": "4370cea4a5d7be5e283fcafc09fdce07e37168929db8a1e21448614e79f51bc1",
+      "cli_sha256": "4310265f970cf273ebbb29cf2e28f5882c0cbeeab88c64b044a26fca3aa700c5",
+      "integrity": "sha512-aJV8OK9jgZBo8Og/lMkc2opnMG30fh5TuBK92kj4mTw8FP38Gpdj8r0vZ+Ah85romgz1TPWGZbIw9nx/jgXrSA==",
+      "tarball": "threadloop-0.1.0.tgz",
+      "bundled_dependencies": 55
+    }
+  },
+  "versions": {
+    "candidate": "0.1.0",
+    "rollback": "0.1.0"
+  },
+  "declared_errors": {
+    "750ae36b6b7b6ea34081a8c90236d8c95f71b086": [
+      "SESSION_NOT_FOUND",
+      "SESSION_REQUIRED",
+      "SESSION_AMBIGUOUS",
+      "THREADLOOP_NOT_INITIALIZED",
+      "INVALID_ARGUMENT",
+      "BASE_REF_NOT_FOUND",
+      "NOT_GIT_REPOSITORY",
+      "STATE_CORRUPTED",
+      "RECONCILE_TARGET_REQUIRED"
+    ],
+    "80e091c9f6412195a8444f048add977d648c4115": [
+      "SESSION_NOT_FOUND",
+      "WORKFLOW_RUN_NOT_FOUND",
+      "WORKFLOW_RUNTIME_UNSUPPORTED",
+      "SESSION_REQUIRED",
+      "SESSION_AMBIGUOUS",
+      "THREADLOOP_NOT_INITIALIZED",
+      "INVALID_ARGUMENT",
+      "BASE_REF_NOT_FOUND",
+      "NOT_GIT_REPOSITORY",
+      "STATE_CORRUPTED",
+      "SESSION_SCHEMA_MIGRATION_REQUIRED",
+      "STATE_VERSION_CONFLICT",
+      "IDEMPOTENCY_CONFLICT",
+      "TRANSITION_NOT_ALLOWED",
+      "TRANSITION_GUARD_FAILED",
+      "STATE_BUSY",
+      "EXECUTOR_REJECTED",
+      "REPOSITORY_OBSERVATION_FAILED",
+      "RECONCILE_TARGET_REQUIRED",
+      "PROOF_PLAN_MISSING",
+      "PROOF_PLAN_CORRUPTED",
+      "GATE_NOT_DECLARED",
+      "GATE_NOT_RUNNABLE",
+      "GATE_PREFLIGHT_DIRTY",
+      "RECEIPT_NOT_RECORDED",
+      "SIGNED_RECEIPT_INVALID",
+      "SIGNED_RECEIPT_SIGNATURE_INVALID",
+      "SIGNED_RECEIPT_TRANSPARENCY_MISSING",
+      "SIGNED_RECEIPT_IDENTITY_MISMATCH",
+      "SIGNED_RECEIPT_ARTIFACT_MISMATCH",
+      "SIGNED_RECEIPT_HEAD_MISMATCH",
+      "SIGNED_RECEIPT_RESULT_REJECTED",
+      "SIGNED_RECEIPT_SETUP_FAILED",
+      "SIGNED_RECEIPT_CONFLICT",
+      "SIGNED_RECEIPT_VERIFICATION_UNAVAILABLE",
+      "AUDIT_UNAVAILABLE",
+      "AUDIT_EMPTY",
+      "AUDIT_VERIFICATION_FAILED",
+      "AUDIT_EXPORT_CONFLICT",
+      "AUDIT_EXPORT_FAILED",
+      "AUDIT_CORPUS_INVALID"
+    ]
+  },
+  "failure_envelopes": [
+    {
+      "operation": ["start"],
+      "code": "INVALID_ARGUMENT",
+      "exit": 1,
+      "stream": "stderr"
+    },
+    {
+      "operation": ["capture"],
+      "code": "INVALID_ARGUMENT",
+      "exit": 1,
+      "stream": "stderr"
+    },
+    {
+      "operation": ["status"],
+      "code": "INVALID_ARGUMENT",
+      "exit": 1,
+      "stream": "stderr"
+    },
+    {
+      "operation": ["finish"],
+      "code": "INVALID_ARGUMENT",
+      "exit": 1,
+      "stream": "stderr"
+    },
+    {
+      "operation": ["session", "finish"],
+      "code": "INVALID_ARGUMENT",
+      "exit": 1,
+      "stream": "stderr"
+    },
+    {
+      "operation": ["daemon", "run"],
+      "code": "INVALID_ARGUMENT",
+      "exit": 1,
+      "stream": "stderr"
+    },
+    {
+      "operation": ["session", "list"],
+      "code": "NOT_GIT_REPOSITORY",
+      "exit": 1,
+      "stream": "stderr"
+    },
+    {
+      "operation": ["session", "list"],
+      "code": "THREADLOOP_NOT_INITIALIZED",
+      "exit": 1,
+      "stream": "stderr"
+    },
+    {
+      "operation": ["session", "status"],
+      "code": "SESSION_REQUIRED",
+      "exit": 1,
+      "stream": "stderr"
+    },
+    {
+      "operation": ["session", "status"],
+      "code": "SESSION_NOT_FOUND",
+      "exit": 1,
+      "stream": "stderr"
+    },
+    {
+      "operation": ["session", "start"],
+      "code": "BASE_REF_NOT_FOUND",
+      "exit": 1,
+      "stream": "stderr"
+    },
+    {
+      "operation": ["session", "reconcile"],
+      "code": "RECONCILE_TARGET_REQUIRED",
+      "exit": 1,
+      "stream": "stderr"
+    },
+    {
+      "operation": ["artifact", "generate"],
+      "code": "SESSION_AMBIGUOUS",
+      "exit": 1,
+      "stream": "stderr"
+    },
+    {
+      "operation": ["workflow", "create"],
+      "code": "WORKFLOW_RUNTIME_UNSUPPORTED",
+      "exit": 1,
+      "stream": "stderr"
+    },
+    {
+      "operation": ["workflow", "inspect"],
+      "code": "WORKFLOW_RUN_NOT_FOUND",
+      "exit": 1,
+      "stream": "stderr"
+    },
+    {
+      "operation": ["workflow", "inspect"],
+      "code": "WORKFLOW_RUN_NOT_FOUND",
+      "exit": 1,
+      "stream": "stderr"
+    },
+    {
+      "operation": ["session", "list"],
+      "code": "STATE_CORRUPTED",
+      "exit": 1,
+      "stream": "stderr"
+    },
+    {
+      "operation": ["session", "list"],
+      "code": "STATE_CORRUPTED",
+      "exit": 1,
+      "stream": "stderr"
+    }
+  ],
+  "protocol": {
+    "default_version": 4,
+    "4": {
+      "json_sha256": "e5943879bfaf27696f0c791adca0d5510e6e49d5660edfa9beb75931c846ed90",
+      "text_sha256": "5ac51f9c27359b9f27e717adec58d4b85c3e78e4b721957ed534f2d9a7e40fcf",
+      "commands": {
+        "init": "threadloop init - Initialize ThreadLoop in the current Git repo",
+        "artifact generate": "threadloop artifact generate [kind] [--session <id>] [--json] - Generate a Markdown artifact from task, notes, and Git context",
+        "session start": "threadloop session start <title> [--goal <goal>] [--constraint <constraint...>] [--base <ref>] [--issue <ref>] [--actor <actor>] [--goal-edit] [--run-config <file>] [--json] - Start a task-scoped session",
+        "session list": "threadloop session list [--json] - List sessions in the current workspace",
+        "session status": "threadloop session status --session <id> [--json] - Show status for an explicit session",
+        "session capture": "threadloop session capture <kind> [text] --session <id> [--because <reason>] [--actor <actor>] [--edit] [--json] - Capture a structured checkpoint entry for an explicit session",
+        "session heartbeat": "threadloop session heartbeat --session <id> [--source <source>] [--json] - Refresh mechanical session metadata without creating a semantic entry",
+        "session transition": "threadloop session transition <target-state> --session <id> --expected-state-version <version> --idempotency-key <key> --actor <actor> --input <json-object> [--json] - Apply an idempotent, guarded lifecycle transition",
+        "session next": "threadloop session next --session <id> [--json] - Inspect the deterministic next lifecycle candidate without mutating state",
+        "session gate run": "threadloop session gate run <gate-id> --session <id> [--json] - Run one declared local gate and append an immutable receipt",
+        "session gate import": "threadloop session gate import <package-path> --session <id> [--json] - Verify and append one signed GitHub Actions gate receipt",
+        "session review import": "threadloop session review import <package-path> --session <id> [--json] - Verify and append one signed GitHub review snapshot",
+        "session reconcile": "threadloop session reconcile (--session <id> | --all) [--json] - Refresh Git-derived metadata for a session without creating semantic entries",
+        "executor register": "threadloop executor register --state <directory> --binding <file> --config <file> [--json] - Adopt a fresh host-controlled action and signer policy",
+        "executor run": "threadloop executor run --state <directory> [--json] - Launch the registered Attempt once and admit verified evidence",
+        "executor inspect": "threadloop executor inspect --state <directory> [--json] - Independently verify retained executor state without launching",
+        "executor admit": "threadloop executor admit <observation-id> --state <directory> [--json] - Recheck retained output after an admission failure without launching",
+        "executor evaluate": "threadloop executor evaluate --state <directory> [--json] - Re-evaluate lifecycle guards after evidence admission",
+        "audit show": "threadloop audit show --session <id> [--json] - Show hash-linked audit events for a session",
+        "audit verify": "threadloop audit verify --session <id> [--root <sha256>] [--json] - Verify a session audit chain and optional retained root",
+        "audit export": "threadloop audit export --session <id> --output <path> [--json] - Verify and atomically create a JSONL audit export",
+        "audit corpus": "threadloop audit corpus (--session <ids...> | --all) --output <path> [--format <format>] [--json] - Export a verified corpus with one outcome per session",
+        "audit verify-export": "threadloop audit verify-export --input <path> [--root <sha256>] [--json] - Verify retained corpus bytes without a repository or database",
+        "protocol": "threadloop protocol [--json] - Print the agent integration protocol"
+      },
+      "contractVersions": {
+        "protocol": 4,
+        "proofPlan": 4,
+        "sessionNext": 4,
+        "signedReviewReceipt": 1,
+        "auditEvent": 1,
+        "handoff": 3
+      },
+      "capabilities": []
+    },
+    "5": {
+      "json_sha256": "1ad7fcc02c57024a9263560d591650d178cad2ade2aa712a789de97ff2c181ce",
+      "text_sha256": "ed62d07a04364d61ed5356d285c79e15abeaa81b5d27e191024754c0a4fdadaa",
+      "commands": {
+        "init": "threadloop init - Initialize ThreadLoop in the current Git repo",
+        "artifact generate": "threadloop artifact generate [kind] [--session <id>] [--json] - Generate a Markdown artifact from task, notes, and Git context",
+        "session start": "threadloop session start <title> [--goal <goal>] [--constraint <constraint...>] [--base <ref>] [--issue <ref>] [--actor <actor>] [--goal-edit] [--run-config <file>] [--json] - Start a task-scoped session",
+        "session list": "threadloop session list [--json] - List sessions in the current workspace",
+        "session status": "threadloop session status --session <id> [--json] - Show status for an explicit session",
+        "session capture": "threadloop session capture <kind> [text] --session <id> [--because <reason>] [--actor <actor>] [--edit] [--json] - Capture a structured checkpoint entry for an explicit session",
+        "session heartbeat": "threadloop session heartbeat --session <id> [--source <source>] [--json] - Refresh mechanical session metadata without creating a semantic entry",
+        "session transition": "threadloop session transition <target-state> --session <id> --expected-state-version <version> --idempotency-key <key> --actor <actor> --input <json-object> [--json] - Apply an idempotent, guarded lifecycle transition",
+        "session next": "threadloop session next --session <id> [--json] - Inspect the deterministic next lifecycle candidate without mutating state",
+        "session gate run": "threadloop session gate run <gate-id> --session <id> [--json] - Run one declared local gate and append an immutable receipt",
+        "session gate import": "threadloop session gate import <package-path> --session <id> [--json] - Verify and append one signed GitHub Actions gate receipt",
+        "session review import": "threadloop session review import <package-path> --session <id> [--json] - Verify and append one signed GitHub review snapshot",
+        "session reconcile": "threadloop session reconcile (--session <id> | --all) [--json] - Refresh Git-derived metadata for a session without creating semantic entries",
+        "executor register": "threadloop executor register --state <directory> --binding <file> --config <file> [--json] - Adopt a fresh host-controlled action and signer policy",
+        "executor run": "threadloop executor run --state <directory> [--json] - Launch the registered Attempt once and admit verified evidence",
+        "executor inspect": "threadloop executor inspect --state <directory> [--json] - Independently verify retained executor state without launching",
+        "executor admit": "threadloop executor admit <observation-id> --state <directory> [--json] - Recheck retained output after an admission failure without launching",
+        "executor evaluate": "threadloop executor evaluate --state <directory> [--json] - Re-evaluate lifecycle guards after evidence admission",
+        "audit show": "threadloop audit show --session <id> [--json] - Show hash-linked audit events for a session",
+        "audit verify": "threadloop audit verify --session <id> [--root <sha256>] [--json] - Verify a session audit chain and optional retained root",
+        "audit export": "threadloop audit export --session <id> --output <path> [--json] - Verify and atomically create a JSONL audit export",
+        "audit corpus": "threadloop audit corpus (--session <ids...> | --all) --output <path> [--format <format>] [--json] - Export a verified corpus with one outcome per session",
+        "audit verify-export": "threadloop audit verify-export --input <path> [--root <sha256>] [--json] - Verify retained corpus bytes without a repository or database",
+        "workflow create": "threadloop workflow create <run-id> --profile <yaml> --setup <json> [--json] - Create a run bound to one compiled graph and setup",
+        "workflow inspect": "threadloop workflow inspect <run-id> [--json] - Read the verified graph binding and current state",
+        "workflow decide": "threadloop workflow decide <run-id> [--json] - Select the next outcome from verified run facts",
+        "workflow apply": "threadloop workflow apply <run-id> --decision <file> --idempotency-key <key> [--json] - Apply a fresh selected transition once",
+        "workflow execute": "threadloop workflow execute <run-id> --decision <file> [--json] - Execute a selected engineering action through the enrolled GAAP bridge",
+        "workflow expire-claim": "threadloop workflow expire-claim <run> --attempt <id> --expected-state-version <n> [--json] - Record an overdue claim for its enrolled Attempt",
+        "workflow evidence collect": "threadloop workflow evidence collect <kind> --run <run-id> [--gate <id>] [--operation <id>] --expected-state-version <n> --idempotency-key <key> [--json] - Collect local gate or pre-PR review evidence from the enrolled producer",
+        "workflow evidence prepare": "threadloop workflow evidence prepare <kind> --run <run-id> [--gate <id>] [--pr <n>] [--instruction <file>] --expected-state-version <n> --idempotency-key <key> [--json] - Bind a sensor observation to the current run",
+        "workflow evidence import": "threadloop workflow evidence import <kind> --run <run-id> --source <file> --expected-state-version <n> [--json] - Verify and retain a prepared sensor package",
+        "protocol": "threadloop protocol [--contract <version>] [--json] - Print the agent integration protocol"
+      },
+      "contractVersions": {
+        "protocol": 5,
+        "proofPlan": 4,
+        "sessionNext": 4,
+        "signedReviewReceipt": 1,
+        "auditEvent": 1,
+        "handoff": 3,
+        "workflowRun": 1
+      },
+      "capabilities": ["workflow_runs_v1", "workflow_gaap_execution_v1", "workflow_claim_expiry_v1"]
+    }
+  },
+  "help": {
+    "threadloop": "Usage: threadloop [options] [command]\n\nTask-first, repo-local session memory that generates review-ready artifacts\n\nOptions:\n  -V, --version       output the version number\n  -h, --help          display help for command\n\nCommands:\n  init                Initialize ThreadLoop in the current Git repo\n  artifact            Generate artifacts from session context\n  session             Manage explicit ThreadLoop sessions\n  executor            Run the frozen GAAP reference process bridge\n  audit               Inspect and export the authoritative audit ledger\n  workflow            Manage graph-bound Workflow Runs\n  protocol [options]  Print the agent integration protocol\n  help [command]      display help for command\n",
+    "init": "Usage: threadloop init [options]\n\nInitialize ThreadLoop in the current Git repo\n\nOptions:\n  -h, --help  display help for command\n",
+    "artifact generate": "Usage: threadloop artifact generate [options] [kind]\n\nGenerate a Markdown artifact from task, notes, and Git context\n\nArguments:\n  kind            artifact kind (default: \"change-brief\")\n\nOptions:\n  --session <id>  session id to target\n  --json          Output machine-readable JSON\n  -h, --help      display help for command\n",
+    "session start": "Usage: threadloop session start [options] <title>\n\nStart a task-scoped session\n\nArguments:\n  title                         task title\n\nOptions:\n  --goal <goal>                 goal for the task\n  --constraint <constraint...>  constraints that matter for this task\n  --base <ref>                  base Git ref used for comparisons; defaults to\n                                main when available\n  --issue <ref>                 issue reference for branch and PR traceability\n  --actor <actor>               entry actor for the initial intent record\n                                (default: \"cli\")\n  --goal-edit                   open $EDITOR for the goal text\n  --run-config <file>           caller configuration and snapshot file paths for\n                                immutable audit attribution\n  --json                        Output machine-readable JSON\n  -h, --help                    display help for command\n",
+    "session list": "Usage: threadloop session list [options]\n\nList sessions in the current workspace\n\nOptions:\n  --json      Output machine-readable JSON\n  -h, --help  display help for command\n",
+    "session status": "Usage: threadloop session status [options]\n\nShow status for an explicit session\n\nOptions:\n  --session <id>  session id to target\n  --json          Output machine-readable JSON\n  -h, --help      display help for command\n",
+    "session capture": "Usage: threadloop session capture [options] <kind> [text]\n\nCapture a structured checkpoint entry for an explicit session\n\nArguments:\n  kind                entry kind\n  text                entry text\n\nOptions:\n  --session <id>      session id to target\n  --because <reason>  optional reasoning or context\n  --actor <actor>     entry actor for the captured note (default: \"cli\")\n  --edit              open $EDITOR for longer text\n  --json              Output machine-readable JSON\n  -h, --help          display help for command\n",
+    "session heartbeat": "Usage: threadloop session heartbeat [options]\n\nRefresh mechanical session metadata without creating a semantic entry\n\nOptions:\n  --session <id>     session id to target\n  --source <source>  heartbeat source\n  --json             Output machine-readable JSON\n  -h, --help         display help for command\n",
+    "session transition": "Usage: threadloop session transition [options] <target-state>\n\nApply an idempotent, guarded lifecycle transition\n\nArguments:\n  target-state                        target lifecycle state\n\nOptions:\n  --session <id>                      session id to target\n  --expected-state-version <version>  optimistic lifecycle state version\n  --idempotency-key <key>             idempotency key for this canonical request\n  --actor <actor>                     transition actor\n  --input <json-object>               structured transition input, including\n                                      proof_plan or pre_pr_review when required\n  --json                              Output machine-readable JSON\n  -h, --help                          display help for command\n",
+    "session next": "Usage: threadloop session next [options]\n\nInspect the deterministic next lifecycle candidate without mutating state\n\nOptions:\n  --session <id>  session id to inspect\n  --json          Output machine-readable JSON\n  -h, --help      display help for command\n",
+    "session gate run": "Usage: threadloop session gate run [options] <gate-id>\n\nRun one declared local gate and append an immutable receipt\n\nArguments:\n  gate-id         declared proof-plan gate id\n\nOptions:\n  --session <id>  session id to target\n  --json          Output machine-readable JSON\n  -h, --help      display help for command\n",
+    "session gate import": "Usage: threadloop session gate import [options] <package-path>\n\nVerify and append one signed GitHub Actions gate receipt\n\nArguments:\n  package-path    path to a signed receipt package\n\nOptions:\n  --session <id>  session id to target\n  --json          Output machine-readable JSON\n  -h, --help      display help for command\n",
+    "session review import": "Usage: threadloop session review import [options] <package-path>\n\nVerify and append one signed GitHub review snapshot\n\nArguments:\n  package-path    path to a signed review package\n\nOptions:\n  --session <id>  session id to target\n  --json          Output machine-readable JSON\n  -h, --help      display help for command\n",
+    "session reconcile": "Usage: threadloop session reconcile [options]\n\nRefresh Git-derived metadata for a session without creating semantic entries\n\nOptions:\n  --session <id>  session id to reconcile\n  -a, --all       reconcile all active sessions\n  --json          Output machine-readable JSON\n  -h, --help      display help for command\n",
+    "executor register": "Usage: threadloop executor register [options]\n\nAdopt a fresh host-controlled action and signer policy\n\nOptions:\n  --state <directory>  new state directory outside the subject\n  --binding <file>     host-adopted frozen controller binding JSON\n  --config <file>      explicit process and verification configuration JSON\n  --json               Output machine-readable JSON\n  -h, --help           display help for command\n",
+    "executor run": "Usage: threadloop executor run [options]\n\nLaunch the registered Attempt once and admit verified evidence\n\nOptions:\n  --state <directory>  registered executor state directory\n  --json               Output machine-readable JSON\n  -h, --help           display help for command\n",
+    "executor inspect": "Usage: threadloop executor inspect [options]\n\nIndependently verify retained executor state without launching\n\nOptions:\n  --state <directory>  executor state directory\n  --json               Output machine-readable JSON\n  -h, --help           display help for command\n",
+    "executor admit": "Usage: threadloop executor admit [options] <observation-id>\n\nRecheck retained output after an admission failure without launching\n\nArguments:\n  observation-id       retained successful transport observation\n\nOptions:\n  --state <directory>  executor state directory\n  --json               Output machine-readable JSON\n  -h, --help           display help for command\n",
+    "executor evaluate": "Usage: threadloop executor evaluate [options]\n\nRe-evaluate lifecycle guards after evidence admission\n\nOptions:\n  --state <directory>  executor state directory\n  --json               Output machine-readable JSON\n  -h, --help           display help for command\n",
+    "audit show": "Usage: threadloop audit show [options]\n\nShow hash-linked audit events for a session\n\nOptions:\n  --session <id>  session id to inspect\n  --json          Output machine-readable JSON\n  -h, --help      display help for command\n",
+    "audit verify": "Usage: threadloop audit verify [options]\n\nVerify a session audit chain and optional retained root\n\nOptions:\n  --session <id>   session id to verify\n  --root <sha256>  previously retained audit root\n  --json           Output machine-readable JSON\n  -h, --help       display help for command\n",
+    "audit export": "Usage: threadloop audit export [options]\n\nVerify and atomically create a JSONL audit export\n\nOptions:\n  --session <id>   session id to export\n  --output <path>  new output path; existing files are never overwritten\n  --json           Output machine-readable JSON\n  -h, --help       display help for command\n",
+    "audit corpus": "Usage: threadloop audit corpus [options]\n\nExport a verified corpus with one outcome per session\n\nOptions:\n  --format <format>   native corpus, viewer logs or verifiable logs (choices:\n                      \"native\", \"otel\", \"otel-verifiable\", default: \"native\")\n  --session <ids...>  explicit session ids to include\n  --all               include every session in the current repository\n  --output <path>     new output path; existing files are never overwritten\n  --json              Output machine-readable JSON\n  -h, --help          display help for command\n",
+    "audit verify-export": "Usage: threadloop audit verify-export [options]\n\nVerify retained corpus bytes without a repository or database\n\nOptions:\n  --input <path>   retained corpus file\n  --root <sha256>  previously retained whole-file corpus root\n  --json           Output machine-readable JSON\n  -h, --help       display help for command\n",
+    "workflow create": "Usage: threadloop workflow create [options] <run-id>\n\nCreate a run bound to one compiled graph and setup\n\nOptions:\n  --profile <yaml>  workflow profile file\n  --setup <json>    workflow setup file\n  --json            Output machine-readable JSON\n  -h, --help        display help for command\n",
+    "workflow inspect": "Usage: threadloop workflow inspect [options] <run-id>\n\nRead the verified graph binding and current state\n\nOptions:\n  --json      Output machine-readable JSON\n  -h, --help  display help for command\n",
+    "workflow decide": "Usage: threadloop workflow decide [options] <run-id>\n\nSelect the next outcome from verified run facts\n\nOptions:\n  --json      Output machine-readable JSON\n  -h, --help  display help for command\n",
+    "workflow apply": "Usage: threadloop workflow apply [options] <run-id>\n\nApply a fresh selected transition once\n\nOptions:\n  --decision <file>        saved workflow decide JSON response\n  --idempotency-key <key>  stable key for this request\n  --json                   Output machine-readable JSON\n  -h, --help               display help for command\n",
+    "workflow execute": "Usage: threadloop workflow execute [options] <run-id>\n\nExecute a selected engineering action through the enrolled GAAP bridge\n\nOptions:\n  --decision <file>  saved workflow decide JSON response\n  --json             Output machine-readable JSON\n  -h, --help         display help for command\n",
+    "workflow expire-claim": "Usage: threadloop workflow expire-claim [options] <run>\n\nRecord an overdue claim for its enrolled Attempt\n\nOptions:\n  --attempt <id>                enrolled Attempt ID from workflow inspect\n  --expected-state-version <n>  expected lifecycle version\n  --json                        Output machine-readable JSON\n  -h, --help                    display help for command\n",
+    "workflow evidence collect": "Usage: threadloop workflow evidence collect [options] <kind>\n\nCollect local gate or pre-PR review evidence from the enrolled producer\n\nOptions:\n  --run <run-id>                workflow run ID\n  --gate <id>                   adopted local proof gate\n  --operation <id>              Qodo review operation UUID\n  --expected-state-version <n>  expected lifecycle version\n  --idempotency-key <key>       stable collection key\n  --json                        Output machine-readable JSON\n  -h, --help                    display help for command\n",
+    "workflow evidence prepare": "Usage: threadloop workflow evidence prepare [options] <kind>\n\nBind a sensor observation to the current run\n\nOptions:\n  --run <run-id>                workflow run ID\n  --gate <id>                   declared gate ID\n  --pr <n>                      positive pull request number\n  --instruction <file>          explicit human instruction file\n  --expected-state-version <n>  expected lifecycle version\n  --idempotency-key <key>       stable preparation key\n  --json                        Output machine-readable JSON\n  -h, --help                    display help for command\n",
+    "workflow evidence import": "Usage: threadloop workflow evidence import [options] <kind>\n\nVerify and retain a prepared sensor package\n\nOptions:\n  --run <run-id>                workflow run ID\n  --source <file>               signed sensor package or GAAP correlation file\n  --expected-state-version <n>  expected lifecycle version\n  --json                        Output machine-readable JSON\n  -h, --help                    display help for command\n",
+    "protocol": "Usage: threadloop protocol [options]\n\nPrint the agent integration protocol\n\nOptions:\n  --contract <version>  protocol version to print (choices: \"4\", \"5\")\n  --json                Output machine-readable JSON\n  -h, --help            display help for command\n"
+  },
+  "no_arguments": {
+    "exit": 1,
+    "stderr": "Usage: threadloop [options] [command]\n\nTask-first, repo-local session memory that generates review-ready artifacts\n\nOptions:\n  -V, --version       output the version number\n  -h, --help          display help for command\n\nCommands:\n  init                Initialize ThreadLoop in the current Git repo\n  artifact            Generate artifacts from session context\n  session             Manage explicit ThreadLoop sessions\n  executor            Run the frozen GAAP reference process bridge\n  audit               Inspect and export the authoritative audit ledger\n  workflow            Manage graph-bound Workflow Runs\n  protocol [options]  Print the agent integration protocol\n  help [command]      display help for command\n"
+  },
+  "runner_sha256": {
+    "80e091c9f6412195a8444f048add977d648c4115": "fd9fabf1ad27f4b91d1b369b9283200045a1ca54e54d38da014d4f29972cc0dc",
+    "31388a07566350dfeddc30578d43b8926d5b4e22": "fd9fabf1ad27f4b91d1b369b9283200045a1ca54e54d38da014d4f29972cc0dc",
+    "7c54c2bb8055f00736e3b5f6631e9aecbe0fd212": "f0294d8c2abb5b8dcb6d9b8564eb6076a72a26614323acf0dc1ed4479e190a81"
+  },
+  "per_runtime": {
+    "v22.22.2": {
+      "node": "v22.22.2",
+      "host": "macOS-26.6-arm64-arm-64bit",
+      "race": {
+        "winner": "parity-right",
+        "loser": "STATE_VERSION_CONFLICT",
+        "replay_sha256": "75df7b8f7c2bc7bbb362566d55c39bac49938b05018999dbe7aa6d9e7be1dfba"
+      },
+      "rollback_proof": {
+        "pre_upgrade": {
+          "session status": "64542b79793a6d335201cf597fd10e60ea3d20755cdc48068a26b1e7505c3b0d",
+          "session next": "ce445f2a896e6b181bd7763d91240f56bcc4fc521b8baa723665014e1625f6f1",
+          "audit show": "50cf4c260e43decf37c214b6ed6f87eeee6d5afeaed183985a23bd30f19faad3",
+          "audit verify": "1532d5b4599a1dd28073986c6f5923e5dcf557b8c4d6b679341f6e9435c604f4",
+          "audit export": "bb11d9f9ed1417415727ccafcafec265bfb08756373c2604b9195aaf3737a87a"
+        },
+        "post_upgrade": {
+          "session status": "416f37da0839d59b446cc4bf679dc7a36556e1e53f4e7b65c6783d8fe499c298",
+          "session next": "839d2642825c580423edda59293666a43267391276970664547128c891ef6687",
+          "audit show": "917de81b2c44194919261f8e9907395d6c8f25e8d57a07c0623c2a8b8326b127",
+          "audit verify": "1b97529dd7bcbd5ed686a973884575598595dbb7173881b0f14d4ce43e8f0839",
+          "audit export": "13df5a624863a10c77dc2a53a03ca4f44e59e66a250e80745f2da5938cb869d6"
+        },
+        "restored": {
+          "session status": "64542b79793a6d335201cf597fd10e60ea3d20755cdc48068a26b1e7505c3b0d",
+          "session next": "ce445f2a896e6b181bd7763d91240f56bcc4fc521b8baa723665014e1625f6f1",
+          "audit show": "50cf4c260e43decf37c214b6ed6f87eeee6d5afeaed183985a23bd30f19faad3",
+          "audit verify": "1532d5b4599a1dd28073986c6f5923e5dcf557b8c4d6b679341f6e9435c604f4",
+          "audit export": "bb11d9f9ed1417415727ccafcafec265bfb08756373c2604b9195aaf3737a87a"
+        },
+        "pre_files": {
+          "state.db": "c61517a4dc45484aba885319e73c12437874242903f588ea196600423767b2b7",
+          "state.db-shm": "fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb",
+          "state.db-wal": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "post_files": {
+          "state.db": "25b6ddc7333e75c1d09004b443934ea56666ab8296a083cd0a3a7d120275b8aa",
+          "state.db-shm": "fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb",
+          "state.db-wal": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "restored_files": {
+          "state.db": "c61517a4dc45484aba885319e73c12437874242903f588ea196600423767b2b7",
+          "state.db-shm": "fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb",
+          "state.db-wal": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "post_upgrade_session_absent": true,
+        "post_upgrade_workflow_absent": true
+      },
+      "artifacts": {
+        ".change-brief": "cf31c8191bb237d44bc9a2252a7dbf3b00c6a5e03baa8b49e3694175a2ad3517",
+        ".handoff": "622be4b346834c9d3f13586b8e2f61f05ddd26aa07b074e18f978ac16cacccd6",
+        ".pr-summary": "f95ce67695800b91c8809c20ff34470ad9b423788735decf7b278ba220822872"
+      },
+      "workflow": {
+        "graph_digest": "22fb31abcf828c86c0c299eed82bc0d196285a62a9875bfd96fa3d5580202234",
+        "initial": "intake",
+        "final": "prepared",
+        "final_version": 1,
+        "exact_replay_preserved": true
+      },
+      "pre_adoption": {
+        "original_reads": {
+          "session status": "3747f123c5fc8ef1fb0a6832f8dad0ae861a56e8bf4d6fb4ccf81a7113cf592a",
+          "session next": "80766a64edf99f6fafb87456be96568a21b9624097b47fff8230348fccce61c9",
+          "audit show": "1d8db6268072a7fda66e17c2d3bf0d6a64b84b7e2a3cf3dcfa138af8267f5b34",
+          "audit verify": "ed4ad6e0d1660d38117219e116b9b0cf61af172af4fa30a81f5d00cdfb0b8e98",
+          "audit export": "d286e0e520119763589cb1c9039400da4466412a537d687833061951327cdf5b"
+        },
+        "candidate_reads": {
+          "session status": "3747f123c5fc8ef1fb0a6832f8dad0ae861a56e8bf4d6fb4ccf81a7113cf592a",
+          "session next": "206a3765190a7e2fad13727df7a939957ec52574d3e3d627a098352bec3b0ffb",
+          "audit show": "1d8db6268072a7fda66e17c2d3bf0d6a64b84b7e2a3cf3dcfa138af8267f5b34",
+          "audit verify": "ed4ad6e0d1660d38117219e116b9b0cf61af172af4fa30a81f5d00cdfb0b8e98",
+          "audit export": "d286e0e520119763589cb1c9039400da4466412a537d687833061951327cdf5b"
+        },
+        "database": {
+          "state.db": "bbdc24c1753f3f2a0f3494b0aec7b2e83cb7020d910d9b182357b6382b75dce1"
+        },
+        "catalog_and_workflow_tables_absent": true,
+        "capabilities": ["session_next_v1"],
+        "next_other_fields_identical": true
+      },
+      "storage": {
+        "generation": 8,
+        "future_generation_refused_without_writes": {
+          "state.db": "f183e522dd15966d25bb84099e6ca820e50612a8d7b3c3d2a3999599eb977b5f"
+        },
+        "legacy_json_sha256": "8dcc406d6ab111da1c212e64a25d8a393c80ab0cdbeb942e72fdf82e24a234ce",
+        "legacy_task_imported": false,
+        "generation_one_ddl_revision": "750ae36b6b7b6ea34081a8c90236d8c95f71b086",
+        "generation_one_ddl_sha256": "80908d1e0f6ba7a7b4376497c1888bf795aa5d946e68aa12e20b5d41f0f82b5f",
+        "rejected_read_preserved_files": {
+          "state.db": "4501776c51cd7e09cfcb730e7f109484c6164533a500960b8d40a4ed96480690"
+        }
+      },
+      "raw_packet_sha256": "fabb72a6b7bfc8ca149fac23b4b82b0e094b2a3f32551cbda916102da2bc1758"
+    },
+    "v24.20.0": {
+      "node": "v24.20.0",
+      "host": "macOS-26.6-arm64-arm-64bit",
+      "race": {
+        "winner": "parity-right",
+        "loser": "STATE_VERSION_CONFLICT",
+        "replay_sha256": "9031744bdf2e000cb1147af30ea3ddab0ebf0ccbfa2f7809c573035d5b57a810"
+      },
+      "rollback_proof": {
+        "pre_upgrade": {
+          "session status": "e41bb10660bbfd18567f1010fcddc260ac902407a46d35607eabdcf3baf50d38",
+          "session next": "2523c91c9f61a94b10e2fb7b73a4a466a2ac8092e42c16d0682bd9eb498ea926",
+          "audit show": "1f27cfed14c609253e1ccdd656f3cce5165eb9f425c353578fb947292b9c97b1",
+          "audit verify": "44eec6b38aa1f40915ebd750089a1a986b549f4bd04caef4c666cbca25215bbd",
+          "audit export": "82fb8c4de91bafa970a17e9107e1a1f5404464eda55bef90eba4d6333903b262"
+        },
+        "post_upgrade": {
+          "session status": "faf121a62faa9a806a599644ebd94e34e5e9fc11e4a7ec284b1f3f0534d2ccf6",
+          "session next": "a09c0bf39acf2265871030854db56e0023887eb2dde203507776a7f97f980e1e",
+          "audit show": "9360f2224196d97a788f1afe0e6c353fdea98e8041da836500cff69edf6565e1",
+          "audit verify": "8aa9914b5c15f3b0273b75d80180ec8b890d09e60a5772b931baf4f901ce0e5c",
+          "audit export": "6e7b432bb09a7b054725ff19f1df1bf60167a86950d522d974216452a39ca924"
+        },
+        "restored": {
+          "session status": "e41bb10660bbfd18567f1010fcddc260ac902407a46d35607eabdcf3baf50d38",
+          "session next": "2523c91c9f61a94b10e2fb7b73a4a466a2ac8092e42c16d0682bd9eb498ea926",
+          "audit show": "1f27cfed14c609253e1ccdd656f3cce5165eb9f425c353578fb947292b9c97b1",
+          "audit verify": "44eec6b38aa1f40915ebd750089a1a986b549f4bd04caef4c666cbca25215bbd",
+          "audit export": "82fb8c4de91bafa970a17e9107e1a1f5404464eda55bef90eba4d6333903b262"
+        },
+        "pre_files": {
+          "state.db": "61a32143bf7ffd2093deea60ae6c176b27e5d2e948ec0143a4cf9c20f9b4e1db",
+          "state.db-shm": "fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb",
+          "state.db-wal": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "post_files": {
+          "state.db": "d008271e6a7184e1bb417f7cf7275705492dc9ec0b82cbfe98d8bdb43e748d08",
+          "state.db-shm": "fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb",
+          "state.db-wal": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "restored_files": {
+          "state.db": "61a32143bf7ffd2093deea60ae6c176b27e5d2e948ec0143a4cf9c20f9b4e1db",
+          "state.db-shm": "fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb",
+          "state.db-wal": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "post_upgrade_session_absent": true,
+        "post_upgrade_workflow_absent": true
+      },
+      "artifacts": {
+        ".change-brief": "dcb7993a9747f451da571fe75250cbef4b692910e0644e4a2dd6e3a9b561bcc2",
+        ".handoff": "8c2ec54ae4aa2183a21b694fbd004e0c694887711a2ec90902a78a12f182b147",
+        ".pr-summary": "af17475b427e613aa6c9593ac91a524c6d08c0feaf9669087aceff54f9eb5f1d"
+      },
+      "workflow": {
+        "graph_digest": "22fb31abcf828c86c0c299eed82bc0d196285a62a9875bfd96fa3d5580202234",
+        "initial": "intake",
+        "final": "prepared",
+        "final_version": 1,
+        "exact_replay_preserved": true
+      },
+      "pre_adoption": {
+        "original_reads": {
+          "session status": "085445fa77ee85a5df53813aa802e28c6997c73f24305e9387921b8a88d7a251",
+          "session next": "509ea15ca894f8aee312dc4e11525dd7df4243e595a0450377dfa6ad83c5920b",
+          "audit show": "89761466258e59291e1175a9e2ac8e92d60c0bfd79fd465f06f17e7a558e2596",
+          "audit verify": "e30818a7f38982c7fe95020198ae9aad09c0453e6d30e608de5dfadf48186c3b",
+          "audit export": "a2a8011d83d873778a6d4fab6c46bdbe2854a768520dc0e6299351920d17daef"
+        },
+        "candidate_reads": {
+          "session status": "085445fa77ee85a5df53813aa802e28c6997c73f24305e9387921b8a88d7a251",
+          "session next": "a64e19360f2dd648b32527b0493d6da3b644456b043ec2c26997f50b582a3897",
+          "audit show": "89761466258e59291e1175a9e2ac8e92d60c0bfd79fd465f06f17e7a558e2596",
+          "audit verify": "e30818a7f38982c7fe95020198ae9aad09c0453e6d30e608de5dfadf48186c3b",
+          "audit export": "a2a8011d83d873778a6d4fab6c46bdbe2854a768520dc0e6299351920d17daef"
+        },
+        "database": {
+          "state.db": "b096e336cd6652365ff3e8d1780334be0563ebf03a60524c73df74d98424ae64"
+        },
+        "catalog_and_workflow_tables_absent": true,
+        "capabilities": ["session_next_v1"],
+        "next_other_fields_identical": true
+      },
+      "storage": {
+        "generation": 8,
+        "future_generation_refused_without_writes": {
+          "state.db": "f183e522dd15966d25bb84099e6ca820e50612a8d7b3c3d2a3999599eb977b5f"
+        },
+        "legacy_json_sha256": "8c3fa07dc9c3eb0f1e1ee9dfafc93113e1bc43f5a05bf5dfda5f7da4f5819479",
+        "legacy_task_imported": false,
+        "generation_one_ddl_revision": "750ae36b6b7b6ea34081a8c90236d8c95f71b086",
+        "generation_one_ddl_sha256": "80908d1e0f6ba7a7b4376497c1888bf795aa5d946e68aa12e20b5d41f0f82b5f",
+        "rejected_read_preserved_files": {
+          "state.db": "4501776c51cd7e09cfcb730e7f109484c6164533a500960b8d40a4ed96480690"
+        }
+      },
+      "raw_packet_sha256": "ec76f978136b6486305cfa52ad0defb899b341157d768b57647b094d5d1ac9dc"
+    },
+    "v26.8.2": {
+      "node": "v26.8.2",
+      "host": "macOS-26.6-arm64-arm-64bit",
+      "race": {
+        "winner": "parity-left",
+        "loser": "STATE_VERSION_CONFLICT",
+        "replay_sha256": "eedda2aae521b9e6117beeacab84d7f1fd2fbbad47a4fd40b7a384547e1ff763"
+      },
+      "rollback_proof": {
+        "pre_upgrade": {
+          "session status": "bbaa3535650748b505a06606bcdb594be7747abee5d46a39a5446a8134eeb68d",
+          "session next": "61edfbcb785cb9018cab0bba4d0ed0ccfcb169dd3f5aeb126981262b3a0d4ed7",
+          "audit show": "0264f1495c61667b761f85ae2673f440a90e367f3552462e6aa2ae78faa269ae",
+          "audit verify": "66e9e9a2694c49201c364cdd05f2f51c8f933eed8e3a615e839d76a4c9c53927",
+          "audit export": "7c9335f5a43ae2fb05b5241882c64c5ab425c8625cd7696b662b31e6cba0c70f"
+        },
+        "post_upgrade": {
+          "session status": "29aa71bc7339a8b71f40a643f43ce7c2695b7b015cb541adaf8f8c24e0660ed2",
+          "session next": "397317ee2df6c8e867eb479e1256bc7e99d7725e5dfdfea0581d9dff3f79fbb4",
+          "audit show": "250a4db59e80fc0520b4920bd5b2c61989e6d3dad089052434ba03cb57c9ba6c",
+          "audit verify": "a8ffdbd9ed277e874e412f8bb6352b7046442527320c1b5aa89d61ecc30c2f2a",
+          "audit export": "498978f066bad990c92cbbef05b0a32bc3cdb3a3cf1f6745339b825a7ae77048"
+        },
+        "restored": {
+          "session status": "bbaa3535650748b505a06606bcdb594be7747abee5d46a39a5446a8134eeb68d",
+          "session next": "61edfbcb785cb9018cab0bba4d0ed0ccfcb169dd3f5aeb126981262b3a0d4ed7",
+          "audit show": "0264f1495c61667b761f85ae2673f440a90e367f3552462e6aa2ae78faa269ae",
+          "audit verify": "66e9e9a2694c49201c364cdd05f2f51c8f933eed8e3a615e839d76a4c9c53927",
+          "audit export": "7c9335f5a43ae2fb05b5241882c64c5ab425c8625cd7696b662b31e6cba0c70f"
+        },
+        "pre_files": {
+          "state.db": "7f16a40de06507eec944175de718a84b6eb4b214246e222659d2fdd5a31db5b3",
+          "state.db-shm": "fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb",
+          "state.db-wal": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "post_files": {
+          "state.db": "199ff0d5ea19c268638c652d52df6c1913b3a4533513fbedde6fcfe4b4f330b6",
+          "state.db-shm": "fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb",
+          "state.db-wal": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "restored_files": {
+          "state.db": "7f16a40de06507eec944175de718a84b6eb4b214246e222659d2fdd5a31db5b3",
+          "state.db-shm": "fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb",
+          "state.db-wal": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "post_upgrade_session_absent": true,
+        "post_upgrade_workflow_absent": true
+      },
+      "artifacts": {
+        ".change-brief": "e4bf2312a3afbbc76e3ed9871b72b40512560358d36d9f7c798aa59c13bc8286",
+        ".handoff": "f6343637addb357ad42bf05078abe54e92dacadde3afa7c3e7008bc25c251b36",
+        ".pr-summary": "c22658a9ccb4754a47ad29df6a576a86a4998ee57a131d206cce3b0d69ceefb2"
+      },
+      "workflow": {
+        "graph_digest": "22fb31abcf828c86c0c299eed82bc0d196285a62a9875bfd96fa3d5580202234",
+        "initial": "intake",
+        "final": "prepared",
+        "final_version": 1,
+        "exact_replay_preserved": true
+      },
+      "pre_adoption": {
+        "original_reads": {
+          "session status": "c733835fc0dc627182ac3c38ff6c47005bf0267f0c220f805a2a2e05e32fc8eb",
+          "session next": "c9ce58c3d3f917be049d60a215147d026aec53915a7754b2ca9544206385b7c3",
+          "audit show": "6aa20d36038ddf35c21b5afbc8478a285627c6478546820a6c070d496bb67293",
+          "audit verify": "5a475ebd99e7ce36831249087d608b152c92f7d1f48b82647237e4b26c9fcc19",
+          "audit export": "30a7bd0b44ea417173d1d028f883eb88b38d5e47e421cb333daa147e665d2996"
+        },
+        "candidate_reads": {
+          "session status": "c733835fc0dc627182ac3c38ff6c47005bf0267f0c220f805a2a2e05e32fc8eb",
+          "session next": "6c614492432fc36e1287d6fe2c195956e21a9b196167dbc14319d00a9e567bab",
+          "audit show": "6aa20d36038ddf35c21b5afbc8478a285627c6478546820a6c070d496bb67293",
+          "audit verify": "5a475ebd99e7ce36831249087d608b152c92f7d1f48b82647237e4b26c9fcc19",
+          "audit export": "30a7bd0b44ea417173d1d028f883eb88b38d5e47e421cb333daa147e665d2996"
+        },
+        "database": {
+          "state.db": "4a35f5921c8f0d683a8546eab247dc3f99defe6da1cdbf2932bd632c69602039"
+        },
+        "catalog_and_workflow_tables_absent": true,
+        "capabilities": ["session_next_v1"],
+        "next_other_fields_identical": true
+      },
+      "storage": {
+        "generation": 8,
+        "future_generation_refused_without_writes": {
+          "state.db": "f183e522dd15966d25bb84099e6ca820e50612a8d7b3c3d2a3999599eb977b5f"
+        },
+        "legacy_json_sha256": "6a8dbb06330467840594e1e629522cb5300d19cca293a679fe04d32bfd52dba1",
+        "legacy_task_imported": false,
+        "generation_one_ddl_revision": "750ae36b6b7b6ea34081a8c90236d8c95f71b086",
+        "generation_one_ddl_sha256": "80908d1e0f6ba7a7b4376497c1888bf795aa5d946e68aa12e20b5d41f0f82b5f",
+        "rejected_read_preserved_files": {
+          "state.db": "4501776c51cd7e09cfcb730e7f109484c6164533a500960b8d40a4ed96480690"
+        }
+      },
+      "raw_packet_sha256": "8e453e1519329d1a1c55f698e3be5626126daa8c6c819e33345d83c1b3e9da76"
+    }
+  }
+}
