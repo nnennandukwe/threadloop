@@ -271,6 +271,12 @@ remains open.
 
 ## Test Plan
 
+At `06c086d`, both macOS jobs passed the tests and build before the 15-minute job limit interrupted their packaged
+install checks. A second attempt passed on Node 22 and reached the limit on Node 22.22.2. Allow 20 minutes for each
+macOS test job and retain 15 minutes on Ubuntu. Validate the workflow with actionlint and require all four platform jobs
+to finish their tests, build and packaged install at the reviewed revision.
+[CI attempts](https://github.com/nnennandukwe/threadloop/actions/runs/45214202711)
+
 **Native and external checks.** Use fresh disposable clones of the pinned dependencies. Install their locked packages
 and run upstream checks there, then supply those clean clones to the read-only external proof. Set `CONTRACTS` and
 `HARNESS` to their absolute paths and `EVIDENCE` to a fresh directory outside the clean ThreadLoop checkout. The parent
