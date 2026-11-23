@@ -56,7 +56,7 @@
     "@sigstore/bundle": "5.0.0",
     "@sigstore/sign": "5.0.0",
     "ajv": "8.20.0",
-    "commander": "^15.0.0",
+    "commander": "^15.1.0",
     "prompts": "^2.4.2",
     "sigstore": "5.0.0",
     "threadloop-contracts": "git+https://github.com/nnennandukwe/threadloop-contracts.git#4ed9a94a2a089b9ae950d93297f7a6b9b939d3a6",
